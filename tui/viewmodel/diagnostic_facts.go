@@ -3,14 +3,14 @@ package viewmodel
 import (
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/editor"
-	"crude/types"
+	"crude/types/insight"
 )
 
 type diagnosticTreeProjection struct {
 	id      string
-	state   types.InsightState
+	state   insight.State
 	visible bool
 }
 
@@ -18,7 +18,7 @@ type diagnosticTreeProjection struct {
 // problem in the file's retained facts, whatever their freshness. Freshness is
 // told in the panel and the editor, not by hiding the marker. Hiding it for
 // project-check and older facts made the tree disagree with Problems.
-func (m *App) projectTreeDiagnostic(path string, facts types.InsightDiagnostics) {
+func (m *App) projectTreeDiagnostic(path string, facts insight.Diagnostics) {
 	if m.Tree == nil || m.Tree.Model == nil {
 		return
 	}
@@ -49,7 +49,7 @@ func (m *App) projectTreeDiagnostic(path string, facts types.InsightDiagnostics)
 	}
 }
 
-func (m *App) canNavigateDiagnostic(path string, facts types.InsightDiagnostics) bool {
+func (m *App) canNavigateDiagnostic(path string, facts insight.Diagnostics) bool {
 	// A project check reports a file from disk. Opening the file reads the
 	// same disk text, so the location applies unless an editor holds unsaved
 	// changes for it.
@@ -69,9 +69,9 @@ func (m *App) canNavigateDiagnostic(path string, facts types.InsightDiagnostics)
 	return live
 }
 
-func (m *App) diagnosticForNavigation(path string, d editor.LSPDiagnostic) (types.InsightDiagnostics, bool) {
+func (m *App) diagnosticForNavigation(path string, d insight.LSPDiagnostic) (insight.Diagnostics, bool) {
 	if m.ws.LSPMgr() == nil {
-		return types.InsightDiagnostics{}, false
+		return insight.Diagnostics{}, false
 	}
 	facts, ok := m.ws.LSPMgr().FileDiagnostics(path)
 	if !ok {
@@ -87,13 +87,13 @@ func (m *App) diagnosticForNavigation(path string, d editor.LSPDiagnostic) (type
 
 // Captures provenance along with wire coordinates. Source can overtake the
 // asynchronous open; neither a matching path nor equal bytes revives this batch.
-func (m *App) queueLiveDiagnosticNavigation(path string, d editor.LSPDiagnostic, facts types.InsightDiagnostics) bool {
+func (m *App) queueLiveDiagnosticNavigation(path string, d insight.LSPDiagnostic, facts insight.Diagnostics) bool {
 	if _, ok := m.ws.(shellport.LiveDocuments); !ok {
 		return false
 	}
 	cmd := m.openPaneFiles([]string{path}, m.Win.ActiveGroup())
 	if cmd != nil {
-		facts = types.CloneInsightDiagnostics(facts)
+		facts = insight.CloneDiagnostics(facts)
 		m.editorCommands = append(m.editorCommands, func() tea.Msg {
 			msg := cmd().(paneFilesOpenedMsg)
 			msg.position, msg.diagnosticFacts = &d, &facts

@@ -7,7 +7,7 @@ import (
 
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 // styledSpanCount counts spans that carry real styling (explicit colors or
@@ -96,12 +96,12 @@ func TestColorPersistenceAcrossTurns(t *testing.T) {
 	}
 
 	// ---- Turn 1 ----
-	r.SyncMessages([]types.ChatMessage{
-		{InternalID: "u1", Role: types.RoleUser, Content: "write me some go", Time: time.Unix(1, 0)},
+	r.SyncMessages([]conversation.ChatMessage{
+		{InternalID: "u1", Role: conversation.RoleUser, Content: "write me some go", Time: time.Unix(1, 0)},
 	}, 1, 0)
-	r.SyncMessages([]types.ChatMessage{
-		{InternalID: "u1", Role: types.RoleUser, Content: "write me some go", Time: time.Unix(1, 0)},
-		{InternalID: "a1", Role: types.RoleAssistant, Content: markdownBody, Time: time.Unix(2, 0)},
+	r.SyncMessages([]conversation.ChatMessage{
+		{InternalID: "u1", Role: conversation.RoleUser, Content: "write me some go", Time: time.Unix(1, 0)},
+		{InternalID: "a1", Role: conversation.RoleAssistant, Content: markdownBody, Time: time.Unix(2, 0)},
 	}, 2, 0)
 	base := count("turn1-seed", "a1")
 	fmt.Printf("turn1 base styled spans: %d\n", base)
@@ -148,16 +148,16 @@ func TestColorPersistenceAcrossTurns(t *testing.T) {
 	}
 
 	// ---- Turn 2 ----
-	r.SyncMessages([]types.ChatMessage{
-		{InternalID: "u1", Role: types.RoleUser, Content: "write me some go", Time: time.Unix(1, 0)},
-		{InternalID: "a1", Role: types.RoleAssistant, Content: markdownBody, Time: time.Unix(2, 0)},
-		{InternalID: "s2", Role: types.RoleStatus, Content: "agent turn started", Time: time.Unix(3, 0)},
+	r.SyncMessages([]conversation.ChatMessage{
+		{InternalID: "u1", Role: conversation.RoleUser, Content: "write me some go", Time: time.Unix(1, 0)},
+		{InternalID: "a1", Role: conversation.RoleAssistant, Content: markdownBody, Time: time.Unix(2, 0)},
+		{InternalID: "s2", Role: conversation.RoleStatus, Content: "agent turn started", Time: time.Unix(3, 0)},
 	}, 3, 0)
-	r.SyncMessages([]types.ChatMessage{
-		{InternalID: "u1", Role: types.RoleUser, Content: "write me some go", Time: time.Unix(1, 0)},
-		{InternalID: "a1", Role: types.RoleAssistant, Content: markdownBody, Time: time.Unix(2, 0)},
-		{InternalID: "s2", Role: types.RoleStatus, Content: "agent turn started", Time: time.Unix(3, 0)},
-		{InternalID: "u2", Role: types.RoleUser, Content: "thanks, more", Time: time.Unix(4, 0)},
+	r.SyncMessages([]conversation.ChatMessage{
+		{InternalID: "u1", Role: conversation.RoleUser, Content: "write me some go", Time: time.Unix(1, 0)},
+		{InternalID: "a1", Role: conversation.RoleAssistant, Content: markdownBody, Time: time.Unix(2, 0)},
+		{InternalID: "s2", Role: conversation.RoleStatus, Content: "agent turn started", Time: time.Unix(3, 0)},
+		{InternalID: "u2", Role: conversation.RoleUser, Content: "thanks, more", Time: time.Unix(4, 0)},
 	}, 4, 0)
 	if got := count("turn2-append", "a1"); got != base {
 		t.Errorf("turn2 after append: styled span count %d != base %d", got, base)
@@ -169,12 +169,12 @@ func TestColorPersistenceAcrossTurns(t *testing.T) {
 		for range step {
 			content += "\nmore tokens per chunk"
 		}
-		r.SyncMessages([]types.ChatMessage{
-			{InternalID: "u1", Role: types.RoleUser, Content: "write me some go", Time: time.Unix(1, 0)},
-			{InternalID: "a1", Role: types.RoleAssistant, Content: markdownBody, Time: time.Unix(2, 0)},
-			{InternalID: "s2", Role: types.RoleStatus, Content: "agent turn started", Time: time.Unix(3, 0)},
-			{InternalID: "u2", Role: types.RoleUser, Content: "write me some go", Time: time.Unix(4, 0)},
-			{InternalID: "a2", Role: types.RoleAssistant, Content: "thinking out loud..." + fmt.Sprint(step), Time: time.Unix(5, 0)},
+		r.SyncMessages([]conversation.ChatMessage{
+			{InternalID: "u1", Role: conversation.RoleUser, Content: "write me some go", Time: time.Unix(1, 0)},
+			{InternalID: "a1", Role: conversation.RoleAssistant, Content: markdownBody, Time: time.Unix(2, 0)},
+			{InternalID: "s2", Role: conversation.RoleStatus, Content: "agent turn started", Time: time.Unix(3, 0)},
+			{InternalID: "u2", Role: conversation.RoleUser, Content: "write me some go", Time: time.Unix(4, 0)},
+			{InternalID: "a2", Role: conversation.RoleAssistant, Content: "thinking out loud..." + fmt.Sprint(step), Time: time.Unix(5, 0)},
 		}, uint64(5+step), 0)
 		r.SetStreaming(step < 4)
 		_ = r.Render(120)

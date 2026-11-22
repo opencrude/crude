@@ -12,15 +12,17 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
-	ttypes "crude/types"
+	"crude/types/conversation"
+	"crude/types/setting"
 )
 
 func (s *Session) AppendWorkspaceHistoryEvent(content, display string) error {
 	eventID := fmt.Sprintf("history-%d", time.Now().UnixNano())
-	return s.AppendWorkspaceHistoryEventWithID(eventID, content, ttypes.ConversationMessage{InternalID: eventID + "-status", Role: "status", Content: display})
+	return s.AppendWorkspaceHistoryEventWithID(eventID, content, conversation.Message{InternalID: eventID + "-status", Role: "status", Content: display})
 }
 
-func (s *Session) AppendWorkspaceHistoryEventWithID(eventID, content string, status ttypes.ConversationMessage) error {
+// AppendWorkspaceHistoryEventWithID records a workspace restore as a runtime context message.
+func (s *Session) AppendWorkspaceHistoryEventWithID(eventID, content string, status conversation.Message) error {
 	if !s.turnGate.TryLock() {
 		return errors.New("stop the active turn before recording workspace restore")
 	}
@@ -38,7 +40,7 @@ func (s *Session) AppendWorkspaceHistoryEventWithID(eventID, content string, sta
 		status.Time = createdAt
 	}
 	meta := sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, DisplayRole: "hidden_wire_context",
-		Snapshots: []ttypes.ConversationMessage{status}}
+		Snapshots: []conversation.Message{status}}
 	s.msgsMu.Lock()
 	defer s.msgsMu.Unlock()
 	for _, existing := range s.msgs {
@@ -74,7 +76,7 @@ func (s *Session) AppendWorkspaceHistoryEventWithID(eventID, content string, sta
 // AppendSubAgentHistoryStatus durably adds restore status to a completed
 // child's own transcript. The root context event remains separate because it
 // informs future root requests about the changed workspace.
-func (s *Session) AppendSubAgentHistoryStatus(agentID, eventID string, status ttypes.ConversationMessage) (bool, error) {
+func (s *Session) AppendSubAgentHistoryStatus(agentID, eventID string, status conversation.Message) (bool, error) {
 	if s == nil || s.db == nil || agentID == "" {
 		return false, nil
 	}
@@ -119,7 +121,7 @@ func (s *Session) AppendSubAgentHistoryStatus(agentID, eventID string, status tt
 		status.Time = time.Now()
 	}
 	meta := sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, DisplayRole: "hidden_wire_context",
-		Snapshots: []ttypes.ConversationMessage{status}}
+		Snapshots: []conversation.Message{status}}
 	turn := 1
 	if len(rows) > 0 && rows[len(rows)-1].Turn > turn {
 		turn = rows[len(rows)-1].Turn
@@ -162,18 +164,19 @@ func (s *Session) YoloEnabled() bool {
 	return s != nil && s.yolo.Load()
 }
 
-func (s *Session) HandleSettingsSave(tuiSettings ttypes.Settings) error {
+// HandleSettingsSave saves settings from the shell and reports a failure to the caller.
+func (s *Session) HandleSettingsSave(tuiSettings setting.Settings) error {
 	_, err := s.SaveSettingsSnapshot(tuiSettings)
 	return err
 }
 
 // saveSettingsLocked requires settingsOperationMu, delegationMu and mu.
-func (s *Session) saveSettingsLocked(tuiSettings ttypes.Settings) error {
+func (s *Session) saveSettingsLocked(tuiSettings setting.Settings) error {
 	l := s.logger
 
 	oldDelegation := s.cfg.IsMultiAgentEnabled()
 	defer func() { s.recordDelegationChange(oldDelegation, s.cfg.IsMultiAgentEnabled()) }()
-	oldMain := s.cfg.GetActiveDefaultCategory()
+	oldMain := s.cfg.ActiveDefaultCategory()
 	oldTemplate := s.cfg.providerIDForAccount(oldMain.AccountID)
 	oldModel := oldMain.Model
 	l.Info("CONFIG", "save_begin", "old_template", oldTemplate, "old_account", oldMain.AccountID, "old_model", oldModel, "turn_logs", tuiSettings.TurnLogsEnabled)
@@ -188,7 +191,7 @@ func (s *Session) saveSettingsLocked(tuiSettings ttypes.Settings) error {
 	if err := newCfg.ValidateSelectedAgent(); err != nil && tuiSettings.SessionMainAgent != s.selectedMainAgent {
 		return fmt.Errorf("select a usable root agent: %w", err)
 	}
-	mainCat := newCfg.GetActiveDefaultCategory()
+	mainCat := newCfg.ActiveDefaultCategory()
 	configuredProvider, err := newCfg.providerForCategory(mainCat)
 	if err != nil && (oldMain.AccountID != mainCat.AccountID || oldMain.Model != mainCat.Model) {
 		return fmt.Errorf("invalid provider connection: %w", err)
@@ -206,13 +209,13 @@ func (s *Session) saveSettingsLocked(tuiSettings ttypes.Settings) error {
 		if old.AccountID == changed.AccountID && old.Model == changed.Model {
 			continue
 		}
-		category := newCfg.GetCategoryConfig(role)
+		category := newCfg.CategoryConfig(role)
 		if name, isProfile := strings.CutPrefix(role, "profile/"); isProfile {
 			named, exists := newCfg.Agents.AgentProfiles[name]
 			if !exists {
 				return fmt.Errorf("agent profile %q is unavailable", name)
 			}
-			category = newCfg.GetCategoryConfig(named.Category)
+			category = newCfg.CategoryConfig(named.Category)
 			if named.AccountID != "" {
 				category.AccountID = named.AccountID
 			}
@@ -280,7 +283,7 @@ func (s *Session) saveSettingsLocked(tuiSettings ttypes.Settings) error {
 	return nil
 }
 
-func settingsToSessionOverrides(settings ttypes.Settings) map[string]sessiondb.AgentSettingOverride {
+func settingsToSessionOverrides(settings setting.Settings) map[string]sessiondb.AgentSettingOverride {
 	overrides := make(map[string]sessiondb.AgentSettingOverride)
 	for category, cfg := range settings.SessionOverrides {
 		overrides[category] = sessiondb.AgentSettingOverride{
@@ -426,13 +429,13 @@ func workspaceMainCategory(base *Config) *CategoryConfig {
 }
 
 // SettingsSnapshot returns the current effective session settings.
-func (s *Session) SettingsSnapshot() ttypes.Settings {
+func (s *Session) SettingsSnapshot() setting.Settings {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.settingsSnapshotLocked()
 }
 
-func (s *Session) settingsSnapshotLocked() ttypes.Settings {
+func (s *Session) settingsSnapshotLocked() setting.Settings {
 	settings := detachedSettingsSnapshot(s.cfg)
 	settings.SessionMainAgent = s.selectedMainAgent
 	settings.SessionOverrides = s.sessionOverridesSnapshotLocked()
@@ -461,30 +464,30 @@ func (s *Session) ConnectionIssue() error {
 	if err := s.cfg.ValidateSelectedAgent(); err != nil {
 		return err
 	}
-	main := s.cfg.GetActiveDefaultCategory()
+	main := s.cfg.ActiveDefaultCategory()
 	_, err := s.cfg.resolveAccount(main.AccountID)
 	return err
 }
 
 // WorkspaceSettingsSnapshot returns the inherited workspace baseline without
 // this session's persisted overrides.
-func (s *Session) WorkspaceSettingsSnapshot() ttypes.Settings {
+func (s *Session) WorkspaceSettingsSnapshot() setting.Settings {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return detachedSettingsSnapshot(s.workspaceCfg)
 }
 
 // SessionOverridesSnapshot returns only explicit DB-backed overrides.
-func (s *Session) SessionOverridesSnapshot() map[string]ttypes.CategorySettings {
+func (s *Session) SessionOverridesSnapshot() map[string]setting.Category {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.sessionOverridesSnapshotLocked()
 }
 
-func (s *Session) sessionOverridesSnapshotLocked() map[string]ttypes.CategorySettings {
-	out := make(map[string]ttypes.CategorySettings, len(s.sessionOverrides))
+func (s *Session) sessionOverridesSnapshotLocked() map[string]setting.Category {
+	out := make(map[string]setting.Category, len(s.sessionOverrides))
 	for category, override := range s.sessionOverrides {
-		out[category] = ttypes.CategorySettings{
+		out[category] = setting.Category{
 			AccountID: override.AccountID, Model: override.Model,
 			ThinkingEffort:           override.ThinkingEffort,
 			Inherit:                  override.Inherit,
@@ -513,7 +516,7 @@ func (s *Session) ResetSessionSettings() error {
 // copying values. Manual session overrides are preserved by
 // rebuildEffectiveConfigLocked, which re-applies them on top of the refreshed
 // baseline.
-func (s *Session) UpdateWorkspaceDefaults(settings ttypes.AppSettings) {
+func (s *Session) UpdateWorkspaceDefaults(settings setting.App) {
 	if err := s.beginSettingsOperation(); err != nil {
 		return
 	}
@@ -536,7 +539,7 @@ func (s *Session) UpdateWorkspaceDefaults(settings ttypes.AppSettings) {
 // refreshProviderCredentialsLocked updates how the session reaches a
 // provider without touching which model a role picks. Each account carries
 // its complete authoritative connection configuration.
-func (s *Session) refreshProviderCredentialsLocked(settings ttypes.AppSettings) {
+func (s *Session) refreshProviderCredentialsLocked(settings setting.App) {
 	if s.workspaceCfg == nil {
 		s.workspaceCfg = &Config{}
 	}
@@ -566,7 +569,7 @@ func (s *Session) rebuildEffectiveConfigLocked() {
 		s.runtimeProfile.UpdateBase(s.cfg)
 	}
 	s.provider = nil
-	main := s.cfg.GetActiveDefaultCategory()
+	main := s.cfg.ActiveDefaultCategory()
 	configuredProvider, err := s.cfg.providerForCategory(main)
 	if err != nil {
 		s.logger.Warn("PROVIDER", "account_unavailable", "account", main.AccountID, "error", err.Error())
@@ -577,7 +580,7 @@ func (s *Session) rebuildEffectiveConfigLocked() {
 
 // HandleFetchModelsForAccount lists models using the exact selected connection.
 // The caller must correlate asynchronous results to ProviderID and AccountID.
-func (s *Session) HandleFetchModelsForAccount(providerID, accountID, baseURL, standardID string) ([]ttypes.ModelEntry, error) {
+func (s *Session) HandleFetchModelsForAccount(providerID, accountID, baseURL, standardID string) ([]setting.ModelEntry, error) {
 	s.mu.Lock()
 	cfg := copyConfig(s.cfg)
 	s.mu.Unlock()
@@ -598,7 +601,7 @@ func (s *Session) HandleFetchModelsForAccount(providerID, accountID, baseURL, st
 	if err != nil {
 		return nil, err
 	}
-	return ttypes.ModelEntriesFromInfos(models), nil
+	return setting.ModelEntriesFromInfos(models), nil
 }
 
 func listBoundProviderModels(p *provider.Provider) ([]provider.ModelInfo, error) {

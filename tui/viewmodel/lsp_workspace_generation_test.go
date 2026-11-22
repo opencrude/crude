@@ -3,7 +3,7 @@ package viewmodel
 import (
 	"testing"
 
-	"crude/types"
+	"crude/types/insight"
 	"crude/workspace"
 )
 
@@ -25,7 +25,7 @@ func TestLSPResultsFromOldWorkspaceGenerationAreIgnored(t *testing.T) {
 	_, _ = app.Update(workspace.LSPDiagnosticsMsg{
 		Generation: oldGeneration,
 		FilePath:   current.FilePath(),
-		Facts: types.InsightDiagnostics{ID: "stale-publication", Diagnostics: []workspace.LSPDiagnostic{{
+		Facts: insight.Diagnostics{ID: "stale-publication", Diagnostics: []insight.LSPDiagnostic{{
 			Severity: workspace.DiagError,
 			Message:  "stale",
 		}}},

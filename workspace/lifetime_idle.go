@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"sync"
 
-	"crude/types"
+	"crude/types/conversation"
 )
 
 // BeginIdleLease runs on the workspace actor, which fences new sessions and
@@ -70,7 +70,7 @@ func (w *Workspace) BeginIdleLease(ctx context.Context, purpose IdlePurpose) (fu
 
 func (s *DocumentService) beginIdleLease() (func(), error) {
 	if !s.mu.TryLock() {
-		return nil, types.IdleSettling("document operation is still running")
+		return nil, conversation.IdleSettling("document operation is still running")
 	}
 	defer s.mu.Unlock()
 	if s.closed || s.idleFenced {
@@ -88,11 +88,11 @@ func (s *DocumentService) beginIdleLease() (func(), error) {
 
 func (s *TerminalService) beginIdleLease(purpose IdlePurpose) (func(), error) {
 	if !s.mu.TryLock() {
-		return nil, types.IdleSettling("terminal operation is still running")
+		return nil, conversation.IdleSettling("terminal operation is still running")
 	}
 	defer s.mu.Unlock()
 	if s.closed || s.idleFenced || s.creating != 0 {
-		return nil, types.IdleSettling("terminal creation or shutdown is in progress")
+		return nil, conversation.IdleSettling("terminal creation or shutdown is in progress")
 	}
 	for id, r := range s.items {
 		if r.lease.Owner.ClientID != "" {

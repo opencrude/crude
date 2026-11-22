@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"crude/agent"
 	"crude/agent/plan"
 	"crude/agent/sessiondb"
+	"crude/agent/turnloop"
 )
 
 func TestSessionContinuityUsesDurableTurnAndCurrentPlanOwners(t *testing.T) {
@@ -20,13 +20,13 @@ func TestSessionContinuityUsesDurableTurnAndCurrentPlanOwners(t *testing.T) {
 	if err := sessiondb.FinishAgentTurn(s.db, s.sessionID, "old-orchestrator", 4, sessiondb.TurnCompleted); err != nil {
 		t.Fatal(err)
 	}
-	category := s.cfg.GetActiveDefaultCategory()
+	category := s.cfg.ActiveDefaultCategory()
 	provider, err := s.cfg.providerForCategory(category)
 	if err != nil {
 		t.Fatal(err)
 	}
 	live := s.newAgent(provider, true, category.ModelModalities)
-	live.AgentID = agent.AgentID("replacement-orchestrator")
+	live.AgentID = turnloop.AgentID("replacement-orchestrator")
 	data, err := live.ContinuationContext(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -40,7 +40,7 @@ func TestSessionContinuityUsesDurableTurnAndCurrentPlanOwners(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, _, err := store.Update(context.Background(), plan.UpdateRequest{PlanID: "continue", Objective: "Continue safely", Status: plan.StatusActive,
-		Steps: []plan.PlanStep{{ID: "observe", Description: "Observe existing build", Status: plan.StepInProgress}}}); err != nil {
+		Steps: []plan.Step{{ID: "observe", Description: "Observe existing build", Status: plan.StepInProgress}}}); err != nil {
 		t.Fatal(err)
 	}
 	data, err = live.ContinuationContext(context.Background())
@@ -52,7 +52,7 @@ func TestSessionContinuityUsesDurableTurnAndCurrentPlanOwners(t *testing.T) {
 func TestSessionContinuityTracksConcurrentLiveSettings(t *testing.T) {
 	s := newTestSessionForPlan(t)
 	defer s.Close()
-	category := s.cfg.GetActiveDefaultCategory()
+	category := s.cfg.ActiveDefaultCategory()
 	p, err := s.cfg.providerForCategory(category)
 	if err != nil {
 		t.Fatal(err)

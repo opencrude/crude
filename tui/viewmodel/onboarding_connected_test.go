@@ -15,10 +15,10 @@ import (
 	"crude/agent/provider"
 	"crude/agent/session"
 	"crude/core"
-	"crude/core/protocol"
-	settingsui "crude/tui/settings"
+	"crude/core/coreprotocol"
+	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/setting"
 	"crude/workspace"
 
 	"github.com/charmbracelet/x/ansi"
@@ -28,7 +28,7 @@ import (
 // and preference commits through the real framed core and native Settings forms.
 type onboardingJourneyOwner struct {
 	mu       sync.Mutex
-	settings types.AppSettings
+	settings setting.App
 	manager  *provider.AccountManager
 	failSave bool
 }
@@ -37,17 +37,17 @@ func (o *onboardingJourneyOwner) StartupSnapshot(context.Context) (coreprotocol.
 	return coreprotocol.StartupSnapshot{}, nil
 }
 
-func (o *onboardingJourneyOwner) SaveStartup(context.Context, []types.SettingEdit) (types.OnboardingSettings, error) {
-	return types.OnboardingSettings{}, errors.New("unexpected detached save")
+func (o *onboardingJourneyOwner) SaveStartup(context.Context, []setting.Edit) (setting.Onboarding, error) {
+	return setting.Onboarding{}, errors.New("unexpected detached save")
 }
 
-func (o *onboardingJourneyOwner) ReadStartupSettings(context.Context) (types.AppSettings, error) {
+func (o *onboardingJourneyOwner) ReadStartupSettings(context.Context) (setting.App, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	return types.CloneAppSettings(o.settings), nil
+	return setting.CloneApp(o.settings), nil
 }
 
-func (o *onboardingJourneyOwner) account(change types.AccountChange) (types.AppSettings, error) {
+func (o *onboardingJourneyOwner) account(change setting.AccountChange) (setting.App, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if change.After == nil {
@@ -56,20 +56,20 @@ func (o *onboardingJourneyOwner) account(change types.AccountChange) (types.AppS
 		o.settings.Accounts[change.ID] = provider.CloneAccount(*change.After)
 	}
 	o.manager.Replace(o.settings.Accounts)
-	return types.CloneAppSettings(o.settings), nil
+	return setting.CloneApp(o.settings), nil
 }
 
-func (o *onboardingJourneyOwner) preferences(edits []types.SettingEdit) (types.AppSettings, error) {
+func (o *onboardingJourneyOwner) preferences(edits []setting.Edit) (setting.App, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if o.failSave {
 		o.failSave = false
-		return types.AppSettings{}, errors.New("model choice could not be written")
+		return setting.App{}, errors.New("model choice could not be written")
 	}
-	if err := types.ApplySettingsEdits(&o.settings, edits); err != nil {
-		return types.AppSettings{}, err
+	if err := setting.ApplyEdits(&o.settings, edits); err != nil {
+		return setting.App{}, err
 	}
-	return types.CloneAppSettings(o.settings), nil
+	return setting.CloneApp(o.settings), nil
 }
 
 func TestOnboardingConnectedAccountModelSaveAndExplicitSession(t *testing.T) {
@@ -85,16 +85,16 @@ func TestOnboardingConnectedAccountModelSaveAndExplicitSession(t *testing.T) {
 		_, _ = fmt.Fprint(w, `{"data":[{"id":"startup-model","object":"model","owned_by":"local"}]}`)
 	}))
 	t.Cleanup(server.Close)
-	owner := &onboardingJourneyOwner{settings: types.AppSettings{
+	owner := &onboardingJourneyOwner{settings: setting.App{
 		Accounts:     map[string]provider.Account{},
-		Onboarding:   types.OnboardingSettings{IntroductionCompleted: true},
-		LocalHistory: types.LocalHistorySettings{Enabled: "off"},
-		Memory:       types.MemorySettings{AutoRecall: "off", AutoExtract: "off", Consolidation: "off"},
+		Onboarding:   setting.Onboarding{IntroductionCompleted: true},
+		LocalHistory: setting.LocalHistory{Enabled: "off"},
+		Memory:       setting.Memory{AutoRecall: "off", AutoExtract: "off", Consolidation: "off"},
 	}}
 	owner.manager = provider.NewAccountManager(owner.settings.Accounts, nil)
 	runtime, err := core.New(func(root string) (*workspace.Workspace, error) {
 		settings, _ := owner.ReadStartupSettings(t.Context())
-		ws := workspace.NewWorkspace(root, "", "tester", types.Settings{}, noopLogger{})
+		ws := workspace.NewWorkspace(root, "", "tester", setting.Settings{}, noopLogger{})
 		ws.SetAppDefaults(settings)
 		ws.OnAppAccountCommit = owner.account
 		ws.OnAppPreferencesCommit = owner.preferences

@@ -10,7 +10,7 @@ import (
 	"crude/tui/editor"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -25,7 +25,7 @@ func snippetJourney(t *testing.T, width int) (*App, *editor.Editor) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ed.ApplyCompletion(types.CompletionItem{Label: "print", InsertText: text, Snippet: plan}); err != nil {
+	if err := ed.ApplyCompletion(insight.CompletionItem{Label: "print", InsertText: text, Snippet: plan}); err != nil {
 		t.Fatal(err)
 	}
 	app.adoptEditorSnippet(ed)
@@ -173,7 +173,7 @@ func TestEditorSnippetLateAutomaticResultCannotStealIdenticalSourceInteraction(t
 	app, port := completionTestApp(t, 100, 32, "word")
 	ed := app.EditorState.Editor
 	ed.SetCursorPosition(0, 4)
-	automatic := app.requestCompletion(true, types.LSPCompletionContext{})
+	automatic := app.requestCompletion(true, insight.LSPCompletionContext{})
 	if automatic == nil || app.completion == nil || !app.completion.automatic {
 		t.Fatal("old automatic invocation was not really admitted")
 	}
@@ -183,7 +183,7 @@ func TestEditorSnippetLateAutomaticResultCannotStealIdenticalSourceInteraction(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	port.set.Entries = []types.LSPCompletionEntry{{ID: "original-word", Insertion: types.CompletionItem{Label: "word", InsertText: text, Snippet: plan}}}
+	port.set.Entries = []insight.LSPCompletionEntry{{ID: "original-word", Insertion: insight.CompletionItem{Label: "word", InsertText: text, Snippet: plan}}}
 	completionTestKey(t, app, tea.KeyPressMsg{Code: ' ', Mod: tea.ModCtrl})
 	completionTestKey(t, app, tea.KeyPressMsg{Code: tea.KeyTab})
 	if !ed.SnippetActive() || ed.SelectedText() != "word" || ed.Revision() != old.revision || ed.Value() != "word" {

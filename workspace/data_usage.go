@@ -12,7 +12,7 @@ import (
 
 	"github.com/shirou/gopsutil/v4/disk"
 
-	"crude/metrics"
+	"crude/internal/metrics"
 )
 
 // DataUsage measures how much disk Crude's data folder takes, per part and

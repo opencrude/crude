@@ -89,8 +89,8 @@ inlay case does not exclude earlier memory corruption or a lifetime error.
 
 Review unsafe/native lifetimes at their actual owners only when evidence points
 to them. The pinned adapters' lifetime contracts are in
-`third_party/modernc-libc/CRUDE_PATCH.md`,
-`third_party/modernc-memory/CRUDE_PATCH.md` and
+`third_party/modernc-libc/CRUDE.md`,
+`third_party/modernc-memory/CRUDE.md` and
 [native syntax](../reference/native-syntax.md). A race-detector pass alone does
 not prove correct native pointer lifetimes. A toolchain or dependency experiment
 must be reversible and must not silently become the production fix.

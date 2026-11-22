@@ -11,8 +11,8 @@ import (
 	"crude/agent/provider"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/types/command"
+	"crude/types/conversation"
 )
 
 func TestCommandOutcomesStayCompactStaticAndHydrateIdentically(t *testing.T) {
@@ -28,7 +28,7 @@ func TestCommandOutcomesStayCompactStaticAndHydrateIdentically(t *testing.T) {
 					info.Error = "timed out"
 					info.TimedOut = true
 				}
-				message := types.ChatMessage{InternalID: "outcome", Role: types.RoleUser, Origin: provider.OriginPeer,
+				message := conversation.ChatMessage{InternalID: "outcome", Role: conversation.RoleUser, Origin: provider.OriginPeer,
 					Content: "runtime instructions for read_async_output; do not rerun the command", Collaboration: &provider.CollaborationAttribution{
 						EventID: "event", SenderName: "Background command settings-repro-build", Kind: "command_outcome", Command: info,
 					}}
@@ -41,12 +41,12 @@ func TestCommandOutcomesStayCompactStaticAndHydrateIdentically(t *testing.T) {
 				live := newRenderer()
 				live.AppendMessage(message)
 				raw, _ := json.Marshal(message)
-				var detached types.ChatMessage
+				var detached conversation.ChatMessage
 				if err := json.Unmarshal(raw, &detached); err != nil {
 					t.Fatal(err)
 				}
 				hydrated := newRenderer()
-				hydrated.SyncMessages([]types.ChatMessage{detached}, 1, 0)
+				hydrated.SyncMessages([]conversation.ChatMessage{detached}, 1, 0)
 				for _, expanded := range []bool{false, true} {
 					if expanded {
 						live.ToggleDisclosure(message.InternalID)
@@ -88,7 +88,7 @@ func TestCommandOutcomesStayCompactStaticAndHydrateIdentically(t *testing.T) {
 }
 
 func TestCommandOutcomeOutputSurvivesHydrationWithoutAnAgentRead(t *testing.T) {
-	msg := types.ChatMessage{InternalID: "settled", Role: types.RoleUser, Collaboration: &provider.CollaborationAttribution{Kind: "command_outcome", Command: &command.Outcome{
+	msg := conversation.ChatMessage{InternalID: "settled", Role: conversation.RoleUser, Collaboration: &provider.CollaborationAttribution{Kind: "command_outcome", Command: &command.Outcome{
 		Handle: "tests", Command: "go test ./...", Status: "failed", ExitCode: 7, ExitKnown: true, OutputBytes: 40,
 		Output: &command.Result{OutputDescriptor: command.OutputDescriptor{Handle: "tests", Status: command.Failed, TotalBytes: 40}, Output: "\x1b[31mFAIL\x1b[0m\r\n    retained stderr\n"},
 	}}}
@@ -96,13 +96,13 @@ func TestCommandOutcomeOutputSurvivesHydrationWithoutAnAgentRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var restored types.ChatMessage
+	var restored conversation.ChatMessage
 	if err := json.Unmarshal(data, &restored); err != nil {
 		t.Fatal(err)
 	}
-	for _, message := range []types.ChatMessage{msg, restored} {
+	for _, message := range []conversation.ChatMessage{msg, restored} {
 		r := newActivityRenderer()
-		r.SyncMessages([]types.ChatMessage{message}, 1, 0)
+		r.SyncMessages([]conversation.ChatMessage{message}, 1, 0)
 		compact, _, _ := r.ExportMessageRows(100)
 		if strings.Contains(strings.Join(compact[0].Lines, "\n"), "retained stderr") || len(compact[0].Native) != 2 {
 			t.Fatal("compact background outcome contains an output teaser")
@@ -114,7 +114,7 @@ func TestCommandOutcomeOutputSurvivesHydrationWithoutAnAgentRead(t *testing.T) {
 			t.Fatalf("completion evidence is missing or unreadable: %s", text)
 		}
 	}
-	clone := types.CloneConversationMessage(types.ConversationMessage{Collaboration: msg.Collaboration})
+	clone := conversation.CloneMessage(conversation.Message{Collaboration: msg.Collaboration})
 	clone.Collaboration.Command.Output.OutputDescriptor.Handle = "changed"
 	if msg.Collaboration.Command.Output.OutputDescriptor.Handle != "tests" {
 		t.Fatal("completion evidence aliases the source")

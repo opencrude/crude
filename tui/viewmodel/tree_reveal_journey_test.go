@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/core/port"
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
+	"crude/core/shellport"
 	"crude/tui/screens/shelltree"
 	"crude/tui/ui"
 	"crude/types/control"
@@ -188,7 +188,7 @@ type blockingRevealFiles struct {
 	canceled chan struct{}
 }
 
-func (p *blockingRevealFiles) BrowseDirectory(ctx context.Context, _ string) ([]shellport.ClientDirectoryEntry, error) {
+func (p *blockingRevealFiles) BrowseDirectory(ctx context.Context, _ string) ([]coreprotocol.ClientDirectoryEntry, error) {
 	close(p.started)
 	<-ctx.Done()
 	close(p.canceled)
@@ -239,7 +239,7 @@ type displacedRevealFiles struct {
 	release chan struct{}
 }
 
-func (p *displacedRevealFiles) BrowseDirectory(ctx context.Context, _ string) ([]shellport.ClientDirectoryEntry, error) {
+func (p *displacedRevealFiles) BrowseDirectory(ctx context.Context, _ string) ([]coreprotocol.ClientDirectoryEntry, error) {
 	if p.calls.Add(1) == 2 {
 		close(p.started)
 		select {
@@ -262,7 +262,7 @@ func TestCancelledRevealKeepsDisplacedTreeRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	port := &displacedRevealFiles{
-		fakeClientFiles: fakeClientFiles{Workspace: app.ws, root: root, entries: []shellport.ClientDirectoryEntry{
+		fakeClientFiles: fakeClientFiles{Workspace: app.ws, root: root, entries: []coreprotocol.ClientDirectoryEntry{
 			{Name: "other.txt", Path: filepath.Join(root, "other.txt")},
 			{Name: "target.txt", Path: target},
 		}},

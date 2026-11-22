@@ -7,7 +7,7 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 func TestCommandOutputReadableAcrossAllToolEntryPoints(t *testing.T) {
@@ -15,7 +15,7 @@ func TestCommandOutputReadableAcrossAllToolEntryPoints(t *testing.T) {
 		t.Run(tool, func(t *testing.T) {
 			// Literal wire fixture: producer and expectation do not share a builder.
 			content := `{"command":"go test ./...","cwd":"/project","exit_code":7,"output_descriptor":{"handle":"build","status":"failed","total_bytes":123,"shown_ranges":[{"start_byte":0,"end_byte":123}]},"retrieval":"MODEL ONLY: never paint this","output":"\u001b[31mFAIL\u001b[0m\r\n    expected true\n\tactual false\n/home/u/a.go:2: evidence\n/home/u/b.go:3: evidence\n"}`
-			msg := types.ChatMessage{Role: types.RoleTool, ToolName: tool, ToolStatus: types.ToolStatusSuccess, Content: content}
+			msg := conversation.ChatMessage{Role: conversation.RoleTool, ToolName: tool, ToolStatus: conversation.ToolStatusSuccess, Content: content}
 			for _, disclosure := range []DisclosureState{DisclosureCollapsed, DisclosureExpanded} {
 				rows := renderToolMessageLines(msg, theme.DefaultDark(), 116, 116, 120, 0, 30, "done", disclosure)
 				text := strings.Join(rows.lines, "\n")
@@ -50,7 +50,7 @@ func TestCommandOutputPaintFollowsThemeAcrossDisclosureAndThemeSwitch(t *testing
 	r := NewRenderer(theme.DefaultDark())
 	r.SetSize(100, 30)
 	r.SetChatAreaBounds(0, 20)
-	r.SyncMessages([]types.ChatMessage{{InternalID: "ink", Role: types.RoleTool, ToolName: "execute_command", ToolStatus: types.ToolStatusError,
+	r.SyncMessages([]conversation.ChatMessage{{InternalID: "ink", Role: conversation.RoleTool, ToolName: "execute_command", ToolStatus: conversation.ToolStatusError,
 		Content: `{"exit_code":7,"output_descriptor":{"status":"failed","total_bytes":16},"output":"    quiet output"}`}}, 1, 0)
 	r.ToggleDisclosure("ink")
 	for _, th := range []*theme.Theme{theme.DefaultDark(), theme.DefaultLight(), theme.DefaultDark()} {
@@ -74,7 +74,7 @@ func TestCommandOutputPaintFollowsThemeAcrossDisclosureAndThemeSwitch(t *testing
 }
 
 func BenchmarkCommandOutputDisclosure(b *testing.B) {
-	msg := types.ChatMessage{Role: types.RoleTool, ToolName: "execute_command", ToolCommand: "go test ./...", ToolStatus: types.ToolStatusSuccess,
+	msg := conversation.ChatMessage{Role: conversation.RoleTool, ToolName: "execute_command", ToolCommand: "go test ./...", ToolStatus: conversation.ToolStatusSuccess,
 		Content: strings.Repeat("compile fixture 0123456789\n", 1000)}
 	for _, state := range []struct {
 		name       string
@@ -100,7 +100,7 @@ func TestCommandDoesNotConfuseOmittedOutputWithEmptyCapture(t *testing.T) {
 		{"read_async_output", `{"output":"","output_descriptor":{"handle":"job","status":"completed","total_bytes":120},"page":{"since_byte":120,"next_byte":120}}`, "no bytes in this output range"},
 		{"exec_command", `{"output":"\u001b[2K","output_descriptor":{"status":"completed","total_bytes":4}}`, "control sequences only"},
 	} {
-		msg := types.ChatMessage{Role: types.RoleTool, ToolName: tc.tool, ToolStatus: types.ToolStatusSuccess, Content: tc.content}
+		msg := conversation.ChatMessage{Role: conversation.RoleTool, ToolName: tc.tool, ToolStatus: conversation.ToolStatusSuccess, Content: tc.content}
 		rows := renderToolMessageLines(msg, theme.DefaultDark(), 100, 100, 104, 0, 20, "done", DisclosureExpanded)
 		if text := strings.Join(rows.lines, "\n"); !strings.Contains(text, tc.want) {
 			t.Fatalf("%s misreported empty result: %s", tc.tool, text)
@@ -109,7 +109,7 @@ func TestCommandDoesNotConfuseOmittedOutputWithEmptyCapture(t *testing.T) {
 }
 
 func TestCancelledCommandKeepsPartialOutputWithoutCallingItFailure(t *testing.T) {
-	msg := types.ChatMessage{Role: types.RoleTool, ToolName: "exec_command", ToolCommand: "long build", ToolStatus: types.ToolStatusSuccess,
+	msg := conversation.ChatMessage{Role: conversation.RoleTool, ToolName: "exec_command", ToolCommand: "long build", ToolStatus: conversation.ToolStatusSuccess,
 		Content: `{"cancelled":true,"output":"partial stderr evidence","error":"interrupted","output_descriptor":{"handle":"job","status":"killed","total_bytes":23}}`}
 	rows := renderToolMessageLines(msg, theme.DefaultDark(), 100, 100, 104, 0, 20, "done", DisclosureExpanded)
 	text := strings.Join(rows.lines, "\n")
@@ -122,7 +122,7 @@ func TestCancelledCommandKeepsPartialOutputWithoutCallingItFailure(t *testing.T)
 }
 
 func TestMultilineCommandKeepsExactReadableInputInDisclosure(t *testing.T) {
-	msg := types.ChatMessage{Role: types.RoleTool, ToolName: "execute_command", ToolStatus: types.ToolStatusSuccess,
+	msg := conversation.ChatMessage{Role: conversation.RoleTool, ToolName: "execute_command", ToolStatus: conversation.ToolStatusSuccess,
 		Content: `{"command":"python3 - <<'PY'\n    print('audit')\nPY","output":"audit","output_descriptor":{"status":"completed","total_bytes":5}}`}
 	rows := renderToolMessageLines(msg, theme.DefaultDark(), 100, 100, 104, 0, 20, "done", DisclosureExpanded)
 	text := strings.Join(rows.lines, "\n")
@@ -139,7 +139,7 @@ func TestCommandCompactHidesAllOutputAndDisclosureRestoresEveryRow(t *testing.T)
 	for _, line := range []string{"first", "setup", "middle-1", "middle-2", "middle-3", "middle-4", "middle-5", "middle-6", "result", "last"} {
 		content.WriteString(line + "\n")
 	}
-	msg := types.ChatMessage{Role: types.RoleTool, ToolName: "execute_command", ToolStatus: types.ToolStatusSuccess, Content: content.String()}
+	msg := conversation.ChatMessage{Role: conversation.RoleTool, ToolName: "execute_command", ToolStatus: conversation.ToolStatusSuccess, Content: content.String()}
 	collapsed := renderToolMessageLines(msg, theme.DefaultDark(), 80, 80, 84, 0, 30, "done", DisclosureCollapsed)
 	text := strings.Join(collapsed.lines, "\n")
 	if len(collapsed.lines) != 1 || strings.Contains(text, "first") || strings.Contains(text, "last") || strings.Contains(text, "more lines") {
@@ -161,7 +161,7 @@ func TestCommandOutputBinaryEmptyAndLiteralJSON(t *testing.T) {
 		{`{"output":"{\"answer\":42}","exit_code":0,"output_descriptor":{"status":"completed","total_bytes":13}}`, `{"answer":42}`},
 		{`{"output":"dGV4dA==","output_encoding":"base64","exit_code":0,"output_descriptor":{"status":"completed","total_bytes":4}}`, "text"},
 	} {
-		msg := types.ChatMessage{Role: types.RoleTool, ToolName: "exec_command", ToolStatus: types.ToolStatusSuccess, Content: tc.content}
+		msg := conversation.ChatMessage{Role: conversation.RoleTool, ToolName: "exec_command", ToolStatus: conversation.ToolStatusSuccess, Content: tc.content}
 		rows := renderToolMessageLines(msg, theme.DefaultDark(), 80, 80, 84, 0, 20, "done", DisclosureExpanded)
 		if text := strings.Join(rows.lines, "\n"); !strings.Contains(text, tc.want) {
 			t.Fatalf("missing %q: %s", tc.want, text)

@@ -10,7 +10,7 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/tools"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 	"crude/types/recovery"
 )
 
@@ -18,11 +18,11 @@ import (
 // Never mutate the messages: their IDs and complete bodies remain the audit log.
 type activityGroup struct {
 	id             string
-	messages       []*types.ChatMessage
+	messages       []*conversation.ChatMessage
 	active         bool
 	leafRows       map[int]string
 	label          string
-	visible        []*types.ChatMessage
+	visible        []*conversation.ChatMessage
 	paneBackground bool
 }
 
@@ -30,8 +30,8 @@ type activityGroup struct {
 // canonical boundary/incident for history and context, but reserve no transcript
 // item, spacer or grouping boundary. Recovery state outranks a generic phase;
 // actionable and resumed incidents must retain their evidence and disclosure.
-func redundantStopNotice(msg *types.ChatMessage) bool {
-	if msg.Role != types.RoleStatus {
+func redundantStopNotice(msg *conversation.ChatMessage) bool {
+	if msg.Role != conversation.RoleStatus {
 		return false
 	}
 	if msg.Recovery != nil {
@@ -45,46 +45,46 @@ func redundantStopNotice(msg *types.ChatMessage) bool {
 // send as separators between output items. They must neither consume a row
 // nor split adjacent activity. Keep the live streaming placeholder until it is
 // replaced by real content.
-func (r *Renderer) activityInvisible(msg *types.ChatMessage) bool {
+func (r *Renderer) activityInvisible(msg *conversation.ChatMessage) bool {
 	if redundantStopNotice(msg) {
 		return true
 	}
-	if msg.ToolName == "multi_tool_use.parallel" && msg.ToolStatus == types.ToolStatusStreaming && msg.Content == "" {
+	if msg.ToolName == "multi_tool_use.parallel" && msg.ToolStatus == conversation.ToolStatusStreaming && msg.Content == "" {
 		return true // the empty argument-streaming envelope belongs to the fixed strip
 	}
-	if msg.Role == types.RoleThinking && msg.ThinkingActive && msg.ThinkingDisplay.Kind.HasCompactPreview() && r.disclosureState(msg) == DisclosureCollapsed {
+	if msg.Role == conversation.RoleThinking && msg.ThinkingActive && msg.ThinkingDisplay.Kind.HasCompactPreview() && r.disclosureState(msg) == DisclosureCollapsed {
 		return true // the live compact preview already lives in the fixed strip
 	}
-	if msg.Role == types.RoleStatus && msg.LifecycleOperationID == "" {
+	if msg.Role == conversation.RoleStatus && msg.LifecycleOperationID == "" {
 		switch msg.LifecyclePhase {
 		case "preparing", "waiting_provider", "retrying", "cancelling":
 			return true // transient lifecycle belongs to the fixed activity strip
 		}
 	}
-	return msg.Role == types.RoleAssistant && strings.TrimSpace(msg.Content) == "" && msg.SubPaneID == "" && !msg.Incomplete && !r.isStreamingCursor(msg)
+	return msg.Role == conversation.RoleAssistant && strings.TrimSpace(msg.Content) == "" && msg.SubPaneID == "" && !msg.Incomplete && !r.isStreamingCursor(msg)
 }
 
-func activityEligible(msg *types.ChatMessage) bool {
+func activityEligible(msg *conversation.ChatMessage) bool {
 	if msg == nil || msg.SubPaneID != "" {
 		return false
 	}
-	if msg.Role == types.RoleThinking {
+	if msg.Role == conversation.RoleThinking {
 		return !msg.ThinkingActive && !msg.ThinkingInterrupted && msg.Content != ""
 	}
-	if msg.Role != types.RoleTool {
+	if msg.Role != conversation.RoleTool {
 		return false
 	}
 	if msg.PermTag != "" && msg.PermTag != "auto" {
 		return false // explicit permission decisions stay independently visible
 	}
-	if msg.ToolStatus != types.ToolStatusSuccess && msg.ToolStatus != types.ToolStatusStreaming && msg.ToolStatus != types.ToolStatusCalling {
+	if msg.ToolStatus != conversation.ToolStatusSuccess && msg.ToolStatus != conversation.ToolStatusStreaming && msg.ToolStatus != conversation.ToolStatusCalling {
 		return false
 	}
 	// Preview phases may lag a successful result while their minimum dwell
 	// elapses. The canonical tool outcome, not that animation, owns grouping.
 	// Tool errors are boundaries, even if the transport reported success but
 	// returned an explicit failure in its payload.
-	if msg.ToolStatus == types.ToolStatusSuccess {
+	if msg.ToolStatus == conversation.ToolStatusSuccess {
 		if result, ok := toolargs.ParseCommandResult(msg.ToolName, msg.Content); ok && (result.Cancelled || result.Failed() || result.OutputDescriptor.Status == "running" && msg.ToolName != "read_async_output") {
 			return false
 		}
@@ -95,7 +95,7 @@ func activityEligible(msg *types.ChatMessage) bool {
 	}
 	// A successful transport may still report a failed/killed background job;
 	// unknown result shapes stay visible rather than asserting success.
-	if msg.ToolStatus == types.ToolStatusSuccess {
+	if msg.ToolStatus == conversation.ToolStatusSuccess {
 		switch msg.ToolName {
 		case "check_async_command", "read_async_output", "agent_wait":
 			if !activitySuccessfulResult(msg) {
@@ -122,14 +122,14 @@ type eligibilityMemo struct {
 	eligible                                                bool
 }
 
-func (m *eligibilityMemo) matches(msg *types.ChatMessage) bool {
+func (m *eligibilityMemo) matches(msg *conversation.ChatMessage) bool {
 	return m.role == msg.Role && m.toolName == msg.ToolName && m.toolStatus == msg.ToolStatus &&
 		m.permTag == msg.PermTag && m.subPaneID == msg.SubPaneID && m.content == msg.Content &&
 		m.thinkingActive == msg.ThinkingActive && m.thinkingInterrupted == msg.ThinkingInterrupted
 }
 
 // activityEligibleCached is activityEligible for retained renderer messages.
-func (r *Renderer) activityEligibleCached(msg *types.ChatMessage) bool {
+func (r *Renderer) activityEligibleCached(msg *conversation.ChatMessage) bool {
 	if msg == nil {
 		return false
 	}
@@ -137,7 +137,7 @@ func (r *Renderer) activityEligibleCached(msg *types.ChatMessage) bool {
 		return memo.eligible
 	}
 	if r.eligibility == nil {
-		r.eligibility = make(map[*types.ChatMessage]eligibilityMemo)
+		r.eligibility = make(map[*conversation.ChatMessage]eligibilityMemo)
 	}
 	eligible := activityEligible(msg)
 	r.eligibility[msg] = eligibilityMemo{role: msg.Role, toolName: msg.ToolName, toolStatus: msg.ToolStatus,
@@ -148,7 +148,7 @@ func (r *Renderer) activityEligibleCached(msg *types.ChatMessage) bool {
 
 // pruneEligibility drops memos for messages no longer retained. It runs only
 // when the memo outgrows the live set, so steady streaming pays nothing.
-func (r *Renderer) pruneEligibility(live map[string]*types.ChatMessage) {
+func (r *Renderer) pruneEligibility(live map[string]*conversation.ChatMessage) {
 	if len(r.eligibility) <= 2*len(live)+64 {
 		return
 	}
@@ -159,7 +159,7 @@ func (r *Renderer) pruneEligibility(live map[string]*types.ChatMessage) {
 	}
 }
 
-func activitySuccessfulResult(msg *types.ChatMessage) bool {
+func activitySuccessfulResult(msg *conversation.ChatMessage) bool {
 	if msg.ToolName == "read_async_output" {
 		return true // output is evidence, not an assertion that the job succeeded
 	}
@@ -176,11 +176,11 @@ func activitySuccessfulResult(msg *types.ChatMessage) bool {
 	return false
 }
 
-func activityRunning(msg *types.ChatMessage) bool {
-	return msg.Role == types.RoleTool && (msg.ToolStatus == types.ToolStatusStreaming || msg.ToolStatus == types.ToolStatusCalling)
+func activityRunning(msg *conversation.ChatMessage) bool {
+	return msg.Role == conversation.RoleTool && (msg.ToolStatus == conversation.ToolStatusStreaming || msg.ToolStatus == conversation.ToolStatusCalling)
 }
 
-func newActivityGroup(messages []*types.ChatMessage) *activityGroup {
+func newActivityGroup(messages []*conversation.ChatMessage) *activityGroup {
 	group := &activityGroup{id: "activity:" + messages[0].InternalID, messages: messages, paneBackground: true}
 	for _, msg := range messages {
 		if !messageHasPaneBackground(msg) {
@@ -257,8 +257,8 @@ func (g *activityGroup) title() string {
 	var thoughtDuration time.Duration
 	preparing, running := 0, 0
 	for _, msg := range g.messages {
-		if msg.Role == types.RoleTool && msg.ToolStatus != types.ToolStatusSuccess {
-			if msg.ToolPreviewPhase == types.ToolPreviewPreparing {
+		if msg.Role == conversation.RoleTool && msg.ToolStatus != conversation.ToolStatusSuccess {
+			if msg.ToolPreviewPhase == conversation.ToolPreviewPreparing {
 				preparing++
 			} else {
 				running++
@@ -266,7 +266,7 @@ func (g *activityGroup) title() string {
 			continue
 		}
 		name := msg.ToolName
-		if msg.Role == types.RoleThinking {
+		if msg.Role == conversation.RoleThinking {
 			name = "thinking"
 			thoughtDuration += msg.ThinkingDuration
 		}
@@ -315,11 +315,11 @@ func (r *Renderer) syncActivityItems(changedIDs []string) {
 		from = r.firstActivityChange(canonical, changedIDs)
 	}
 	if r.activityBatches == nil {
-		r.activityBatches = make(map[string][]*types.ChatMessage)
+		r.activityBatches = make(map[string][]*conversation.ChatMessage)
 	}
 	from = r.indexCommandEvidence(canonical, from, changed)
 	if r.activityMessages == nil || from == 0 {
-		r.activityMessages = make(map[string]*types.ChatMessage)
+		r.activityMessages = make(map[string]*conversation.ChatMessage)
 		r.activityParallel = make(map[string]bool)
 		r.activityFlat, r.activityFlatStart = r.activityFlat[:0], r.activityFlatStart[:0]
 		r.activityRoundFirst = make(map[string]int)
@@ -374,7 +374,7 @@ func (r *Renderer) syncActivityItems(changedIDs []string) {
 	seenRound := make(map[string]bool)
 	for i := flatFrom; i < len(messages); i++ {
 		msg := messages[i]
-		if msg.Role != types.RoleTool || !r.activityEligibleCached(msg) {
+		if msg.Role != conversation.RoleTool || !r.activityEligibleCached(msg) {
 			continue
 		}
 		id := activityRoundID(msg)
@@ -401,10 +401,10 @@ func (r *Renderer) syncActivityItems(changedIDs []string) {
 	recentStart := len(messages)
 	for i := len(messages) - 1; i >= 0; i-- {
 		msg := messages[i]
-		if msg.Role == types.RoleUser && !msg.PendingSteering {
+		if msg.Role == conversation.RoleUser && !msg.PendingSteering {
 			break
 		}
-		if msg.Role != types.RoleTool || !r.activityEligibleCached(msg) {
+		if msg.Role != conversation.RoleTool || !r.activityEligibleCached(msg) {
 			continue
 		}
 		id := activityRoundID(msg)
@@ -472,7 +472,7 @@ func (r *Renderer) syncActivityItems(changedIDs []string) {
 			continue
 		}
 		end := i + 1
-		members := []*types.ChatMessage{msg}
+		members := []*conversation.ChatMessage{msg}
 		for end < len(messages) && (r.activityEligibleCached(messages[end]) || r.activityInvisible(messages[end])) {
 			if r.activityEligibleCached(messages[end]) {
 				members = append(members, messages[end])
@@ -575,7 +575,7 @@ func (r *Renderer) activityGroupPresent(id string) bool {
 // differ from the retained build: an identity moved or a changed row. Pointer
 // comparison is a few nanoseconds per row and never decodes message bodies;
 // changed rows are searched from the tail, where live updates land.
-func (r *Renderer) firstActivityChange(canonical []*types.ChatMessage, changedIDs []string) int {
+func (r *Renderer) firstActivityChange(canonical []*conversation.ChatMessage, changedIDs []string) int {
 	first := min(len(canonical), len(r.activityCanon))
 	for i := range first {
 		if canonical[i] != r.activityCanon[i] {
@@ -585,14 +585,14 @@ func (r *Renderer) firstActivityChange(canonical []*types.ChatMessage, changedID
 	}
 	for _, id := range changedIDs {
 		if msg := r.sync.MsgByID[id]; msg != nil {
-			first = min(first, lastIndexOf(canonical, func(m *types.ChatMessage) bool { return m == msg }, first))
+			first = min(first, lastIndexOf(canonical, func(m *conversation.ChatMessage) bool { return m == msg }, first))
 			continue
 		}
 		if !r.activityParallel[id] {
 			continue
 		}
 		// A parallel leaf is rebuilt from its canonical batch row.
-		first = min(first, lastIndexOf(canonical, func(m *types.ChatMessage) bool {
+		first = min(first, lastIndexOf(canonical, func(m *conversation.ChatMessage) bool {
 			if m.ToolName != "multi_tool_use.parallel" {
 				return false
 			}
@@ -608,7 +608,7 @@ func (r *Renderer) firstActivityChange(canonical []*types.ChatMessage, changedID
 }
 
 // lastIndexOf returns the last index matching match, or fallback when none does.
-func lastIndexOf(canonical []*types.ChatMessage, match func(*types.ChatMessage) bool, fallback int) int {
+func lastIndexOf(canonical []*conversation.ChatMessage, match func(*conversation.ChatMessage) bool, fallback int) int {
 	for i := len(canonical) - 1; i >= 0; i-- {
 		if match(canonical[i]) {
 			return i
@@ -617,7 +617,7 @@ func lastIndexOf(canonical []*types.ChatMessage, match func(*types.ChatMessage) 
 	return fallback
 }
 
-func activityRoundID(msg *types.ChatMessage) string {
+func activityRoundID(msg *conversation.ChatMessage) string {
 	if msg.ToolRoundID != "" {
 		return msg.ToolRoundID
 	}
@@ -627,7 +627,7 @@ func activityRoundID(msg *types.ChatMessage) string {
 	return msg.InternalID
 }
 
-func (r *Renderer) activityMessageItem(msg *types.ChatMessage, previous map[string]renderItem, changed map[string]bool) renderItem {
+func (r *Renderer) activityMessageItem(msg *conversation.ChatMessage, previous map[string]renderItem, changed map[string]bool) renderItem {
 	if item, ok := previous[msg.InternalID]; ok {
 		item.Data = msg
 		if changed[msg.InternalID] || msg.CachedLines == nil {
@@ -638,7 +638,7 @@ func (r *Renderer) activityMessageItem(msg *types.ChatMessage, previous map[stri
 	return renderItem{ID: msg.InternalID, Data: msg, Height: 2, Dirty: true}
 }
 
-func activityCommand(msg *types.ChatMessage) bool {
+func activityCommand(msg *conversation.ChatMessage) bool {
 	return (msg.ToolName == "exec_command" || msg.ToolName == "execute_command" || msg.ToolName == "async_execute_command") && msg.ToolCommand != ""
 }
 
@@ -648,7 +648,7 @@ func (r *Renderer) updateActivityVisibility(group *activityGroup) {
 	group.label = group.title()
 	group.visible = group.visible[:0]
 	for _, member := range group.messages {
-		if r.expanded[group.id] || r.expanded[member.InternalID] || activityRunning(member) || member.Role == types.RoleTool && r.activityRecentRounds[activityRoundID(member)] {
+		if r.expanded[group.id] || r.expanded[member.InternalID] || activityRunning(member) || member.Role == conversation.RoleTool && r.activityRecentRounds[activityRoundID(member)] {
 			group.visible = append(group.visible, member)
 		}
 	}

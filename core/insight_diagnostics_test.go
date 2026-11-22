@@ -8,8 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace"
 	"crude/workspace/document"
 )
@@ -23,14 +24,14 @@ func TestInsightDiagnosticsTwoWireShellsAndProbeShareExactFact(t *testing.T) {
 	if err := os.WriteFile(path, []byte(disk), 0600); err != nil {
 		t.Fatal(err)
 	}
-	engine := &semanticLSPClient{version: 40, diagnostics: []types.LSPDiagnostic{{Line: 1, Col: 15, EndLine: 1, EndCol: 22, Severity: types.DiagError, Message: "undefined: missing", Source: "fixture"}}}
+	engine := &semanticLSPClient{version: 40, diagnostics: []insight.LSPDiagnostic{{Line: 1, Col: 15, EndLine: 1, EndCol: 22, Severity: insight.DiagError, Message: "undefined: missing", Source: "fixture"}}}
 	var service *workspace.LSPManager
 	settings := semanticLSPFixtureSettings(t)
 	r, err := New(func(root string) (*workspace.Workspace, error) {
-		w := workspace.NewWorkspace(root, "", "tester", types.Settings{}, coreTestLogger{})
+		w := workspace.NewWorkspace(root, "", "tester", setting.Settings{}, coreTestLogger{})
 		service = w.LSPMgr
 		service.SetRuntime(semanticLSPRuntime{engine})
-		w.SetAppDefaults(types.AppSettings{LSP: settings})
+		w.SetAppDefaults(setting.App{LSP: settings})
 		return w, nil
 	}, filepath.Join(t.TempDir(), "receipts.db"))
 	if err != nil {
@@ -48,9 +49,9 @@ func TestInsightDiagnosticsTwoWireShellsAndProbeShareExactFact(t *testing.T) {
 	b.call(t, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &attached)
 	var granted coreprotocol.WorkspacePreferencesResult
 	a.call(t, ws, coreprotocol.WorkspaceOverridesSet, coreprotocol.WorkspacePreferencesRequest{
-		Edits: []types.SettingEdit{{Path: []string{"analysis", "trust"}, After: []byte(`"trusted"`)}},
+		Edits: []setting.Edit{{Path: []string{"analysis", "trust"}, After: []byte(`"trusted"`)}},
 	}, &granted)
-	if granted.Effective.Analysis.Trust != types.AnalysisTrusted || granted.Overrides.AnalysisRootIdentity == "" {
+	if granted.Effective.Analysis.Trust != setting.AnalysisTrusted || granted.Overrides.AnalysisRootIdentity == "" {
 		t.Fatal("the semantic wire fixture did not persist explicit root-bound workspace trust")
 	}
 	var initial, peer document.Snapshot
@@ -69,7 +70,7 @@ func TestInsightDiagnosticsTwoWireShellsAndProbeShareExactFact(t *testing.T) {
 		t.Fatalf("qualified probe missing: %+v quiet=%v err=%v", answer, quiet, err)
 	}
 	if view.SourceText != source || view.Source != answer.Boundary.Source || answer.Boundary.Source.Revision != receipt.Revision ||
-		answer.WireVersion <= 40 || answer.WireVersion == int(receipt.Revision) || answer.State != types.InsightProvisional ||
+		answer.WireVersion <= 40 || answer.WireVersion == int(receipt.Revision) || answer.State != insight.Provisional ||
 		len(answer.Boundary.Context.UnknownInputs) == 0 || len(answer.Diagnostics) != 1 ||
 		answer.Diagnostics[0].Message != "undefined: missing" || answer.Diagnostics[0].Col != 15 {
 		t.Fatalf("probe bound wrong source/version/context: %+v %+v", answer, view)
@@ -89,7 +90,7 @@ func TestInsightDiagnosticsTwoWireShellsAndProbeShareExactFact(t *testing.T) {
 	a.call(t, ws, coreprotocol.LSPSnapshotMethod, coreprotocol.LSPRequest{}, &one)
 	b.call(t, ws, coreprotocol.LSPSnapshotMethod, coreprotocol.LSPRequest{}, &two)
 	stale := one.Diagnostics[path]
-	if stale.ID != answer.ID || stale.State != types.InsightStale || stale.HasExactSource() ||
+	if stale.ID != answer.ID || stale.State != insight.Stale || stale.HasExactSource() ||
 		len(stale.Diagnostics) != 1 || !reflect.DeepEqual(stale, two.Diagnostics[path]) || one.Insights.DiagnosticsStale != 1 {
 		t.Fatalf("Stop hid or restamped warning evidence: %+v", one)
 	}

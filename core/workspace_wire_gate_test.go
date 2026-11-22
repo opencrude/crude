@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"crude/core/client"
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
+	"crude/types/statuscenter"
 	"crude/workspace"
 )
 
@@ -116,7 +116,7 @@ func TestWorkspaceTwentyKBReplyCompleteCarrierByteGate(t *testing.T) {
 
 func TestWorkspaceMetadataComparisonDoesNotSuppressStatusTransitions(t *testing.T) {
 	clock := time.Unix(100, 0)
-	original := workspace.AgentSnapshot{ID: "owner", Activity: types.AgentActivityView{Status: types.AgentStatusSnapshot{Phase: types.AgentResponding, Detail: "Receiving response", UpdatedAt: clock}}}
+	original := workspace.AgentSnapshot{ID: "owner", Activity: statuscenter.AgentActivityView{Status: statuscenter.AgentStatusSnapshot{Phase: statuscenter.AgentResponding, Detail: "Receiving response", UpdatedAt: clock}}}
 	observed := original
 	observed.LastTokenTime = clock.Add(time.Second)
 	observed.ConversationRevision = 7
@@ -125,7 +125,7 @@ func TestWorkspaceMetadataComparisonDoesNotSuppressStatusTransitions(t *testing.
 		t.Fatal("observation clocks changed semantic metadata")
 	}
 	for _, mutate := range []func(*workspace.AgentSnapshot){
-		func(s *workspace.AgentSnapshot) { s.Activity.Status.Phase = types.AgentCompleted },
+		func(s *workspace.AgentSnapshot) { s.Activity.Status.Phase = statuscenter.AgentCompleted },
 		func(s *workspace.AgentSnapshot) { s.Activity.Status.Detail = "A different status" },
 		func(s *workspace.AgentSnapshot) { s.Activity.Status.PhaseStartedAt = clock.Add(time.Second) },
 		func(s *workspace.AgentSnapshot) { s.Activity.Status.NeedsAction = true },

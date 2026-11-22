@@ -7,13 +7,13 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/metrics"
+	"crude/internal/metrics"
 	"crude/tui/perf"
 	"crude/tui/rendering"
 	"crude/tui/theme"
 	"crude/tui/tools"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 var nextRendererSourceID atomic.Uint64
@@ -63,19 +63,19 @@ type Renderer struct {
 	// deterministic default applies (see disclosure.go). Disclosure is TUI
 	// presentation state only: never persisted.
 	expanded         map[string]bool
-	activityMessages map[string]*types.ChatMessage   // transient batch children, keyed by stable call ID
-	activityParents  map[string]string               // leaf ID to its retained group
-	revealMessage    string                          // explicit jump, applied with final render geometry
-	activityBatches  map[string][]*types.ChatMessage // rebuilt only when the canonical batch changes
+	activityMessages map[string]*conversation.ChatMessage   // transient batch children, keyed by stable call ID
+	activityParents  map[string]string                      // leaf ID to its retained group
+	revealMessage    string                                 // explicit jump, applied with final render geometry
+	activityBatches  map[string][]*conversation.ChatMessage // rebuilt only when the canonical batch changes
 	// eligibility memoizes activityEligible per retained message. Grouping is
 	// rederived on every source sync, but a settled result's payload verdict
 	// is immutable, so dense transcripts must not reparse it per event.
-	eligibility map[*types.ChatMessage]eligibilityMemo
+	eligibility map[*conversation.ChatMessage]eligibilityMemo
 	// Retained activity build state (see syncActivityItems): the canonical
 	// list it was built from, the flattened rows with each canonical row's
 	// start, each item's first flat row, and the recent-round window start.
-	activityCanon        []*types.ChatMessage
-	activityFlat         []*types.ChatMessage
+	activityCanon        []*conversation.ChatMessage
+	activityFlat         []*conversation.ChatMessage
 	activityFlatStart    []int
 	activityItemStart    []int
 	activityParallel     map[string]bool
@@ -107,7 +107,7 @@ type Renderer struct {
 	MaterializeClock func() time.Time
 	frameSensitive   map[string]struct{}
 	thinkingPanes    map[string]string
-	thinkingOriginal map[string]types.ChatMessage
+	thinkingOriginal map[string]conversation.ChatMessage
 }
 
 type MessageRowsSnapshot struct {
@@ -152,7 +152,7 @@ func NewRenderer(t *theme.Theme) *Renderer {
 	return r
 }
 
-func (r *Renderer) invalidateMessageCache(msg *types.ChatMessage) {
+func (r *Renderer) invalidateMessageCache(msg *conversation.ChatMessage) {
 	if msg == nil {
 		return
 	}
@@ -351,7 +351,8 @@ func (r *Renderer) SetChatAreaBounds(top, height int) {
 	}
 }
 
-func (r *Renderer) AppendMessage(msg types.ChatMessage) {
+// AppendMessage adds a message to the transcript and assigns it an id when it has none.
+func (r *Renderer) AppendMessage(msg conversation.ChatMessage) {
 	r.invalidateStreamingCursorOwner()
 	msgCopy := msg
 	if msgCopy.InternalID == "" {
@@ -372,7 +373,7 @@ func (r *Renderer) AppendToken(token string) {
 		return
 	}
 	last := r.sync.Messages[len(r.sync.Messages)-1]
-	if last.Role != types.RoleAssistant {
+	if last.Role != conversation.RoleAssistant {
 		return
 	}
 	last.Content += token
@@ -385,7 +386,7 @@ func (r *Renderer) AppendToken(token string) {
 func (r *Renderer) AppendThinking(s string) {
 	if len(r.sync.Messages) > 0 {
 		last := r.sync.Messages[len(r.sync.Messages)-1]
-		if last.Role == types.RoleThinking && last.ThinkingActive {
+		if last.Role == conversation.RoleThinking && last.ThinkingActive {
 			last.Content += s
 			r.bumpVersion()
 			last.CachedLines = nil
@@ -401,9 +402,9 @@ func (r *Renderer) AppendThinking(s string) {
 		}
 	}
 	r.invalidateStreamingCursorOwner()
-	newMsg := &types.ChatMessage{
+	newMsg := &conversation.ChatMessage{
 		InternalID:     r.nextMsgID(),
-		Role:           types.RoleThinking,
+		Role:           conversation.RoleThinking,
 		Content:        s,
 		Time:           time.Now(),
 		ThinkingActive: true,
@@ -426,7 +427,7 @@ func toIntField(v any) int {
 	return 0
 }
 
-func (r *Renderer) findToolMsg(internalID, toolID string) *types.ChatMessage {
+func (r *Renderer) findToolMsg(internalID, toolID string) *conversation.ChatMessage {
 	if internalID != "" {
 		if msg, ok := r.sync.MsgByID[internalID]; ok {
 			return msg
@@ -447,13 +448,13 @@ func (r *Renderer) UpdateToolStreaming(toolID, internalID, name string, data map
 	oldLines := toIntField(data["old_lines_int"])
 	newLines := toIntField(data["new_lines_int"])
 
-	previewPhase := types.ToolPreviewPreparing
+	previewPhase := conversation.ToolPreviewPreparing
 	if target != "" || contentLines > 0 || oldLines > 0 || newLines > 0 || estTokens > 0 {
-		previewPhase = types.ToolPreviewStreaming
+		previewPhase = conversation.ToolPreviewStreaming
 	}
 
 	if msg := r.findToolMsg(internalID, toolID); msg != nil {
-		if msg.ToolStatus == "success" || msg.ToolStatus == "error" || msg.ToolStatus == types.ToolStatusCancelled {
+		if msg.ToolStatus == "success" || msg.ToolStatus == "error" || msg.ToolStatus == conversation.ToolStatusCancelled {
 		} else {
 			if v, ok := data["content"]; ok {
 				if s, ok := v.(string); ok {
@@ -501,9 +502,9 @@ func (r *Renderer) UpdateToolStreaming(toolID, internalID, name string, data map
 	if id == "" || r.sync.MsgByID[id] != nil {
 		id = r.nextMsgID()
 	}
-	msg := &types.ChatMessage{
+	msg := &conversation.ChatMessage{
 		InternalID:        id,
-		Role:              types.RoleTool,
+		Role:              conversation.RoleTool,
 		Time:              time.Now(),
 		ToolName:          name,
 		ToolID:            toolID,
@@ -533,12 +534,12 @@ func (r *Renderer) UpdateToolStreaming(toolID, internalID, name string, data map
 
 func (r *Renderer) UpdateToolCall(toolID, internalID, name, argsCompact string) {
 	if msg := r.findToolMsg(internalID, toolID); msg != nil {
-		if msg.ToolStatus == "success" || msg.ToolStatus == "error" || msg.ToolStatus == types.ToolStatusCancelled {
+		if msg.ToolStatus == "success" || msg.ToolStatus == "error" || msg.ToolStatus == conversation.ToolStatusCancelled {
 		} else {
 			msg.ToolStatus = "calling"
 			msg.ToolArgs = argsCompact
 			msg.Content = name + " " + argsCompact
-			msg.ToolPreviewPhase = types.ToolPreviewStreaming
+			msg.ToolPreviewPhase = conversation.ToolPreviewStreaming
 			msg.ToolProgressPhase = ""
 			msg.ToolProgressMessage = ""
 			if msg.ToolProgressLabel == "" {
@@ -561,9 +562,9 @@ func (r *Renderer) UpdateToolCall(toolID, internalID, name, argsCompact string) 
 	if id == "" || r.sync.MsgByID[id] != nil {
 		id = r.nextMsgID()
 	}
-	msg := &types.ChatMessage{
+	msg := &conversation.ChatMessage{
 		InternalID:        id,
-		Role:              types.RoleTool,
+		Role:              conversation.RoleTool,
 		Content:           name + " " + argsCompact,
 		Time:              time.Now(),
 		ToolName:          name,
@@ -571,7 +572,7 @@ func (r *Renderer) UpdateToolCall(toolID, internalID, name, argsCompact string) 
 		ToolArgs:          argsCompact,
 		ToolStatus:        "calling",
 		ToolIndex:         len(r.sync.Messages),
-		ToolPreviewPhase:  types.ToolPreviewStreaming,
+		ToolPreviewPhase:  conversation.ToolPreviewStreaming,
 		ToolProgressLabel: argsCompact,
 		ToolStartTime:     time.Now(),
 	}
@@ -608,7 +609,7 @@ func (r *Renderer) UpdateToolProgress(toolID, internalID, name, phase, message, 
 	case "done":
 		msg.ToolLivedAdded = linesAdded
 		msg.ToolLivedRemoved = linesRemoved
-		msg.ToolPreviewPhase = types.ToolPreviewDone
+		msg.ToolPreviewPhase = conversation.ToolPreviewDone
 		if !msg.ToolStartTime.IsZero() {
 			msg.ToolDuration = time.Since(msg.ToolStartTime)
 		}
@@ -616,7 +617,7 @@ func (r *Renderer) UpdateToolProgress(toolID, internalID, name, phase, message, 
 			msg.ToolEstTokens = estTokens
 		}
 	case "error":
-		msg.ToolPreviewPhase = types.ToolPreviewError
+		msg.ToolPreviewPhase = conversation.ToolPreviewError
 		if linesAdded > 0 {
 			msg.ToolLivedAdded = linesAdded
 		}
@@ -645,7 +646,7 @@ func (r *Renderer) UpdateToolResult(toolID, internalID, name, result string, isE
 	} else {
 		msg.ToolStatus = "success"
 	}
-	msg.ToolPreviewPhase = types.ToolPreviewDone
+	msg.ToolPreviewPhase = conversation.ToolPreviewDone
 	msg.ToolProgressPhase = ""
 	msg.ToolProgressMessage = ""
 	if !msg.ToolStartTime.IsZero() {
@@ -685,8 +686,8 @@ func (r *Renderer) MarkStreamingToolsCancelled() {
 	var changed []string
 	for _, msg := range r.sync.Messages {
 		if msg.ToolStatus == "streaming" || msg.ToolStatus == "calling" {
-			msg.ToolStatus = types.ToolStatusCancelled
-			msg.ToolPreviewPhase = types.ToolPreviewDone
+			msg.ToolStatus = conversation.ToolStatusCancelled
+			msg.ToolPreviewPhase = conversation.ToolPreviewDone
 			msg.ToolProgressPhase = ""
 			msg.ToolProgressMessage = ""
 			msg.CachedLines = nil
@@ -702,7 +703,7 @@ func (r *Renderer) MarkStreamingToolsCancelled() {
 func (r *Renderer) MarkAllThinkingDone() {
 	var changed []string
 	for _, msg := range r.sync.Messages {
-		if msg.Role == types.RoleThinking {
+		if msg.Role == conversation.RoleThinking {
 			msg.ThinkingActive = false
 			msg.ThinkingInterrupted = false
 			msg.CachedLines = nil
@@ -718,12 +719,12 @@ func (r *Renderer) MarkAllThinkingDone() {
 func (r *Renderer) MarkAllThinkingInterrupted() {
 	var changed []string
 	for _, msg := range r.sync.Messages {
-		if msg.Role == types.RoleThinking && msg.ThinkingActive {
+		if msg.Role == conversation.RoleThinking && msg.ThinkingActive {
 			msg.ThinkingActive = false
 			msg.ThinkingInterrupted = true
 			msg.CachedLines = nil
 			changed = append(changed, msg.InternalID)
-		} else if msg.Role == types.RoleThinking {
+		} else if msg.Role == conversation.RoleThinking {
 			msg.ThinkingActive = false
 			changed = append(changed, msg.InternalID)
 		}
@@ -736,9 +737,9 @@ func (r *Renderer) MarkAllThinkingInterrupted() {
 
 func (r *Renderer) RemoveActiveThinking() string {
 	var content string
-	var keep []*types.ChatMessage
+	var keep []*conversation.ChatMessage
 	for _, msg := range r.sync.Messages {
-		if msg.Role == types.RoleThinking && msg.ThinkingActive {
+		if msg.Role == conversation.RoleThinking && msg.ThinkingActive {
 			content = msg.Content
 			delete(r.sync.MsgByID, msg.InternalID)
 			continue
@@ -760,7 +761,7 @@ func (r *Renderer) RemoveActiveThinking() string {
 // block's current semantic block, the same measurement promotion uses.
 func (r *Renderer) ActiveThinkingLineCount(contentWidth int) int {
 	for _, msg := range r.sync.Messages {
-		if msg.Role == types.RoleThinking && msg.ThinkingActive {
+		if msg.Role == conversation.RoleThinking && msg.ThinkingActive {
 			block := InlineThinkingBlock(msg.Content, msg.ThinkingDisplay.Start)
 			return len(rendering.WrapText(block, max(1, contentWidth)))
 		}
@@ -771,18 +772,18 @@ func (r *Renderer) ActiveThinkingLineCount(contentWidth int) int {
 func (r *Renderer) InvalidateCache() {
 	perf.MarkCacheInvalidation()
 	for _, msg := range r.sync.Messages {
-		if msg.Role == types.RoleTool && (msg.ToolStatus == "streaming" || msg.ToolStatus == "calling") {
+		if msg.Role == conversation.RoleTool && (msg.ToolStatus == "streaming" || msg.ToolStatus == "calling") {
 			msg.CachedLines = nil
 			r.vl.InvalidateItem(msg.InternalID)
 			if _, ok := r.vl.byID["activity:"+msg.InternalID]; ok {
 				r.vl.InvalidateItem("activity:" + msg.InternalID)
 			}
 		}
-		if msg.Role == types.RoleThinking && msg.ThinkingActive {
+		if msg.Role == conversation.RoleThinking && msg.ThinkingActive {
 			msg.CachedLines = nil
 			r.vl.InvalidateItem(msg.InternalID)
 		}
-		if msg.Role == types.RoleStatus && lifecycleMessageFrameSensitive(*msg) {
+		if msg.Role == conversation.RoleStatus && lifecycleMessageFrameSensitive(*msg) {
 			msg.CachedLines = nil
 			r.vl.InvalidateItem(msg.InternalID)
 		}
@@ -794,7 +795,7 @@ func (r *Renderer) InvalidateCache() {
 	// Active thinking rows are already covered by the loop above.
 	if r.streaming && len(r.sync.Messages) > 0 {
 		last := r.sync.Messages[len(r.sync.Messages)-1]
-		if last.Role == types.RoleAssistant {
+		if last.Role == conversation.RoleAssistant {
 			last.CachedLines = nil
 			r.vl.InvalidateItem(last.InternalID)
 		}
@@ -824,7 +825,7 @@ func (r *Renderer) SetStreaming(s bool) {
 		if message.PendingSteering {
 			continue
 		}
-		if message.Role == types.RoleAssistant {
+		if message.Role == conversation.RoleAssistant {
 			message.CachedLines = nil
 			r.vl.InvalidateItem(message.InternalID)
 		}
@@ -888,7 +889,7 @@ func (r *Renderer) SetPhase(p string) {
 	}
 	r.phase = p
 	for _, message := range r.sync.Messages {
-		if message != nil && message.Role == types.RoleTool && toolRowFrameSensitive(*message) {
+		if message != nil && message.Role == conversation.RoleTool && toolRowFrameSensitive(*message) {
 			message.CachedLines = nil
 			r.vl.InvalidateItem(message.InternalID)
 		}
@@ -908,12 +909,13 @@ func (r *Renderer) IsAtBottom() bool {
 	return r.vl.IsAtBottom()
 }
 
-func (r *Renderer) Messages() []*types.ChatMessage {
+// Messages returns the transcript rows in paint order.
+func (r *Renderer) Messages() []*conversation.ChatMessage {
 	return r.sync.Messages
 }
 
 // MessageByID resolves the exact retained row for inline action validation.
-func (r *Renderer) MessageByID(id string) *types.ChatMessage { return r.sync.MsgByID[id] }
+func (r *Renderer) MessageByID(id string) *conversation.ChatMessage { return r.sync.MsgByID[id] }
 
 func (r *Renderer) SourceVersion() uint64 {
 	return r.sync.SourceVersion()
@@ -936,13 +938,13 @@ func (r *Renderer) PresentThinkingPane(id, paneID string) {
 	}
 	if r.thinkingPanes == nil {
 		r.thinkingPanes = make(map[string]string)
-		r.thinkingOriginal = make(map[string]types.ChatMessage)
+		r.thinkingOriginal = make(map[string]conversation.ChatMessage)
 	}
 	if _, saved := r.thinkingOriginal[id]; !saved {
 		r.thinkingOriginal[id] = *message
 	}
 	r.thinkingPanes[id] = paneID
-	*message = types.ChatMessage{InternalID: id, Role: types.RoleTool, Content: "Thinking", SubPaneID: paneID, Time: message.Time}
+	*message = conversation.ChatMessage{InternalID: id, Role: conversation.RoleTool, Content: "Thinking", SubPaneID: paneID, Time: message.Time}
 	r.sync.BumpVersion()
 	r.syncActivityItems([]string{id})
 }
@@ -987,7 +989,7 @@ func (r *Renderer) RemoveThinkingPane(paneID string) {
 
 // SyncMessages updates the retained TUI projection from workspace-owned
 // message data. Stable IDs preserve unchanged render caches and scroll state.
-func (r *Renderer) SyncMessages(messages []types.ChatMessage, sourceVersion, sourceGeneration uint64) {
+func (r *Renderer) SyncMessages(messages []conversation.ChatMessage, sourceVersion, sourceGeneration uint64) {
 	if r.sync.sourceSet && sourceVersion == r.sync.SourceVersion() && sourceGeneration == r.sync.SourceGeneration() {
 		return
 	}
@@ -1006,7 +1008,7 @@ func (r *Renderer) SyncMessages(messages []types.ChatMessage, sourceVersion, sou
 // SyncChanges applies an exact source delta (see MessageSync.ApplyChanges).
 // It reports false without changing the projection when the caller must
 // perform a complete SyncMessages instead.
-func (r *Renderer) SyncChanges(changed []types.ChatMessage, removed, order []string, sourceVersion, sourceGeneration uint64) bool {
+func (r *Renderer) SyncChanges(changed []conversation.ChatMessage, removed, order []string, sourceVersion, sourceGeneration uint64) bool {
 	if !r.sync.sourceSet || sourceGeneration != r.sync.SourceGeneration() || sourceVersion <= r.sync.SourceVersion() {
 		return false
 	}
@@ -1278,7 +1280,7 @@ func (r *Renderer) messageRow(item *renderItem) MessageRow {
 		toggleLine = 0
 		toggleAny = r.expanded[group.id]
 		leafToggles = group.leafRows
-	} else if msg, ok := item.Data.(*types.ChatMessage); ok && msg != nil {
+	} else if msg, ok := item.Data.(*conversation.ChatMessage); ok && msg != nil {
 		subPaneID = msg.SubPaneID
 		executionID = msg.ExecutionID
 		contextBoundary = msg.LifecyclePhase == "history_restored" || isManualCompaction(*msg) && !settledCompaction(*msg)
@@ -1497,7 +1499,7 @@ func (r *Renderer) renderItem(idx int, item *renderItem, width int) []string {
 		r.setFrameSensitive(group.id, group.active)
 		return lines
 	}
-	msg, ok := item.Data.(*types.ChatMessage)
+	msg, ok := item.Data.(*conversation.ChatMessage)
 	if !ok {
 		item.Native = nil
 		return []string{""}
@@ -1587,14 +1589,14 @@ func (r *Renderer) renderItem(idx int, item *renderItem, width int) []string {
 	return lines
 }
 
-func (r *Renderer) isStreamingCursor(msg *types.ChatMessage) bool {
+func (r *Renderer) isStreamingCursor(msg *conversation.ChatMessage) bool {
 	if !r.isLastMessage(msg) {
 		return false
 	}
 	switch {
-	case msg.Role == types.RoleAssistant && r.streaming:
+	case msg.Role == conversation.RoleAssistant && r.streaming:
 		return true
-	case msg.Role == types.RoleThinking && msg.ThinkingActive:
+	case msg.Role == conversation.RoleThinking && msg.ThinkingActive:
 		return true
 	}
 	return false
@@ -1631,13 +1633,13 @@ func scrollbarFootprint(scrollbars int) int {
 	return scrollbars + 1
 }
 
-func (r *Renderer) buildRenderContext(msg *types.ChatMessage, suppressHeader bool) renderContext {
+func (r *Renderer) buildRenderContext(msg *conversation.ChatMessage, suppressHeader bool) renderContext {
 	contentWidth, innerW := r.availableMessageWidths()
 	// Ordinary Markdown owns the full document box; a header timestamp is
 	// on another row. Reserve only chrome that is actually beside this body.
 	var md *rendering.MarkdownRenderer
 	switch msg.Role {
-	case types.RoleUser, types.RoleAssistant, types.RoleAssignment:
+	case conversation.RoleUser, conversation.RoleAssistant, conversation.RoleAssignment:
 		if !isCommandOutcome(msg) {
 			contentWidth = innerW
 			if msg.Collaboration != nil {
@@ -1645,7 +1647,7 @@ func (r *Renderer) buildRenderContext(msg *types.ChatMessage, suppressHeader boo
 			}
 			md = r.markdownAtWidth(contentWidth)
 		}
-	case types.RoleThinking:
+	case conversation.RoleThinking:
 		if msg.ThinkingDisplay.Kind.HasCompactPreview() {
 			md = r.markdownAtWidth(contentWidth)
 		}
@@ -1683,8 +1685,8 @@ func (r *Renderer) buildRenderContext(msg *types.ChatMessage, suppressHeader boo
 // planMessageSuperseded collapses historical snapshots when a newer plan
 // mutation/snapshot exists for the same plan id. The underlying transcript
 // remains intact and an explicit expansion still reveals the older snapshot.
-func (r *Renderer) planMessageSuperseded(msg *types.ChatMessage) bool {
-	if msg == nil || msg.Role != types.RoleTool || !tools.IsPlanTool(msg.ToolName) || msg.ToolStatus == "error" {
+func (r *Renderer) planMessageSuperseded(msg *conversation.ChatMessage) bool {
+	if msg == nil || msg.Role != conversation.RoleTool || !tools.IsPlanTool(msg.ToolName) || msg.ToolStatus == "error" {
 		return false
 	}
 	view, ok := parsePlanView(msg.Content)
@@ -1706,7 +1708,7 @@ func (r *Renderer) planMessageSuperseded(msg *types.ChatMessage) bool {
 		return false // an external pane has no retained chronology to supersede
 	}
 	for _, next := range messages[idx+1:] {
-		if next == nil || next.Role != types.RoleTool || !tools.IsPlanTool(next.ToolName) || next.ToolStatus == "error" {
+		if next == nil || next.Role != conversation.RoleTool || !tools.IsPlanTool(next.ToolName) || next.ToolStatus == "error" {
 			continue
 		}
 		nextView, nextOK := parsePlanView(next.Content)
@@ -1717,7 +1719,7 @@ func (r *Renderer) planMessageSuperseded(msg *types.ChatMessage) bool {
 	return false
 }
 
-func (r *Renderer) renderSingleMessage(msg *types.ChatMessage) ([]string, []PaintLine) {
+func (r *Renderer) renderSingleMessage(msg *conversation.ChatMessage) ([]string, []PaintLine) {
 	defer observeRender(msg, time.Now())
 	origMsg := msg
 	sanitized := *msg
@@ -1737,7 +1739,7 @@ func (r *Renderer) renderSingleMessage(msg *types.ChatMessage) ([]string, []Pain
 	if r.sync.MsgByID[origMsg.InternalID] == origMsg {
 		ctx.markdownReflow = &r.markdownReflow
 	}
-	if r.streaming && r.isLastMessage(origMsg) && origMsg.Role == types.RoleAssistant {
+	if r.streaming && r.isLastMessage(origMsg) && origMsg.Role == conversation.RoleAssistant {
 		ctx.streamBody = &r.streamCache
 	}
 	ml := renderMessageContent(*msg, ctx, suppressHeader)
@@ -1745,9 +1747,9 @@ func (r *Renderer) renderSingleMessage(msg *types.ChatMessage) ([]string, []Pain
 	cursorIdx := -1
 	if ctx.isLastMsg {
 		switch {
-		case msg.Role == types.RoleAssistant && r.streaming:
+		case msg.Role == conversation.RoleAssistant && r.streaming:
 			cursorIdx = len(ml.lines) - 1
-		case msg.Role == types.RoleThinking && msg.ThinkingActive && (ctx.thinkingBodyOnly || !msg.ThinkingDisplay.Kind.HasCompactPreview()):
+		case msg.Role == conversation.RoleThinking && msg.ThinkingActive && (ctx.thinkingBodyOnly || !msg.ThinkingDisplay.Kind.HasCompactPreview()):
 			cursorIdx = len(ml.lines) - 1
 		}
 	}
@@ -1768,7 +1770,7 @@ func (r *Renderer) renderSingleMessage(msg *types.ChatMessage) ([]string, []Pain
 	// Work accounting lives here (not at the renderItem caller) so the role
 	// is known: status rows re-render every tick by design and are counted
 	// separately from the glamour-class re-renders the budgets hunt.
-	if origMsg.Role == types.RoleStatus {
+	if origMsg.Role == conversation.RoleStatus {
 		perf.MarkStatusRerender()
 	} else {
 		perf.MarkItemRendered(len(lines))
@@ -1780,7 +1782,7 @@ func (r *Renderer) renderSingleMessage(msg *types.ChatMessage) ([]string, []Pain
 	// re-rendered the whole session every frame. Role/PendingSteering are identical
 	// on both, so only the write target changes.
 	if r.sync.MsgByID[origMsg.InternalID] == origMsg && !isStreamingCursor &&
-		(origMsg.Role != types.RoleStatus || origMsg.Recovery != nil) && !origMsg.PendingSteering {
+		(origMsg.Role != conversation.RoleStatus || origMsg.Recovery != nil) && !origMsg.PendingSteering {
 		origMsg.CachedLines = make([]string, len(ml.lines))
 		copy(origMsg.CachedLines, ml.lines)
 		r.nativeCache[origMsg.InternalID] = append([]PaintLine(nil), ml.native...)
@@ -1789,14 +1791,14 @@ func (r *Renderer) renderSingleMessage(msg *types.ChatMessage) ([]string, []Pain
 	return lines, native
 }
 
-func (r *Renderer) isLastMessage(msg *types.ChatMessage) bool {
+func (r *Renderer) isLastMessage(msg *conversation.ChatMessage) bool {
 	if len(r.sync.Messages) == 0 {
 		return false
 	}
 	if r.sync.Messages[len(r.sync.Messages)-1] == msg {
 		return true
 	}
-	if !r.streaming || msg.Role != types.RoleAssistant {
+	if !r.streaming || msg.Role != conversation.RoleAssistant {
 		return false
 	}
 	for i := len(r.sync.Messages) - 1; i >= 0; i-- {
@@ -1811,11 +1813,11 @@ func (r *Renderer) isLastMessage(msg *types.ChatMessage) bool {
 
 func messageParty(role string) string {
 	switch role {
-	case types.RoleUser:
+	case conversation.RoleUser:
 		return "user"
-	case types.RoleAssistant, types.RoleThinking, types.RoleStatus:
+	case conversation.RoleAssistant, conversation.RoleThinking, conversation.RoleStatus:
 		return "agent"
-	case types.RoleAssignment:
+	case conversation.RoleAssignment:
 		return "assignment"
 	default:
 		return ""
@@ -1836,11 +1838,11 @@ func (r *Renderer) shouldSuppressHeader(msgIdx int) bool {
 		if redundantStopNotice(previous) {
 			continue
 		}
-		if current.Role == types.RoleAssistant {
+		if current.Role == conversation.RoleAssistant {
 			switch previous.Role {
-			case types.RoleThinking, types.RoleStatus:
+			case conversation.RoleThinking, conversation.RoleStatus:
 				return false
-			case types.RoleAssistant:
+			case conversation.RoleAssistant:
 				if current.TurnGeneration > 0 && previous.TurnGeneration > 0 {
 					return current.TurnGeneration == previous.TurnGeneration
 				}
@@ -1857,7 +1859,7 @@ func (r *Renderer) shouldSuppressHeader(msgIdx int) bool {
 	return false
 }
 
-func (r *Renderer) messageIndexOf(target *types.ChatMessage) int {
+func (r *Renderer) messageIndexOf(target *conversation.ChatMessage) int {
 	for i, m := range r.sync.Messages {
 		if m == target {
 			return i
@@ -2029,7 +2031,7 @@ var messageRenders = metrics.NewTable(metrics.Meta{Name: "render.messages", Grou
 	Help: "Rendering one transcript row (markdown, diffs, tool output). One slow row is one slow frame.",
 	Warn: 8_000, Crit: 33_000})
 
-func observeRender(msg *types.ChatMessage, start time.Time) {
+func observeRender(msg *conversation.ChatMessage, start time.Time) {
 	key := string(msg.Role)
 	if msg.ToolName != "" {
 		key += " " + msg.ToolName

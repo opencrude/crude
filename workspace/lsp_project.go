@@ -10,7 +10,8 @@ import (
 
 	"crude/insight/facts"
 	"crude/internal/fileuri"
-	ttypes "crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 )
 
 // projectFactPrefix marks facts that a project producer reported for a file
@@ -35,16 +36,16 @@ const lspProjectSettleQuiet = 3 * time.Second
 // lspUnopenedDiagnostics is implemented by transports that report
 // diagnostics for files the client has not opened.
 type lspUnopenedDiagnostics interface {
-	OnUnopenedDiagnostics(func(path string, p ttypes.InsightDiagnosticPublication))
+	OnUnopenedDiagnostics(func(path string, p insight.DiagnosticPublication))
 }
 
-func isProjectFact(b ttypes.InsightBoundary) bool {
-	return b.Source.Kind == ttypes.InsightSourceDisk &&
+func isProjectFact(b insight.Boundary) bool {
+	return b.Source.Kind == insight.SourceDisk &&
 		(strings.HasPrefix(b.Source.DocumentID, projectFactPrefix) || isCheckedFact(b))
 }
 
-func isCheckedFact(b ttypes.InsightBoundary) bool {
-	return b.Source.Kind == ttypes.InsightSourceDisk && strings.HasPrefix(b.Source.DocumentID, checkedFactPrefix)
+func isCheckedFact(b insight.Boundary) bool {
+	return b.Source.Kind == insight.SourceDisk && strings.HasPrefix(b.Source.DocumentID, checkedFactPrefix)
 }
 
 // SetProjectProducers replaces the set of project-scoped servers. A project
@@ -52,17 +53,17 @@ func isCheckedFact(b ttypes.InsightBoundary) bool {
 // admission as document servers, when language servers may start for this
 // workspace. Producers outside the workspace root are ignored. A removed
 // producer stops when no document uses its server, and its facts go away.
-func (m *LSPManager) SetProjectProducers(producers []ttypes.LSPProjectProducer) {
+func (m *LSPManager) SetProjectProducers(producers []insight.LSPProjectProducer) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.setProjectProducersLocked(producers)
 }
 
-func (m *LSPManager) setProjectProducersLocked(producers []ttypes.LSPProjectProducer) {
+func (m *LSPManager) setProjectProducersLocked(producers []insight.LSPProjectProducer) {
 	if m.closed {
 		return
 	}
-	next := make(map[string]ttypes.LSPProjectProducer, len(producers))
+	next := make(map[string]insight.LSPProjectProducer, len(producers))
 	for _, producer := range producers {
 		root := filepath.Clean(producer.Root)
 		if !filepath.IsAbs(root) || strings.TrimSpace(producer.Spec.Command) == "" ||
@@ -70,7 +71,7 @@ func (m *LSPManager) setProjectProducersLocked(producers []ttypes.LSPProjectProd
 			continue
 		}
 		producer.Root = root
-		producer.Spec = ttypes.CloneLSPServerSpec(producer.Spec)
+		producer.Spec = setting.CloneLSPServerSpec(producer.Spec)
 		next[lspServerKey(fileuri.FromPath(root), producer.Spec)] = producer
 	}
 	for key := range m.projects {
@@ -80,7 +81,7 @@ func (m *LSPManager) setProjectProducersLocked(producers []ttypes.LSPProjectProd
 		if state := m.states[key]; state != nil && m.documentCountLocked(key) == 0 {
 			m.retireLocked(state)
 		}
-		m.removeProjectFactsLocked(func(b ttypes.InsightBoundary) bool { return b.Context.ID == key })
+		m.removeProjectFactsLocked(func(b insight.Boundary) bool { return b.Context.ID == key })
 	}
 	m.projects = next
 	m.requestProjectCheckLocked()
@@ -91,13 +92,13 @@ func (m *LSPManager) setProjectProducersLocked(producers []ttypes.LSPProjectProd
 }
 
 // ProjectProducers returns the current project-scoped servers.
-func (m *LSPManager) ProjectProducers() []ttypes.LSPProjectProducer {
+func (m *LSPManager) ProjectProducers() []insight.LSPProjectProducer {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	out := make([]ttypes.LSPProjectProducer, 0, len(m.projects))
+	out := make([]insight.LSPProjectProducer, 0, len(m.projects))
 	for _, key := range m.projectKeysLocked() {
 		producer := m.projects[key]
-		producer.Spec = ttypes.CloneLSPServerSpec(producer.Spec)
+		producer.Spec = setting.CloneLSPServerSpec(producer.Spec)
 		out = append(out, producer)
 	}
 	return out
@@ -120,11 +121,11 @@ func (m *LSPManager) projectWantedLocked(key string) bool {
 	return ok && !m.projectWatchUnreliable && !m.paused && m.editorActiveLocked()
 }
 
-func (m *LSPManager) removeProjectFactsLocked(match func(ttypes.InsightBoundary) bool) {
+func (m *LSPManager) removeProjectFactsLocked(match func(insight.Boundary) bool) {
 	if m.sources == nil || m.sources.Insight == nil {
 		return
 	}
-	if m.sources.Insight.diagnostics.RemoveMatching(func(b ttypes.InsightBoundary) bool { return isProjectFact(b) && match(b) }) > 0 {
+	if m.sources.Insight.diagnostics.RemoveMatching(func(b insight.Boundary) bool { return isProjectFact(b) && match(b) }) > 0 {
 		m.bumpVersionLocked()
 	}
 }
@@ -133,7 +134,7 @@ func (m *LSPManager) removeProjectFactsLocked(match func(ttypes.InsightBoundary)
 // document holds. The fact is bound to the producer instance and the file
 // path, not to a text revision. An open document always owns its own file,
 // and the first producer that reports a file keeps it until it stops.
-func (m *LSPManager) receiveUnopenedDiagnostics(key string, owner *lspClientState, path string, p ttypes.InsightDiagnosticPublication) {
+func (m *LSPManager) receiveUnopenedDiagnostics(key string, owner *lspClientState, path string, p insight.DiagnosticPublication) {
 	path = filepath.Clean(path)
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -164,25 +165,25 @@ func (m *LSPManager) receiveUnopenedDiagnostics(key string, owner *lspClientStat
 // publishProjectFactLocked stores one file's result that no open view owns.
 // One fact per file keeps Problems unambiguous: it replaces any other result
 // for the path, unless another live producer reported the file first.
-func (m *LSPManager) publishProjectFactLocked(sources *DocumentService, key string, owner *lspClientState, root, path, prefix string, p ttypes.InsightDiagnosticPublication) {
+func (m *LSPManager) publishProjectFactLocked(sources *DocumentService, key string, owner *lspClientState, root, path, prefix string, p insight.DiagnosticPublication) {
 	store := sources.Insight.diagnostics
 	unknown := []string{
 		"The file is not open; the server reported it from its view of the project.",
 		"Complete dependency and build graph has not been established.",
 		"Executable digest is unverified; tool identity describes launch configuration only.",
 	}
-	boundary := ttypes.InsightBoundary{
-		Source: ttypes.InsightSource{WorkspaceGeneration: sources.Insight.generation, DocumentID: prefix + path,
-			Path: path, Lifetime: owner.instance, Revision: 1, Kind: ttypes.InsightSourceDisk},
-		Context:  ttypes.InsightContext{ID: key, Root: root, Generation: owner.epoch + 1, UnknownInputs: unknown},
-		Producer: ttypes.InsightProducer{InstanceID: owner.instance, Provider: owner.cmd, ToolIdentity: "launch-config:" + key},
+	boundary := insight.Boundary{
+		Source: insight.Source{WorkspaceGeneration: sources.Insight.generation, DocumentID: prefix + path,
+			Path: path, Lifetime: owner.instance, Revision: 1, Kind: insight.SourceDisk},
+		Context:  insight.Context{ID: key, Root: root, Generation: owner.epoch + 1, UnknownInputs: unknown},
+		Producer: insight.Producer{InstanceID: owner.instance, Provider: owner.cmd, ToolIdentity: "launch-config:" + key},
 	}
 	for _, id := range []string{projectFactPrefix + path, checkedFactPrefix + path} {
-		if current, ok := store.Snapshot(id); ok && current.Boundary.Context.ID != key && current.State != ttypes.InsightStale {
+		if current, ok := store.Snapshot(id); ok && current.Boundary.Context.ID != key && current.State != insight.Stale {
 			return
 		}
 	}
-	store.RemoveMatching(func(b ttypes.InsightBoundary) bool {
+	store.RemoveMatching(func(b insight.Boundary) bool {
 		return b.Source.Path == path && b.Source.DocumentID != boundary.Source.DocumentID
 	})
 	if err := store.Observe(boundary); err != nil {
@@ -215,10 +216,10 @@ func (m *LSPManager) retainDiskViewLocked(path string, doc *lspDocument) {
 	if state != nil {
 		root, err = fileuri.ToPath(state.rootURI)
 	}
-	if !ok || answer.ID == "" || answer.State == ttypes.InsightStale || answer.Limited || err != nil || state == nil ||
+	if !ok || answer.ID == "" || answer.State == insight.Stale || answer.Limited || err != nil || state == nil ||
 		state.closing || state.stopped || state.instance == "" || answer.Boundary.Producer.InstanceID != state.instance ||
 		answer.Boundary.Source != doc.source {
-		if store.RemoveMatching(func(b ttypes.InsightBoundary) bool { return b.Source == doc.source }) > 0 {
+		if store.RemoveMatching(func(b insight.Boundary) bool { return b.Source == doc.source }) > 0 {
 			m.bumpVersionLocked()
 		}
 		return
@@ -227,19 +228,19 @@ func (m *LSPManager) retainDiskViewLocked(path string, doc *lspDocument) {
 	if m.reportsProjectLocked(doc.key, state) {
 		prefix = projectFactPrefix
 	}
-	store.RemoveMatching(func(b ttypes.InsightBoundary) bool { return b.Source == doc.source })
-	m.publishProjectFactLocked(m.sources, doc.key, state, root, path, prefix, ttypes.InsightDiagnosticPublication{
+	store.RemoveMatching(func(b insight.Boundary) bool { return b.Source == doc.source })
+	m.publishProjectFactLocked(m.sources, doc.key, state, root, path, prefix, insight.DiagnosticPublication{
 		Diagnostics: answer.Diagnostics, Detail: answer.Detail})
 }
 
 // reportsProjectLocked reports whether the server reports files that are not
 // open: the catalog says so, or the server was seen doing it.
 func (m *LSPManager) reportsProjectLocked(key string, state *lspClientState) bool {
-	if state != nil && (state.reportsProject || state.spec.DiagnosticScope == ttypes.CoverageProject) {
+	if state != nil && (state.reportsProject || state.spec.DiagnosticScope == insight.CoverageProject) {
 		return true
 	}
 	_, project := m.projects[key]
-	return project && state != nil && state.spec.DiagnosticScope == ttypes.CoverageProject
+	return project && state != nil && state.spec.DiagnosticScope == insight.CoverageProject
 }
 
 // settleProjectReportLocked runs once per server instance, when it is idle
@@ -280,11 +281,11 @@ func (m *LSPManager) settleProjectReportLocked(state *lspClientState, now time.T
 	store := m.sources.Insight.diagnostics
 	checked := make(map[string]bool)
 	for _, fact := range store.All() {
-		if isCheckedFact(fact.Boundary) && fact.State != ttypes.InsightStale {
+		if isCheckedFact(fact.Boundary) && fact.State != insight.Stale {
 			checked[fact.Boundary.Source.DocumentID] = true
 		}
 	}
-	if store.RemoveMatching(func(b ttypes.InsightBoundary) bool {
+	if store.RemoveMatching(func(b insight.Boundary) bool {
 		path := b.Source.Path
 		if m.documents[path] != nil || live[b.Producer.InstanceID] || checked[b.Source.DocumentID] || !pathWithin(root, path) {
 			return false

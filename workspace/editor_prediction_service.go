@@ -20,7 +20,8 @@ import (
 	"crude/insight/predictionbudget"
 	"crude/insight/predictioncontext"
 	"crude/insight/textindex"
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace/document"
 	"crude/workspace/fileio"
 )
@@ -75,7 +76,7 @@ type predictionCached struct {
 // predictionRuntimePolicy is the workspace's consent and the bound connection.
 // Consented names the connection identity that the workspace allowed.
 type predictionRuntimePolicy struct {
-	settings            types.WorkspacePredictionSettings
+	settings            setting.WorkspacePrediction
 	rootIdentity, grant string
 	consented           string
 	completer           session.EditorPredictionCompleter
@@ -98,7 +99,7 @@ type editorPredictionService struct {
 	closed     bool
 	views      map[predictionViewKey]*predictionSequence
 	cache      []predictionCached
-	status     types.EditorPredictionStatus
+	status     insight.EditorPredictionStatus
 	jobs       sync.WaitGroup
 }
 
@@ -143,7 +144,7 @@ func (p *editorPredictionService) Configure(next predictionRuntimePolicy) {
 	p.status.Model = next.completer.Model
 	p.status.Ready, p.status.Reason = false, ""
 	switch {
-	case next.settings.Mode == types.PredictionOff:
+	case next.settings.Mode == setting.PredictionOff:
 	case next.completerErr != nil:
 		p.status.Reason = sentence(next.completerErr.Error())
 	case !next.completer.Bound():
@@ -152,7 +153,7 @@ func (p *editorPredictionService) Configure(next predictionRuntimePolicy) {
 		p.status.Reason = "Turn on suggestions again to allow this workspace."
 	case next.consented != next.completer.ConnectionIdentity:
 		p.status.Reason = "The suggestion connection changed. Turn on suggestions again to allow the new connection."
-	case types.ValidatePredictionSettings(next.settings) != nil:
+	case setting.ValidatePrediction(next.settings) != nil:
 		p.status.Reason = "Set a positive hourly token limit for suggestions."
 	default:
 		p.status.Ready = true
@@ -172,7 +173,7 @@ func sentence(text string) string {
 }
 
 // Snapshot returns the current status.
-func (p *editorPredictionService) Snapshot() types.EditorPredictionStatus {
+func (p *editorPredictionService) Snapshot() insight.EditorPredictionStatus {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.status
@@ -272,7 +273,7 @@ func (p *editorPredictionService) pruneLocked(now time.Time) {
 	}
 }
 
-func (p *editorPredictionService) begin(ctx context.Context, owner document.Owner, request types.EditorPredictionRequest) (context.Context, *predictionInvocation, predictionRuntimePolicy, error) {
+func (p *editorPredictionService) begin(ctx context.Context, owner document.Owner, request insight.EditorPredictionRequest) (context.Context, *predictionInvocation, predictionRuntimePolicy, error) {
 	key := predictionViewKey{owner, request.ViewID}
 	p.mu.Lock()
 	p.pruneLocked(time.Now())
@@ -319,7 +320,7 @@ func (p *editorPredictionService) begin(ctx context.Context, owner document.Owne
 		}
 		return nil, nil, predictionRuntimePolicy{}, errors.New(reason)
 	}
-	if request.Automatic && p.policy.settings.Mode != types.PredictionType {
+	if request.Automatic && p.policy.settings.Mode != setting.PredictionType {
 		p.mu.Unlock()
 		return nil, nil, predictionRuntimePolicy{}, errPredictionOff
 	}
@@ -338,7 +339,7 @@ func (p *editorPredictionService) begin(ctx context.Context, owner document.Owne
 	return jobCtx, job, policy, nil
 }
 
-func (p *editorPredictionService) finish(owner document.Owner, request types.EditorPredictionRequest, job *predictionInvocation) {
+func (p *editorPredictionService) finish(owner document.Owner, request insight.EditorPredictionRequest, job *predictionInvocation) {
 	job.cancel()
 	p.mu.Lock()
 	if view := p.views[predictionViewKey{owner, request.ViewID}]; view != nil && view.job == job {
@@ -380,7 +381,7 @@ func predictionPathAllowed(root, path string) bool {
 }
 
 // current reports whether the invocation may still publish.
-func (p *editorPredictionService) current(owner document.Owner, request types.EditorPredictionRequest, job *predictionInvocation) bool {
+func (p *editorPredictionService) current(owner document.Owner, request insight.EditorPredictionRequest, job *predictionInvocation) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	view := p.views[predictionViewKey{owner, request.ViewID}]
@@ -388,7 +389,7 @@ func (p *editorPredictionService) current(owner document.Owner, request types.Ed
 		view.sequence == request.Sequence && view.job == job && !view.retired
 }
 
-func (p *editorPredictionService) fence(ctx context.Context, owner document.Owner, request types.EditorPredictionRequest, job *predictionInvocation, policy predictionRuntimePolicy) error {
+func (p *editorPredictionService) fence(ctx context.Context, owner document.Owner, request insight.EditorPredictionRequest, job *predictionInvocation, policy predictionRuntimePolicy) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -414,7 +415,7 @@ func (p *editorPredictionService) fence(ctx context.Context, owner document.Owne
 
 // watchSource cancels a request when its canonical source changes or closes.
 // It joins the watcher before returning, including on provider failure.
-func (p *editorPredictionService) watchSource(ctx context.Context, cancel context.CancelFunc, owner document.Owner, source types.InsightSource) (func(), error) {
+func (p *editorPredictionService) watchSource(ctx context.Context, cancel context.CancelFunc, owner document.Owner, source insight.Source) (func(), error) {
 	wake, release, err := p.docs.SubscribeDocument(owner, source.DocumentID)
 	if err != nil {
 		return nil, err
@@ -442,25 +443,25 @@ func (p *editorPredictionService) watchSource(ctx context.Context, cancel contex
 
 // Request answers one suggestion request. An empty result means "nothing to
 // show"; errors are written for the user.
-func (p *editorPredictionService) Request(ctx context.Context, owner document.Owner, request types.EditorPredictionRequest) (types.EditorPredictionResult, error) {
+func (p *editorPredictionService) Request(ctx context.Context, owner document.Owner, request insight.EditorPredictionRequest) (insight.EditorPredictionResult, error) {
 	began := time.Now()
 	if ctx == nil || !validLSPView(request.ViewID, request.Sequence) || owner.ClientID == "" || owner.Epoch == 0 {
-		return types.EditorPredictionResult{}, document.ErrOwner
+		return insight.EditorPredictionResult{}, document.ErrOwner
 	}
 	jobCtx, job, policy, err := p.begin(ctx, owner, request)
 	if err != nil {
-		return types.EditorPredictionResult{}, err
+		return insight.EditorPredictionResult{}, err
 	}
 	defer p.finish(owner, request, job)
 	stop, err := p.watchSource(jobCtx, job.cancel, owner, request.Source)
 	if err != nil {
-		return types.EditorPredictionResult{}, err
+		return insight.EditorPredictionResult{}, err
 	}
 	defer stop()
 	if err := p.fence(jobCtx, owner, request, job, policy); err != nil {
-		return types.EditorPredictionResult{}, err
+		return insight.EditorPredictionResult{}, err
 	}
-	result := types.EditorPredictionResult{Source: request.Source, ViewID: request.ViewID, Sequence: request.Sequence,
+	result := insight.EditorPredictionResult{Source: request.Source, ViewID: request.ViewID, Sequence: request.Sequence,
 		PolicyGeneration: job.generation, Caret: request.Caret}
 
 	// Context: everything comes from memory and nothing waits.
@@ -468,25 +469,25 @@ func (p *editorPredictionService) Request(ctx context.Context, owner document.Ow
 	p.docs.mu.Lock()
 	text, err := p.docs.readOnlyLSPSourceLocked(owner, request.Source)
 	text = bytes.Clone(text)
-	var edits []types.RecentEdit
+	var edits []insight.RecentEdit
 	if err == nil {
 		edits = p.docs.recentEditsLocked(owner, 16, "")
 	}
 	p.docs.mu.Unlock()
 	if err != nil {
-		return types.EditorPredictionResult{}, err
+		return insight.EditorPredictionResult{}, err
 	}
 	if request.Caret < 0 || request.Caret > len(text) {
-		return types.EditorPredictionResult{}, errors.New("the caret is outside the document")
+		return insight.EditorPredictionResult{}, errors.New("the caret is outside the document")
 	}
 	rel := filepath.ToSlash(request.Source.Path)
 	if r, err := filepath.Rel(p.root, request.Source.Path); err == nil {
 		rel = filepath.ToSlash(r)
 	}
 	edits = allowedEdits(p.root, edits)
-	var own []types.RecentEdit
+	var own []insight.RecentEdit
 	for _, e := range edits {
-		if e.Author == types.RecentEditYou && e.Path == rel {
+		if e.Author == insight.RecentEditYou && e.Path == rel {
 			own = append(own, e)
 		}
 	}
@@ -494,7 +495,7 @@ func (p *editorPredictionService) Request(ctx context.Context, owner document.Ow
 	// A chained change from the last answer needs no request.
 	if hunk, kind, ok := p.chained(owner, request, text); ok {
 		result.Kind, result.Start, result.End, result.Text, result.CacheHit = kind, hunk.start, hunk.end, hunk.text, true
-		result.Sources = []string{types.PredictionSourceChain}
+		result.Sources = []string{insight.PredictionSourceChain}
 		return p.publish(jobCtx, owner, request, job, policy, result, began, true)
 	}
 	if request.Follow {
@@ -502,7 +503,7 @@ func (p *editorPredictionService) Request(ctx context.Context, owner document.Ow
 	}
 
 	diagnostics, _ := p.docs.Insight.diagnostics.SnapshotPath(request.Source.Path)
-	var facts []types.LSPDiagnostic
+	var facts []insight.LSPDiagnostic
 	if diagnostics.HasExactSource() && diagnostics.Boundary.Source == request.Source {
 		facts = diagnostics.Diagnostics
 	}
@@ -522,13 +523,13 @@ func (p *editorPredictionService) Request(ctx context.Context, owner document.Ow
 	}
 	selected, err := predictioncontext.Build(in, predictionContextTokens)
 	if err != nil {
-		return types.EditorPredictionResult{}, err
+		return insight.EditorPredictionResult{}, err
 	}
 	if prompt.ContainsSuggestionMarker(selected.Region) {
 		return p.publish(jobCtx, owner, request, job, policy, result, began, false)
 	}
 	result.ContextDigest = selected.Digest
-	result.Sources = contextSources(selected, policy.completer.Format == types.SuggestionFormatChat)
+	result.Sources = contextSources(selected, policy.completer.Format == setting.SuggestionFormatChat)
 	result.Stages.ContextUS = time.Since(contextBegan).Microseconds()
 
 	var hunks []suggestionHunk
@@ -544,10 +545,10 @@ func (p *editorPredictionService) Request(ctx context.Context, owner document.Ow
 	if !result.CacheHit {
 		hunks, err = p.ask(jobCtx, owner, request, job, policy, selected, &result.Stages)
 		if err != nil {
-			return types.EditorPredictionResult{}, err
+			return insight.EditorPredictionResult{}, err
 		}
 		if err := p.fence(jobCtx, owner, request, job, policy); err != nil {
-			return types.EditorPredictionResult{}, err
+			return insight.EditorPredictionResult{}, err
 		}
 		p.remember(selected, hunks, job.generation)
 	}
@@ -579,21 +580,21 @@ func contextSources(c predictioncontext.Context, chat bool) []string {
 	}
 	var out []string
 	if len(c.Edits) > 0 {
-		out = append(out, types.PredictionSourceEdits)
+		out = append(out, insight.PredictionSourceEdits)
 	}
 	if len(c.Diagnostics) > 0 {
-		out = append(out, types.PredictionSourceDiagnostics)
+		out = append(out, insight.PredictionSourceDiagnostics)
 	}
 	if len(c.Completions) > 0 {
-		out = append(out, types.PredictionSourceCompletions)
+		out = append(out, insight.PredictionSourceCompletions)
 	}
 	if len(c.Snippets) > 0 {
-		out = append(out, types.PredictionSourceSnippets)
+		out = append(out, insight.PredictionSourceSnippets)
 	}
 	return out
 }
 
-func allowedEdits(root string, edits []types.RecentEdit) []types.RecentEdit {
+func allowedEdits(root string, edits []insight.RecentEdit) []insight.RecentEdit {
 	out := edits[:0]
 	for _, e := range edits {
 		if predictionPathAllowed(root, filepath.Join(root, filepath.FromSlash(e.Path))) {
@@ -627,7 +628,7 @@ func (p *editorPredictionService) remember(selected predictioncontext.Context, h
 	}
 }
 
-func (p *editorPredictionService) chained(owner document.Owner, request types.EditorPredictionRequest, text []byte) (suggestionHunk, types.EditorPredictionKind, bool) {
+func (p *editorPredictionService) chained(owner document.Owner, request insight.EditorPredictionRequest, text []byte) (suggestionHunk, insight.EditorPredictionKind, bool) {
 	p.mu.Lock()
 	view := p.views[predictionViewKey{owner, request.ViewID}]
 	var chain *predictionChain
@@ -639,14 +640,14 @@ func (p *editorPredictionService) chained(owner document.Owner, request types.Ed
 		return suggestionHunk{}, "", false
 	}
 	first := chain.hunks[0]
-	if first.end > len(text) || !types.ValidEditorPredictionText(first.text) {
+	if first.end > len(text) || !insight.ValidEditorPredictionText(first.text) {
 		return suggestionHunk{}, "", false
 	}
 	p.setChain(owner, request, text, first, chain.hunks[1:])
 	return first, classifySuggestion(text, request.Caret, first), true
 }
 
-func (p *editorPredictionService) setChain(owner document.Owner, request types.EditorPredictionRequest, text []byte, shown suggestionHunk, rest []suggestionHunk) {
+func (p *editorPredictionService) setChain(owner document.Owner, request insight.EditorPredictionRequest, text []byte, shown suggestionHunk, rest []suggestionHunk) {
 	if len(rest) == 0 {
 		return
 	}
@@ -659,9 +660,9 @@ func (p *editorPredictionService) setChain(owner document.Owner, request types.E
 }
 
 // ask sends one request through the ledger and the bound connection.
-func (p *editorPredictionService) ask(ctx context.Context, owner document.Owner, request types.EditorPredictionRequest, job *predictionInvocation, policy predictionRuntimePolicy, selected predictioncontext.Context, stages *types.EditorPredictionStages) ([]suggestionHunk, error) {
+func (p *editorPredictionService) ask(ctx context.Context, owner document.Owner, request insight.EditorPredictionRequest, job *predictionInvocation, policy predictionRuntimePolicy, selected predictioncontext.Context, stages *insight.EditorPredictionStages) ([]suggestionHunk, error) {
 	system, input := "", ""
-	chat := policy.completer.Format == types.SuggestionFormatChat
+	chat := policy.completer.Format == setting.SuggestionFormatChat
 	if chat {
 		system = prompt.EditorSuggestionSystem()
 		input = prompt.EditorSuggestionInput(promptOf(selected))
@@ -709,7 +710,7 @@ func (p *editorPredictionService) ask(ctx context.Context, owner document.Owner,
 		})
 	} else {
 		var fim provider.FIMOnceResult
-		fim, err = policy.completer.CompleteFIM(ctx, selected.Prefix, selected.Suffix, types.EditorPredictionMaxBytes)
+		fim, err = policy.completer.CompleteFIM(ctx, selected.Prefix, selected.Suffix, insight.EditorPredictionMaxBytes)
 		answer, usage, complete = fim.Text, fim.Usage, fim.UsageComplete
 		stages.FirstByteUS = time.Since(modelBegan).Microseconds()
 	}
@@ -755,8 +756,8 @@ func promptOf(c predictioncontext.Context) prompt.SuggestionPrompt {
 // fimHunks turns a fill-in-the-middle answer into an insertion at the caret.
 func fimHunks(c predictioncontext.Context, answer string) []suggestionHunk {
 	lines := strings.SplitAfter(answer, "\n")
-	if len(lines) > types.EditorPredictionMaxLines {
-		answer = strings.Join(lines[:types.EditorPredictionMaxLines], "")
+	if len(lines) > insight.EditorPredictionMaxLines {
+		answer = strings.Join(lines[:insight.EditorPredictionMaxLines], "")
 	}
 	answer = strings.TrimRight(answer, "\n")
 	if strings.TrimSpace(answer) == "" {
@@ -801,7 +802,7 @@ func streamRewrite(ctx context.Context, completer session.EditorPredictionComple
 				continue
 			}
 			answer.WriteString(update.ContentDelta)
-			if answer.Len() > types.EditorPredictionMaxBytes*4 {
+			if answer.Len() > insight.EditorPredictionMaxBytes*4 {
 				return answer.String(), usage, false, nil
 			}
 			closed = strings.Contains(answer.String(), prompt.SuggestionRegionEnd)
@@ -813,9 +814,9 @@ func streamRewrite(ctx context.Context, completer session.EditorPredictionComple
 }
 
 // publish fences the result and updates the status.
-func (p *editorPredictionService) publish(ctx context.Context, owner document.Owner, request types.EditorPredictionRequest, job *predictionInvocation, policy predictionRuntimePolicy, result types.EditorPredictionResult, began time.Time, reused bool) (types.EditorPredictionResult, error) {
+func (p *editorPredictionService) publish(ctx context.Context, owner document.Owner, request insight.EditorPredictionRequest, job *predictionInvocation, policy predictionRuntimePolicy, result insight.EditorPredictionResult, began time.Time, reused bool) (insight.EditorPredictionResult, error) {
 	if err := p.fence(ctx, owner, request, job, policy); err != nil {
-		return types.EditorPredictionResult{}, err
+		return insight.EditorPredictionResult{}, err
 	}
 	total := time.Since(began)
 	result.Stages.TotalUS = total.Microseconds()
@@ -823,7 +824,7 @@ func (p *editorPredictionService) publish(ctx context.Context, owner document.Ow
 	defer p.mu.Unlock()
 	view := p.views[predictionViewKey{owner, request.ViewID}]
 	if p.closed || p.generation != job.generation || view == nil || view.sequence != request.Sequence || view.job != job || view.retired {
-		return types.EditorPredictionResult{}, errPredictionSequence
+		return insight.EditorPredictionResult{}, errPredictionSequence
 	}
 	observeSuggestionStages(result.Stages, total, reused)
 	p.status.Requests++

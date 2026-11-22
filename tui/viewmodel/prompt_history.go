@@ -10,9 +10,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/agent/prompthistory"
 	"crude/agent/sessiondb"
-	"crude/core/port"
-	"crude/history"
+	"crude/core/shellport"
 	"crude/tui/input"
 	"crude/tui/screens/statusoverview"
 	"crude/tui/ui"
@@ -22,9 +22,9 @@ import (
 
 type remotePromptHistoryMsg struct {
 	owner      shellport.Workspace
-	store      *history.Store
+	store      *prompthistory.Store
 	generation uint64
-	entries    []history.Entry
+	entries    []prompthistory.Entry
 	err        error
 }
 
@@ -63,11 +63,11 @@ func (m *App) recordRemotePrompt(text string, refs []sessiondb.Reference) (tea.C
 	if m.ActiveSession != nil {
 		sessionID = m.ActiveSession.SessionID
 	}
-	var attachments []history.Attachment
+	var attachments []prompthistory.Attachment
 	for _, span := range input.FindRefRanges(text, refs) {
 		for _, ref := range refs {
 			if ref.ID == span.ID {
-				attachments = append(attachments, history.Attachment{Start: span.Start, End: span.End, Reference: ref})
+				attachments = append(attachments, prompthistory.Attachment{Start: span.Start, End: span.End, Reference: ref})
 				break
 			}
 		}
@@ -101,7 +101,7 @@ func (m *App) applyRemotePromptHistory(msg remotePromptHistoryMsg) {
 }
 
 type promptHistorySavedMsg struct {
-	store *history.Store
+	store *prompthistory.Store
 	err   error
 }
 

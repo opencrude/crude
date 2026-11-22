@@ -7,9 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
 	"crude/types/control"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -34,7 +35,7 @@ func TestControlLSPRestartOneAndAllUseManagerAndRetainReceipt(t *testing.T) {
 			client.muWatch.Lock()
 			publish := client.publish
 			client.muWatch.Unlock()
-			publish(closed, types.InsightDiagnosticPublication{Diagnostics: []types.LSPDiagnostic{{Message: "old problem", Severity: types.DiagError}}})
+			publish(closed, insight.DiagnosticPublication{Diagnostics: []insight.LSPDiagnostic{{Message: "old problem", Severity: insight.DiagError}}})
 			if _, ok := w.LSPMgr.FileDiagnostics(closed); !ok {
 				t.Fatal("missing pre-refresh fact")
 			}
@@ -98,7 +99,7 @@ func TestControlLSPRestartRejectsInvalidTargetsAndCancellation(t *testing.T) {
 		t.Fatal(got)
 	}
 	// No trust or start policy is changed by a restart request or cancellation.
-	if manager.AnalysisPolicy().Trust == types.AnalysisTrusted {
+	if manager.AnalysisPolicy().Trust == setting.AnalysisTrusted {
 		t.Fatal("restart granted workspace trust")
 	}
 }

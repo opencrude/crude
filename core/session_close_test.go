@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"crude/buildinfo"
-	"crude/core/client"
-	"crude/core/protocol"
-	"crude/core/wire"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
+	"crude/core/corewire"
+	"crude/internal/buildinfo"
 	"crude/workspace"
 	"crude/workspace/document"
 )

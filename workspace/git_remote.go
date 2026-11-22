@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"crude/text/encoding"
+	"crude/text/textencoding"
 	"crude/workspace/fileio"
 	"crude/workspace/localhistory"
 
@@ -475,11 +475,11 @@ func (s *GitService) ConflictFile(ctx context.Context, path string) (GitConflict
 // ResolveGitConflict writes the resolved text of a conflicted file and marks
 // it resolved, after a mandatory Local History snapshot of the conflicted
 // bytes. A file that changed since it was read is left alone.
-func (workspace *Workspace) ResolveGitConflict(ctx context.Context, path, fingerprint string, choices []GitConflictChoice) (string, error) {
-	if workspace.LocalHistory == nil || workspace.Git == nil {
+func (w *Workspace) ResolveGitConflict(ctx context.Context, path, fingerprint string, choices []GitConflictChoice) (string, error) {
+	if w.LocalHistory == nil || w.Git == nil {
 		return "", errors.New("resolving conflicts requires the repository and the Local History recovery store")
 	}
-	file, err := workspace.Git.ConflictFile(ctx, path)
+	file, err := w.Git.ConflictFile(ctx, path)
 	if err != nil {
 		return "", err
 	}
@@ -499,7 +499,7 @@ func (workspace *Workspace) ResolveGitConflict(ctx context.Context, path, finger
 		return "", err
 	}
 	defer unlock()
-	service := workspace.Git
+	service := w.Git
 	if err := service.lock(ctx); err != nil {
 		return "", err
 	}
@@ -517,7 +517,7 @@ func (workspace *Workspace) ResolveGitConflict(ctx context.Context, path, finger
 	if err := verify(); err != nil {
 		return "", err
 	}
-	safety, err := workspace.LocalHistory.Snapshot(ctx, localhistory.SnapshotOptions{Kind: "safety", Label: "Before resolving Git conflict: " + file.Path, IncludePaths: []string{file.Path}, DisableGitIgnore: true, MaxFileSize: gitComparisonLimit})
+	safety, err := w.LocalHistory.Snapshot(ctx, localhistory.SnapshotOptions{Kind: "safety", Label: "Before resolving Git conflict: " + file.Path, IncludePaths: []string{file.Path}, DisableGitIgnore: true, MaxFileSize: gitComparisonLimit})
 	if err != nil {
 		return "", err
 	}

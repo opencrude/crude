@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 
-	"crude/core/port/remote"
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
+	"crude/core/shellport/remote"
 	startuptui "crude/tui/startup"
-	"crude/types"
+	"crude/types/statuscenter"
 )
 
 // attachStartupSelection is the single startup chooser/attachment lifecycle.
@@ -17,11 +17,11 @@ import (
 func attachStartupSelection(ctx context.Context, root string, exact bool, selection coreprotocol.StartupSnapshot,
 	choose func(context.Context, coreprotocol.StartupSnapshot) (startuptui.Selection, error),
 	attach func(context.Context, string) (*remote.Workspace, error),
-) (string, *remote.Workspace, []types.OperationIssue, error) {
+) (string, *remote.Workspace, []statuscenter.OperationIssue, error) {
 	if exact && (selection.Root != root || selection.FolderKind != "" || selection.PathError != "" || selection.ShowIntroduction) {
 		return "", nil, nil, errors.New("handover destination is not ready; no alternative workspace or onboarding choice was selected")
 	}
-	issues := append([]types.OperationIssue(nil), selection.Issues...)
+	issues := append([]statuscenter.OperationIssue(nil), selection.Issues...)
 	for {
 		if selection.ShowIntroduction || selection.FolderKind != "" || selection.PathError != "" {
 			selected, err := choose(ctx, selection)

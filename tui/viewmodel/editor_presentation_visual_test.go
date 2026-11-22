@@ -3,11 +3,11 @@ package viewmodel
 import (
 	tea "charm.land/bubbletea/v2"
 	"context"
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/cell"
-	settingsui "crude/tui/settings"
+	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
 	"crude/workspace"
 	"errors"
 	"fmt"
@@ -223,7 +223,7 @@ func (m *presentationVisualModel) observePresentation(phase int) error {
 			return fmt.Errorf("source or draft changed")
 		}
 		state, _ := ed.InsightStatus()
-		if state != types.InsightCurrent {
+		if state != insight.Current {
 			return fmt.Errorf("source syntax not ready")
 		}
 		if phase == 0 {

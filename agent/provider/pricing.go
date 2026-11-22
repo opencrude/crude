@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"crude/logger"
+	"crude/internal/logger"
 )
 
 // ModelPrice holds per-token pricing for a single model, used for manual
@@ -162,9 +162,9 @@ func LoadModelMetas(metas map[string]ModelMeta) {
 	logIf(func(lg *logger.Logger) { lg.Info("PRICING", "load_metas", "count", len(metas)) })
 }
 
-// GetAllModelMetas returns independent complete model cards, not a lossy
+// AllModelMetas returns independent complete model cards, not a lossy
 // reconstruction from runtime pricing/context caches or user overrides.
-func GetAllModelMetas() map[string]ModelMeta {
+func AllModelMetas() map[string]ModelMeta {
 	if catalog := activeModelCatalog.Load(); catalog != nil {
 		return catalog.Models()
 	}

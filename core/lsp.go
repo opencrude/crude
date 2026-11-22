@@ -2,9 +2,10 @@ package core
 
 import (
 	"context"
-	"crude/core/port"
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/core/shellport"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -128,14 +129,14 @@ func lspSnapshot(manager *workspace.LSPManager) coreprotocol.LSPSnapshot {
 	out := coreprotocol.LSPSnapshot{Available: true, Generation: generation, Version: version}
 	_, out.ContextGeneration = manager.ContextCursor()
 	out.Diagnostics = manager.AllDiagnostics()
-	out.Symbols = make(map[string][]workspace.LSPSymbol)
+	out.Symbols = make(map[string][]insight.LSPSymbol)
 	for path, symbols := range manager.AllDocumentSymbols() {
 		out.Symbols[path] = cloneLSPSymbols(symbols)
 	}
 	out.Insights, out.Health = manager.ProjectInsights(), manager.ServerHealthSnapshots()
 	out.Assistance = manager.AssistanceSnapshots()
 	out.Assembly = manager.Assembly()
-	out.Settings = types.CloneLSPSettings(manager.Settings())
+	out.Settings = setting.CloneLSP(manager.Settings())
 	out.Connected, out.Status, out.Error = manager.Status()
 	out.Ready = manager.ServerReady()
 	out.ShowInEditor, out.ShowInTree = manager.ShowDiagnosticsInEditor(), manager.ShowDiagnosticsInTree()
@@ -144,8 +145,8 @@ func lspSnapshot(manager *workspace.LSPManager) coreprotocol.LSPSnapshot {
 	return out
 }
 
-func cloneLSPSymbols(in []workspace.LSPSymbol) []workspace.LSPSymbol {
-	out := append([]workspace.LSPSymbol(nil), in...)
+func cloneLSPSymbols(in []insight.LSPSymbol) []insight.LSPSymbol {
+	out := append([]insight.LSPSymbol(nil), in...)
 	for i := range out {
 		out[i].Children = cloneLSPSymbols(out[i].Children)
 	}

@@ -13,10 +13,10 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/port"
-	"crude/text/diff"
-	"crude/text/encoding"
-	findinfiles "crude/tui/screens/findinfiles"
+	"crude/core/shellport"
+	"crude/text/textdiff"
+	"crude/text/textencoding"
+	"crude/tui/screens/findinfiles"
 	"crude/tui/surface"
 	"crude/tui/ui"
 	"crude/tui/wm"

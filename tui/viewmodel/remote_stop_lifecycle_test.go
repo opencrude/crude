@@ -16,8 +16,8 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/session"
-	"crude/types"
 	"crude/types/recovery"
+	"crude/types/statuscenter"
 )
 
 func TestRemoteAppJourneyRepeatedStopSteeringCompactionAndResume(t *testing.T) {
@@ -126,7 +126,7 @@ func TestRemoteAppJourneyRepeatedStopSteeringCompactionAndResume(t *testing.T) {
 	}
 	send(one, "FOLLOW seed evidence\n"+strings.Repeat("retained source evidence\n", 4_000))
 	remoteJourneyUntil(t, shells, func() bool {
-		return normal.Load() == 1 && one.app.ws.AgentActivity(id).Status.Phase == types.AgentCompleted
+		return normal.Load() == 1 && one.app.ws.AgentActivity(id).Status.Phase == statuscenter.AgentCompleted
 	})
 	compacted := false
 	for _, message := range one.app.ws.AgentMgr().Get(id).State.Messages.Messages() {
@@ -173,7 +173,7 @@ func TestRemoteAppJourneyRepeatedStopSteeringCompactionAndResume(t *testing.T) {
 				if state.RecoveryStatus().State == recovery.NeedsAttention {
 					t.Fatalf("cycle %d stranded in recovery: %+v", cycle, state.RecoveryStatus())
 				}
-				if shell.app.ws.AgentActivity(id).Status.Phase != types.AgentCompleted {
+				if shell.app.ws.AgentActivity(id).Status.Phase != statuscenter.AgentCompleted {
 					return false
 				}
 				paint := ansi.Strip(shell.app.View().RenderContent())
@@ -196,13 +196,13 @@ func TestRemoteAppJourneyRepeatedStopSteeringCompactionAndResume(t *testing.T) {
 	remoteJourneyUntil(t, shells, func() bool { return one.app.ws.AgentMgr().Get(id).State.Messages.PendingSteeringCount() == 1 })
 	close(releaseSteering)
 	remoteJourneyUntil(t, shells, func() bool {
-		return normal.Load() == 13 && one.app.ws.AgentActivity(id).Status.Phase == types.AgentCompleted &&
+		return normal.Load() == 13 && one.app.ws.AgentActivity(id).Status.Phase == statuscenter.AgentCompleted &&
 			strings.Contains(ansi.Strip(one.app.View().RenderContent()), "HUMAN STEERING REACHED THE MODEL") &&
 			strings.Contains(ansi.Strip(two.app.View().RenderContent()), "HUMAN STEERING REACHED THE MODEL")
 	})
 	send(two, "FOLLOW after successful steering")
 	remoteJourneyUntil(t, shells, func() bool {
-		return normal.Load() == 14 && two.app.ws.AgentActivity(id).Status.Phase == types.AgentCompleted
+		return normal.Load() == 14 && two.app.ws.AgentActivity(id).Status.Phase == statuscenter.AgentCompleted
 	})
 	if normal.Load() != 14 {
 		t.Fatalf("steering was lost or replayed: %d", normal.Load())
@@ -223,7 +223,7 @@ func TestRemoteAppJourneyRepeatedStopSteeringCompactionAndResume(t *testing.T) {
 	})
 	send(one, "FOLLOW after failed authentication")
 	remoteJourneyUntil(t, shells, func() bool {
-		return normal.Load() == 16 && one.app.ws.AgentActivity(id).Status.Phase == types.AgentCompleted
+		return normal.Load() == 16 && one.app.ws.AgentActivity(id).Status.Phase == statuscenter.AgentCompleted
 	})
 	if normal.Load() != 16 || two.app.Input.Value() != "private draft during failure" {
 		t.Fatal("provider failure/Stop lost draft or duplicated follow-up")
@@ -248,7 +248,7 @@ func TestRemoteAppJourneyRepeatedStopSteeringCompactionAndResume(t *testing.T) {
 	id = resumed.app.AgentView.ActiveID()
 	send(resumed, "FOLLOW after cold resume")
 	remoteJourneyUntil(t, []remoteJourneyShell{resumed}, func() bool {
-		return normal.Load() == 17 && resumed.app.ws.AgentActivity(id).Status.Phase == types.AgentCompleted
+		return normal.Load() == 17 && resumed.app.ws.AgentActivity(id).Status.Phase == statuscenter.AgentCompleted
 	})
 	if normal.Load() != 17 {
 		t.Fatal("resumed dense session did not accept one fresh turn")
@@ -333,7 +333,7 @@ func TestRemoteAppJourneyStaleRunningShellSendsAfterPeerCompletion(t *testing.T)
 	one.app.Input.SetInput("private peer draft")
 	releaseOnce.Do(func() { close(release) })
 	// Freeze two's replica while one observes actual terminal completion.
-	remoteJourneyUntil(t, []remoteJourneyShell{one}, func() bool { return one.app.ws.AgentActivity(id).Status.Phase == types.AgentCompleted })
+	remoteJourneyUntil(t, []remoteJourneyShell{one}, func() bool { return one.app.ws.AgentActivity(id).Status.Phase == statuscenter.AgentCompleted })
 	if !two.app.ws.AgentMgr().Get(id).State.IsActive() {
 		t.Fatal("fixture did not retain the stale running view")
 	}
@@ -343,7 +343,7 @@ func TestRemoteAppJourneyStaleRunningShellSendsAfterPeerCompletion(t *testing.T)
 	runAppCommand(t, two.app, cmd)
 	remoteJourneyUntil(t, shells, func() bool {
 		return calls.Load() == 2 && strings.Contains(ansi.Strip(two.app.View().RenderContent()), "STALE SHELL FOLLOW-UP COMPLETED") &&
-			one.app.ws.AgentActivity(id).Status.Phase == types.AgentCompleted && two.app.ws.AgentActivity(id).Status.Phase == types.AgentCompleted
+			one.app.ws.AgentActivity(id).Status.Phase == statuscenter.AgentCompleted && two.app.ws.AgentActivity(id).Status.Phase == statuscenter.AgentCompleted
 	})
 	if two.app.Input.Value() != "" || one.app.Input.Value() != "private peer draft" {
 		t.Fatal("completion fallback consumed the wrong draft")
@@ -416,7 +416,7 @@ func TestRemoteAppJourneyStaleIdleShellSteersPeerRun(t *testing.T) {
 	}
 	once.Do(func() { close(release) })
 	remoteJourneyUntil(t, shells, func() bool {
-		return calls.Load() == 2 && one.app.ws.AgentActivity(id).Status.Phase == types.AgentCompleted && two.app.ws.AgentActivity(id).Status.Phase == types.AgentCompleted
+		return calls.Load() == 2 && one.app.ws.AgentActivity(id).Status.Phase == statuscenter.AgentCompleted && two.app.ws.AgentActivity(id).Status.Phase == statuscenter.AgentCompleted
 	})
 	select {
 	case found := <-steeringObserved:

@@ -1,7 +1,7 @@
 package editor
 
 import (
-	"crude/types"
+	"crude/types/insight"
 	"crude/workspace/document"
 	"slices"
 )
@@ -213,7 +213,7 @@ func (e *Editor) releaseLinkedDocument() {
 	e.documentProjection = nil
 	e.canonicalInsight, e.canonicalInk = nil, nil
 	e.diagMu.Lock()
-	e.diagnosticFacts = types.InsightDiagnostics{}
+	e.diagnosticFacts = insight.Diagnostics{}
 	e.diagnosticProjectedID = ""
 	e.diagnostics, e.diagByLine = nil, nil
 	e.diagMu.Unlock()

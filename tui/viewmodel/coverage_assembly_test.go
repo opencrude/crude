@@ -4,22 +4,23 @@ import (
 	"strings"
 	"testing"
 
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/screens/problems"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/statuscenter"
 )
 
 type coverageFixture struct {
 	shellport.LSPService
-	insights types.ProjectInsights
-	plan     types.AssemblyPlan
-	servers  []types.LSPServerHealth
+	insights insight.ProjectInsights
+	plan     insight.AssemblyPlan
+	servers  []statuscenter.LSPServerHealth
 }
 
-func (f *coverageFixture) ProjectInsights() types.ProjectInsights         { return f.insights }
-func (f *coverageFixture) Assembly() types.AssemblyPlan                   { return f.plan }
-func (f *coverageFixture) ServerHealthSnapshots() []types.LSPServerHealth { return f.servers }
+func (f *coverageFixture) ProjectInsights() insight.ProjectInsights              { return f.insights }
+func (f *coverageFixture) Assembly() insight.AssemblyPlan                        { return f.plan }
+func (f *coverageFixture) ServerHealthSnapshots() []statuscenter.LSPServerHealth { return f.servers }
 
 // problemByRef finds the pane row of one diagnostic in one exact batch.
 func problemByRef(model problems.Model, factsID string, index int) (problems.Problem, bool) {
@@ -38,25 +39,25 @@ func TestProblemsStatusCountsServersOrNamesNextStep(t *testing.T) {
 	app, ed, _, facts := qualifiedDiagnosticApp(t)
 	f := &coverageFixture{LSPService: app.ws.LSPMgr()}
 	app.ws = &diagnosticFixtureWorkspace{Workspace: app.ws, service: f, root: app.ws.RootPath()}
-	app.lspFacts = map[string]types.InsightDiagnostics{ed.FilePath(): facts}
+	app.lspFacts = map[string]insight.Diagnostics{ed.FilePath(): facts}
 	for _, tc := range []struct {
 		name       string
-		status     types.LanguageServiceStatus
-		servers    []types.LSPServerHealth
+		status     insight.LanguageServiceStatus
+		servers    []statuscenter.LSPServerHealth
 		wantAction string
 		wantLabel  string
 		wantText   string
 		attention  bool
 	}{
-		{"restricted", types.LanguageServiceStatus{State: types.LanguageRestricted, Message: "Language servers do not run in restricted mode.", Action: types.LanguageActionTrustFolder, ActionLabel: "Trust folder"}, nil, "language:trust", "Trust folder", "Language servers do not run in restricted mode.", true},
-		{"off", types.LanguageServiceStatus{State: types.LanguageOff, Message: "Language servers are off.", Action: types.LanguageActionOpenSettings, ActionLabel: "Open settings"}, nil, "language:settings", "Open settings", "Language servers are off.", true},
-		{"paused", types.LanguageServiceStatus{State: types.LanguageOff, Message: "Language servers are stopped.", Action: types.LanguageActionStartServers, ActionLabel: "Start language servers"}, nil, "lsp:start-all", "Start language servers", "Language servers are stopped.", true},
-		{"two running", types.LanguageServiceStatus{State: types.LanguageReady}, []types.LSPServerHealth{{Name: "gopls", Connected: true}, {Name: "pyright", Connected: true}, {Name: "rust", Starting: true}}, "language:settings", "Language settings", "2 language servers running, 1 starting", false},
-		{"one failed", types.LanguageServiceStatus{State: types.LanguageReady}, []types.LSPServerHealth{{Name: "gopls", Connected: true}, {Name: "rust", Error: "exit 1"}}, "language:settings", "Language settings", "1 language server running, 1 stopped with an error", true},
-		{"none", types.LanguageServiceStatus{State: types.LanguageReady}, nil, "language:settings", "Language settings", "No language server is running.", false},
+		{"restricted", insight.LanguageServiceStatus{State: insight.LanguageRestricted, Message: "Language servers do not run in restricted mode.", Action: insight.LanguageActionTrustFolder, ActionLabel: "Trust folder"}, nil, "language:trust", "Trust folder", "Language servers do not run in restricted mode.", true},
+		{"off", insight.LanguageServiceStatus{State: insight.LanguageOff, Message: "Language servers are off.", Action: insight.LanguageActionOpenSettings, ActionLabel: "Open settings"}, nil, "language:settings", "Open settings", "Language servers are off.", true},
+		{"paused", insight.LanguageServiceStatus{State: insight.LanguageOff, Message: "Language servers are stopped.", Action: insight.LanguageActionStartServers, ActionLabel: "Start language servers"}, nil, "lsp:start-all", "Start language servers", "Language servers are stopped.", true},
+		{"two running", insight.LanguageServiceStatus{State: insight.LanguageReady}, []statuscenter.LSPServerHealth{{Name: "gopls", Connected: true}, {Name: "pyright", Connected: true}, {Name: "rust", Starting: true}}, "language:settings", "Language settings", "2 language servers running, 1 starting", false},
+		{"one failed", insight.LanguageServiceStatus{State: insight.LanguageReady}, []statuscenter.LSPServerHealth{{Name: "gopls", Connected: true}, {Name: "rust", Error: "exit 1"}}, "language:settings", "Language settings", "1 language server running, 1 stopped with an error", true},
+		{"none", insight.LanguageServiceStatus{State: insight.LanguageReady}, nil, "language:settings", "Language settings", "No language server is running.", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			f.insights = types.ProjectInsights{Language: tc.status, DiagnosticsObserved: 1}
+			f.insights = insight.ProjectInsights{Language: tc.status, DiagnosticsObserved: 1}
 			f.servers = tc.servers
 			model := app.problemsModel()
 			status := model.Status
@@ -78,11 +79,11 @@ func TestProblemsStatusCountsServersOrNamesNextStep(t *testing.T) {
 func TestProblemsModelCarriesEveryDiagnostic(t *testing.T) {
 	app, ed, _, facts := qualifiedDiagnosticApp(t)
 	path := ed.FilePath()
-	facts.Diagnostics = []types.LSPDiagnostic{
-		{Line: 8, Col: 2, Severity: types.DiagWarning, Message: "late warning", Source: "vet"},
-		{Line: 4, Col: 9, Severity: types.DiagError, Message: "second error", Source: "compiler"},
+	facts.Diagnostics = []insight.LSPDiagnostic{
+		{Line: 8, Col: 2, Severity: insight.DiagWarning, Message: "late warning", Source: "vet"},
+		{Line: 4, Col: 9, Severity: insight.DiagError, Message: "second error", Source: "compiler"},
 	}
-	app.lspFacts = map[string]types.InsightDiagnostics{path: facts}
+	app.lspFacts = map[string]insight.Diagnostics{path: facts}
 	model := app.problemsModel()
 	if len(model.Problems) != 2 {
 		t.Fatalf("problems = %d, want 2", len(model.Problems))
@@ -110,12 +111,12 @@ func TestProblemsRestartButtonRestartsOnlyFailedServers(t *testing.T) {
 	app, ed, _, facts := qualifiedDiagnosticApp(t)
 	fixture := &restartRecorder{coverageFixture: &coverageFixture{LSPService: app.ws.LSPMgr()}}
 	app.ws = &diagnosticFixtureWorkspace{Workspace: app.ws, service: fixture, root: app.ws.RootPath()}
-	app.lspFacts = map[string]types.InsightDiagnostics{ed.FilePath(): facts}
-	failed := types.LanguageServiceStatus{State: types.LanguageFailed, Label: "Language server failed",
+	app.lspFacts = map[string]insight.Diagnostics{ed.FilePath(): facts}
+	failed := insight.LanguageServiceStatus{State: insight.LanguageFailed, Label: "Language server failed",
 		Message: "gopls failed. The server reported an error. Check its installation and restart it.",
-		Action:  types.LanguageActionRestartServer, ActionLabel: "Restart gopls"}
-	fixture.insights = types.ProjectInsights{Language: failed, DiagnosticsObserved: 1}
-	fixture.servers = []types.LSPServerHealth{{ID: "go", Name: "gopls", Error: "exit 2"}, {ID: "py", Name: "pyright", Connected: true}}
+		Action:  insight.LanguageActionRestartServer, ActionLabel: "Restart gopls"}
+	fixture.insights = insight.ProjectInsights{Language: failed, DiagnosticsObserved: 1}
+	fixture.servers = []statuscenter.LSPServerHealth{{ID: "go", Name: "gopls", Error: "exit 2"}, {ID: "py", Name: "pyright", Connected: true}}
 	status := app.problemsModel().Status
 	if status.Action != "lsp:restart-failed" || status.ActionLabel != "Restart gopls" {
 		t.Fatalf("one failure: %+v", status)
@@ -125,7 +126,7 @@ func TestProblemsRestartButtonRestartsOnlyFailedServers(t *testing.T) {
 		t.Fatalf("restart = %v, settings open = %v", fixture.restarted, app.overlayHost.IsOpen(ui.OverlayWorkspaceSettings))
 	}
 	fixture.restarted = nil
-	fixture.servers = append(fixture.servers, types.LSPServerHealth{ID: "ts", Name: "tsserver", Error: "exit 1"})
+	fixture.servers = append(fixture.servers, statuscenter.LSPServerHealth{ID: "ts", Name: "tsserver", Error: "exit 1"})
 	if status := app.problemsModel().Status; status.ActionLabel != "Restart failed servers" {
 		t.Fatalf("two failures: %+v", status)
 	}

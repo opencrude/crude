@@ -6,9 +6,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/clipboard"
+	"crude/internal/clipboard"
 	"crude/tui/ui"
-	wm "crude/tui/wm"
+	"crude/tui/wm"
 )
 
 // recordingClipboard installs a backend that captures clipboard writes instead

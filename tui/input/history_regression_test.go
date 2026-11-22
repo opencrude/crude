@@ -4,13 +4,13 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/history"
+	"crude/agent/prompthistory"
 	"crude/tui/theme"
 )
 
 func TestHistoryDownReachesNewestAndThenOriginalDraft(t *testing.T) {
 	m := NewModel(theme.DefaultDark())
-	m.SetHistory([]history.Entry{{Text: "prefix older"}, {Text: "prefix newest"}})
+	m.SetHistory([]prompthistory.Entry{{Text: "prefix older"}, {Text: "prefix newest"}})
 	m.SetInput("prefix")
 	for _, step := range []struct {
 		key  rune
@@ -29,7 +29,7 @@ func TestHistoryDownReachesNewestAndThenOriginalDraft(t *testing.T) {
 
 func TestHistoryWheelDoesNotDiscardRecallOrKeepSendBlocked(t *testing.T) {
 	m := NewModel(theme.DefaultDark())
-	m.SetHistory([]history.Entry{{Text: "history"}})
+	m.SetHistory([]prompthistory.Entry{{Text: "history"}})
 	m.SetInput("")
 	m, _, event := m.Update(tea.MouseClickMsg{Button: tea.MouseWheelUp}, false, false)
 	recall, ok := event.(HistoryRecallEvent)

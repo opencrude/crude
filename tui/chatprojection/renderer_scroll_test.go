@@ -8,7 +8,7 @@ import (
 
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 func testRendererWithDualScroll(t *testing.T) (*Renderer, *ui.ScrollModel, *ui.ScrollModel) {
@@ -26,11 +26,11 @@ func testRendererWithDualScroll(t *testing.T) (*Renderer, *ui.ScrollModel, *ui.S
 
 func seedScrollableMessages(r *Renderer, count int) {
 	now := time.Unix(1, 0)
-	messages := make([]types.ChatMessage, 0, count)
+	messages := make([]conversation.ChatMessage, 0, count)
 	for i := 0; i < count; i++ {
-		messages = append(messages, types.ChatMessage{
+		messages = append(messages, conversation.ChatMessage{
 			InternalID: "m-" + string(rune('a'+i)),
-			Role:       types.RoleAssistant,
+			Role:       conversation.RoleAssistant,
 			Content:    strings.Repeat("line\n", 6),
 			Time:       now,
 		})
@@ -140,9 +140,9 @@ func TestRendererPaneOnlyAppendSticksWhenArmed(t *testing.T) {
 	r.SetChatAreaBounds(0, 3)
 	seedScrollableMessages(r, 5)
 
-	r.AppendMessage(types.ChatMessage{
+	r.AppendMessage(conversation.ChatMessage{
 		InternalID: "new",
-		Role:       types.RoleAssistant,
+		Role:       conversation.RoleAssistant,
 		Content:    strings.Repeat("x\n", 8),
 		Time:       time.Unix(2, 0),
 	})
@@ -167,9 +167,9 @@ func TestRendererPaneOnlyDisarmedPreservesOffsetOnAppend(t *testing.T) {
 	pane.ScrollTo(1)
 	before := pane.Offset()
 
-	r.AppendMessage(types.ChatMessage{
+	r.AppendMessage(conversation.ChatMessage{
 		InternalID: "new",
-		Role:       types.RoleAssistant,
+		Role:       conversation.RoleAssistant,
 		Content:    strings.Repeat("y\n", 8),
 		Time:       time.Unix(2, 0),
 	})
@@ -191,9 +191,9 @@ func TestSubPaneLeadingSpacerIsNotPaneOwned(t *testing.T) {
 		line.PaneInfo = PaneLineInfo{PaneID: paneID, LineIdx: -1}
 		return []SubPaneLine{line}
 	})
-	r.AppendMessage(types.ChatMessage{
+	r.AppendMessage(conversation.ChatMessage{
 		InternalID: "thought-pane",
-		Role:       types.RoleTool,
+		Role:       conversation.RoleTool,
 		SubPaneID:  "thinking-1",
 	})
 
@@ -218,14 +218,14 @@ func TestCollapsedThinkingThenToolIsSingleGap(t *testing.T) {
 			NativeLine(PaintLine{Spans: []RowSpan{{Text: "Thought for 2s", Role: ui.ColorMuted}}}),
 		}
 	})
-	r.AppendMessage(types.ChatMessage{
+	r.AppendMessage(conversation.ChatMessage{
 		InternalID: "thought-pane",
-		Role:       types.RoleTool,
+		Role:       conversation.RoleTool,
 		SubPaneID:  "thinking-1",
 	})
-	r.AppendMessage(types.ChatMessage{
+	r.AppendMessage(conversation.ChatMessage{
 		InternalID: "tool-1",
-		Role:       types.RoleTool,
+		Role:       conversation.RoleTool,
 		ToolName:   "search_history",
 		Content:    "Search History settings deck restore",
 	})
@@ -250,11 +250,11 @@ func TestPaneThenActivityHasExactlyOneGap(t *testing.T) {
 	r.SetSubPaneContentFn(func(_ string, _, _, _ int, _ bool) []SubPaneLine {
 		return []SubPaneLine{NativeLine(buildPlainBodyLine("Finished child"))}
 	})
-	r.SyncMessages([]types.ChatMessage{
-		{InternalID: "child", Role: types.RoleTool, SubPaneID: "child-pane"},
-		{InternalID: "empty", Role: types.RoleAssistant},
-		{InternalID: "one", Role: types.RoleTool, ToolName: "read_file", ToolArgs: "one.go", ToolStatus: types.ToolStatusSuccess},
-		{InternalID: "two", Role: types.RoleTool, ToolName: "read_file", ToolArgs: "two.go", ToolStatus: types.ToolStatusSuccess},
+	r.SyncMessages([]conversation.ChatMessage{
+		{InternalID: "child", Role: conversation.RoleTool, SubPaneID: "child-pane"},
+		{InternalID: "empty", Role: conversation.RoleAssistant},
+		{InternalID: "one", Role: conversation.RoleTool, ToolName: "read_file", ToolArgs: "one.go", ToolStatus: conversation.ToolStatusSuccess},
+		{InternalID: "two", Role: conversation.RoleTool, ToolName: "read_file", ToolArgs: "two.go", ToolStatus: conversation.ToolStatusSuccess},
 	}, 1, 0)
 	rows, _, _ := r.ExportMessageRows(100)
 	var lines []string
@@ -273,9 +273,9 @@ func TestExportMessageRowsRendersEveryDirtyItem(t *testing.T) {
 	r.SetSize(48, 3)
 	r.SetChatAreaBounds(0, 3)
 	for i := 0; i < 10; i++ {
-		r.AppendMessage(types.ChatMessage{
+		r.AppendMessage(conversation.ChatMessage{
 			InternalID: fmt.Sprintf("message-%d", i),
-			Role:       types.RoleAssistant,
+			Role:       conversation.RoleAssistant,
 			Content:    fmt.Sprintf("content-%d", i),
 		})
 	}
@@ -297,9 +297,9 @@ func TestLaterToolRemovesCursorFromPreviousAssistant(t *testing.T) {
 	r.SetChatAreaBounds(0, 8)
 	r.SetStreaming(true)
 	r.SetActiveTyping(true)
-	r.AppendMessage(types.ChatMessage{
+	r.AppendMessage(conversation.ChatMessage{
 		InternalID: "assistant",
-		Role:       types.RoleAssistant,
+		Role:       conversation.RoleAssistant,
 		Content:    "I will inspect the current implementation.",
 	})
 
@@ -324,16 +324,16 @@ func TestSyncAppendRemovesCursorFromPreviousAssistant(t *testing.T) {
 	r.SetChatAreaBounds(0, 8)
 	r.SetStreaming(true)
 	r.SetActiveTyping(true)
-	r.SyncMessages([]types.ChatMessage{{
+	r.SyncMessages([]conversation.ChatMessage{{
 		InternalID: "assistant",
-		Role:       types.RoleAssistant,
+		Role:       conversation.RoleAssistant,
 		Content:    "Working now.",
 	}}, 1, 0)
 	_, _, _ = r.ExportMessageRows(60)
 
-	r.SyncMessages([]types.ChatMessage{
-		{InternalID: "assistant", Role: types.RoleAssistant, Content: "Working now."},
-		{InternalID: "tool", Role: types.RoleTool, ToolName: "read_file", ToolStatus: "calling"},
+	r.SyncMessages([]conversation.ChatMessage{
+		{InternalID: "assistant", Role: conversation.RoleAssistant, Content: "Working now."},
+		{InternalID: "tool", Role: conversation.RoleTool, ToolName: "read_file", ToolStatus: "calling"},
 	}, 2, 0)
 	rows, _, _ := r.ExportMessageRows(60)
 	if got := strings.Join(rows[0].Lines, "\n"); strings.Contains(got, "█") {

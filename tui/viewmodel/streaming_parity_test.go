@@ -11,10 +11,10 @@ import (
 	"github.com/charmbracelet/colorprofile"
 	uv "github.com/charmbracelet/ultraviolet"
 
-	"crude/agent"
-	"crude/terminalvt"
+	"crude/agent/turnloop"
+	"crude/internal/terminalvt"
 	"crude/tui/chatprojection"
-	"crude/types"
+	"crude/types/conversation"
 	"crude/types/recovery"
 	"crude/workspace"
 )
@@ -75,15 +75,15 @@ func TestNativeStreamingAssistantMatchesPresentedFrame(t *testing.T) {
 				}
 			}
 			emit := func(kind string, data any) {
-				app.Update(agent.AgentEvent{AgentID: "root", Type: kind, Data: data})
+				app.Update(turnloop.AgentEvent{AgentID: "root", Type: kind, Data: data})
 				present(kind)
 			}
 			present("dense history")
-			emit("turn_started", types.TurnIdentity{Generation: 1, ModelID: "model"})
+			emit("turn_started", conversation.TurnIdentity{Generation: 1, ModelID: "model"})
 			emit("phase", map[string]any{"name": "waiting_provider"})
 			for at := 0; at < len(streamParityAnswer); at += 5 {
 				emit("stream_token", streamParityAnswer[at:min(at+5, len(streamParityAnswer))])
-				app.Update(types.TickMsg(time.Now()))
+				app.Update(TickMsg(time.Now()))
 				present("cursor tick")
 			}
 			emit("done", map[string]any{"content": streamParityAnswer, "reason": "completed"})
@@ -105,7 +105,7 @@ func TestStreamingAssistantRetainedPaintMatchesSource(t *testing.T) {
 					app.handleAgentDomainEvent(workspace.AgentEvent{AgentID: "root", Type: kind, Data: data})
 					app.paintShellFrame()
 				}
-				emit("turn_started", types.TurnIdentity{Generation: 1, ModelID: "model"})
+				emit("turn_started", conversation.TurnIdentity{Generation: 1, ModelID: "model"})
 				status := recovery.Status{ID: "incident", AgentID: "root", Generation: 1, State: recovery.Recovering, StartedAt: time.Now(), UpdatedAt: time.Now(), Summary: "Retrying unfinished run"}
 				if settlement == "recovered" {
 					emit("recovery", status)
@@ -117,7 +117,7 @@ func TestStreamingAssistantRetainedPaintMatchesSource(t *testing.T) {
 					accepted += chunk
 					emit("stream_token", chunk)
 					messages := state.Messages.Messages()
-					if messages[len(messages)-1].Role != types.RoleAssistant || messages[len(messages)-1].Content != accepted {
+					if messages[len(messages)-1].Role != conversation.RoleAssistant || messages[len(messages)-1].Content != accepted {
 						t.Fatalf("stream source differs at byte %d: %+v", at, messages)
 					}
 					assertStreamParityRows(t, app.activeMessageList().ExportMessageRowsSnapshot(app.chatReflowInnerW), accepted)
@@ -133,7 +133,7 @@ func TestStreamingAssistantRetainedPaintMatchesSource(t *testing.T) {
 				messages := state.Messages.Messages()
 				var answers []string
 				for _, message := range messages {
-					if message.Role == types.RoleAssistant {
+					if message.Role == conversation.RoleAssistant {
 						answers = append(answers, message.Content)
 					}
 				}

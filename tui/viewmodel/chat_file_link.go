@@ -10,7 +10,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/internal/filelink"
 	"crude/tui/chatprojection"
 	"crude/tui/editor"

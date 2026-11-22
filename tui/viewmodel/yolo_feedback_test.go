@@ -2,11 +2,11 @@ package viewmodel
 
 import (
 	"crude/tui/screens/decision"
+	"crude/types/conversation"
 	"strings"
 	"testing"
 
 	"crude/tui/ui"
-	"crude/types"
 	"crude/workspace"
 )
 
@@ -33,7 +33,7 @@ func TestYoloTransitionsUseOnePathAndDoNotImpersonateAssistant(t *testing.T) {
 		t.Fatalf("enable/disable feedback differs: %+v", messages)
 	}
 	for _, message := range messages {
-		if message.Role != types.RoleStatus || message.LifecycleOperationID == "" {
+		if message.Role != conversation.RoleStatus || message.LifecycleOperationID == "" {
 			t.Fatalf("YOLO feedback became assistant or transient turn content: %+v", message)
 		}
 	}
@@ -52,7 +52,7 @@ func TestYoloScopesToOwningRootAndCompleteDescendantTree(t *testing.T) {
 	first := addBackendTestOrchestrator(t, app)
 	second := addBackendTestOrchestrator(t, app)
 	t.Cleanup(wsOf(app).CloseAllSessions)
-	pane := app.ws.PaneMgr().GetOrCreate("child", workspace.PaneAgent, "child")
+	pane := app.ws.PaneMgr().Ensure("child", workspace.PaneAgent, "child")
 	childState := workspace.NewAgentState("child", pane.Messages, app.ws.Logger())
 	app.ws.AgentMgr().AddSubAgent("child", first, "Child", "model", "researcher", childState)
 
@@ -79,7 +79,7 @@ func TestAgentFailurePublishesOneNoticeForItsActualOwner(t *testing.T) {
 	app.AddOrchestrator("background")
 	app.ws.AgentMgr().Get("background").State.Running = true
 	app.AddOrchestrator("foreground")
-	cmd := app.handleAgentEvent(types.AgentEventMsg{AgentID: "background", Type: "error", Data: "history sync failed"})
+	cmd := app.handleAgentEvent(AgentEventMsg{AgentID: "background", Type: "error", Data: "history sync failed"})
 	if cmd != nil {
 		cmd()
 	}

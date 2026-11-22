@@ -12,11 +12,11 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"crude/agent"
 	"crude/agent/capability"
 	"crude/agent/collaboration"
 	"crude/agent/provider"
 	"crude/agent/skills"
+	"crude/agent/turnloop"
 	captypes "crude/types/capability"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -107,7 +107,7 @@ func TestTaskAcquiresSkillActivatesMCPUsesToolAndResumesPassively(test *testing.
 	}
 	defer owner.Close()
 	owner.SetWorkDir(root)
-	owner.SetCapabilities(runtime, agent.NewFileOwnership())
+	owner.SetCapabilities(runtime, turnloop.NewFileOwnership())
 	store, err := collaboration.Attach(database, root, filepath.Join(home, "locks"))
 	if err != nil {
 		test.Fatal(err)

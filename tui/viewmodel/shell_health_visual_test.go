@@ -12,8 +12,9 @@ import (
 
 	"crude/tui/screens/shellfooter"
 	"crude/tui/screens/termdock"
-	"crude/types"
 	captypes "crude/types/capability"
+	"crude/types/setting"
+	"crude/types/statuscenter"
 	"crude/workspace"
 )
 
@@ -45,8 +46,8 @@ func TestShellHealthVisualAcceptance(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: review-guide\ndescription: Local evidence review.\n---\nReview exact evidence.\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	seed := workspace.NewWorkspace(root, "", "tester", types.Settings{}, nil)
-	seed.Status.Notify(types.NotificationRecord{ID: "visual-notice", Summary: "Recovered notice", Detail: "This notice survived a cold core start.", Source: "acceptance"})
+	seed := workspace.NewWorkspace(root, "", "tester", setting.Settings{}, nil)
+	seed.Status.Notify(statuscenter.NotificationRecord{ID: "visual-notice", Summary: "Recovered notice", Detail: "This notice survived a cold core start.", Source: "acceptance"})
 	seed.Close()
 	runtime := remoteJourneyRuntime(t, "http://unused.invalid")
 	shell := newRemoteJourneyShell(t, runtime, root)

@@ -1,8 +1,8 @@
 package workspace
 
 import (
-	"crude/types"
 	"crude/types/recovery"
+	"crude/types/statuscenter"
 	"time"
 )
 
@@ -19,7 +19,7 @@ func (w *Workspace) SyncAgentStatusInventory() {
 		state := node.State
 		status, exists := w.Status.Agent(node.ID)
 		if !exists {
-			status = types.AgentStatusSnapshot{Ref: types.ResourceRef{Kind: types.ResourceAgent, ID: node.ID}, Phase: types.AgentIdle, Detail: "Idle"}
+			status = statuscenter.AgentStatusSnapshot{Ref: statuscenter.ResourceRef{Kind: statuscenter.ResourceAgent, ID: node.ID}, Phase: statuscenter.AgentIdle, Detail: "Idle"}
 		}
 		status.Label, status.ReadOnly = w.agentIdentityLabel(node), state.Completed
 		if node.Model != "" {
@@ -33,7 +33,7 @@ func (w *Workspace) SyncAgentStatusInventory() {
 		}
 		blocked := state.PendingBlockID != "" && state.PendingPermTag == ""
 		prompt := w.agentPrompts[node.ID]
-		question := blocked && (prompt.IsQuestion || status.Phase == types.AgentQuestion)
+		question := blocked && (prompt.IsQuestion || status.Phase == statuscenter.AgentQuestion)
 		approval := blocked && !question && !w.YoloForAgent(node.ID)
 		status.NeedsAction = question || approval
 		incident := state.RecoveryStatus()
@@ -41,27 +41,27 @@ func (w *Workspace) SyncAgentStatusInventory() {
 		case state.Cancelling:
 			status = StoppingStatus(status)
 		case question:
-			status.Phase, status.Detail = types.AgentQuestion, "Needs answer"
+			status.Phase, status.Detail = statuscenter.AgentQuestion, "Needs answer"
 		case approval:
-			status.Phase, status.Detail = types.AgentApproval, "Needs approval"
+			status.Phase, status.Detail = statuscenter.AgentApproval, "Needs approval"
 		case incident.State == recovery.NeedsAttention:
-			status.Phase, status.Detail, status.NeedsAction = types.AgentNeedsAttention, incident.Summary, true
+			status.Phase, status.Detail, status.NeedsAction = statuscenter.AgentNeedsAttention, incident.Summary, true
 		case incident.State == recovery.Interrupted:
-			status.Phase, status.Detail, status.NeedsAction = types.AgentInterrupted, incident.Summary, true
+			status.Phase, status.Detail, status.NeedsAction = statuscenter.AgentInterrupted, incident.Summary, true
 		case incident.State == recovery.Recovering && incident.CanRetry():
-			status.Phase, status.Detail, status.RetryAt = types.AgentRecovering, incident.Summary, incident.RetryAt
+			status.Phase, status.Detail, status.RetryAt = statuscenter.AgentRecovering, incident.Summary, incident.RetryAt
 		case state.Completed:
 			status.Phase, status.Detail = agentTerminalPhase(state.Status)
 			status.NeedsAction = false
-		case !state.IsActive() && status.Phase != types.AgentCompleted && status.Phase != types.AgentCancelled && status.Phase != types.AgentFailed && status.Phase != types.AgentCompactionResult:
-			status.Phase, status.Detail = types.AgentIdle, "Idle"
-		case state.IsActive() && (status.Phase == types.AgentApproval || status.Phase == types.AgentQuestion):
-			status.Phase, status.Detail = types.AgentThinking, "Working"
+		case !state.IsActive() && status.Phase != statuscenter.AgentCompleted && status.Phase != statuscenter.AgentCancelled && status.Phase != statuscenter.AgentFailed && status.Phase != statuscenter.AgentCompactionResult:
+			status.Phase, status.Detail = statuscenter.AgentIdle, "Idle"
+		case state.IsActive() && (status.Phase == statuscenter.AgentApproval || status.Phase == statuscenter.AgentQuestion):
+			status.Phase, status.Detail = statuscenter.AgentThinking, "Working"
 		case state.IsActive() && !liveAgentPhase(status.Phase):
 			// Accepted input starts the turn at admission. A phase left by the
 			// previous turn (Completed, Failed, Idle...) must not keep claiming
 			// nothing is happening until the run's first event arrives.
-			status.Phase, status.Detail = types.AgentPreparing, "Preparing context"
+			status.Phase, status.Detail = statuscenter.AgentPreparing, "Preparing context"
 			status.StartedAt = time.Now()
 			status.RequestID = ""
 			status.UploadedBytes, status.TotalBytes, status.ProgressKnown, status.Progress = 0, 0, false, 0
@@ -71,11 +71,11 @@ func (w *Workspace) SyncAgentStatusInventory() {
 }
 
 // liveAgentPhase reports phases that describe a turn in progress.
-func liveAgentPhase(phase types.AgentPhase) bool {
+func liveAgentPhase(phase statuscenter.AgentPhase) bool {
 	switch phase {
-	case types.AgentOpening, types.AgentPreparing, types.AgentUploading, types.AgentWaiting, types.AgentCompacting,
-		types.AgentThinking, types.AgentResponding, types.AgentTool, types.AgentChildren, types.AgentRetrying,
-		types.AgentRecovering, types.AgentCancelling:
+	case statuscenter.AgentOpening, statuscenter.AgentPreparing, statuscenter.AgentUploading, statuscenter.AgentWaiting, statuscenter.AgentCompacting,
+		statuscenter.AgentThinking, statuscenter.AgentResponding, statuscenter.AgentTool, statuscenter.AgentChildren, statuscenter.AgentRetrying,
+		statuscenter.AgentRecovering, statuscenter.AgentCancelling:
 		return true
 	}
 	return false

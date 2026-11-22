@@ -13,7 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace/document"
 )
 
@@ -40,7 +41,7 @@ type completionAcceptanceCall struct {
 	original  string
 }
 
-func (c *completionAcceptanceClient) answer(call completionAcceptanceCall) (types.LSPCompletionResponse, error) {
+func (c *completionAcceptanceClient) answer(call completionAcceptanceCall) (insight.LSPCompletionResponse, error) {
 	c.mu.Lock()
 	wire := c.versions[call.path]
 	c.mu.Unlock()
@@ -50,8 +51,8 @@ func (c *completionAcceptanceClient) answer(call completionAcceptanceCall) (type
 	if call.resolve {
 		raw = c.resolved
 	}
-	out := types.LSPCompletionResponse{
-		Boundary:    types.InsightBoundary{Source: types.InsightSource{Path: "forged-adapter", Kind: "disk"}},
+	out := insight.LSPCompletionResponse{
+		Boundary:    insight.Boundary{Source: insight.Source{Path: "forged-adapter", Kind: "disk"}},
 		WireVersion: wire + c.wireDelta, JSON: []byte(raw),
 		Unsupported: c.unsupported, ResolveSupported: c.resolveSupported,
 	}
@@ -66,17 +67,17 @@ func (c *completionAcceptanceClient) answer(call completionAcceptanceCall) (type
 	return out, err
 }
 
-func (c *completionAcceptanceClient) RequestCompletions(ctx context.Context, path string, line, col int, trigger types.LSPCompletionContext) (types.LSPCompletionResponse, error) {
+func (c *completionAcceptanceClient) RequestCompletions(ctx context.Context, path string, line, col int, trigger insight.LSPCompletionContext) (insight.LSPCompletionResponse, error) {
 	return c.answer(completionAcceptanceCall{ctx: ctx, path: path, line: line, col: col})
 }
 
-func (c *completionAcceptanceClient) ResolveCompletion(ctx context.Context, path string, wire int, original []byte) (types.LSPCompletionResponse, error) {
+func (c *completionAcceptanceClient) ResolveCompletion(ctx context.Context, path string, wire int, original []byte) (insight.LSPCompletionResponse, error) {
 	return c.answer(completionAcceptanceCall{ctx: ctx, path: path, wire: wire, original: string(original), resolve: true})
 }
 
 type completionAcceptanceRuntime struct{ client *completionAcceptanceClient }
 
-func (r completionAcceptanceRuntime) NewClient(_ types.LSPServerSpec, _ string, admission func() error) LSPClient {
+func (r completionAcceptanceRuntime) NewClient(_ setting.LSPServerSpec, _ string, admission func() error) LSPClient {
 	r.client.startAdmission = admission
 	return r.client
 }
@@ -85,7 +86,7 @@ type completionAcceptanceFixture struct {
 	w      *Workspace
 	client *completionAcceptanceClient
 	owner  document.Owner
-	source types.InsightSource
+	source insight.Source
 	path   string
 	disk   string
 }
@@ -125,19 +126,19 @@ func newCompletionAcceptanceFixture(t *testing.T, text string) *completionAccept
 	return &completionAcceptanceFixture{&Workspace{LiveDocuments: docs, LSPMgr: manager}, client, owner, source, path, text}
 }
 
-func (f *completionAcceptanceFixture) request(t *testing.T, raw, view string, sequence uint64, line, col int) types.LSPCompletionSet {
+func (f *completionAcceptanceFixture) request(t *testing.T, raw, view string, sequence uint64, line, col int) insight.LSPCompletionSet {
 	t.Helper()
 	f.client.completionMu.Lock()
 	f.client.raw = raw
 	f.client.completionMu.Unlock()
-	set, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, view, sequence, line, col, types.LSPCompletionContext{})
+	set, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, view, sequence, line, col, insight.LSPCompletionContext{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return set
 }
 
-func (f *completionAcceptanceFixture) inspect(t *testing.T, set types.LSPCompletionSet, row int, resolve bool) types.LSPCompletionInspection {
+func (f *completionAcceptanceFixture) inspect(t *testing.T, set insight.LSPCompletionSet, row int, resolve bool) insight.LSPCompletionInspection {
 	t.Helper()
 	out, err := f.w.InspectLSPCompletion(t.Context(), f.owner, set.ID, set.Digest, set.Entries[row].ID, resolve)
 	if err != nil {
@@ -213,13 +214,13 @@ func TestCompletionCanonicalUnsavedSnippetAndLiteralAdjunctsAreReadOnly(t *testi
 		t.Fatal("lost initial snippet", set)
 	}
 	item := set.Entries[0].Insertion
-	wantPrimary := types.LSPTextEdit{Line: 0, Col: 4, EndLine: 0, EndCol: 6, NewText: "fn(x, x)"}
-	wantAdditional := []types.LSPTextEdit{{Line: 0, Col: 0, EndLine: 0, EndCol: 0, NewText: "$1 literal\r\n"}}
+	wantPrimary := insight.LSPTextEdit{Line: 0, Col: 4, EndLine: 0, EndCol: 6, NewText: "fn(x, x)"}
+	wantAdditional := []insight.LSPTextEdit{{Line: 0, Col: 0, EndLine: 0, EndCol: 0, NewText: "$1 literal\r\n"}}
 	if item.InsertText != "fn(x, x)" || item.TextEdit == nil || *item.TextEdit != wantPrimary ||
 		!reflect.DeepEqual(item.AdditionalTextEdits, wantAdditional) || item.Snippet == nil {
 		t.Fatal("initial numeric snippet or literal additional edit changed", item)
 	}
-	wantOccurrences := []types.CompletionOccurrence{
+	wantOccurrences := []insight.CompletionOccurrence{
 		{Stop: 1, StartByte: 3, EndByte: 4, Parent: -1},
 		{Stop: 1, StartByte: 6, EndByte: 7, Parent: -1},
 		{Stop: 0, StartByte: 8, EndByte: 8, Parent: -1},
@@ -237,7 +238,7 @@ func TestCompletionCanonicalUnsavedSnippetAndLiteralAdjunctsAreReadOnly(t *testi
 	// Acceptance preflight and documentation resolution both remain observations.
 	f.inspect(t, set, 0, false)
 	resolved := f.inspect(t, set, 0, true)
-	if resolved.ResolveState != "resolved" || resolved.Documentation != (types.LSPCompletionDocumentation{
+	if resolved.ResolveState != "resolved" || resolved.Documentation != (insight.LSPCompletionDocumentation{
 		HasDetail: true, Present: true, Detail: "signature", Form: "markup", Kind: "markdown", Value: "**inert**",
 	}) {
 		t.Fatal("lost selected documentation form", resolved)
@@ -260,7 +261,7 @@ func TestCompletionCanonicalUnsavedSnippetAndLiteralAdjunctsAreReadOnly(t *testi
 	set.Entries[0].Insertion.AdditionalTextEdits[0].NewText = "forged"
 	set.Entries[0].Insertion.Snippet.Occurrences[0].StartByte = 999
 	f.w.LiveDocuments.mu.Lock()
-	after := types.CloneCompletionItem(f.w.LiveDocuments.completionViews[completionViewKey{f.owner, "editor"}].set.Entries[0].Insertion)
+	after := insight.CloneCompletionItem(f.w.LiveDocuments.completionViews[completionViewKey{f.owner, "editor"}].set.Entries[0].Insertion)
 	f.w.LiveDocuments.mu.Unlock()
 	if after.TextEdit.NewText != "fn(x, x)" || after.AdditionalTextEdits[0].NewText != "$1 literal\r\n" ||
 		after.Snippet.Occurrences[0].StartByte != 3 {
@@ -282,7 +283,7 @@ func TestCompletionSameLabelsKeepExactIndicesRawIdentityAndDocumentationForms(t 
 		set.Entries[0].Insertion.Label != "same" || set.Entries[1].Insertion.Label != "same" {
 		t.Fatal("same-label rows collapsed or lost original indices", set.Entries)
 	}
-	want := []types.LSPCompletionDocumentation{
+	want := []insight.LSPCompletionDocumentation{
 		{Present: true, Form: "string", Kind: "plaintext", Value: "first"},
 		{HasDetail: true, Present: true, Form: "markup", Kind: "plaintext"},
 		{},
@@ -331,9 +332,9 @@ func TestCompletionUnsupportedUnknownNullEmptyAndFailuresStayDistinct(t *testing
 			f := newCompletionAcceptanceFixture(t, "abc\n")
 			before, history := f.snapshot(t), f.history()
 			f.client.raw, f.client.unsupported, f.client.err = tc.raw, tc.unsupported, tc.failure
-			set, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "view", 1, 0, 1, types.LSPCompletionContext{})
+			set, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "view", 1, 0, 1, insight.LSPCompletionContext{})
 			if tc.answer == "" {
-				if err == nil || !reflect.DeepEqual(set, types.LSPCompletionSet{}) {
+				if err == nil || !reflect.DeepEqual(set, insight.LSPCompletionSet{}) {
 					t.Fatal("missing support/result or provider failure became successful absence", set, err)
 				}
 			} else {
@@ -350,7 +351,7 @@ func TestCompletionUnsupportedUnknownNullEmptyAndFailuresStayDistinct(t *testing
 					t.Fatal("unsupported-only answer was disguised as provider absence", set)
 				}
 				out, err := f.w.InspectLSPCompletion(t.Context(), f.owner, set.ID, set.Digest, "item-0", true)
-				if err == nil || !reflect.DeepEqual(out, types.LSPCompletionInspection{}) {
+				if err == nil || !reflect.DeepEqual(out, insight.LSPCompletionInspection{}) {
 					t.Fatal("negative response invented a selectable item", out, err)
 				}
 			}
@@ -375,8 +376,8 @@ func TestCompletionMalformedResponsesAreAtomicAndRetainNoRawObjects(t *testing.T
 			f := newCompletionAcceptanceFixture(t, "a😀z\n")
 			before, history := f.snapshot(t), f.history()
 			f.client.raw = raw
-			out, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "view", 1, 0, 3, types.LSPCompletionContext{})
-			if err == nil || !reflect.DeepEqual(out, types.LSPCompletionSet{}) {
+			out, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "view", 1, 0, 3, insight.LSPCompletionContext{})
+			if err == nil || !reflect.DeepEqual(out, insight.LSPCompletionSet{}) {
 				t.Fatal("invalid list published partial canonical evidence", out, err)
 			}
 			f.w.LiveDocuments.mu.Lock()
@@ -435,8 +436,8 @@ func TestCompletionAdmissionAndExactInspectionIdentity(t *testing.T) {
 			case "unsupported-payload":
 				f.client.unsupported = true
 			}
-			out, err := f.w.RequestLSPCompletions(ctx, owner, source, view, sequence, line, col, types.LSPCompletionContext{})
-			if err == nil || !reflect.DeepEqual(out, types.LSPCompletionSet{}) {
+			out, err := f.w.RequestLSPCompletions(ctx, owner, source, view, sequence, line, col, insight.LSPCompletionContext{})
+			if err == nil || !reflect.DeepEqual(out, insight.LSPCompletionSet{}) {
 				t.Fatal("invalid source/wire/admission acquired evidence", invalid, out, err)
 			}
 		})
@@ -462,7 +463,7 @@ func TestCompletionAdmissionAndExactInspectionIdentity(t *testing.T) {
 		}
 		out, err := f.w.InspectLSPCompletion(ctx, owner, id, digest, row, true)
 		cancel()
-		if err == nil || !reflect.DeepEqual(out, types.LSPCompletionInspection{}) {
+		if err == nil || !reflect.DeepEqual(out, insight.LSPCompletionInspection{}) {
 			t.Fatal("inspection accepted caller-authored identity", invalid, out, err)
 		}
 	}
@@ -493,7 +494,7 @@ func TestCompletionResolveOnlyDocumentationAndDetailOrRejectAtomically(t *testin
 			initial := cloneCompletionSet(f.w.LiveDocuments.completionViews[completionViewKey{f.owner, "view"}].set)
 			f.w.LiveDocuments.mu.Unlock()
 			out, err := f.w.InspectLSPCompletion(t.Context(), f.owner, set.ID, set.Digest, set.Entries[0].ID, true)
-			if err == nil || !reflect.DeepEqual(out, types.LSPCompletionInspection{}) {
+			if err == nil || !reflect.DeepEqual(out, insight.LSPCompletionInspection{}) {
 				t.Fatal("resolve accepted non-documentation or partial-object mutation", out, err)
 			}
 			f.w.LiveDocuments.mu.Lock()
@@ -508,7 +509,7 @@ func TestCompletionResolveOnlyDocumentationAndDetailOrRejectAtomically(t *testin
 			f.client.resolved = strings.Replace(original, `"documentation":"initial"`, `"detail":"","documentation":{"kind":"markdown","value":"safe docs"}`, 1)
 			f.client.completionMu.Unlock()
 			got := f.inspect(t, set, 0, true)
-			if got.Documentation != (types.LSPCompletionDocumentation{
+			if got.Documentation != (insight.LSPCompletionDocumentation{
 				HasDetail: true, Present: true, Form: "markup", Kind: "markdown", Value: "safe docs",
 			}) {
 				t.Fatal("valid documentation-only retry was not accepted", got)
@@ -540,15 +541,15 @@ func TestCompletionResolvedDocumentationAbsenceAndEmptyFormsRemainDistinct(t *te
 	const original = `{"label":"same","data":{"n":9007199254740993},"detail":"initial","documentation":"initial"}`
 	for _, tc := range []struct {
 		name, resolved string
-		want           types.LSPCompletionDocumentation
+		want           insight.LSPCompletionDocumentation
 	}{
-		{"absent", `{"label":"same","data":{"n":9007199254740993}}`, types.LSPCompletionDocumentation{}},
+		{"absent", `{"label":"same","data":{"n":9007199254740993}}`, insight.LSPCompletionDocumentation{}},
 		{"empty-string", `{"label":"same","data":{"n":9007199254740993},"detail":"","documentation":""}`,
-			types.LSPCompletionDocumentation{HasDetail: true, Present: true, Form: "string", Kind: "plaintext"}},
+			insight.LSPCompletionDocumentation{HasDetail: true, Present: true, Form: "string", Kind: "plaintext"}},
 		{"empty-plaintext-markup", `{"label":"same","data":{"n":9007199254740993},"documentation":{"kind":"plaintext","value":""}}`,
-			types.LSPCompletionDocumentation{Present: true, Form: "markup", Kind: "plaintext"}},
+			insight.LSPCompletionDocumentation{Present: true, Form: "markup", Kind: "plaintext"}},
 		{"empty-markdown", `{"label":"same","data":{"n":9007199254740993},"documentation":{"kind":"markdown","value":""}}`,
-			types.LSPCompletionDocumentation{Present: true, Form: "markup", Kind: "markdown"}},
+			insight.LSPCompletionDocumentation{Present: true, Form: "markup", Kind: "markdown"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newCompletionAcceptanceFixture(t, "abc\n")
@@ -583,7 +584,7 @@ func TestCompletionAcceptancePreflightValidatesAllOriginalEditsWithoutApplying(t
 				if err != nil || out.ResolveState != "initial" {
 					t.Fatal("disjoint original vector failed preflight", out, err)
 				}
-			} else if err == nil || !reflect.DeepEqual(out, types.LSPCompletionInspection{}) {
+			} else if err == nil || !reflect.DeepEqual(out, insight.LSPCompletionInspection{}) {
 				t.Fatal("invalid complete edit vector reached acceptance", out, err)
 			}
 			f.unchanged(t, before, history)
@@ -653,7 +654,7 @@ func TestCompletionCompletedEvidenceRetiresAcrossCanonicalLifetimeBoundaries(t *
 			f.invalidate(t, change)
 			for _, resolve := range []bool{false, true} {
 				out, err := f.w.InspectLSPCompletion(t.Context(), f.owner, set.ID, set.Digest, set.Entries[0].ID, resolve)
-				if err == nil || !reflect.DeepEqual(out, types.LSPCompletionInspection{}) {
+				if err == nil || !reflect.DeepEqual(out, insight.LSPCompletionInspection{}) {
 					t.Fatal("completed insertion/docs survived lifecycle boundary", change, out, err)
 				}
 			}
@@ -685,7 +686,7 @@ func awaitCompletionAcceptanceCall(t *testing.T, entered <-chan completionAccept
 }
 
 type completionAcceptanceOutcome struct {
-	set types.LSPCompletionSet
+	set insight.LSPCompletionSet
 	err error
 }
 
@@ -706,7 +707,7 @@ func TestCompletionLatestViewSequenceWinsAndOldReleaseCannotRetireNewer(t *testi
 	entered, unblock := holdCompletionAcceptanceRPC(t, f.client)
 	done := make(chan completionAcceptanceOutcome, 1)
 	go func() {
-		set, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "view", 1, 0, 1, types.LSPCompletionContext{})
+		set, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "view", 1, 0, 1, insight.LSPCompletionContext{})
 		done <- completionAcceptanceOutcome{set, err}
 	}()
 	first := awaitCompletionAcceptanceCall(t, entered)
@@ -726,12 +727,12 @@ func TestCompletionLatestViewSequenceWinsAndOldReleaseCannotRetireNewer(t *testi
 		t.Fatal("delayed release retired newer set", got)
 	}
 	unblock()
-	if got := awaitCompletionAcceptanceOutcome(t, done); got.err == nil || !reflect.DeepEqual(got.set, types.LSPCompletionSet{}) {
+	if got := awaitCompletionAcceptanceOutcome(t, done); got.err == nil || !reflect.DeepEqual(got.set, insight.LSPCompletionSet{}) {
 		t.Fatal("late old request replaced newer set", got)
 	}
 	for _, sequence := range []uint64{1, 2} {
-		if set, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "view", sequence, 0, 1, types.LSPCompletionContext{}); err == nil ||
-			!reflect.DeepEqual(set, types.LSPCompletionSet{}) {
+		if set, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "view", sequence, 0, 1, insight.LSPCompletionContext{}); err == nil ||
+			!reflect.DeepEqual(set, insight.LSPCompletionSet{}) {
 			t.Fatal("nonmonotonic request replayed provider evidence", sequence, set, err)
 		}
 	}
@@ -741,7 +742,7 @@ func TestCompletionLatestViewSequenceWinsAndOldReleaseCannotRetireNewer(t *testi
 	if _, err := f.w.InspectLSPCompletion(t.Context(), f.owner, second.ID, second.Digest, second.Entries[0].ID, false); err == nil {
 		t.Fatal("released set remained acceptable")
 	}
-	if _, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "view", 2, 0, 1, types.LSPCompletionContext{}); err == nil {
+	if _, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "view", 2, 0, 1, insight.LSPCompletionContext{}); err == nil {
 		t.Fatal("exact release lost sequence tombstone")
 	}
 	if third := f.request(t, "[]", "view", 3, 0, 1); third.Answer != "empty" || third.Sequence != 3 {
@@ -764,7 +765,7 @@ func TestCompletionLatePositiveAndAbsenceAnswersCannotCrossLifetimeFences(t *tes
 				defer cancel()
 				done := make(chan completionAcceptanceOutcome, 1)
 				go func() {
-					set, err := f.w.RequestLSPCompletions(ctx, f.owner, f.source, "view", 1, 0, 1, types.LSPCompletionContext{})
+					set, err := f.w.RequestLSPCompletions(ctx, f.owner, f.source, "view", 1, 0, 1, insight.LSPCompletionContext{})
 					done <- completionAcceptanceOutcome{set, err}
 				}()
 				awaitCompletionAcceptanceCall(t, entered)
@@ -779,7 +780,7 @@ func TestCompletionLatePositiveAndAbsenceAnswersCannotCrossLifetimeFences(t *tes
 					f.invalidate(t, change)
 				}
 				unblock()
-				if got := awaitCompletionAcceptanceOutcome(t, done); got.err == nil || !reflect.DeepEqual(got.set, types.LSPCompletionSet{}) {
+				if got := awaitCompletionAcceptanceOutcome(t, done); got.err == nil || !reflect.DeepEqual(got.set, insight.LSPCompletionSet{}) {
 					t.Fatal("cancellation-ignoring adapter leaked stale result", answer, change, got)
 				}
 			})
@@ -798,7 +799,7 @@ func TestCompletionLateResolveCannotPublishOrCacheAfterRetirement(t *testing.T) 
 			f.client.resolved = strings.TrimSuffix(original, "}") + `,"documentation":"late docs"}`
 			entered, unblock := holdCompletionAcceptanceRPC(t, f.client)
 			type outcome struct {
-				out types.LSPCompletionInspection
+				out insight.LSPCompletionInspection
 				err error
 			}
 			done := make(chan outcome, 1)
@@ -826,7 +827,7 @@ func TestCompletionLateResolveCannotPublishOrCacheAfterRetirement(t *testing.T) 
 			unblock()
 			select {
 			case got := <-done:
-				if got.err == nil || !reflect.DeepEqual(got.out, types.LSPCompletionInspection{}) {
+				if got.err == nil || !reflect.DeepEqual(got.out, insight.LSPCompletionInspection{}) {
 					t.Fatal("retired resolve returned documentation", change, got)
 				}
 			case <-time.After(5 * time.Second):
@@ -850,8 +851,8 @@ func TestCompletionActiveViewsAndReplayTrackingHaveConstantSeparateCaps(t *testi
 	for i := 0; i < 16; i++ {
 		f.request(t, "[]", fmt.Sprintf("view-%d", i), 1, 0, 1)
 	}
-	if set, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "active-17", 1, 0, 1, types.LSPCompletionContext{}); err == nil ||
-		!reflect.DeepEqual(set, types.LSPCompletionSet{}) {
+	if set, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "active-17", 1, 0, 1, insight.LSPCompletionContext{}); err == nil ||
+		!reflect.DeepEqual(set, insight.LSPCompletionSet{}) {
 		t.Fatal("seventeenth active view exceeded cap16", set, err)
 	}
 	for i := 0; i < 128; i++ {
@@ -863,8 +864,8 @@ func TestCompletionActiveViewsAndReplayTrackingHaveConstantSeparateCaps(t *testi
 			t.Fatal(err)
 		}
 	}
-	if set, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "tracking-129", 1, 0, 1, types.LSPCompletionContext{}); err == nil ||
-		!reflect.DeepEqual(set, types.LSPCompletionSet{}) {
+	if set, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "tracking-129", 1, 0, 1, insight.LSPCompletionContext{}); err == nil ||
+		!reflect.DeepEqual(set, insight.LSPCompletionSet{}) {
 		t.Fatal("129th replay-tracked view exceeded cap128", set, err)
 	}
 	if got := f.request(t, "null", "view-0", 2, 0, 1); got.Answer != "null" {
@@ -909,9 +910,9 @@ func TestCompletionRawAndRetainedByteBoundsReleaseAndCloseReclaimEvidence(t *tes
 	}
 	accepted, rejected := 0, false
 	for i := 0; i < 16; i++ {
-		set, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, fmt.Sprintf("bytes-%d", i), 1, 0, 1, types.LSPCompletionContext{})
+		set, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, fmt.Sprintf("bytes-%d", i), 1, 0, 1, insight.LSPCompletionContext{})
 		if err != nil {
-			if !reflect.DeepEqual(set, types.LSPCompletionSet{}) || !strings.Contains(err.Error(), "16 MiB") {
+			if !reflect.DeepEqual(set, insight.LSPCompletionSet{}) || !strings.Contains(err.Error(), "16 MiB") {
 				t.Fatal("workload failed before aggregate retained-byte cap", set, err)
 			}
 			rejected = true
@@ -931,8 +932,8 @@ func TestCompletionRawAndRetainedByteBoundsReleaseAndCloseReclaimEvidence(t *tes
 		t.Fatal("release retained original/display byte accounting", before, after)
 	}
 	f.client.raw = `[{"label":"too-large","data":"x"}]` + strings.Repeat(" ", 1<<20)
-	if set, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "oversize", 1, 0, 1, types.LSPCompletionContext{}); err == nil ||
-		!reflect.DeepEqual(set, types.LSPCompletionSet{}) {
+	if set, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "oversize", 1, 0, 1, insight.LSPCompletionContext{}); err == nil ||
+		!reflect.DeepEqual(set, insight.LSPCompletionSet{}) {
 		t.Fatal("over-1MiB provider JSON acquired retained evidence", set, err)
 	}
 	if total, _ := retained(); total != after {
@@ -977,7 +978,7 @@ func TestCompletionCapabilitiesAndOldServerIntentFence(t *testing.T) {
 	}
 	old := caps.Producer
 	old.InstanceID = "retired-instance"
-	result, err := fixture.w.RequestLSPCompletions(t.Context(), fixture.owner, fixture.source, "old-server", 1, 0, 4, types.LSPCompletionContext{Producer: old, TriggerKind: 2, TriggerCharacter: "."})
+	result, err := fixture.w.RequestLSPCompletions(t.Context(), fixture.owner, fixture.source, "old-server", 1, 0, 4, insight.LSPCompletionContext{Producer: old, TriggerKind: 2, TriggerCharacter: "."})
 	fixture.client.completionMu.Lock()
 	calls := len(fixture.client.calls)
 	fixture.client.completionMu.Unlock()
@@ -1000,7 +1001,7 @@ func TestCompletionAdjustedMultilineSurvivesCanonicalInspection(t *testing.T) {
 	before, history := f.snapshot(t), f.history()
 	raw := `[{"label":"print block","insertTextFormat":2,"insertTextMode":2,"textEdit":{"range":{"start":{"line":0,"character":1},"end":{"line":0,"character":4}},"newText":"if (${1:界}) {\n\tuse($1);\n}$0"},"data":{"serverId":"exact"}}]`
 	set := f.request(t, raw, "adjusted", 1, 0, 4)
-	if set.Answer != types.LSPCompletionItems || set.UnsupportedItems != 0 || len(set.Entries) != 1 {
+	if set.Answer != insight.LSPCompletionItems || set.UnsupportedItems != 0 || len(set.Entries) != 1 {
 		t.Fatalf("multiline suggestion was discarded: %+v", set)
 	}
 	insertion := set.Entries[0].Insertion

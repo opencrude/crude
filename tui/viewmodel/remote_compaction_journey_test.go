@@ -15,7 +15,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"crude/agent/provider"
-	"crude/types"
+	"crude/types/statuscenter"
 	"crude/workspace"
 )
 
@@ -86,8 +86,8 @@ func TestRemoteAppJourneyCompactionQueuesFromBothShells(t *testing.T) {
 	}
 	send(one, "Keep the complete evidence.\n"+strings.Repeat("source evidence\n", 4_000))
 	remoteJourneyUntil(t, shells, func() bool {
-		return one.app.ws.AgentActivity(id).Status.Phase == types.AgentCompleted &&
-			two.app.ws.AgentActivity(id).Status.Phase == types.AgentCompleted
+		return one.app.ws.AgentActivity(id).Status.Phase == statuscenter.AgentCompleted &&
+			two.app.ws.AgentActivity(id).Status.Phase == statuscenter.AgentCompleted
 	})
 	one.app.Input.SetInput("/compact")
 	_, compactCmd := one.app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -133,7 +133,7 @@ func TestRemoteAppJourneyCompactionQueuesFromBothShells(t *testing.T) {
 	remoteJourneyUntil(t, shells, func() bool {
 		for _, shell := range shells {
 			if !strings.Contains(ansi.Strip(shell.app.View().RenderContent()), "ANSWER TO queued prompt two") ||
-				shell.app.ws.AgentActivity(id).Status.Phase != types.AgentCompleted {
+				shell.app.ws.AgentActivity(id).Status.Phase != statuscenter.AgentCompleted {
 				return false
 			}
 		}
@@ -212,7 +212,7 @@ func TestRemoteAppJourneyStopCompactionPreservesQueuedPromptAndResumeIsPassive(t
 	one.app.Input.SetInput("Keep complete context.\n" + strings.Repeat("evidence\n", 7_000))
 	_, cmd := one.app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	runAppCommand(t, one.app, cmd)
-	remoteJourneyUntil(t, shells, func() bool { return one.app.ws.AgentActivity(id).Status.Phase == types.AgentCompleted })
+	remoteJourneyUntil(t, shells, func() bool { return one.app.ws.AgentActivity(id).Status.Phase == statuscenter.AgentCompleted })
 	one.app.Input.SetInput("/compact")
 	_, cmd = one.app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	compactDone := make(chan tea.Msg, 1)
@@ -336,11 +336,11 @@ func TestRemoteAppJourneyCompactDuringActiveTurnIsAccepted(t *testing.T) {
 	}
 	releaseOnce.Do(func() { close(release) })
 	remoteJourneyUntil(t, shells, func() bool {
-		return extraction.Load() == 1 && shell.app.ws.AgentActivity(id).Status.Phase == types.AgentCompactionResult &&
+		return extraction.Load() == 1 && shell.app.ws.AgentActivity(id).Status.Phase == statuscenter.AgentCompactionResult &&
 			strings.Contains(ansi.Strip(shell.app.View().RenderContent()), "Compacted context")
 	})
 	for _, notice := range shell.app.ws.Status().Notifications(false) {
-		if notice.Severity == types.SeverityError && strings.Contains(strings.ToLower(notice.Summary), "compact") {
+		if notice.Severity == statuscenter.SeverityError && strings.Contains(strings.ToLower(notice.Summary), "compact") {
 			t.Fatalf("accepted compaction reported an error: %+v", notice)
 		}
 	}

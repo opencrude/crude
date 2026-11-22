@@ -1,26 +1,3 @@
-// Package workspace is the per-project state machine for the Crude IDE.
-//
-// One Workspace instance represents a single IDE session rooted at a project
-// directory. It owns everything that is scoped to that project:
-//
-// - AI agent sessions and orchestrators
-// - Editor buffers and tab state
-// - LSP server connections and diagnostics cache
-// - File tree model
-// - Workspace-specific settings (inheriting from app config)
-// - Per-workspace SQLite database
-//
-// Workspace follows the JetBrains model: each project gets a dedicated folder
-// under ~/.crude/workspaces/<hash>/, identified by a SHA-256 hash of the
-// absolute project directory path. This folder contains the workspace database,
-// session data, and any workspace-specific configuration.
-//
-// Communication with the TUI layer happens via two mechanisms:
-// - TUI → Workspace: direct method calls (e.g., ws.OpenFile(path))
-// - Workspace → TUI: event bus publishes (e.g., bus.Publish(FileOpened{path}))
-//
-// The workspace package intentionally has NO knowledge of rendering or input
-// handling; those concerns live in the tui/ layer.
 package workspace
 
 import (
@@ -38,15 +15,15 @@ import (
 	"sync"
 	"time"
 
-	"crude/buildinfo"
-	"crude/retry"
+	"crude/internal/buildinfo"
+	"crude/internal/retry"
 
 	"modernc.org/sqlite"
 )
 
-// WorkspaceID returns the stable 16-hex workspace folder name for a project
+// ID returns the stable 16-hex workspace folder name for a project
 // directory (SHA-256 of the absolute path, first 8 bytes).
-func WorkspaceID(projectDir string) string {
+func ID(projectDir string) string {
 	return workspaceID(projectDir)
 }
 
@@ -65,9 +42,9 @@ func workspaceID(projectDir string) string {
 	return fmt.Sprintf("%x", h[:8]) // 16 hex chars
 }
 
-// WorkspaceRoot returns the base directory for all workspace folders.
+// Root returns the base directory for all workspace folders.
 // Layout: ~/.crude/workspaces/
-func WorkspaceRoot() (string, error) {
+func Root() (string, error) {
 	home, err := buildinfo.Home()
 	if err != nil {
 		return "", fmt.Errorf("home dir: %w", err)
@@ -75,11 +52,11 @@ func WorkspaceRoot() (string, error) {
 	return filepath.Join(home, buildinfo.DataDir(), "workspaces"), nil
 }
 
-// WorkspaceDir returns the dedicated folder for a specific project.
+// Dir returns the dedicated folder for a specific project.
 // Layout: ~/.crude/workspaces/<hash>/
 // The folder is created if it doesn't exist.
-func WorkspaceDir(projectDir string) (string, error) {
-	root, err := WorkspaceRoot()
+func Dir(projectDir string) (string, error) {
+	root, err := Root()
 	if err != nil {
 		return "", err
 	}
@@ -91,10 +68,10 @@ func WorkspaceDir(projectDir string) (string, error) {
 	return dir, nil
 }
 
-// WorkspaceDBPath returns the path to the workspace-level SQLite database.
+// DBPath returns the path to the workspace-level SQLite database.
 // Layout: ~/.crude/workspaces/<hash>/workspace.db
-func WorkspaceDBPath(projectDir string) (string, error) {
-	dir, err := WorkspaceDir(projectDir)
+func DBPath(projectDir string) (string, error) {
+	dir, err := Dir(projectDir)
 	if err != nil {
 		return "", err
 	}
@@ -105,7 +82,7 @@ func WorkspaceDBPath(projectDir string) (string, error) {
 // deliberately outside the project tree so snapshots never create repository
 // artifacts or trigger project watchers.
 func LocalHistoryDir(projectDir string) (string, error) {
-	dir, err := WorkspaceDir(projectDir)
+	dir, err := Dir(projectDir)
 	if err != nil {
 		return "", err
 	}
@@ -119,7 +96,7 @@ func LocalHistoryDir(projectDir string) (string, error) {
 // SessionDir returns the dedicated directory for a single session inside
 // a workspace. Layout: ~/.crude/workspaces/<hash>/sessions/<sessionID>/
 func SessionDir(projectDir, sessionID string) (string, error) {
-	wsDir, err := WorkspaceDir(projectDir)
+	wsDir, err := Dir(projectDir)
 	if err != nil {
 		return "", err
 	}
@@ -133,27 +110,27 @@ func SessionDir(projectDir, sessionID string) (string, error) {
 // SessionDBPath returns the path to a session database inside a workspace.
 // Layout: ~/.crude/workspaces/<hash>/sessions/<sessionID>.db
 func SessionDBPath(projectDir, sessionID string) (string, error) {
-	wsDir, err := WorkspaceDir(projectDir)
+	wsDir, err := Dir(projectDir)
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(wsDir, "sessions", sessionID+".db"), nil
 }
 
-// WorkspaceInfo describes a known workspace for the launcher selector.
-type WorkspaceInfo struct {
+// Info describes a known workspace for the launcher selector.
+type Info struct {
 	ID           string // hash directory name
 	ProjectDir   string // absolute project path (best-effort)
 	ProjectName  string // display name (basename of project dir); never the raw hash
 	DisplayPath  string // display-only path relative to the catalog host's home, when applicable
 	SessionCount int
-	LastAccessed int64             // unix nano of most recent successful shell attachment, 0 if unknown
-	Activity     WorkspaceActivity // optional retained snapshot for detached catalog consumers
+	LastAccessed int64    // unix nano of most recent successful shell attachment, 0 if unknown
+	Activity     Activity // optional retained snapshot for detached catalog consumers
 }
 
 // ShortPath is for display only. ProjectDir remains the exact path for opening,
 // searching, or copying a workspace, including on a different host.
-func (info WorkspaceInfo) ShortPath() string {
+func (info Info) ShortPath() string {
 	if info.DisplayPath != "" {
 		return info.DisplayPath
 	}
@@ -176,11 +153,11 @@ func homeRelativeWorkspacePath(path, home string) string {
 	return "~" + string(filepath.Separator) + rel
 }
 
-// WorkspaceDisplayName returns a human-readable label for a workspace row.
+// DisplayName returns a human-readable label for a workspace row.
 // Prefer a stored ProjectName, then the project directory basename. Never
 // returns the raw workspace hash id; empty/unknown metadata yields a
 // stable placeholder instead.
-func WorkspaceDisplayName(info WorkspaceInfo) string {
+func DisplayName(info Info) string {
 	name := strings.TrimSpace(info.ProjectName)
 	if name != "" && name != info.ID {
 		return name
@@ -198,7 +175,7 @@ func WorkspaceDisplayName(info WorkspaceInfo) string {
 // and returns their directory names (the hashes). This is used by the app
 // layer to present a list of known workspaces for resumption.
 func ListWorkspaces() ([]string, error) {
-	root, err := WorkspaceRoot()
+	root, err := Root()
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +199,7 @@ func ListWorkspaces() ([]string, error) {
 // launcher. Best-effort: missing/corrupt/locked DBs still produce an entry
 // and never block the UI for long. Display names are always human-readable
 // (path basename or "unnamed workspace"), never the raw hash id.
-func ListWorkspaceInfos() ([]WorkspaceInfo, error) {
+func ListWorkspaceInfos() ([]Info, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return ListWorkspaceInfosContext(ctx)
@@ -230,7 +207,7 @@ func ListWorkspaceInfos() ([]WorkspaceInfo, error) {
 
 // ListWorkspaceInfosContext is the cancelable catalog read shared by shell
 // home, workspace navigation and the core resource lane.
-func ListWorkspaceInfosContext(ctx context.Context) ([]WorkspaceInfo, error) {
+func ListWorkspaceInfosContext(ctx context.Context) ([]Info, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -241,13 +218,13 @@ func ListWorkspaceInfosContext(ctx context.Context) ([]WorkspaceInfo, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	root, err := WorkspaceRoot()
+	root, err := Root()
 	if err != nil {
 		return nil, err
 	}
 	type workspaceResult struct {
 		id   string
-		info *WorkspaceInfo
+		info *Info
 	}
 	jobs := make(chan string)
 	results := make(chan workspaceResult, len(ids))
@@ -286,12 +263,12 @@ func ListWorkspaceInfosContext(ctx context.Context) ([]WorkspaceInfo, error) {
 	}()
 
 	displayHome, _ := os.UserHomeDir()
-	byPath := make(map[string]WorkspaceInfo, len(ids))
+	byPath := make(map[string]Info, len(ids))
 	for result := range results {
 		if ctx.Err() != nil {
 			continue
 		}
-		info := WorkspaceInfo{ID: result.id}
+		info := Info{ID: result.id}
 		if result.info != nil {
 			info = *result.info
 			info.ID = result.id
@@ -307,7 +284,7 @@ func ListWorkspaceInfosContext(ctx context.Context) ([]WorkspaceInfo, error) {
 			continue
 		}
 		info.ProjectDir = projectDir
-		info.ProjectName = WorkspaceDisplayName(info)
+		info.ProjectName = DisplayName(info)
 		info.DisplayPath = homeRelativeWorkspacePath(projectDir, displayHome)
 		if existing, ok := byPath[projectDir]; !ok || info.LastAccessed > existing.LastAccessed {
 			byPath[projectDir] = info
@@ -316,7 +293,7 @@ func ListWorkspaceInfosContext(ctx context.Context) ([]WorkspaceInfo, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	infos := make([]WorkspaceInfo, 0, len(byPath))
+	infos := make([]Info, 0, len(byPath))
 	for _, info := range byPath {
 		infos = append(infos, info)
 	}
@@ -336,7 +313,7 @@ func ListWorkspaceInfosContext(ctx context.Context) ([]WorkspaceInfo, error) {
 // before returning. A timed-out outer read must not leave a detached SQLite
 // opener creating WAL/SHM files after workspace shutdown or storage deletion.
 // Cancellation bounds cooperative queries; it is not a hard OS-syscall timeout.
-func readWorkspaceMetaBounded(parent context.Context, dbPath string, limit time.Duration) *WorkspaceInfo {
+func readWorkspaceMetaBounded(parent context.Context, dbPath string, limit time.Duration) *Info {
 	ctx, cancel := context.WithTimeout(parent, limit)
 	info := readWorkspaceMeta(ctx, dbPath)
 	timedOut := ctx.Err() != nil
@@ -353,7 +330,7 @@ func readWorkspaceMetaBounded(parent context.Context, dbPath string, limit time.
 
 // readWorkspaceMetaLight reads only workspace_metadata.project_dir so the
 // launcher can still show a path-derived name when the full meta read stalls.
-func readWorkspaceMetaLight(ctx context.Context, dbPath string) *WorkspaceInfo {
+func readWorkspaceMetaLight(ctx context.Context, dbPath string) *Info {
 	unlock, err := lockWorkspaceStorage(ctx, false)
 	if err != nil {
 		return nil
@@ -377,7 +354,7 @@ func readWorkspaceMetaLight(ctx context.Context, dbPath string) *WorkspaceInfo {
 		FROM workspace_metadata WHERE key IN ('project_dir', 'last_accessed_at')`, &dir, &accessed); err != nil || dir == "" {
 		return nil
 	}
-	info := &WorkspaceInfo{
+	info := &Info{
 		ProjectDir:  dir,
 		ProjectName: filepath.Base(dir),
 	}
@@ -390,7 +367,7 @@ func readWorkspaceMetaLight(ctx context.Context, dbPath string) *WorkspaceInfo {
 // launcher must not mutate ~/.crude (including other projects' DBs).
 // All queries are context-bound so a stalled read can be cancelled (which
 // also releases the file handle; see readWorkspaceMetaBounded).
-func readWorkspaceMeta(ctx context.Context, dbPath string) *WorkspaceInfo {
+func readWorkspaceMeta(ctx context.Context, dbPath string) *Info {
 	unlock, err := lockWorkspaceStorage(ctx, false)
 	if err != nil {
 		return nil
@@ -399,7 +376,7 @@ func readWorkspaceMeta(ctx context.Context, dbPath string) *WorkspaceInfo {
 	return readWorkspaceMetaUnlocked(ctx, dbPath)
 }
 
-func readWorkspaceMetaUnlocked(ctx context.Context, dbPath string) *WorkspaceInfo {
+func readWorkspaceMetaUnlocked(ctx context.Context, dbPath string) *Info {
 	if _, err := os.Stat(dbPath); err != nil {
 		return nil
 	}
@@ -416,7 +393,7 @@ func readWorkspaceMetaUnlocked(ctx context.Context, dbPath string) *WorkspaceInf
 	db.SetMaxOpenConns(1)
 	defer db.Close()
 
-	info := &WorkspaceInfo{}
+	info := &Info{}
 	var accessed string
 	// One statement owns one consistent metadata/count observation and releases
 	// its rows before returning. No second query can wait on our one connection.
@@ -428,7 +405,7 @@ func readWorkspaceMetaUnlocked(ctx context.Context, dbPath string) *WorkspaceInf
 		return nil
 	}
 	info.LastAccessed, _ = strconv.ParseInt(accessed, 10, 64)
-	info.ProjectName = WorkspaceDisplayName(*info)
+	info.ProjectName = DisplayName(*info)
 	return info
 }
 

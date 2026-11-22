@@ -176,7 +176,7 @@ replacements and jumps are not supported.
   `agent/provider/text_once.go` (OpenAI Chat and Responses only). Both stream on the
   wire but return only at the end.
 - `agent/prompt/editor_prediction.go`: a single-line insertion prompt.
-- `tui/settings/prediction.go`: Off / Light / Full, an hourly token cap, and
+- `tui/screens/settingspages/prediction.go`: Off / Light / Full, an hourly token cap, and
   a protocol and endpoint path that the user must type.
 - No core request, shell-port method or editor trigger exists. Automatic
   requests are refused until a manual request has measured latency, and the
@@ -203,7 +203,7 @@ for keystroke suggestions (D5).
 - Agent file tools read the saved file. Unsaved editor text is invisible to
   agents (D3).
 
-**Search.** The fzf matcher (`text/search/fuzzy.go`) is fast. Find in Files
+**Search.** The fzf matcher (`text/textsearch/fuzzy.go`) is fast. Find in Files
 (`workspace/fileio/project_search.go`) walks the tree with one goroutine and reads every
 file again for each query, without an index and without ignore files. It
 cannot serve retrieval on the keystroke path.
@@ -456,7 +456,7 @@ cost is walking and reading every file for every query. Replace that with an
 index that the core keeps current:
 
 - Built from the existing file-watcher facts, walking with the internal
-  fastwalk (`third_party/pathwalk/`) in parallel. It honors ignore files and
+  fastwalk (`third_party/fastwalk/`) in parallel. It honors ignore files and
   the existing skip rules. Open documents are indexed from their live text.
 - Content: identifier tokens and trigrams mapped to chunks of about 40 lines,
   per file. Skips binaries and files above 1 MiB. Memory is bounded (start at

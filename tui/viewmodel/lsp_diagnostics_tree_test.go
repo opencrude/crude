@@ -11,64 +11,65 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 
-	"crude/core/port"
-	model "crude/types"
+	"crude/core/shellport"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
 type immediateTreeDiagRuntime struct {
 	mu       sync.Mutex
 	filePath string
-	diags    []workspace.LSPDiagnostic
+	diags    []insight.LSPDiagnostic
 	rootURIs []string
-	specs    []model.LSPServerSpec
+	specs    []setting.LSPServerSpec
 	client   *immediateTreeDiagClient
 }
 
 type immediateTreeDiagClient struct {
 	filePath    string
-	diags       []workspace.LSPDiagnostic
+	diags       []insight.LSPDiagnostic
 	mu          sync.Mutex
-	publish     func(model.InsightDiagnosticPublication)
-	boundary    model.InsightBoundary
+	publish     func(insight.DiagnosticPublication)
+	boundary    insight.Boundary
 	wireVersion int
 	sequence    uint64
 	admit       func() error
 }
 
-func (r *immediateTreeDiagRuntime) NewClient(spec model.LSPServerSpec, rootURI string, startAdmission func() error) workspace.LSPClient {
+func (r *immediateTreeDiagRuntime) NewClient(spec setting.LSPServerSpec, rootURI string, startAdmission func() error) workspace.LSPClient {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.rootURIs = append(r.rootURIs, rootURI)
-	r.specs = append(r.specs, model.CloneLSPServerSpec(spec))
+	r.specs = append(r.specs, setting.CloneLSPServerSpec(spec))
 	r.client = &immediateTreeDiagClient{filePath: r.filePath, diags: r.diags, admit: startAdmission}
 	return r.client
 }
 
-func (c *immediateTreeDiagClient) OnDiagnostics(fn func(model.InsightDiagnosticPublication)) {
+func (c *immediateTreeDiagClient) OnDiagnostics(fn func(insight.DiagnosticPublication)) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.publish = fn
 }
 
-func (c *immediateTreeDiagClient) publishDiagnostics(diags []workspace.LSPDiagnostic) {
+func (c *immediateTreeDiagClient) publishDiagnostics(diags []insight.LSPDiagnostic) {
 	c.mu.Lock()
 	fn := c.publish
 	c.sequence++
 	version := c.wireVersion
-	publication := model.InsightDiagnosticPublication{Boundary: c.boundary, Sequence: c.sequence, WireVersion: version, ReportedVersion: &version, Diagnostics: append([]workspace.LSPDiagnostic(nil), diags...)}
+	publication := insight.DiagnosticPublication{Boundary: c.boundary, Sequence: c.sequence, WireVersion: version, ReportedVersion: &version, Diagnostics: append([]insight.LSPDiagnostic(nil), diags...)}
 	c.mu.Unlock()
 	if fn != nil {
 		fn(publication)
 	}
 }
 
-func (c *immediateTreeDiagClient) syncBoundary(boundary model.InsightBoundary) (int, error) {
+func (c *immediateTreeDiagClient) syncBoundary(boundary insight.Boundary) (int, error) {
 	c.mu.Lock()
 	c.boundary = boundary
 	c.wireVersion++
 	version := c.wireVersion
-	diags := append([]workspace.LSPDiagnostic(nil), c.diags...)
+	diags := append([]insight.LSPDiagnostic(nil), c.diags...)
 	c.mu.Unlock()
 	c.publishDiagnostics(diags)
 	return version, nil
@@ -77,10 +78,10 @@ func (c *immediateTreeDiagClient) syncBoundary(boundary model.InsightBoundary) (
 func (c *immediateTreeDiagClient) Start(context.Context) error { return c.admit() }
 func (c *immediateTreeDiagClient) Stop() error                 { return nil }
 func (c *immediateTreeDiagClient) Done() <-chan struct{}       { return nil }
-func (c *immediateTreeDiagClient) OpenFile(_ context.Context, _, _, _ string, boundary model.InsightBoundary) (int, error) {
+func (c *immediateTreeDiagClient) OpenFile(_ context.Context, _, _, _ string, boundary insight.Boundary) (int, error) {
 	return c.syncBoundary(boundary)
 }
-func (c *immediateTreeDiagClient) UpdateFile(_ context.Context, _, _ string, boundary model.InsightBoundary) (int, error) {
+func (c *immediateTreeDiagClient) UpdateFile(_ context.Context, _, _ string, boundary insight.Boundary) (int, error) {
 	return c.syncBoundary(boundary)
 }
 func (c *immediateTreeDiagClient) CloseFile(context.Context, string)                     {}
@@ -88,38 +89,38 @@ func (c *immediateTreeDiagClient) NotifySave(context.Context, string, string, in
 func (c *immediateTreeDiagClient) NotifyWatchedFilesChanged(context.Context, string, int) {
 }
 func (c *immediateTreeDiagClient) SyncFileFromDisk(context.Context, string, int) {}
-func (c *immediateTreeDiagClient) RequestNavigation(context.Context, string, string, int, int, bool) (model.LSPNavigationResponse, error) {
-	return model.LSPNavigationResponse{}, context.Canceled
+func (c *immediateTreeDiagClient) RequestNavigation(context.Context, string, string, int, int, bool) (insight.LSPNavigationResponse, error) {
+	return insight.LSPNavigationResponse{}, context.Canceled
 }
-func (c *immediateTreeDiagClient) RequestDocumentSymbols(context.Context, string) []workspace.LSPSymbol {
+func (c *immediateTreeDiagClient) RequestDocumentSymbols(context.Context, string) []insight.LSPSymbol {
 	return nil
 }
 func (c *immediateTreeDiagClient) RequestHover(context.Context, string, int, int) (string, error) {
 	return "", nil
 }
-func (c *immediateTreeDiagClient) RequestSignatureHelp(context.Context, string, int, int, model.LSPSignatureContext) (model.LSPSignatureHelp, error) {
-	return model.LSPSignatureHelp{}, nil
+func (c *immediateTreeDiagClient) RequestSignatureHelp(context.Context, string, int, int, insight.LSPSignatureContext) (insight.LSPSignatureHelp, error) {
+	return insight.LSPSignatureHelp{}, nil
 }
-func (c *immediateTreeDiagClient) RequestRename(context.Context, string, int, int, string) (model.LSPRenameEdit, error) {
-	return model.LSPRenameEdit{}, nil
+func (c *immediateTreeDiagClient) RequestRename(context.Context, string, int, int, string) (insight.LSPRenameEdit, error) {
+	return insight.LSPRenameEdit{}, nil
 }
-func (c *immediateTreeDiagClient) RequestCodeActions(context.Context, string, int, int, int, int) (model.LSPCodeActionResponse, error) {
-	return model.LSPCodeActionResponse{}, context.Canceled
+func (c *immediateTreeDiagClient) RequestCodeActions(context.Context, string, int, int, int, int) (insight.LSPCodeActionResponse, error) {
+	return insight.LSPCodeActionResponse{}, context.Canceled
 }
-func (c *immediateTreeDiagClient) ResolveCodeAction(context.Context, string, int, []byte) (model.LSPCodeActionResponse, error) {
-	return model.LSPCodeActionResponse{}, context.Canceled
+func (c *immediateTreeDiagClient) ResolveCodeAction(context.Context, string, int, []byte) (insight.LSPCodeActionResponse, error) {
+	return insight.LSPCodeActionResponse{}, context.Canceled
 }
-func (c *immediateTreeDiagClient) RequestInlayHints(context.Context, string, model.LSPInlayRange) (model.LSPInlayResponse, error) {
-	return model.LSPInlayResponse{}, context.Canceled
+func (c *immediateTreeDiagClient) RequestInlayHints(context.Context, string, insight.LSPInlayRange) (insight.LSPInlayResponse, error) {
+	return insight.LSPInlayResponse{}, context.Canceled
 }
-func (c *immediateTreeDiagClient) ResolveInlayHint(context.Context, string, int, []byte) (model.LSPInlayResponse, error) {
-	return model.LSPInlayResponse{}, context.Canceled
+func (c *immediateTreeDiagClient) ResolveInlayHint(context.Context, string, int, []byte) (insight.LSPInlayResponse, error) {
+	return insight.LSPInlayResponse{}, context.Canceled
 }
-func (c *immediateTreeDiagClient) RequestCompletions(context.Context, string, int, int, model.LSPCompletionContext) (model.LSPCompletionResponse, error) {
-	return model.LSPCompletionResponse{}, context.Canceled
+func (c *immediateTreeDiagClient) RequestCompletions(context.Context, string, int, int, insight.LSPCompletionContext) (insight.LSPCompletionResponse, error) {
+	return insight.LSPCompletionResponse{}, context.Canceled
 }
-func (c *immediateTreeDiagClient) ResolveCompletion(context.Context, string, int, []byte) (model.LSPCompletionResponse, error) {
-	return model.LSPCompletionResponse{}, context.Canceled
+func (c *immediateTreeDiagClient) ResolveCompletion(context.Context, string, int, []byte) (insight.LSPCompletionResponse, error) {
+	return insight.LSPCompletionResponse{}, context.Canceled
 }
 
 func TestLocalEditorCannotInventCanonicalDiagnosticAuthority(t *testing.T) {
@@ -127,7 +128,7 @@ func TestLocalEditorCannotInventCanonicalDiagnosticAuthority(t *testing.T) {
 	app := newDiagnosticsTreeApp(t, dir)
 	runtime := &immediateTreeDiagRuntime{
 		filePath: mainGo,
-		diags:    []workspace.LSPDiagnostic{{Severity: workspace.DiagError, Message: "boom"}},
+		diags:    []insight.LSPDiagnostic{{Severity: workspace.DiagError, Message: "boom"}},
 	}
 	wsOf(app).LSPMgr.SetRuntime(runtime)
 
@@ -174,7 +175,7 @@ func TestSwitchProjectLocalEditorCannotStartRawDiagnosticSource(t *testing.T) {
 	}
 	runtime := &immediateTreeDiagRuntime{
 		filePath: mainGo,
-		diags:    []workspace.LSPDiagnostic{{Severity: workspace.DiagWarning, Message: "warn"}},
+		diags:    []insight.LSPDiagnostic{{Severity: workspace.DiagWarning, Message: "warn"}},
 	}
 	wsOf(app).LSPMgr.SetRuntime(runtime)
 
@@ -213,7 +214,7 @@ func newDiagnosticsTreeApp(t *testing.T, dir string) *App {
 	home := t.TempDir()
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("HOME", home)
-	ws := workspace.NewWorkspace(dir, "test", "test", model.Settings{}, stubLogger{})
+	ws := workspace.NewWorkspace(dir, "test", "test", setting.Settings{}, stubLogger{})
 	app := NewApp(shellport.Local(ws), nil)
 	t.Cleanup(func() {
 		app.StopAsyncIO()
@@ -241,10 +242,10 @@ func assertLSPStartedForRoot(t *testing.T, runtime *immediateTreeDiagRuntime, di
 	}
 }
 
-func (*immediateTreeDiagClient) AwaitDiagnostics(context.Context, string) (model.InsightDiagnosticPublication, bool) {
-	return model.InsightDiagnosticPublication{}, true
+func (*immediateTreeDiagClient) AwaitDiagnostics(context.Context, string) (insight.DiagnosticPublication, bool) {
+	return insight.DiagnosticPublication{}, true
 }
 
-func (*immediateTreeDiagClient) AssistanceCapabilities() model.LSPAssistanceCapabilities {
-	return model.LSPAssistanceCapabilities{Completion: true, CompletionTriggers: []string{"."}, SignatureHelp: true, SignatureTriggers: []string{"(", ","}}
+func (*immediateTreeDiagClient) AssistanceCapabilities() insight.LSPAssistanceCapabilities {
+	return insight.LSPAssistanceCapabilities{Completion: true, CompletionTriggers: []string{"."}, SignatureHelp: true, SignatureTriggers: []string{"(", ","}}
 }

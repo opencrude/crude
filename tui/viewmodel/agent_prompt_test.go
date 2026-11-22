@@ -48,7 +48,7 @@ func TestSubAgentConfirmationRoutesThroughOwningSession(t *testing.T) {
 	session := &workspace.Session{SessionID: "root-session"}
 	app.ActiveSession = session
 	wsOf(app).SessionsByAgent = map[string]*workspace.Session{"root": session}
-	pane := app.ws.PaneMgr().GetOrCreate("child", workspace.PaneAgent, "child")
+	pane := app.ws.PaneMgr().Ensure("child", workspace.PaneAgent, "child")
 	childState := workspace.NewAgentState("child", pane.Messages, app.ws.Logger())
 	app.ws.AgentMgr().AddSubAgent("child", "root", "Child", "model", "researcher", childState)
 	app.syncAgentWindowTabs()

@@ -3,8 +3,8 @@ package session
 import (
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
-	ttypes "crude/types"
 	captypes "crude/types/capability"
+	"crude/types/setting"
 	"fmt"
 	"strings"
 )
@@ -13,7 +13,7 @@ const (
 	CategoryDefault    = "default"
 	CategoryResearcher = "researcher"
 	CategoryCrafter    = "crafter"
-	CategoryErrand     = ttypes.ErrandRoleID
+	CategoryErrand     = setting.ErrandRoleID
 	CategoryMemory     = "memory"
 )
 
@@ -21,7 +21,7 @@ const (
 // configuration source rather than storing a copied value.
 const (
 	// InheritMain follows this session's main agent live.
-	InheritMain = ttypes.AgentInheritMain
+	InheritMain = setting.AgentInheritMain
 	// InheritWorkspace follows the workspace baseline's main agent live.
 	InheritWorkspace = "workspace"
 )
@@ -68,20 +68,18 @@ type ProfileConfig struct {
 }
 
 type AgentsConfig struct {
-	Enabled       bool                          `json:"enabled,omitempty"`
-	ActiveProfile string                        `json:"active_profile,omitempty"`
-	MaxConcurrent int                           `json:"max_concurrent,omitempty"`
-	Profiles      map[string]ProfileConfig      `json:"profiles,omitempty"`
-	AgentProfiles map[string]AgentProfileConfig `json:"agent_profiles,omitempty"`
+	Enabled       bool                            `json:"enabled,omitempty"`
+	ActiveProfile string                          `json:"active_profile,omitempty"`
+	MaxConcurrent int                             `json:"max_concurrent,omitempty"`
+	Profiles      map[string]ProfileConfig        `json:"profiles,omitempty"`
+	AgentProfiles map[string]setting.AgentProfile `json:"agent_profiles,omitempty"`
 	// Shell is the agent command shell; empty is Auto.
 	Shell string `json:"shell,omitempty"`
 	// MaxWaitMinutes bounds one agent wait; zero is Auto.
 	MaxWaitMinutes int `json:"max_wait_minutes,omitempty"`
 	// Suggestions is the connection for Errand's editor suggestions.
-	Suggestions ttypes.SuggestionSettings `json:"suggestions,omitempty"`
+	Suggestions setting.Suggestion `json:"suggestions,omitempty"`
 }
-
-type AgentProfileConfig = ttypes.AgentProfileSettings
 
 // DefaultAgentsConfig returns the built-in agent scaffolding. No category
 // ships a model: the user configures the main agent (and any role that should
@@ -89,7 +87,7 @@ type AgentProfileConfig = ttypes.AgentProfileSettings
 // configuration at read time.
 func DefaultAgentsConfig() AgentsConfig {
 	t := true
-	roles := ttypes.DefaultAgentRoleCategories()
+	roles := setting.DefaultAgentRoleCategories()
 	delete(roles, CategoryDefault)
 	delete(roles, CategoryMemory)
 	categories := make(map[string]CategoryConfig, len(roles))
@@ -108,7 +106,7 @@ func DefaultAgentsConfig() AgentsConfig {
 			},
 		},
 		// Named agents are user-created; none ship with a clean install.
-		AgentProfiles: map[string]AgentProfileConfig{},
+		AgentProfiles: map[string]setting.AgentProfile{},
 	}
 }
 
@@ -119,9 +117,9 @@ type Config struct {
 	AccountManager       *provider.AccountManager
 	TurnLogsEnabled      bool
 	Agents               AgentsConfig
-	Memory               ttypes.MemorySettings
+	Memory               setting.Memory
 	Capabilities         captypes.Settings
-	Safety               ttypes.SafetySettings
+	Safety               setting.Safety
 
 	// workspaceMain is a copy of the workspace baseline's main-agent
 	// category. Categories carrying Inherit="workspace" resolve through it
@@ -212,9 +210,9 @@ func cloneBoolPtr(src *bool) *bool {
 	return &value
 }
 
-// GetActiveDefaultCategory resolves the main agent ("default") category.
+// ActiveDefaultCategory resolves the main agent ("default") category.
 // No provider or account is inferred when the category is absent.
-func (c *Config) GetActiveDefaultCategory() CategoryConfig {
+func (c *Config) ActiveDefaultCategory() CategoryConfig {
 	prof, _ := activeProfileCfg(c)
 	if c.SelectedAgent != "" {
 		if selected, err := c.selectedMainCategory(prof); err == nil {
@@ -263,7 +261,7 @@ func (c *Config) selectedMainCategory(prof ProfileConfig) (CategoryConfig, error
 	}
 	id := c.SelectedAgent
 	role := strings.TrimPrefix(id, "profile/")
-	var named *AgentProfileConfig
+	var named *setting.AgentProfile
 	if role != id {
 		profile, exists := c.Agents.AgentProfiles[role]
 		if !exists {
@@ -382,7 +380,7 @@ func (c *Config) selectedMainCategory(prof ProfileConfig) (CategoryConfig, error
 
 func (c *Config) ValidateSelectedAgent() error {
 	if c.SelectedAgent == "" {
-		main := c.GetActiveDefaultCategory()
+		main := c.ActiveDefaultCategory()
 		if main.Enabled != nil && !*main.Enabled {
 			return fmt.Errorf("main agent is disabled")
 		}
@@ -393,7 +391,7 @@ func (c *Config) ValidateSelectedAgent() error {
 	return err
 }
 
-// GetCategoryConfig resolves a role's effective configuration live:
+// CategoryConfig resolves a role's effective configuration live:
 //
 //	role with stored manual values    → those values
 //	role marked Inherit="main"        → this session's main agent
@@ -403,16 +401,16 @@ func (c *Config) ValidateSelectedAgent() error {
 //	  fields inherited from the main agent
 //
 // Editing the source therefore propagates to every role that inherits it.
-func (c *Config) GetCategoryConfig(category string) CategoryConfig {
+func (c *Config) CategoryConfig(category string) CategoryConfig {
 	if category == "" || category == CategoryDefault {
-		return c.GetActiveDefaultCategory()
+		return c.ActiveDefaultCategory()
 	}
 	prof, _ := activeProfileCfg(c)
 	if cat, ok := prof.Categories[category]; ok {
 		switch {
 		case cat.Inherit == InheritWorkspace && c.workspaceMain != nil:
 			resolved := *c.workspaceMain
-			resolved.AccountID, resolved.Model = ttypes.InheritRoleModel(cat.AccountID, "", resolved.AccountID, resolved.Model)
+			resolved.AccountID, resolved.Model = setting.InheritRoleModel(cat.AccountID, "", resolved.AccountID, resolved.Model)
 			if cat.ServiceTier != "" {
 				resolved.ServiceTier = cat.ServiceTier
 			}
@@ -420,8 +418,8 @@ func (c *Config) GetCategoryConfig(category string) CategoryConfig {
 			resolved = mergeCategoryConfig(resolved, inheritedRoleChoices(cat))
 			return resolved
 		case cat.Inherit == InheritMain:
-			main := c.GetActiveDefaultCategory()
-			main.AccountID, main.Model = ttypes.InheritRoleModel(cat.AccountID, "", main.AccountID, main.Model)
+			main := c.ActiveDefaultCategory()
+			main.AccountID, main.Model = setting.InheritRoleModel(cat.AccountID, "", main.AccountID, main.Model)
 			if cat.ServiceTier != "" {
 				main.ServiceTier = cat.ServiceTier
 			}
@@ -432,8 +430,8 @@ func (c *Config) GetCategoryConfig(category string) CategoryConfig {
 		c.resolveCategoryDefaults(&cat)
 		// Models and thinking remain role-owned; only absent values inherit.
 		if cat.Model == "" || inheritsAccount || cat.ThinkingEffort == "" {
-			main := c.GetActiveDefaultCategory()
-			cat.AccountID, cat.Model = ttypes.InheritRoleModel(cat.AccountID, cat.Model, main.AccountID, main.Model)
+			main := c.ActiveDefaultCategory()
+			cat.AccountID, cat.Model = setting.InheritRoleModel(cat.AccountID, cat.Model, main.AccountID, main.Model)
 			if cat.ThinkingEffort == "" {
 				cat.ThinkingEffort = main.ThinkingEffort
 			}
@@ -441,26 +439,26 @@ func (c *Config) GetCategoryConfig(category string) CategoryConfig {
 		}
 		return cat
 	}
-	return c.GetActiveDefaultCategory()
+	return c.ActiveDefaultCategory()
 }
 
-// GetMemoryCategory resolves the no-tools memory job. Its own settings and
+// MemoryCategory resolves the no-tools memory job. Its own settings and
 // explicit session overrides win over the effective Errand connection.
-func (c *Config) GetMemoryCategory() CategoryConfig {
+func (c *Config) MemoryCategory() CategoryConfig {
 	memory := catSettingsToConfig(c.Memory.MemoryCategory)
-	defaults := c.GetCategoryConfig(CategoryErrand)
+	defaults := c.CategoryConfig(CategoryErrand)
 	profile, _ := activeProfileCfg(c)
 	if override, exists := profile.Categories[CategoryMemory]; exists {
 		memory = mergeCategoryConfig(memory, override)
 		switch {
 		case override.Inherit == InheritWorkspace && c.workspaceMain != nil:
-			memory.AccountID, memory.Model = ttypes.InheritRoleModel(override.AccountID, "", c.workspaceMain.AccountID, c.workspaceMain.Model)
+			memory.AccountID, memory.Model = setting.InheritRoleModel(override.AccountID, "", c.workspaceMain.AccountID, c.workspaceMain.Model)
 		case override.Inherit == InheritMain:
-			main := c.GetActiveDefaultCategory()
-			memory.AccountID, memory.Model = ttypes.InheritRoleModel(override.AccountID, "", main.AccountID, main.Model)
+			main := c.ActiveDefaultCategory()
+			memory.AccountID, memory.Model = setting.InheritRoleModel(override.AccountID, "", main.AccountID, main.Model)
 		}
 	}
-	memory.AccountID, memory.Model = ttypes.InheritAgentModel(memory.AccountID, memory.Model, defaults.AccountID, defaults.Model)
+	memory.AccountID, memory.Model = setting.InheritAgentModel(memory.AccountID, memory.Model, defaults.AccountID, defaults.Model)
 	c.resolveCategoryDefaults(&memory)
 	return memory
 }
@@ -468,9 +466,9 @@ func (c *Config) GetMemoryCategory() CategoryConfig {
 // permissionReviewSettingsLocked is a request projection, not a saved settings
 // value. Only the model binding is inherited; consent and policy stay local
 // to Auto Review and never flow from the Errand role.
-func (s *Session) permissionReviewSettingsLocked() ttypes.AutoPermissionSettings {
+func (s *Session) permissionReviewSettingsLocked() setting.AutoPermission {
 	if s.cfg == nil {
-		return ttypes.AutoPermissionSettings{}
+		return setting.AutoPermission{}
 	}
 	settings := s.cfg.Safety.AutoPermission.Normalized()
 	if settings.Enabled == "on" && s.workspaceCfg != nil {
@@ -478,7 +476,7 @@ func (s *Session) permissionReviewSettingsLocked() ttypes.AutoPermissionSettings
 		// or the Main Agent that Errand itself might use for ordinary work.
 		profile, _ := activeProfileCfg(s.workspaceCfg)
 		errand := profile.Categories[CategoryErrand]
-		settings.AccountID, settings.Model = ttypes.InheritAgentModel(settings.AccountID, settings.Model, errand.AccountID, errand.Model)
+		settings.AccountID, settings.Model = setting.InheritAgentModel(settings.AccountID, settings.Model, errand.AccountID, errand.Model)
 	}
 	return settings
 }
@@ -490,7 +488,7 @@ func (c *Config) resolveCategoryDefaults(cat *CategoryConfig) {
 		cat.ContextCompactionPercent = &value
 	}
 	if cat.ContextRetentionTokens != nil {
-		value := min(ttypes.MaxContextRetentionTokens, max(ttypes.MinContextRetentionTokens, *cat.ContextRetentionTokens))
+		value := min(setting.MaxContextRetentionTokens, max(setting.MinContextRetentionTokens, *cat.ContextRetentionTokens))
 		cat.ContextRetentionTokens = &value
 	}
 }
@@ -506,8 +504,8 @@ func activeProfileCfg(cfg *Config) (ProfileConfig, string) {
 	return ProfileConfig{}, ap
 }
 
-func catConfigToSettings(v CategoryConfig) ttypes.CategorySettings {
-	return ttypes.CategorySettings{
+func catConfigToSettings(v CategoryConfig) setting.Category {
+	return setting.Category{
 		Enabled:      cloneBoolPtr(v.Enabled),
 		Instructions: v.Instructions,
 		AllowedTools: append([]string(nil), v.AllowedTools...), DeniedTools: append([]string(nil), v.DeniedTools...),
@@ -533,7 +531,7 @@ func catConfigToSettings(v CategoryConfig) ttypes.CategorySettings {
 	}
 }
 
-func catSettingsToConfig(v ttypes.CategorySettings) CategoryConfig {
+func catSettingsToConfig(v setting.Category) CategoryConfig {
 	return CategoryConfig{
 		Enabled:      cloneBoolPtr(v.Enabled),
 		Instructions: v.Instructions,
@@ -562,12 +560,12 @@ func catSettingsToConfig(v ttypes.CategorySettings) CategoryConfig {
 
 // AgentDefaultsSettings exposes stored definitions, not resolved role selections.
 // Only ConfigToSettings resolves inheritance for a running session.
-func AgentDefaultsSettings(agents AgentsConfig) ttypes.AgentsSettings {
+func AgentDefaultsSettings(agents AgentsConfig) setting.Agents {
 	cfg := copyConfig(&Config{Agents: agents})
 	EnsureAgentsDefaults(&cfg.Agents)
 	prof, name := activeProfileCfg(cfg)
-	out := ttypes.AgentsSettings{ActiveProfile: name, Enabled: cfg.IsMultiAgentEnabled(), MaxConcurrent: cfg.Agents.MaxConcurrent,
-		Categories: make(map[string]ttypes.CategorySettings), AgentProfiles: ttypes.CloneAgentProfiles(cfg.Agents.AgentProfiles), Shell: cfg.Agents.Shell, MaxWaitMinutes: cfg.Agents.MaxWaitMinutes, Suggestions: cfg.Agents.Suggestions}
+	out := setting.Agents{ActiveProfile: name, Enabled: cfg.IsMultiAgentEnabled(), MaxConcurrent: cfg.Agents.MaxConcurrent,
+		Categories: make(map[string]setting.Category), AgentProfiles: setting.CloneAgentProfiles(cfg.Agents.AgentProfiles), Shell: cfg.Agents.Shell, MaxWaitMinutes: cfg.Agents.MaxWaitMinutes, Suggestions: cfg.Agents.Suggestions}
 	for role, cat := range prof.Categories {
 		out.Categories[role] = catConfigToSettings(cat)
 	}
@@ -587,8 +585,9 @@ func cloneIntPtr(src *int) *int {
 	return &value
 }
 
-func ConfigToSettings(cfg *Config) ttypes.Settings {
-	mainCat := cfg.GetActiveDefaultCategory()
+// ConfigToSettings projects the session config into the settings shape that the shell saves.
+func ConfigToSettings(cfg *Config) setting.Settings {
+	mainCat := cfg.ActiveDefaultCategory()
 	mainProviderID := cfg.providerIDForAccount(mainCat.AccountID)
 	var mainTemplate provider.Template
 	resolved, connectionErr := cfg.connectionForAccountID(mainCat.AccountID)
@@ -612,19 +611,19 @@ func ConfigToSettings(cfg *Config) ttypes.Settings {
 		turnLogs = "off"
 	}
 
-	agentsSettings := ttypes.AgentsSettings{
-		AgentProfiles: ttypes.CloneAgentProfiles(cfg.Agents.AgentProfiles),
+	agentsSettings := setting.Agents{
+		AgentProfiles: setting.CloneAgentProfiles(cfg.Agents.AgentProfiles),
 		Enabled:       maEnabled,
 		ActiveProfile: ap,
 		MaxConcurrent: cfg.Agents.MaxConcurrent,
-		Categories:    make(map[string]ttypes.CategorySettings),
+		Categories:    make(map[string]setting.Category),
 		Shell:         cfg.Agents.Shell,
 		// The wait bound is one value for every agent, like the shell.
 		MaxWaitMinutes: cfg.Agents.MaxWaitMinutes,
 		Suggestions:    cfg.Agents.Suggestions,
 	}
 	for k := range activeProf.Categories {
-		agentsSettings.Categories[k] = categoryToSettings(cfg, cfg.GetCategoryConfig(k))
+		agentsSettings.Categories[k] = categoryToSettings(cfg, cfg.CategoryConfig(k))
 	}
 
 	if _, hasDefault := agentsSettings.Categories[CategoryDefault]; !hasDefault {
@@ -632,9 +631,9 @@ func ConfigToSettings(cfg *Config) ttypes.Settings {
 	}
 
 	safetySettings := cfg.Safety
-	safetySettings.CommandRules = append([]ttypes.CommandSeverityRule(nil), cfg.Safety.CommandRules...)
+	safetySettings.CommandRules = append([]setting.CommandSeverityRule(nil), cfg.Safety.CommandRules...)
 
-	return ttypes.Settings{
+	return setting.Settings{
 		SessionMainAgent: cfg.SelectedAgent,
 		Model:            mainCat.Model,
 		ProviderID:       mainProviderID,
@@ -653,41 +652,41 @@ func ConfigToSettings(cfg *Config) ttypes.Settings {
 
 // configuredFastMode reflects the next request's role/account configuration.
 // It does not claim the provider actually served a request at that tier.
-func configuredFastMode(providerID string, connection provider.Template, roleTier string, connectionErr error) ttypes.FastMode {
+func configuredFastMode(providerID string, connection provider.Template, roleTier string, connectionErr error) setting.FastMode {
 	accountFast := connection.Protocol != nil && connection.Protocol.ServiceTier == "fast"
 	if roleTier != "fast" && !accountFast {
-		return ttypes.FastModeOff
+		return setting.FastModeOff
 	}
 	if connectionErr != nil || connection.Validate() != nil {
 		if roleTier == "fast" || roleTier == "" && accountFast {
-			return ttypes.FastModeUnavailable
+			return setting.FastModeUnavailable
 		}
-		return ttypes.FastModeOff
+		return setting.FastModeOff
 	}
 	p := &provider.Provider{ID: providerID}
 	if p.SetProtocolID(connection.APIStandard) != nil {
 		if roleTier == "fast" {
-			return ttypes.FastModeUnavailable
+			return setting.FastModeUnavailable
 		}
-		return ttypes.FastModeOff
+		return setting.FastModeOff
 	}
 	if roleTier == "fast" && !p.SupportsServiceTier("fast") {
-		return ttypes.FastModeUnsupported
+		return setting.FastModeUnsupported
 	}
 	p.SetProtocolSettings(connection.Protocol)
 	p.SetServiceTier(roleTier)
 	if roleTier == "fast" {
-		return ttypes.FastModeOn
+		return setting.FastModeOn
 	}
 	if settings := p.ProtocolSettings(); settings != nil && settings.ServiceTier == "fast" && p.SupportsServiceTier("fast") {
-		return ttypes.FastModeOn
+		return setting.FastModeOn
 	}
-	return ttypes.FastModeOff
+	return setting.FastModeOff
 }
 
 // categoryToSettings exposes provider details only as a projection of the
 // explicitly selected account; they are never read back as routing authority.
-func categoryToSettings(cfg *Config, category CategoryConfig) ttypes.CategorySettings {
+func categoryToSettings(cfg *Config, category CategoryConfig) setting.Category {
 	settings := catConfigToSettings(category)
 	settings.Provider = cfg.providerIDForAccount(category.AccountID)
 	if template, err := cfg.connectionForAccountID(category.AccountID); err == nil {
@@ -700,14 +699,14 @@ func categoryToSettings(cfg *Config, category CategoryConfig) ttypes.CategorySet
 // ApplyWorkspaceAgentDefaults overlays workspace-scoped agent defaults onto
 // the active profile. Provider credentials remain app-global; new sessions
 // inherit these role defaults unless their own DB contains an override.
-func ApplyWorkspaceAgentDefaults(cfg *Config, agents ttypes.AgentsSettings) {
+func ApplyWorkspaceAgentDefaults(cfg *Config, agents setting.Agents) {
 	if cfg == nil {
 		return
 	}
 	// The catalog is a complete workspace projection, including an empty map
 	// after the last named agent is removed. Retaining the old map would make
 	// already-running sessions keep showing deleted profiles.
-	cfg.Agents.AgentProfiles = ttypes.CloneAgentProfiles(agents.AgentProfiles)
+	cfg.Agents.AgentProfiles = setting.CloneAgentProfiles(agents.AgentProfiles)
 	// The shell is a complete projection too: empty restores Auto.
 	cfg.Agents.Shell = agents.Shell
 	// So is the wait bound: zero restores Auto.

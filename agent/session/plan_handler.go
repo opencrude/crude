@@ -157,7 +157,7 @@ func decodeUpdateRequest(params map[string]any) (plan.UpdateRequest, error) {
 	req.Replace, _ = params["replace"].(bool)
 	req.Objective = firstStrParam(params, "objective", "goal", "title")
 	req.Explanation = firstStrParam(params, "explanation", "note", "notes")
-	req.Status = plan.PlanStatus(firstStrParam(params, "status", "state"))
+	req.Status = plan.Status(firstStrParam(params, "status", "state"))
 
 	rawSteps, ok := firstParam(params, "steps", "todos", "tasks")
 	if !ok {
@@ -167,7 +167,7 @@ func decodeUpdateRequest(params map[string]any) (plan.UpdateRequest, error) {
 	if err != nil {
 		return req, err
 	}
-	steps := make([]plan.PlanStep, 0, len(entries))
+	steps := make([]plan.Step, 0, len(entries))
 	for i, entry := range entries {
 		step, err := decodePlanStep(entry)
 		if err != nil {
@@ -189,25 +189,25 @@ func decodeUpdateRequest(params map[string]any) (plan.UpdateRequest, error) {
 // annotations are the exception: a result/note/outcome field is dropped, never
 // stored. The card shows the step banner, not a progress log; narration
 // belongs in conversation, and only a deviation status carries a reason.
-func decodePlanStep(raw any) (plan.PlanStep, error) {
+func decodePlanStep(raw any) (plan.Step, error) {
 	if text, ok := raw.(string); ok {
 		if strings.TrimSpace(text) == "" {
-			return plan.PlanStep{}, fmt.Errorf("update_plan: steps cannot contain an empty string; give each step an id (e.g. \"audit\") and a short description")
+			return plan.Step{}, fmt.Errorf("update_plan: steps cannot contain an empty string; give each step an id (e.g. \"audit\") and a short description")
 		}
-		return plan.PlanStep{Description: strings.TrimSpace(text), Status: plan.StepPending}, nil
+		return plan.Step{Description: strings.TrimSpace(text), Status: plan.StepPending}, nil
 	}
 	object, ok := raw.(map[string]any)
 	if !ok {
-		return plan.PlanStep{}, fmt.Errorf("update_plan: each step must be an object like {\"id\":\"audit\",\"description\":\"Audit repo\",\"status\":\"pending\"}, got %T", raw)
+		return plan.Step{}, fmt.Errorf("update_plan: each step must be an object like {\"id\":\"audit\",\"description\":\"Audit repo\",\"status\":\"pending\"}, got %T", raw)
 	}
-	step := plan.PlanStep{
+	step := plan.Step{
 		ID:          firstStrParam(object, "id", "step_id", "key"),
 		Description: firstStrParam(object, "description", "content", "title", "name", "text", "action"),
 		Status:      plan.StepStatus(firstStrParam(object, "status", "state")),
 		Reason:      firstStrParam(object, "reason", "why"),
 	}
 	if step.ID == "" && step.Description == "" {
-		return plan.PlanStep{}, fmt.Errorf("update_plan: every step needs a stable id and a short description (a few imperative words); received %s", describeStepKeys(object))
+		return plan.Step{}, fmt.Errorf("update_plan: every step needs a stable id and a short description (a few imperative words); received %s", describeStepKeys(object))
 	}
 	if step.Description == "" {
 		step.Description = step.ID

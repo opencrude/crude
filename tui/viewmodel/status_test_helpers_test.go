@@ -3,7 +3,7 @@ package viewmodel
 import (
 	"time"
 
-	types "crude/types"
+	"crude/types/statuscenter"
 )
 
 func testActiveAgentCount(app *App) int {
@@ -13,7 +13,7 @@ func testActiveAgentCount(app *App) int {
 	count := 0
 	for _, status := range app.ws.Status().Agents() {
 		switch status.Phase {
-		case types.AgentOpening, types.AgentPreparing, types.AgentUploading, types.AgentWaiting, types.AgentThinking, types.AgentResponding, types.AgentTool, types.AgentChildren, types.AgentRetrying, types.AgentCancelling:
+		case statuscenter.AgentOpening, statuscenter.AgentPreparing, statuscenter.AgentUploading, statuscenter.AgentWaiting, statuscenter.AgentThinking, statuscenter.AgentResponding, statuscenter.AgentTool, statuscenter.AgentChildren, statuscenter.AgentRetrying, statuscenter.AgentCancelling:
 			count++
 		}
 	}
@@ -26,7 +26,7 @@ func testIdleAgentCount(app *App) int {
 	}
 	count := 0
 	for _, status := range app.ws.Status().Agents() {
-		if status.Phase == types.AgentIdle && !status.ReadOnly {
+		if status.Phase == statuscenter.AgentIdle && !status.ReadOnly {
 			count++
 		}
 	}
@@ -42,7 +42,7 @@ func testStatusText(app *App) string {
 			return issue.Summary
 		}
 	}
-	if notice, ok := wsOf(app).Status.LatestUnread(types.SeverityInfo); ok {
+	if notice, ok := wsOf(app).Status.LatestUnread(statuscenter.SeverityInfo); ok {
 		return notice.Summary
 	}
 	if notice, ok := app.ws.Status().LatestTransient(time.Now(), 10*time.Second); ok {

@@ -10,8 +10,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/agent/memory"
-	"crude/core/port"
-	memorybrowser "crude/tui/screens/memorybrowser"
+	"crude/core/shellport"
+	"crude/tui/screens/memorybrowser"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"
 )

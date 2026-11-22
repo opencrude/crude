@@ -53,7 +53,7 @@ func TestWorkspaceStorageMetadataLeaseBlocksMovesAndCancellationPreservesData(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := PreviewWorkspaceDeletion(t.Context(), WorkspaceID(project), project, t.TempDir())
+	plan, err := PreviewWorkspaceDeletion(t.Context(), ID(project), project, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestWorkspaceStorageMetadataLeaseBlocksMovesAndCancellationPreservesData(t 
 	}
 	secondRead()
 	ctx, cancel = context.WithTimeout(t.Context(), 100*time.Millisecond)
-	_, err = PreviewWorkspaceDeletion(ctx, WorkspaceID(project), project, t.TempDir())
+	_, err = PreviewWorkspaceDeletion(ctx, ID(project), project, t.TempDir())
 	cancel()
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("preview bypassed an outstanding metadata SQL lifetime: %v", err)
@@ -146,7 +146,7 @@ func TestWorkspaceStorageFullAndLightMetadataReadsRespectMoveLease(t *testing.T)
 	t.Cleanup(unblock)
 	readers := []struct {
 		name string
-		read func(context.Context, string) *WorkspaceInfo
+		read func(context.Context, string) *Info
 	}{{"full", readWorkspaceMeta}, {"light", readWorkspaceMetaLight}}
 	for _, reader := range readers {
 		t.Run(reader.name, func(t *testing.T) {

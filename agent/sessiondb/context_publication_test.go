@@ -180,7 +180,7 @@ func TestPublishContextCommitsHumanPromptMetadataWithInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	meta, err := GetMeta(db)
+	meta, err := LoadMeta(db)
 	if err != nil || !meta.FirstPrompt.Valid || !meta.LastPrompt.Valid || meta.FirstPrompt.String != "original request" || meta.LastPrompt.String != "original request" || meta.TurnCount != 1 {
 		t.Fatalf("initial input metadata = %+v error=%v", meta, err)
 	}
@@ -193,7 +193,7 @@ func TestPublishContextCommitsHumanPromptMetadataWithInput(t *testing.T) {
 	if _, err := PublishContext(db, publication); err == nil {
 		t.Fatal("failed input was acknowledged")
 	}
-	failed, err := GetMeta(db)
+	failed, err := LoadMeta(db)
 	if err != nil || !reflect.DeepEqual(meta, failed) {
 		t.Fatalf("failed publication changed prompt metadata: before=%+v after=%+v error=%v", meta, failed, err)
 	}
@@ -203,7 +203,7 @@ func TestPublishContextCommitsHumanPromptMetadataWithInput(t *testing.T) {
 	if _, err := PublishContext(db, publication); err != nil {
 		t.Fatal(err)
 	}
-	meta, err = GetMeta(db)
+	meta, err = LoadMeta(db)
 	if err != nil || !meta.FirstPrompt.Valid || !meta.LastPrompt.Valid || meta.FirstPrompt.String != "original request" || meta.LastPrompt.String != strings.Repeat("\u754c", 66) || !utf8.ValidString(meta.LastPrompt.String) || meta.TurnCount != 2 {
 		t.Fatalf("committed steering metadata = %+v error=%v", meta, err)
 	}
@@ -782,7 +782,7 @@ func TestHydrateMessageIdentitiesRestoresProviderFactsAndEmptyShapes(t *testing.
 	}
 	message := provider.ChatMessage{InternalID: "complete", Role: "assistant", Content: provider.TextContent("accepted"),
 		ReplayScope: "provider-scope", ReplaySourceModel: "original-model", ReplayPrefixHash: "original-prefix",
-		ToolCalls: []provider.ToolCall{}, ReasoningDetails: []json.RawMessage{}, ProviderItems: []provider.ProviderItem{},
+		ToolCalls: []provider.ToolCall{}, ReasoningDetails: []json.RawMessage{}, ProviderItems: []provider.Item{},
 	}
 	if _, err := PublishContext(db, ContextPublication{SessionID: "session", AgentID: "session", Mutation: ContextMutation{Append: []ContextMessageDelta{{Message: message, CreatedAt: 1, Meta: DisplayMeta{DisplayRole: "assistant", DisplayContent: "display remains independent"}}}}}); err != nil {
 		t.Fatal(err)

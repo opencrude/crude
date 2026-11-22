@@ -54,7 +54,7 @@ func TestPlanningAdaptersReplaceCleanGoalAndPreserveHistory(t *testing.T) {
 				t.Fatal(err)
 			}
 			var history struct {
-				Events []plan.PlanEvent `json:"events"`
+				Events []plan.Event `json:"events"`
 			}
 			if err := json.Unmarshal([]byte(result.Content), &history); err != nil {
 				t.Fatal(err)

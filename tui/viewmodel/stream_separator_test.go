@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	ctypes "crude/types"
+	"crude/types/conversation"
 	"crude/types/reasoning"
 	"crude/workspace"
 )
@@ -22,7 +22,7 @@ func TestSeparatorDeltasKeepParallelReadsGrouped(t *testing.T) {
 	state := app.ws.AgentMgr().Get("ling").State
 	app.switchToAgentView(state.ID)
 	event := func(typ string, data any) {
-		app.handleAgentEvent(ctypes.AgentEventMsg{AgentID: state.ID, Type: typ, Data: data})
+		app.handleAgentEvent(AgentEventMsg{AgentID: state.ID, Type: typ, Data: data})
 		app.paintShellFrame()
 	}
 	event("thinking", reasoning.Delta{Text: "Check the lint rules first.", Kind: reasoning.Raw})
@@ -84,12 +84,12 @@ func TestThinkingPaneKeepsTranscriptWidth(t *testing.T) {
 	state := app.ws.AgentMgr().Get("thinker").State
 	app.switchToAgentView(state.ID)
 	for i := range 20 {
-		state.Messages.AppendMessage(workspace.Message{Role: ctypes.RoleAssistant,
+		state.Messages.AppendMessage(conversation.Message{Role: conversation.RoleAssistant,
 			Content: fmt.Sprintf("Earlier reply %d is long enough to wrap close to the right edge of the chat column when the width changes by a column or two.", i)})
 	}
 	app.syncAgentMessages(state.ID, false)
 	app.paintShellFrame()
-	renderer := app.subPaneProjections.GetExisting(state.ID).renderer
+	renderer := app.subPaneProjections.Existing(state.ID).renderer
 	transcript := func() string {
 		rows, _, _ := renderer.ExportMessageRows(app.chatReflowInnerW)
 		var lines []string
@@ -104,7 +104,7 @@ func TestThinkingPaneKeepsTranscriptWidth(t *testing.T) {
 	overflowed := false
 	for round := range 2 {
 		for line := range 30 {
-			app.handleAgentEvent(ctypes.AgentEventMsg{AgentID: state.ID, Type: "thinking",
+			app.handleAgentEvent(AgentEventMsg{AgentID: state.ID, Type: "thinking",
 				Data: reasoning.Delta{Text: fmt.Sprintf("Thinking line %d of round %d.\n", line, round), Kind: reasoning.Raw}})
 			app.paintShellFrame()
 			overflowed = overflowed || renderer.PaneScrollbarWidth() > 0
@@ -116,7 +116,7 @@ func TestThinkingPaneKeepsTranscriptWidth(t *testing.T) {
 			}
 		}
 		id := fmt.Sprintf("read-%d", round)
-		app.handleAgentEvent(ctypes.AgentEventMsg{AgentID: state.ID, Type: "tool_call", Data: map[string]any{
+		app.handleAgentEvent(AgentEventMsg{AgentID: state.ID, Type: "tool_call", Data: map[string]any{
 			"tool_id": id, "internal_id": id, "request_id": id, "name": "read_file", "args": `{"path":"a.go"}`}})
 		app.paintShellFrame()
 		if got := transcript(); got != want {

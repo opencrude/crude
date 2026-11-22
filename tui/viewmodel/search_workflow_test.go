@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/core/port"
-	findinfiles "crude/tui/screens/findinfiles"
+	"crude/core/shellport"
+	"crude/tui/screens/findinfiles"
 	"crude/tui/ui"
 	"crude/workspace/fileio"
 

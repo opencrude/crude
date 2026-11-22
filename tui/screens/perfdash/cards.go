@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	"crude/metrics"
-	"crude/perfdata"
+	"crude/internal/metrics"
+	"crude/internal/perfdata"
 )
 
 // chartKind selects how a card reads its series.
@@ -32,13 +32,13 @@ type card struct {
 	warn     float64
 	crit     float64
 	headline string
-	headSev  Severity
+	headSev  perfdata.Severity
 	footer   string
 	step     int
 	end      int64
 }
 
-func (c *card) severity(v float64) Severity {
+func (c *card) severity(v float64) perfdata.Severity {
 	return perfdata.ThresholdSeverity(v, c.warn, c.crit)
 }
 

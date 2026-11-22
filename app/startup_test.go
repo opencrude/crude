@@ -8,8 +8,8 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/session"
-	"crude/network"
-	"crude/types"
+	"crude/internal/network"
+	"crude/types/statuscenter"
 )
 
 const unavailableStartupAccount = "5c7eb662d2f8abcca6eeeb1cf1acbc50"
@@ -33,7 +33,7 @@ func TestPrepareStartupMissingConfiguredAccountKeepsSelectionAndConfigBytes(t *t
 	}
 
 	prepared := PrepareStartup(CLIFlags{})
-	if len(prepared.Issues) != 1 || prepared.Issues[0].Target != types.RepairAccounts || !strings.Contains(prepared.Issues[0].Detail, unavailableStartupAccount) {
+	if len(prepared.Issues) != 1 || prepared.Issues[0].Target != statuscenter.RepairAccounts || !strings.Contains(prepared.Issues[0].Detail, unavailableStartupAccount) {
 		t.Fatalf("missing typed account repair: %#v", prepared.Issues)
 	}
 	gotMain := prepared.Config.Agents.Profiles[prepared.Config.Agents.ActiveProfile].Categories[session.CategoryDefault]
@@ -56,7 +56,7 @@ func TestPrepareStartupMalformedConfigIsNonWritingRepair(t *testing.T) {
 		t.Fatal(err)
 	}
 	prepared := PrepareStartup(CLIFlags{})
-	if len(prepared.Issues) != 1 || prepared.Issues[0].Target != types.RepairConfigFile || prepared.Issues[0].Path != ConfigPath() {
+	if len(prepared.Issues) != 1 || prepared.Issues[0].Target != statuscenter.RepairConfigFile || prepared.Issues[0].Path != ConfigPath() {
 		t.Fatalf("config issue = %#v", prepared.Issues)
 	}
 	if strings.Contains(prepared.Issues[0].Detail, "do-not-echo") {
@@ -71,7 +71,7 @@ func TestPrepareStartupMalformedConfigIsNonWritingRepair(t *testing.T) {
 func TestPrepareStartupUnavailableResumeOpensLauncherWithIssue(t *testing.T) {
 	defer setTestHome(t, t.TempDir())()
 	prepared := PrepareStartup(CLIFlags{Resume: "last"})
-	if prepared.ResumeID != "" || len(prepared.Issues) != 1 || prepared.Issues[0].Target != types.RepairSessionAccount {
+	if prepared.ResumeID != "" || len(prepared.Issues) != 1 || prepared.Issues[0].Target != statuscenter.RepairSessionAccount {
 		t.Fatalf("resume preparation = %#v", prepared)
 	}
 }
@@ -84,13 +84,13 @@ func TestPrepareStartupCLISelectionDoesNotFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	prepared := PrepareStartup(CLIFlags{Provider: "openrouter", Account: unavailableStartupAccount})
-	if len(prepared.Issues) != 1 || prepared.Issues[0].Target != types.RepairAccounts {
+	if len(prepared.Issues) != 1 || prepared.Issues[0].Target != statuscenter.RepairAccounts {
 		t.Fatalf("selection issue = %#v", prepared.Issues)
 	}
 	if prepared.Config.Accounts["valid"].APIKey != "secret" {
 		t.Fatal("startup replaced or damaged the configured account set")
 	}
-	if got := FileConfigToSession(prepared.Config).GetActiveDefaultCategory().AccountID; got != unavailableStartupAccount {
+	if got := FileConfigToSession(prepared.Config).ActiveDefaultCategory().AccountID; got != unavailableStartupAccount {
 		t.Fatalf("failed CLI account silently fell back to %q", got)
 	}
 }
@@ -110,7 +110,7 @@ func TestStartupInvalidNetworkKeepsShellAndPolicyUntilValidSave(t *testing.T) {
 	if err != nil || application == nil {
 		t.Fatalf("invalid certificate locked user out: %v", err)
 	}
-	if len(application.startupIssues) != 1 || application.startupIssues[0].Target != types.RepairNetwork {
+	if len(application.startupIssues) != 1 || application.startupIssues[0].Target != statuscenter.RepairNetwork {
 		t.Fatal("missing actionable certificate startup issue")
 	}
 	if _, err := network.NewTransport(network.Current(), 0); err == nil {

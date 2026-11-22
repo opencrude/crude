@@ -8,7 +8,7 @@ import (
 
 	"crude/tui/chatprojection"
 	"crude/tui/theme"
-	ttypes "crude/types"
+	"crude/types/conversation"
 	"crude/workspace"
 )
 
@@ -20,7 +20,7 @@ func TestCtrlAltE_TogglesNewestDisclosure(t *testing.T) {
 	ml := chatprojection.NewRenderer(th)
 	ml.SetSize(80, 30)
 	ml.SetChatAreaBounds(0, 30)
-	sp := app.ws.PaneMgr().GetOrCreate("ses_1_orch_1", workspace.PaneAgent, "ses_1_orch_1")
+	sp := app.ws.PaneMgr().Ensure("ses_1_orch_1", workspace.PaneAgent, "ses_1_orch_1")
 	proj := app.subPaneProjections.Get("ses_1_orch_1", workspace.PaneAgent)
 	proj.renderer = ml
 	app.ws.AgentMgr().AddOrchestrator("ses_1_orch_1", &workspace.AgentState{Messages: sp.Messages})
@@ -28,9 +28,9 @@ func TestCtrlAltE_TogglesNewestDisclosure(t *testing.T) {
 
 	// Seed two expandable messages: an early completed thought (collapsed by
 	// default) and the newest one. Ctrl+Alt+E must toggle only the newest.
-	ml.SyncMessages([]ttypes.ChatMessage{
-		{InternalID: "thought-1", Role: ttypes.RoleThinking, Content: "a b c", Time: time.Now(), ThinkingDuration: 2 * time.Second},
-		{InternalID: "tool-1", Role: ttypes.RoleTool, ToolName: "execute_command", ToolStatus: "success", Content: "ls\nfoo", Time: time.Now()},
+	ml.SyncMessages([]conversation.ChatMessage{
+		{InternalID: "thought-1", Role: conversation.RoleThinking, Content: "a b c", Time: time.Now(), ThinkingDuration: 2 * time.Second},
+		{InternalID: "tool-1", Role: conversation.RoleTool, ToolName: "execute_command", ToolStatus: "success", Content: "ls\nfoo", Time: time.Now()},
 	}, 1, 0)
 
 	app.dispatchKeyPress(tea.KeyPressMsg{Text: "ctrl+alt+e", Mod: tea.ModCtrl | tea.ModAlt, Code: 'e'})

@@ -8,7 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/clipboard"
+	"crude/internal/clipboard"
 	"crude/workspace"
 )
 

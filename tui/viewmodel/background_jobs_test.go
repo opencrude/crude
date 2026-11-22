@@ -19,7 +19,7 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/screens/backgroundjobs"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/setting"
 	"crude/workspace"
 	"crude/workspace/fileio"
 )
@@ -55,7 +55,7 @@ func TestBackgroundJobMouseTerminationKeepsOtherJobsAndSessionAlive(t *testing.T
 	app := newFullTestApp(t)
 	wsOf(app).Logger = &testLogger{}
 	wsOf(app).RootPath, wsOf(app).WorkspaceDir = t.TempDir(), t.TempDir()
-	wsOf(app).SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
+	wsOf(app).SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}})
 	config := testAccountConfig()
 	account := config.Accounts["test"]
 	template := account.Connection
@@ -67,7 +67,7 @@ func TestBackgroundJobMouseTerminationKeepsOtherJobsAndSessionAlive(t *testing.T
 	main.ModelSupportsTools = true
 	profile.Categories[session.CategoryDefault] = main
 	config.Agents.Profiles[config.Agents.ActiveProfile] = profile
-	config.Memory = types.MemorySettings{AutoRecall: "off", AutoExtract: "off", Consolidation: "off"}
+	config.Memory = setting.Memory{AutoRecall: "off", AutoExtract: "off", Consolidation: "off"}
 	if runtime.GOOS == "windows" {
 		config.Agents.Shell = "cmd" // the helper command is a cmd.exe command line
 	}
@@ -78,7 +78,7 @@ func TestBackgroundJobMouseTerminationKeepsOtherJobsAndSessionAlive(t *testing.T
 		t.Fatal(err)
 	}
 	defer wsOf(app).CloseAllSessions()
-	sender := &latencyEventSender{ctx: t.Context(), events: make(chan types.AgentEventMsg, 4096)}
+	sender := &latencyEventSender{ctx: t.Context(), events: make(chan AgentEventMsg, 4096)}
 	orchestrator, err := wsOf(app).StartOrchestrator(owner.SessionID, sender)
 	if err != nil {
 		t.Fatal(err)
@@ -90,7 +90,7 @@ func TestBackgroundJobMouseTerminationKeepsOtherJobsAndSessionAlive(t *testing.T
 		t.Fatal("turn not admitted")
 	}
 	commands := make(map[string]fileio.AsyncCmdInfo)
-	consume := func(event types.AgentEventMsg) {
+	consume := func(event AgentEventMsg) {
 		app.handleAgentEvent(event)
 		if event.Type == "error" {
 			t.Fatalf("backend error: %v", event.Data)

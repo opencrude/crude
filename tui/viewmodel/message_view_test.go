@@ -5,13 +5,12 @@ import (
 	"testing"
 	"time"
 
-	ttypes "crude/types"
-	"crude/workspace"
+	"crude/types/conversation"
 )
 
 func TestChatMessagesFromViewsProjectsDataWithoutPresentationState(t *testing.T) {
 	now := time.Unix(123, 456)
-	views := []workspace.ChatMessageView{{
+	views := []conversation.Message{{
 		Role:              "tool",
 		Content:           "read_file file.go",
 		Time:              now,
@@ -50,7 +49,7 @@ func TestAppendActiveMessageUpdatesConversationAndProjection(t *testing.T) {
 	app.AddOrchestrator(
 		"agent")
 
-	app.appendActiveMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: "hello", Time: time.Unix(1, 0)})
+	app.appendActiveMessage(conversation.ChatMessage{Role: conversation.RoleAssistant, Content: "hello", Time: time.Unix(1, 0)})
 
 	node := app.ws.AgentMgr().Get("agent")
 	if node == nil || node.State == nil {
@@ -64,14 +63,14 @@ func TestAppendActiveMessageUpdatesConversationAndProjection(t *testing.T) {
 	if pane == nil {
 		t.Fatal("pane was not created")
 	}
-	proj := app.subPaneProjections.GetExisting("agent")
+	proj := app.subPaneProjections.Existing("agent")
 	if proj == nil || len(proj.renderer.Messages()) != 1 || proj.renderer.Messages()[0].Content != "hello" {
 		t.Fatalf("projection did not synchronize: %#v", proj)
 	}
 }
 
 func TestCanonicalMessageFrontendRoundTrip(t *testing.T) {
-	want := workspace.ChatMessageView{
+	want := conversation.Message{
 		InternalID: "canonical", Role: "tool", Content: "result", ReferenceLabels: []string{"@x"}, Time: time.Now().Round(0),
 		ToolName: "execute_command", ToolArgs: "command: go test", ToolCommand: "go test ./...",
 		ToolInput: "needle", ToolScope: "src", ToolID: "call", ToolStatus: "success", ToolIndex: 2,
@@ -83,16 +82,16 @@ func TestCanonicalMessageFrontendRoundTrip(t *testing.T) {
 		LifecycleUploadedBytes: 3, LifecycleTotalBytes: 4,
 		Incomplete: true, IncompleteReason: "partial", SubPaneID: "child", PermTag: "always",
 	}
-	front := ChatMessagesFromViews([]workspace.ChatMessageView{want})[0]
-	got := workspace.ChatMessageView(workspaceMessageFromChat(front))
+	front := ChatMessagesFromViews([]conversation.Message{want})[0]
+	got := conversation.Message(workspaceMessageFromChat(front))
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("frontend canonical round-trip\n got: %#v\nwant: %#v", got, want)
 	}
 }
 
 func TestAccountAttributionSurvivesFrontendRoundTrip(t *testing.T) {
-	canonical := workspace.ChatMessageView{Role: "assistant", Content: "answer", ProviderID: "chatgpt", AccountID: "work", ModelID: "gpt-5", TurnGeneration: 7}
-	messages := ChatMessagesFromViews([]workspace.ChatMessageView{canonical})
+	canonical := conversation.Message{Role: "assistant", Content: "answer", ProviderID: "chatgpt", AccountID: "work", ModelID: "gpt-5", TurnGeneration: 7}
+	messages := ChatMessagesFromViews([]conversation.Message{canonical})
 	if len(messages) != 1 || messages[0].AccountID != "work" {
 		t.Fatalf("account lost in frontend projection: %+v", messages)
 	}

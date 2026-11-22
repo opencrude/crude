@@ -4,7 +4,7 @@
 #
 # Windows counterpart to scripts/bootstrap_libghostty.sh. The terminfo step
 # is skipped: the compiled xterm-ghostty entry is already committed under
-# types/terminfo/ (embedded via go:embed), so Windows users don't need tic.
+# internal/terminalvt/terminfo/ (embedded via go:embed), so Windows users don't need tic.
 #
 # Usage:
 #   pwsh scripts/bootstrap_libghostty.ps1

@@ -11,7 +11,7 @@ import (
 	"crude/agent/sessiondb"
 	"crude/tui/chatprojection"
 	"crude/tui/theme"
-	ctypes "crude/types"
+	"crude/types/conversation"
 	"crude/workspace"
 )
 
@@ -65,7 +65,7 @@ func TestCommandOutputLiveEventsAndSQLiteHydration(t *testing.T) {
 			live, _ := chatMessagesFromConversation(state.Messages)
 			live[0].ToolDuration = 0
 			for _, width := range []int{60, 160} {
-				newRenderer := func(msg []ctypes.ChatMessage) *chatprojection.Renderer {
+				newRenderer := func(msg []conversation.ChatMessage) *chatprojection.Renderer {
 					r := chatprojection.NewRenderer(theme.DefaultDark())
 					r.SetSize(width, 30)
 					r.SetChatAreaBounds(0, 24)

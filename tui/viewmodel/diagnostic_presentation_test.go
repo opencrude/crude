@@ -15,7 +15,8 @@ import (
 	"crude/tui/surface"
 	"crude/tui/ui"
 	"crude/tui/wm"
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -28,7 +29,7 @@ func newDiagnosticPresentationShell(t *testing.T) (remoteJourneyShell, *diagnost
 	}
 	core := remoteJourneyRuntime(t, "http://127.0.0.1:9", func(w *workspace.Workspace) {
 		settings := w.AppDefaults()
-		settings.LSP = types.DefaultLSPSettings()
+		settings.LSP = setting.DefaultLSP()
 		settings.LSP.Enabled, settings.LSP.AutoDetect = false, false
 		w.SetAppDefaults(settings)
 		grantSemanticFixture(t, w)
@@ -39,7 +40,7 @@ func newDiagnosticPresentationShell(t *testing.T) (remoteJourneyShell, *diagnost
 	ed.SetCursorPosition(0, 0)
 	app.setFocusEditor()
 	service := &diagnosticFixtureService{
-		LSPService: app.ws.LSPMgr(), facts: make(map[string]types.InsightDiagnostics),
+		LSPService: app.ws.LSPMgr(), facts: make(map[string]insight.Diagnostics),
 		generation: ed.DocumentSnapshot().AnalysisGeneration,
 	}
 	previous := app.ws
@@ -48,7 +49,7 @@ func newDiagnosticPresentationShell(t *testing.T) (remoteJourneyShell, *diagnost
 	return shell, service
 }
 
-func diagnosticPresentationApp(t *testing.T, cols, rows int, diags []editor.LSPDiagnostic) (*App, int, int) {
+func diagnosticPresentationApp(t *testing.T, cols, rows int, diags []insight.LSPDiagnostic) (*App, int, int) {
 	t.Helper()
 	shell, service := newDiagnosticPresentationShell(t)
 	app := shell.app
@@ -103,7 +104,7 @@ func TestDiagnosticPresentationShortMessagesFitAtEverySeverity(t *testing.T) {
 			{editor.DiagHint, "Hint", "Remove the unused import", '·', ui.ColorMuted},
 		} {
 			t.Run(fmt.Sprintf("%dx%d/%s", size[0], size[1], tc.title), func(t *testing.T) {
-				app, x, y := diagnosticPresentationApp(t, size[0], size[1], []editor.LSPDiagnostic{{
+				app, x, y := diagnosticPresentationApp(t, size[0], size[1], []insight.LSPDiagnostic{{
 					Line: 0, Col: 0, EndCol: 4, Severity: tc.severity,
 					Message: tc.message, Source: "Pyright", Code: "reportUndefinedVariable",
 				}})
@@ -146,7 +147,7 @@ func TestDiagnosticPresentationShortMessagesFitAtEverySeverity(t *testing.T) {
 func TestDiagnosticPresentationOverlappingMessagesVisibleTogether(t *testing.T) {
 	for _, explicit := range []bool{false, true} {
 		t.Run(fmt.Sprint(explicit), func(t *testing.T) {
-			app, x, y := diagnosticPresentationApp(t, 80, 24, []editor.LSPDiagnostic{
+			app, x, y := diagnosticPresentationApp(t, 80, 24, []insight.LSPDiagnostic{
 				{Line: 0, EndCol: 4, Severity: editor.DiagError, Source: "Pyright",
 					Code: "reportUndefinedVariable", Message: `"scsc" is not defined`},
 				{Line: 0, EndCol: 4, Severity: editor.DiagWarning, Source: "Pyright",
@@ -190,7 +191,7 @@ func TestDiagnosticPresentationGrowsThenScrollsToCompleteMessage(t *testing.T) {
 				fmt.Fprintf(&message, "Argument %d has an incompatible type.\n", i)
 			}
 			message.WriteString("Use a string for the final argument.")
-			app, x, y := diagnosticPresentationApp(t, 80, 24, []editor.LSPDiagnostic{{
+			app, x, y := diagnosticPresentationApp(t, 80, 24, []insight.LSPDiagnostic{{
 				Line: 0, EndCol: 4, Severity: editor.DiagError, Message: message.String(),
 			}})
 			_, cmd := app.Update(tea.MouseMotionMsg{X: x, Y: y})

@@ -9,7 +9,8 @@ import (
 	"crude/tui/screens/confirmation"
 	"crude/tui/screens/decision"
 	"crude/tui/screens/question"
-	"crude/types"
+	"crude/types/conversation"
+	"crude/types/setting"
 	"crude/workspace"
 	"crude/workspace/fileio"
 )
@@ -22,7 +23,7 @@ func setupSessionDeckApp(t *testing.T) (*App, *sessionProjection) {
 	app.launcherScreen = nil
 	session := &workspace.Session{
 		SessionID: "session",
-		Settings:  workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil),
+		Settings:  workspace.NewSessionSettingsState(setting.Settings{}, setting.Settings{}, nil),
 	}
 	selectDeckSession(t, app, session, "agent")
 
@@ -78,8 +79,8 @@ func TestPanelDeckViewmodelContractTable(t *testing.T) {
 	t.Run("agent_prompt_allows_transcript_pointer_reading", func(t *testing.T) {
 		app, projection := setupSessionDeckApp(t)
 		for range 40 {
-			app.appendActiveMessage(types.ChatMessage{
-				Role:    types.RoleAssistant,
+			app.appendActiveMessage(conversation.ChatMessage{
+				Role:    conversation.RoleAssistant,
 				Content: "transcript remains readable while an agent waits for an answer",
 				Time:    time.Now(),
 			})
@@ -138,7 +139,7 @@ func TestPanelDeckViewmodelContractTable(t *testing.T) {
 		if app.Input.Value() != "must-not-leak" {
 			t.Fatal("confirmation y leaked key to chat input")
 		}
-		app.handleAgentEvent(types.AgentEventMsg{AgentID: "agent", Type: "blocking_complete"})
+		app.handleAgentEvent(AgentEventMsg{AgentID: "agent", Type: "blocking_complete"})
 		if got := app.Input.Value(); got != "must-not-leak" {
 			t.Fatalf("confirmation completion discarded the composer draft: %q", got)
 		}
@@ -248,8 +249,8 @@ func TestPanelDeckViewmodelContractTable(t *testing.T) {
 
 	t.Run("session_switch_preserves_independent_decks", func(t *testing.T) {
 		app := newFullTestApp(t)
-		first := &workspace.Session{SessionID: "first", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}
-		second := &workspace.Session{SessionID: "second", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}
+		first := &workspace.Session{SessionID: "first", Settings: workspace.NewSessionSettingsState(setting.Settings{}, setting.Settings{}, nil)}
+		second := &workspace.Session{SessionID: "second", Settings: workspace.NewSessionSettingsState(setting.Settings{}, setting.Settings{}, nil)}
 		selectDeckSession(t, app, first, "first-agent")
 		app.openSessionSettings()
 		firstDeck := app.activeSessionProjection()

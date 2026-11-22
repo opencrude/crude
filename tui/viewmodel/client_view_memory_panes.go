@@ -1,8 +1,8 @@
 package viewmodel
 
 import (
-	"crude/syntax"
-	"crude/text/indent"
+	"crude/insight/syntax"
+	"crude/text/indentation"
 	"crude/tui/editor"
 	"fmt"
 	"hash/fnv"

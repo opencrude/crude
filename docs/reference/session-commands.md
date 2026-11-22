@@ -145,13 +145,13 @@ across restarts and shells, and sends the agent the exact quotes, line ranges,
 the user's edits as a diff, and the plan as the user sees it.
 
 - **Record.** The session owns it (`agent/session/plan_review.go`,
-  `session_runtime_state` key `plan_review`, `types.PlanReview`). When a root
+  `session_runtime_state` key `plan_review`, `conversation.PlanReview`). When a root
   turn that *started* in Plan mode finishes and its final reply contains a
-  `<proposed_plan>` block (`types.ProposedPlan`), the session records revision
+  `<proposed_plan>` block (`conversation.ProposedPlan`), the session records revision
   N+1 before the turn's completion reaches any shell: title
-  (`types.PlanTitle`), turn generation, the original proposal, and the file
+  (`conversation.PlanTitle`), turn generation, the original proposal, and the file
   `<session dir>/plans/<slug>-v<N>.md`. Earlier open revisions become
-  *replaced*. At most `types.PlanRevisionMaxCount` revisions are kept. The
+  *replaced*. At most `conversation.PlanRevisionMaxCount` revisions are kept. The
   path is stored relative to the session directory; opening a revision
   recreates a missing file from the proposal, so a fork (which copies only the
   database) can open its plans. Children never record plans.
@@ -169,7 +169,7 @@ the user's edits as a diff, and the plan as the user sees it.
   same key on a commented range edits that comment, and an empty text deletes
   it. **Alt+F9** / **Shift+Alt+F9** go to the next and previous comment
   (VS Code's keys); clicking a card edits it. Anchors follow the W3C Web
-  Annotation model (`types.TextAnchor`: quote with prefix and suffix context,
+  Annotation model (`conversation.TextAnchor`: quote with prefix and suffix context,
   byte position as a hint) and resolve with `crude/text/anchor`: exact quote
   occurrences scored by context and distance (Hypothesis), then a bounded
   diff-match-patch Bitap match near the hint, rejected beyond

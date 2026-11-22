@@ -1,8 +1,8 @@
 package viewmodel
 
 import (
-	"crude/core/port"
-	settingsui "crude/tui/settings"
+	"crude/core/shellport"
+	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/ui"
 )
 

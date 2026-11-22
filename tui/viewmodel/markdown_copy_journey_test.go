@@ -10,8 +10,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"crude/tui/rendering"
-	"crude/types"
-	"crude/workspace"
+	"crude/types/conversation"
 )
 
 const markdownCopyFixture = "Run `alpha beta` next.\n\n- Example:\n\n  ```python\n  if ready:\n      print(\"hi\")\n  ```"
@@ -44,7 +43,7 @@ func markdownCopyCoordinates(app *App) (markdownCopyTargets, error) {
 }
 func seedMarkdownCopy(app *App) {
 	state := app.ws.AgentMgr().Get(app.AgentView.ActiveID()).State
-	state.Messages.AppendMessage(workspace.Message{Role: types.RoleAssistant, Content: markdownCopyFixture})
+	state.Messages.AppendMessage(conversation.Message{Role: conversation.RoleAssistant, Content: markdownCopyFixture})
 	app.syncAgentMessages(state.ID, false)
 	app.Input.SetInput("Keep this draft.")
 }

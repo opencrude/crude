@@ -11,7 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/core/port"
+	"crude/core/coreprotocol"
+	"crude/core/shellport"
 	"crude/tui/ui"
 
 	tea "charm.land/bubbletea/v2"
@@ -273,7 +274,7 @@ func TestConnectedLocalRevealUsesOriginalPath(t *testing.T) {
 func TestRemoteFolderRevealIsExplicitLocalPreview(t *testing.T) {
 	app := newFullTestApp(t)
 	calls := recordDesktopLauncher(t, app)
-	port := &desktopFilesPort{fakeClientFiles: fakeClientFiles{Workspace: app.ws, entries: []shellport.ClientDirectoryEntry{{Name: "file.txt"}, {Name: "subdir", IsDir: true}}}}
+	port := &desktopFilesPort{fakeClientFiles: fakeClientFiles{Workspace: app.ws, entries: []coreprotocol.ClientDirectoryEntry{{Name: "file.txt"}, {Name: "subdir", IsDir: true}}}}
 	port.read = func(context.Context, string) ([]byte, error) {
 		t.Error("folder reveal tried to read a file")
 		return nil, nil

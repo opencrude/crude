@@ -10,7 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/agent/sessiondb"
-	"crude/clipboard"
+	"crude/internal/clipboard"
 	"crude/workspace"
 )
 

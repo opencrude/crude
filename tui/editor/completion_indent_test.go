@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/lsp/completion"
-	"crude/text/indent"
+	"crude/lsp/lspcompletion"
+	"crude/text/indentation"
 	"crude/text/snippet"
 	"crude/tui/cell"
 	"crude/tui/surface"

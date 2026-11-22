@@ -16,19 +16,19 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"crude/agent"
 	"crude/agent/collaboration"
+	"crude/agent/docconv"
 	rootprompt "crude/agent/prompt"
 	"crude/agent/provider"
 	"crude/agent/safety"
 	"crude/agent/sessiondb"
 	"crude/agent/tools"
+	"crude/agent/turnloop"
 	"crude/agent/worktree"
-	"crude/docconv"
-	"crude/logger"
-	ttypes "crude/types"
+	"crude/internal/logger"
 	"crude/types/attachment"
 	captypes "crude/types/capability"
+	"crude/types/conversation"
 	recoverytypes "crude/types/recovery"
 	"crude/types/toolresult"
 	"crude/workspace/fileio"
@@ -422,9 +422,9 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		// installing the exact passive checkpoint. Await's live wake path is
 		// unaffected; only terminal unwind holds this emission until teardown.
 		emit := supervisor.Emit
-		var parkedEvents []agent.AgentEvent
-		park := func(failure agent.RecoveryFailure) recoverytypes.Status {
-			supervisor.Emit = func(event agent.AgentEvent) { parkedEvents = append(parkedEvents, event) }
+		var parkedEvents []turnloop.AgentEvent
+		park := func(failure turnloop.RecoveryFailure) recoverytypes.Status {
+			supervisor.Emit = func(event turnloop.AgentEvent) { parkedEvents = append(parkedEvents, event) }
 			defer func() { supervisor.Emit = emit }()
 			return supervisor.Park(failure)
 		}
@@ -437,13 +437,13 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 				l.Warn("SESSION", "turn_state_finish_failed", "error", err.Error())
 			}
 			s.finishRecovery(o.ID, supervisor.IncidentID(), turnGeneration)
-			status := park(agent.AttentionRecovery(agent.RecoveryFailurePanic, panicErr))
+			status := park(turnloop.AttentionRecovery(turnloop.RecoveryFailurePanic, panicErr))
 			checkpoint := recoveryState.checkpoint(status)
 			s.parkRecovery(checkpoint)
 		}
 		if err := finishTurn(); err != nil {
 			l.Warn("SESSION", "turn_state_finish_failed", "error", err.Error())
-			status := park(agent.AttentionRecovery(agent.RecoveryFailureStorage, err))
+			status := park(turnloop.AttentionRecovery(turnloop.RecoveryFailureStorage, err))
 			s.parkRecovery(recoveryState.checkpoint(status))
 			recoveryParked = true
 		}
@@ -458,11 +458,11 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 			}
 		}
 	}()
-	recoverStep := func(kind agent.RecoveryFailureKind, operation func() error) bool {
+	recoverStep := func(kind turnloop.RecoveryFailureKind, operation func() error) bool {
 		for {
 			if err := operation(); err != nil {
 				l.Warn("RECOVERY", "preflight_blocked", "agent_id", o.ID, "kind", kind, "error", err.Error())
-				if !supervisor.Await(ctx, agent.AttentionRecovery(kind, err)) {
+				if !supervisor.Await(ctx, turnloop.AttentionRecovery(kind, err)) {
 					if turnFinalState != sessiondb.TurnCompleted {
 						turnFinalState = sessiondb.TurnInterrupted
 					}
@@ -509,8 +509,8 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 						if cancelErr == nil {
 							break
 						}
-						if !supervisor.Await(settlementCtx, agent.AttentionRecovery(agent.RecoveryFailureStorage, cancelErr)) {
-							status := supervisor.Park(agent.AttentionRecovery(agent.RecoveryFailureStorage, cancelErr))
+						if !supervisor.Await(settlementCtx, turnloop.AttentionRecovery(turnloop.RecoveryFailureStorage, cancelErr)) {
+							status := supervisor.Park(turnloop.AttentionRecovery(turnloop.RecoveryFailureStorage, cancelErr))
 							s.parkRecovery(recoveryState.checkpoint(status))
 							recoveryParked = true
 							return false
@@ -521,7 +521,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 						content, reason = "Completed.", "end_turn"
 					}
 					source := &runtimeEventSource{ownerID: s.sessionID, agentID: o.ID, runID: collaborationRun.ID, runtimeEpoch: o.RuntimeEpoch, generation: turnGeneration}
-					sendRuntimeEvent(sender, source.bind(agent.AgentEvent{Type: "done", Data: map[string]any{"content": content, "reason": reason}}))
+					sendRuntimeEvent(sender, source.bind(turnloop.AgentEvent{Type: "done", Data: map[string]any{"content": content, "reason": reason}}))
 					return false
 				}
 				continue
@@ -529,7 +529,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 			return true
 		}
 	}
-	if cycleErr != nil && !recoverStep(agent.RecoveryFailureStorage, func() error {
+	if cycleErr != nil && !recoverStep(turnloop.RecoveryFailureStorage, func() error {
 		planningCycle, releasePlanTurn, cycleErr = s.capturePlanInvestigationTurn(ctx, persistedCycle, sourceExecutionID, userInput.InternalID)
 		return cycleErr
 	}) {
@@ -547,11 +547,11 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		recoveryState.setContext(s.sessionID, s.contextRevision, s.contextGeneration, s.contextReason)
 		s.msgsMu.Unlock()
 		if err := supervisor.BeginRetry(); err != nil &&
-			!recoverStep(agent.RecoveryFailureStorage, func() error { return supervisor.BeginRetry() }) {
+			!recoverStep(turnloop.RecoveryFailureStorage, func() error { return supervisor.BeginRetry() }) {
 			return
 		}
 		recoveryState.appendContinuation(rootprompt.RecoveryInterrupted)
-		if !recoverStep(agent.RecoveryFailureStorage, func() error {
+		if !recoverStep(turnloop.RecoveryFailureStorage, func() error {
 			return supervisor.Persist(supervisor.CheckpointStatus())
 		}) {
 			return
@@ -562,7 +562,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		// Direct execution needs its first envelope. An admitted turn adds
 		// only the policy it just captured to its existing envelope. Retry
 		// already published the policy alongside its continuation above.
-		if !recoverStep(agent.RecoveryFailureStorage, func() error {
+		if !recoverStep(turnloop.RecoveryFailureStorage, func() error {
 			return s.persistPendingRecovery(supervisor)
 		}) {
 			return
@@ -574,20 +574,20 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	// publication owner; never install its older revision back into the owner.
 	contextErr := s.reconcileRootRecoveryLocked(recoveryState)
 	s.msgsMu.Unlock()
-	if contextErr != nil && !recoverStep(agent.RecoveryFailureStorage, func() error {
+	if contextErr != nil && !recoverStep(turnloop.RecoveryFailureStorage, func() error {
 		s.msgsMu.Lock()
 		defer s.msgsMu.Unlock()
 		return s.reconcileRootRecoveryLocked(recoveryState)
 	}) {
 		return
 	}
-	if !recoverStep(agent.RecoveryFailureStorage, func() error { return s.runBeforeTurn(ctx) }) {
+	if !recoverStep(turnloop.RecoveryFailureStorage, func() error { return s.runBeforeTurn(ctx) }) {
 		return
 	}
 	// A disabled or removed selected agent must not silently turn into Main Agent.
 	var effectiveCfg *Config
-	if !recoverStep(agent.RecoveryFailureConfiguration, func() error {
-		effectiveCfg = s.runtimeProfile.GetEffectiveConfig(o.ID)
+	if !recoverStep(turnloop.RecoveryFailureConfiguration, func() error {
+		effectiveCfg = s.runtimeProfile.EffectiveConfig(o.ID)
 		if effectiveCfg == nil {
 			return errors.New("session configuration is unavailable")
 		}
@@ -595,7 +595,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	}) {
 		return
 	}
-	if !recoverStep(agent.RecoveryFailureStorage, func() error {
+	if !recoverStep(turnloop.RecoveryFailureStorage, func() error {
 		if s.db == nil {
 			return errors.New("session database is unavailable")
 		}
@@ -616,7 +616,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 			origin = collaboration.OriginPeer
 		}
 		var started collaboration.Run
-		if !recoverStep(agent.RecoveryFailureStorage, func() error {
+		if !recoverStep(turnloop.RecoveryFailureStorage, func() error {
 			var err error
 			started, err = store.StartRun(ctx, collaboration.StartRunRequest{
 				AgentID: o.ID, RuntimeEpoch: o.RuntimeEpoch, RequestID: requestID, Origin: origin,
@@ -631,7 +631,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	}
 
 	if userInput.ControlTarget != nil && userInput.ControlTarget.ExecutionID != "" {
-		if !recoverStep(agent.RecoveryFailureConfiguration, func() error {
+		if !recoverStep(turnloop.RecoveryFailureConfiguration, func() error {
 			var err error
 			executionRoot, err = s.pinRootExecution(ctx, userInput.ControlTarget.ExecutionID, worktree.Owner{AgentID: o.ID, RunID: collaborationRun.ID})
 			return err
@@ -641,7 +641,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	}
 
 	// Use per-orchestrator effective config from runtime profile.
-	activeCfg := effectiveCfg.GetActiveDefaultCategory()
+	activeCfg := effectiveCfg.ActiveDefaultCategory()
 	provider.MergeModelCap(activeCfg.Model, slices.Contains(activeCfg.ModelModalities, provider.ModalityImage), activeCfg.ModelSupportsTools)
 	provider.MergeModelModalities(activeCfg.Model, activeCfg.ModelModalities)
 
@@ -666,7 +666,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 			if errors.Is(err, ErrHistoryDisabled) || errors.Is(err, ErrHistoryRecorded) {
 				l.Debug("HISTORY", "message_scope_disabled", "msg_id", currentMsgID)
 				if historyContinue != nil {
-					if !recoverStep(agent.RecoveryFailureStorage, func() error {
+					if !recoverStep(turnloop.RecoveryFailureStorage, func() error {
 						return historyContinue(ctx, s.sessionID, currentMsgID)
 					}) {
 						return
@@ -678,7 +678,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 					historyCtx = withHistoryScope(ctx, s.sessionID, currentMsgID, o.ID)
 				}
 			} else {
-				if !recoverStep(agent.RecoveryFailureStorage, func() error {
+				if !recoverStep(turnloop.RecoveryFailureStorage, func() error {
 					return historyStart(ctx, s.sessionID, currentMsgID)
 				}) {
 					return
@@ -693,7 +693,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	} else if inputOrigin == provider.OriginPeer && userInput.Collaboration != nil && userInput.Collaboration.HistoryMessageID != "" {
 		historyMessageID := userInput.Collaboration.HistoryMessageID
 		if historyContinue != nil {
-			if !recoverStep(agent.RecoveryFailureStorage, func() error {
+			if !recoverStep(turnloop.RecoveryFailureStorage, func() error {
 				return historyContinue(ctx, s.sessionID, historyMessageID)
 			}) {
 				return
@@ -759,7 +759,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	})
 	if !prepared {
 		var input preparedInput
-		if !recoverStep(agent.RecoveryFailureConfiguration, func() error {
+		if !recoverStep(turnloop.RecoveryFailureConfiguration, func() error {
 			var err error
 			input, err = s.prepareInput(ctx, userInput, effectiveCfg, o, archiveCopy...)
 			return err
@@ -772,7 +772,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 			meta := canonicalizeDisplayMeta(message, sessiondb.DisplayMeta{DisplayRole: "hidden_runtime_context", ContextOnly: true}, "", 0, createdAt)
 			deltas = append(deltas, contextDelta(message, meta, s.turnNumber, createdAt, o.ID))
 		}
-		if !recoverStep(agent.RecoveryFailureStorage, func() error {
+		if !recoverStep(turnloop.RecoveryFailureStorage, func() error {
 			s.msgsMu.Lock()
 			defer s.msgsMu.Unlock()
 			pending := make([]sessiondb.ContextMessageDelta, 0, len(deltas))
@@ -804,7 +804,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		}) {
 			return
 		}
-		if !recoverStep(agent.RecoveryFailureStorage, func() error {
+		if !recoverStep(turnloop.RecoveryFailureStorage, func() error {
 			return s.persistPendingRecovery(supervisor)
 		}) {
 			return
@@ -814,7 +814,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	if humanTurn {
 		s.prevContextInjected.Store(true)
 	}
-	if !recoverStep(agent.RecoveryFailureStorage, func() error {
+	if !recoverStep(turnloop.RecoveryFailureStorage, func() error {
 		s.msgsMu.Lock()
 		defer s.msgsMu.Unlock()
 		if err := s.reconcileRootRecoveryLocked(recoveryState); err != nil {
@@ -828,7 +828,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		return
 	}
 	if len(request.deliveries) > 0 {
-		if !recoverStep(agent.RecoveryFailureStorage, func() error {
+		if !recoverStep(turnloop.RecoveryFailureStorage, func() error {
 			// The event message was already admitted through the exact same
 			// revision-owned context source above. This transaction now publishes
 			// only the durable delivery receipt; re-appending through a separately
@@ -860,27 +860,27 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 
 	var turnProvider, compactionProvider *provider.Provider
 	var compactionCfg CategoryConfig
-	if !recoverStep(agent.RecoveryFailureConfiguration, func() error {
-		effectiveCfg = s.runtimeProfile.GetEffectiveConfig(o.ID)
+	if !recoverStep(turnloop.RecoveryFailureConfiguration, func() error {
+		effectiveCfg = s.runtimeProfile.EffectiveConfig(o.ID)
 		if effectiveCfg == nil {
 			return errors.New("session configuration is unavailable")
 		}
 		if err := effectiveCfg.ValidateSelectedAgent(); err != nil {
 			return err
 		}
-		activeCfg = effectiveCfg.GetActiveDefaultCategory()
+		activeCfg = effectiveCfg.ActiveDefaultCategory()
 		var err error
 		turnProvider, err = effectiveCfg.providerForCategory(activeCfg)
 		if err != nil {
 			return err
 		}
-		compactionCfg = effectiveCfg.GetCategoryConfig(CategoryErrand)
+		compactionCfg = effectiveCfg.CategoryConfig(CategoryErrand)
 		compactionProvider, err = effectiveCfg.providerForCategory(compactionCfg)
 		return err
 	}) {
 		return
 	}
-	turnIdentity := ttypes.TurnIdentity{
+	turnIdentity := conversation.TurnIdentity{
 		ExecutionID: sourceExecutionID,
 		Generation:  turnGeneration,
 		ProviderID:  turnProvider.ID,
@@ -890,7 +890,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	eventSource := &runtimeEventSource{ownerID: s.sessionID, agentID: o.ID, runID: collaborationRun.ID, runtimeEpoch: o.RuntimeEpoch, generation: turnGeneration}
 	// Plan mode is fixed for the whole turn; a toggle applies from the next one.
 	planMode := planningCycle != ""
-	sendRuntimeEvent(sender, eventSource.bind(agent.AgentEvent{Type: "turn_started", Data: turnIdentity}))
+	sendRuntimeEvent(sender, eventSource.bind(turnloop.AgentEvent{Type: "turn_started", Data: turnIdentity}))
 	planModeEnded := s.notePlanModeTurn(planMode)
 	s.syncGoalPlanAccounting(&planMode)
 	goalProgress = s.goalTurnBegin(userInput, planMode)
@@ -907,7 +907,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	investigationOwner := worktree.Owner{AgentID: o.ID, RunID: collaborationRun.ID}
 	if planMode {
 		ag.Policy = safety.ReadOnlyPolicy()
-		ag.PlanInvestigation = &agent.PlanInvestigationPolicy{HostCommand: func(toolCtx context.Context, tool string, params map[string]any) (*agent.PlanInvestigationHostRequest, error) {
+		ag.PlanInvestigation = &turnloop.PlanInvestigationPolicy{HostCommand: func(toolCtx context.Context, tool string, params map[string]any) (*turnloop.PlanInvestigationHostRequest, error) {
 			return s.planInvestigationHostRequest(withPlanInvestigationCycle(toolCtx, planningCycle), sourceExecutionID, executionRoot, investigationOwner, tool, params)
 		}}
 	}
@@ -920,16 +920,16 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	ag.CompactionAgentProfile = agentProfile + "/" + CategoryErrand
 	ag.Precompaction = s.precompactionSlot(o.ID)
 	ag.PriorCheckpointTokens = lastCheckpointTokens(s.CompactionRecords(o.ID))
-	ag.AgentID = agent.AgentID(o.ID)
+	ag.AgentID = turnloop.AgentID(o.ID)
 	ag.RunID = collaborationRun.ID
 	ag.TurnGeneration = turnGeneration
 	var compactionRevision uint64
-	ag.PrepareCompaction = func(source agent.CompactionSource) error {
+	ag.PrepareCompaction = func(source turnloop.CompactionSource) error {
 		var err error
 		compactionRevision, err = s.beginRootCompaction(o.ID, source)
 		return err
 	}
-	ag.CommitCompaction = func(commit agent.CompactionCommit) error {
+	ag.CommitCompaction = func(commit turnloop.CompactionCommit) error {
 		return s.commitRootCompaction(o.ID, compactionRevision, commit)
 	}
 	ag.CompactionRequest = func() string { return o.takeCompactionRequest(turnGeneration) }
@@ -947,7 +947,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	// The compaction connection is rebuilt only when its category changed.
 	stepConfig := effectiveCfg // refreshed with tools under the same request-boundary fence
 	bindCurrentSettings := func(cfg *Config) {
-		s.bindLiveModelSettings(ag, cfg, func() (*Config, CategoryConfig) { return stepConfig, stepConfig.GetActiveDefaultCategory() })
+		s.bindLiveModelSettings(ag, cfg, func() (*Config, CategoryConfig) { return stepConfig, stepConfig.ActiveDefaultCategory() })
 	}
 	bindCurrentSettings(effectiveCfg)
 	// The provider-reported size of the last request seeds the projection of
@@ -993,12 +993,12 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		// any concurrent save has completed its launch-admission barrier.
 		s.delegationMu.Lock()
 		defer s.delegationMu.Unlock()
-		current := s.runtimeProfile.GetEffectiveConfig(o.ID)
+		current := s.runtimeProfile.EffectiveConfig(o.ID)
 		stepConfig = current
 		defs, notices := configuredOrchestratorTools(current, current.IsMultiAgentEnabled(), ag.Model), s.takeDelegationNotices()
 		if planMode {
-			category := current.GetActiveDefaultCategory()
-			defs = append(defs, agent.FilterToolsForModel([]tools.ToolDef{tools.OpenPlanInvestigationTool}, category.AllowedTools, category.DeniedTools, "", false, ag.Model)...)
+			category := current.ActiveDefaultCategory()
+			defs = append(defs, turnloop.FilterToolsForModel([]tools.ToolDef{tools.OpenPlanInvestigationTool}, category.AllowedTools, category.DeniedTools, "", false, ag.Model)...)
 		}
 		if planModeEnded {
 			planModeEnded = false
@@ -1028,7 +1028,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 			return dispatch(toolCtx, tool, params)
 		}
 	}
-	defer s.FileOwnership().Release(agent.AgentID(o.ID))
+	defer s.FileOwnership().Release(turnloop.AgentID(o.ID))
 	var pendingCollaboration []collaboration.PendingDelivery
 	defer func() {
 		s.releaseCollaborationReservations(o.ID, o.RuntimeEpoch, pendingCollaboration, "turn ended before context admission")
@@ -1086,7 +1086,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	}
 
 	ag.Ctx = historyCtx
-	activeCfg = effectiveCfg.GetActiveDefaultCategory()
+	activeCfg = effectiveCfg.ActiveDefaultCategory()
 
 	steeringCtx, stopSteering := context.WithCancel(historyCtx)
 	runtimeMessages, runtimeMessagesDone, flushRuntime := s.humanSteeringMessages(
@@ -1116,8 +1116,8 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 
 	var emitActive atomic.Bool
 	emitActive.Store(true)
-	var terminalDone *agent.AgentEvent
-	emit := func(evt agent.AgentEvent) {
+	var terminalDone *turnloop.AgentEvent
+	emit := func(evt turnloop.AgentEvent) {
 		evt = eventSource.bind(evt)
 		if evt.AgentID == "" || evt.AgentID == o.ID {
 			goalProgress.observe(evt)
@@ -1181,19 +1181,19 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		o.turnMu.Lock()
 		o.turnSealed = false
 		o.turnMu.Unlock()
-		current := s.runtimeProfile.GetEffectiveConfig(o.ID)
+		current := s.runtimeProfile.EffectiveConfig(o.ID)
 		if current == nil {
 			return "", errors.New("session configuration is unavailable")
 		}
 		if err := current.ValidateSelectedAgent(); err != nil {
 			return "", err
 		}
-		category := current.GetActiveDefaultCategory()
+		category := current.ActiveDefaultCategory()
 		currentProvider, err := current.providerForCategory(category)
 		if err != nil {
 			return "", err
 		}
-		currentCompactionCfg := current.GetCategoryConfig(CategoryErrand)
+		currentCompactionCfg := current.CategoryConfig(CategoryErrand)
 		currentCompactionProvider, err := current.providerForCategory(currentCompactionCfg)
 		if err != nil {
 			return "", err
@@ -1205,7 +1205,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		ag.CompactionMaxOutput = currentCompactionCfg.ModelMaxOutput
 		bindCurrentSettings(current)
 		ag.ContextCompactionPercent, ag.CompactionRetentionTokens = rootCompactionChoice(category)
-		turnIdentity = ttypes.TurnIdentity{
+		turnIdentity = conversation.TurnIdentity{
 			ExecutionID: sourceExecutionID,
 			Generation:  turnGeneration, ProviderID: currentProvider.ID,
 			AccountID: currentProvider.AccountID, ModelID: currentProvider.Model,
@@ -1219,7 +1219,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	s.msgsMu.Unlock()
 	runResult := ag.RunSupervised(
 		historyCtx, contextMsgs, prompt, emit, o.BlockResolveCh, s.sessionID, runtimeMessages,
-		agent.SupervisedRunOptions{
+		turnloop.SupervisedRunOptions{
 			Supervisor: supervisor,
 			Prepare:    prepareAttempt,
 			Snapshot:   recoveryState.snapshot,
@@ -1227,11 +1227,11 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 			// turn with its reason, as Codex and Claude Code do: the session is
 			// idle and the next message continues. Waiting for Retry cannot fix
 			// it. Local preparation faults keep waiting with their pending input.
-			OnAttention: func(failure agent.RecoveryFailure) agent.AttentionDisposition {
-				if failure.Kind == agent.RecoveryFailureConfiguration && failure.ProviderVerdict {
-					return agent.AttentionEndTurn
+			OnAttention: func(failure turnloop.RecoveryFailure) turnloop.AttentionDisposition {
+				if failure.Kind == turnloop.RecoveryFailureConfiguration && failure.ProviderVerdict {
+					return turnloop.AttentionEndTurn
 				}
-				return agent.AttentionWait
+				return turnloop.AttentionWait
 			},
 			DeferSettlement: true,
 		},
@@ -1270,9 +1270,9 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	}
 	finalizeErr := finalize()
 	for finalizeErr != nil {
-		if !supervisor.Await(ctx, agent.AttentionRecovery(agent.RecoveryFailureStorage, finalizeErr)) {
+		if !supervisor.Await(ctx, turnloop.AttentionRecovery(turnloop.RecoveryFailureStorage, finalizeErr)) {
 			if cancelErr := supervisor.Cancel(); cancelErr != nil {
-				status := supervisor.Park(agent.AttentionRecovery(agent.RecoveryFailureStorage, cancelErr))
+				status := supervisor.Park(turnloop.AttentionRecovery(turnloop.RecoveryFailureStorage, cancelErr))
 				s.parkRecovery(recoveryState.checkpoint(status))
 				recoveryParked = true
 				return
@@ -1296,8 +1296,8 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	// Transcript finalization has released msgsMu. Commit the review before
 	// publishing terminal success so the completion and its agent snapshot
 	// cannot reach a shell without the new revision.
-	if planMode && runResult.State == agent.SupervisedRunCompleted && terminalDone != nil && terminalDone.AgentID == o.ID {
-		if !recoverStep(agent.RecoveryFailureStorage, func() error {
+	if planMode && runResult.State == turnloop.SupervisedRunCompleted && terminalDone != nil && terminalDone.AgentID == o.ID {
+		if !recoverStep(turnloop.RecoveryFailureStorage, func() error {
 			return s.recordProposedPlan(turnGeneration, finalContent, planningCycle, sourceExecutionID)
 		}) {
 			return
@@ -1305,12 +1305,12 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	}
 	// Do not discard the recovery envelope or acknowledge success while the
 	// durable turn/collaboration lifecycle still says running.
-	if !recoverStep(agent.RecoveryFailureStorage, finishTurn) {
+	if !recoverStep(turnloop.RecoveryFailureStorage, finishTurn) {
 		return
 	}
-	if runResult.State == agent.SupervisedRunFailed {
+	if runResult.State == turnloop.SupervisedRunFailed {
 		if err := supervisor.Fail(runResult.Failure); err != nil {
-			status := supervisor.Park(agent.AttentionRecovery(agent.RecoveryFailureStorage, err))
+			status := supervisor.Park(turnloop.AttentionRecovery(turnloop.RecoveryFailureStorage, err))
 			s.parkRecovery(recoveryState.checkpoint(status))
 			recoveryParked = true
 			return
@@ -1318,7 +1318,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		turnFailure = supervisor.CheckpointStatus().Detail
 	} else if cancelled {
 		if err := supervisor.Cancel(); err != nil {
-			status := supervisor.Park(agent.AttentionRecovery(agent.RecoveryFailureStorage, err))
+			status := supervisor.Park(turnloop.AttentionRecovery(turnloop.RecoveryFailureStorage, err))
 			s.parkRecovery(recoveryState.checkpoint(status))
 			recoveryParked = true
 			return
@@ -1327,9 +1327,9 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		for {
 			if err := supervisor.Resolve(); err == nil {
 				break
-			} else if !supervisor.Await(ctx, agent.AttentionRecovery(agent.RecoveryFailureStorage, err)) {
+			} else if !supervisor.Await(ctx, turnloop.AttentionRecovery(turnloop.RecoveryFailureStorage, err)) {
 				if cancelErr := supervisor.Cancel(); cancelErr != nil {
-					status := supervisor.Park(agent.AttentionRecovery(agent.RecoveryFailureStorage, cancelErr))
+					status := supervisor.Park(turnloop.AttentionRecovery(turnloop.RecoveryFailureStorage, cancelErr))
 					s.parkRecovery(recoveryState.checkpoint(status))
 					recoveryParked = true
 					return
@@ -1351,12 +1351,12 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	// failure settles the request visibly instead of dropping it.
 	launchCompaction := func() {}
 	if requested := o.sealCompactionRequests(turnGeneration); requested != "" {
-		if cancelled || runResult.State == agent.SupervisedRunFailed {
+		if cancelled || runResult.State == turnloop.SupervisedRunFailed {
 			s.settleDroppedCompaction(o.ID, requested)
 		} else {
 			launchCompaction = s.startTurnEndCompaction(o.ID, requested)
 		}
-	} else if !cancelled && runResult.State == agent.SupervisedRunCompleted && s.isErrandSession() {
+	} else if !cancelled && runResult.State == turnloop.SupervisedRunCompleted && s.isErrandSession() {
 		// The workspace Errand's loop ended: the model gave its answer with no
 		// further tool calls. Compact now so the permanent agent stays small.
 		launchCompaction = s.startLoopEndCompaction(o.ID)
@@ -1409,15 +1409,15 @@ func (s *Session) preserveUnstartedInput(request turnRequest, o *Orchestrator) {
 	}
 }
 
-func terminalReasonFromEvent(event agent.AgentEvent) string {
+func terminalReasonFromEvent(event turnloop.AgentEvent) string {
 	data, _ := event.Data.(map[string]any)
 	reason, _ := data["reason"].(string)
 	return reason
 }
 
-func (o *Orchestrator) handleBlockingEvent(data map[string]string, evt agent.AgentEvent, sender EventSender) bool {
+func (o *Orchestrator) handleBlockingEvent(data map[string]string, evt turnloop.AgentEvent, sender EventSender) bool {
 	s := o.session
-	if data != nil && data["operation"] != ttypes.PlanInvestigationHostOperation && data["plan_investigation_path"] != "true" {
+	if data != nil && data["operation"] != conversation.PlanInvestigationHostOperation && data["plan_investigation_path"] != "true" {
 		op := safety.CRUDEOp(data["operation"])
 		tool := data["tool"]
 		target := data["target"]
@@ -1429,7 +1429,7 @@ func (o *Orchestrator) handleBlockingEvent(data map[string]string, evt agent.Age
 		// Read/Always permission cannot approve another install or changed grant.
 		if allowed && tool != "capability_activate" && tool != "mcp_request_access" {
 			s.logger.Debug("PERM", "auto_allowed", "operation", op, "tool", tool, "target", target)
-			o.ResolveBlock(ttypes.BlockResponse{RequestID: data["block_id"], Outcome: ttypes.BlockAnswered, Value: "allow"})
+			o.ResolveBlock(conversation.BlockResponse{RequestID: data["block_id"], Outcome: conversation.BlockAnswered, Value: "allow"})
 			agentID := evt.AgentID
 			if agentID == "" {
 				agentID = o.ID
@@ -1503,7 +1503,7 @@ func (s *Session) processUsageEvent(evtData any, model, agentID, parentAgentID s
 		"turn_cost", record.CostUSD, "session_total", s.CostSnapshot().TotalCost, "estimated", record.Estimated)
 }
 
-func (s *Session) updateDisplayFromEvent(evt agent.AgentEvent, tracker *displayMetaTracker) {
+func (s *Session) updateDisplayFromEvent(evt turnloop.AgentEvent, tracker *displayMetaTracker) {
 	switch evt.Type {
 	case "tool_call_streaming", "tool_call":
 		if data, ok := evt.Data.(map[string]any); ok {
@@ -1607,7 +1607,7 @@ func (s *Session) finalizeTurn(
 	tracker *displayMetaTracker,
 	finalContent string,
 	msgID string,
-	turnIdentity ttypes.TurnIdentity,
+	turnIdentity conversation.TurnIdentity,
 	activeContext ...[]provider.ChatMessage,
 ) (resultErr error) {
 	s.msgsMu.Lock()
@@ -1624,7 +1624,7 @@ func (s *Session) finalizeTurnLocked(
 	finalContent string,
 	msgID string,
 	runID string,
-	turnIdentity ttypes.TurnIdentity,
+	turnIdentity conversation.TurnIdentity,
 	activeContext ...[]provider.ChatMessage,
 ) (resultErr error) {
 	previousMessages := append([]provider.ChatMessage(nil), s.msgs...)
@@ -1917,7 +1917,7 @@ func (s *Session) prepareInput(ctx context.Context, input provider.UserInput, cf
 	// A preflight Continue may follow a settings repair while its caller still
 	// holds the old snapshot. Validate against the exact owning agent's selection.
 	if o != nil && s.runtimeProfile != nil {
-		cfg = s.runtimeProfile.GetEffectiveConfig(o.ID)
+		cfg = s.runtimeProfile.EffectiveConfig(o.ID)
 	}
 	if cfg == nil {
 		return result, errors.New("input preparation requires the selected session configuration")
@@ -1931,7 +1931,7 @@ func (s *Session) prepareInput(ctx context.Context, input provider.UserInput, cf
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
-	category := cfg.GetActiveDefaultCategory()
+	category := cfg.ActiveDefaultCategory()
 	var references, turnContext *provider.ChatMessage
 	for i := range retained {
 		message := &retained[i]
@@ -2042,13 +2042,13 @@ func (s *Session) prepareInput(ctx context.Context, input provider.UserInput, cf
 	}
 	var runtimeParts []string
 	if s.asyncMgr != nil {
-		if status := agent.BuildAsyncCommandStatus(s.asyncMgr); status != "" {
+		if status := turnloop.BuildAsyncCommandStatus(s.asyncMgr); status != "" {
 			runtimeParts = append(runtimeParts, status)
 		}
 	}
 	if o != nil {
 		if runner := o.subAgentRunner(); runner != nil {
-			if status := agent.BuildSubAgentStatus(runner.Manager()); status != "" {
+			if status := turnloop.BuildSubAgentStatus(runner.Manager()); status != "" {
 				runtimeParts = append(runtimeParts, status)
 			}
 		}
@@ -2262,5 +2262,5 @@ func inputMessage(message provider.ChatMessage, input provider.UserInput) provid
 
 // rootCompactionChoice is the root agent's compaction choice in its category.
 func rootCompactionChoice(category CategoryConfig) (percent, retention int) {
-	return agent.CompactionPercentSetting(category.ContextCompactionPercent), agent.RetentionSetting(category.ContextRetentionTokens)
+	return turnloop.CompactionPercentSetting(category.ContextCompactionPercent), turnloop.RetentionSetting(category.ContextRetentionTokens)
 }

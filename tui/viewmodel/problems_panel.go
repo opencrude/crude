@@ -8,9 +8,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/screens/problems"
-	statusoverview "crude/tui/screens/statusoverview"
+	"crude/tui/screens/statusoverview"
 	"crude/tui/ui"
-	ttypes "crude/types"
+	"crude/types/insight"
 	"crude/workspace"
 )
 
@@ -29,7 +29,7 @@ func (m *App) problemsModel() problems.Model {
 	var list []problems.Problem
 	for path, facts := range m.lspFacts {
 		note := ""
-		fresh := facts.State != ttypes.InsightStale && (facts.HasExactSource() || facts.FromProjectCheck())
+		fresh := facts.State != insight.Stale && (facts.HasExactSource() || facts.FromProjectCheck())
 		if tab := m.EditorState.Tabs[path]; fresh && tab != nil && tab.Editor != nil && facts.HasExactSource() && !tab.Editor.MatchesDiagnosticSource(facts) {
 			fresh = false
 		}
@@ -50,11 +50,11 @@ func (m *App) problemsModel() problems.Model {
 	}
 	insights := m.ws.LSPMgr().ProjectInsights()
 	checked := insights.DiagnosticsObserved > 0 || len(list) > 0
-	if insights.Language.State != "" && insights.Language.State != ttypes.LanguageReady {
+	if insights.Language.State != "" && insights.Language.State != insight.LanguageReady {
 		checked = false // a previous/other check cannot certify the waiting file
 	}
 	return problems.Model{Problems: list, Checked: checked, Status: m.problemsStatus(insights),
-		Refresh: insights.Language.Action == ttypes.LanguageActionNone}
+		Refresh: insights.Language.Action == insight.LanguageActionNone}
 }
 
 func problemSeverity(severity int) problems.Severity {
@@ -72,14 +72,14 @@ func problemSeverity(severity int) problems.Severity {
 // problemsStatus says how many language servers work for this workspace. A
 // state that needs the user (restricted folder, servers off) replaces the
 // count with its message and names the control that fixes it.
-func (m *App) problemsStatus(insights ttypes.ProjectInsights) problems.Status {
+func (m *App) problemsStatus(insights insight.ProjectInsights) problems.Status {
 	status := problems.Status{Action: "language:settings", ActionLabel: "Language settings"}
 	switch insights.Language.Action {
-	case ttypes.LanguageActionTrustFolder:
+	case insight.LanguageActionTrustFolder:
 		status.Action = "language:trust"
-	case ttypes.LanguageActionStartServers:
+	case insight.LanguageActionStartServers:
 		status.Action = "lsp:start-all"
-	case ttypes.LanguageActionRestartServer:
+	case insight.LanguageActionRestartServer:
 		// One button restarts what failed: the named server, or every failed
 		// one when there are several. Running servers keep their work.
 		status.Action = "lsp:restart-failed"
@@ -93,9 +93,9 @@ func (m *App) problemsStatus(insights ttypes.ProjectInsights) problems.Status {
 			insights.Language.ActionLabel = "Restart failed servers"
 		}
 	}
-	if insights.Language.Action != ttypes.LanguageActionNone ||
-		insights.Language.State != ttypes.LanguageReady && insights.Language.Message != "" {
-		if insights.Language.Action == ttypes.LanguageActionNone {
+	if insights.Language.Action != insight.LanguageActionNone ||
+		insights.Language.State != insight.LanguageReady && insights.Language.Message != "" {
+		if insights.Language.Action == insight.LanguageActionNone {
 			status.Action, status.ActionLabel = "", ""
 		}
 		if insights.Language.ActionLabel != "" {
@@ -141,7 +141,7 @@ func (m *App) problemsStatus(insights ttypes.ProjectInsights) problems.Status {
 }
 
 // projectCheckText tells how far the check of closed files is.
-func projectCheckText(insights ttypes.ProjectInsights) string {
+func projectCheckText(insights insight.ProjectInsights) string {
 	if insights.ProjectCheckTotal == 0 {
 		return ""
 	}

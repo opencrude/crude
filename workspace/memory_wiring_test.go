@@ -10,7 +10,7 @@ import (
 	"crude/agent/provider"
 	"crude/agent/session"
 	"crude/agent/sessiondb"
-	ttypes "crude/types"
+	"crude/types/setting"
 )
 
 func TestCurrentWorkspaceReopensWithSessionsMemoryAndCapabilities(t *testing.T) {
@@ -51,7 +51,7 @@ func TestCurrentWorkspaceReopensWithSessionsMemoryAndCapabilities(t *testing.T) 
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	ws := NewWorkspace(project, "existing-model", "user", ttypes.Settings{}, nopLogger{})
+	ws := NewWorkspace(project, "existing-model", "user", setting.Settings{}, nopLogger{})
 	t.Cleanup(ws.Close)
 	if !ws.MemoryAvailable() {
 		t.Fatalf("existing workspace lost its database handle: %v", ws.workspaceDBErr)
@@ -84,7 +84,7 @@ func TestCurrentWorkspaceReopensWithSessionsMemoryAndCapabilities(t *testing.T) 
 func TestCreateSessionRecoversWorkspaceMemoryAfterInitialDBFailure(t *testing.T) {
 	setTestHome(t)
 	project := t.TempDir()
-	ws := NewWorkspace(project, "model", "user", ttypes.Settings{}, nopLogger{})
+	ws := NewWorkspace(project, "model", "user", setting.Settings{}, nopLogger{})
 	if ws.registryCostWriter != nil {
 		ws.registryCostWriter.Close()
 		ws.registryCostWriter = nil

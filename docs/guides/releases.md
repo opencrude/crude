@@ -13,7 +13,7 @@
 
 No macOS, ARM64, 32-bit or Alpine/musl release artifacts are advertised. The
 embedded terminal requires cgo; a stub-only build is not a release. See
-[native dependency bootstrap](../../third_party/libghostty-vt/README.md) and
+[native dependency bootstrap](../../third_party/libghostty-vt/CRUDE.md) and
 [terminal contracts](../reference/in-app-terminals.md).
 
 The single build tool is `scripts/release.py`: native `build --version <tag>`
@@ -33,9 +33,9 @@ independent signature or protect against a compromised release publisher.
 
 ### Protocol identities and reproducible source cohort
 
-Run `go run ./internal/wiregen` explicitly after production-source edits and commit
+Run `go run ./tools/wiregen` explicitly after production-source edits and commit
 the reviewed codecs/schema/cohort output before release.
-`go run ./internal/wiregen -check` is nonmutating; release builds, Make build/test/
+`go run ./tools/wiregen -check` is nonmutating; release builds, Make build/test/
 benchmark targets and `scripts/build.sh` invoke it. Direct `go build` never
 implicitly regenerates or proves freshness.
 

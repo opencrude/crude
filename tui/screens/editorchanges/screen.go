@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"crude/text/textdiff"
 	"crude/tui/editor"
 	"crude/tui/screens/shelleditor"
 	"crude/tui/surface"
@@ -29,7 +30,8 @@ type Screen struct {
 	baseline string
 }
 
-func New(th *theme.Theme, hunk editor.GitHunk, baseline string) *Screen {
+// New builds the change screen for one hunk against a baseline.
+func New(th *theme.Theme, hunk textdiff.Hunk, baseline string) *Screen {
 	s := &Screen{Base: ui.NewBase(ScreenID), th: th, baseline: baseline, area: shelleditor.New(th)}
 	s.actions = ui.NewActionBar("editor-changes/actions", ui.NewTokenSet(th),
 		ui.ActionBarButton{ID: "editor-changes/previous", Label: "Previous change", Action: "changes.previous", Enabled: true},
@@ -38,7 +40,8 @@ func New(th *theme.Theme, hunk editor.GitHunk, baseline string) *Screen {
 	return s
 }
 
-func (s *Screen) SetHunk(hunk editor.GitHunk) {
+// SetHunk shows one hunk as a unified diff against the baseline.
+func (s *Screen) SetHunk(hunk textdiff.Hunk) {
 	baseline := s.baseline
 	if baseline == "" {
 		baseline = "HEAD"

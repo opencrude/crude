@@ -3,7 +3,7 @@ package workspace
 import (
 	"testing"
 
-	ttypes "crude/types"
+	"crude/types/setting"
 	"crude/workspace/fileio"
 )
 
@@ -18,7 +18,7 @@ func TestWorkspaceSwitchCancelsSearchWithoutReusingRequestIdentity(t *testing.T)
 	setTestHome(t)
 	oldRoot := t.TempDir()
 	newRoot := t.TempDir()
-	ws := NewWorkspace(oldRoot, "model", "user", ttypes.Settings{}, workspaceSwitchDomainLogger{})
+	ws := NewWorkspace(oldRoot, "model", "user", setting.Settings{}, workspaceSwitchDomainLogger{})
 	t.Cleanup(ws.Close)
 
 	service := ws.ProjectSearch

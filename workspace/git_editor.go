@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"crude/text/diff"
-	"crude/text/encoding"
+	"crude/text/textdiff"
+	"crude/text/textencoding"
 )
 
 // GitBlameLine is porcelain blame for one 1-based file line.
@@ -30,13 +30,9 @@ type GitFileAnnotation struct {
 	HeadContent string
 	Path        string
 	Blame       []GitBlameLine
-	Hunks       []GitHunk
+	Hunks       []textdiff.Hunk
 	Conflicted  bool
 }
-
-// GitHunk is one exact HEAD-to-buffer change. Starts are zero-based line
-// positions; line slices retain their original line endings for inspection.
-type GitHunk = textdiff.Hunk
 
 // AnnotateFile reads blame and HEAD-vs-content line edits for absPath.
 // content is the editor buffer (unsaved text included). Results are
@@ -164,7 +160,7 @@ func isUntrackedGitError(err error) bool {
 
 // DocumentHunks compares immutable text snapshots by line content without Git
 // or disk I/O; CRLF and LF terminators match (see textdiff.ContentHunks).
-func DocumentHunks(before, after string) []GitHunk {
+func DocumentHunks(before, after string) []textdiff.Hunk {
 	return textdiff.ContentHunks(before, after)
 }
 

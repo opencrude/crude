@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	ttypes "crude/types"
+	"crude/types/insight"
 )
 
 const (
@@ -45,8 +45,8 @@ func (m *LSPManager) invalidateAssemblyDiscoveryLocked() {
 		m.assemblyCancel()
 	}
 	m.assemblyRequested++
-	if m.assemblyActive && m.assembly.State != ttypes.AssemblyScanning {
-		m.assembly.State, m.assembly.Message = ttypes.AssemblyScanning, "Crude is looking at the project files."
+	if m.assemblyActive && m.assembly.State != insight.AssemblyScanning {
+		m.assembly.State, m.assembly.Message = insight.AssemblyScanning, "Crude is looking at the project files."
 		m.bumpVersionLocked()
 	}
 }

@@ -6,19 +6,19 @@ import (
 	"testing"
 	"time"
 
-	types "crude/types"
+	"crude/types/statuscenter"
 )
 
 func TestStatusCenterDeduplicatesAndPersistsNotificationState(t *testing.T) {
 	wdb := openTestWorkspaceDB(t)
 	center := NewStatusCenter(wdb.DB, nopLogger{})
-	id := center.Notify(types.NotificationRecord{
-		DedupKey: "lsp:gopls", Owner: types.ResourceRef{Kind: types.ResourceLSP, ID: "gopls"},
-		Severity: types.SeverityError, Source: "lsp", Summary: "gopls failed", Detail: "first",
+	id := center.Notify(statuscenter.NotificationRecord{
+		DedupKey: "lsp:gopls", Owner: statuscenter.ResourceRef{Kind: statuscenter.ResourceLSP, ID: "gopls"},
+		Severity: statuscenter.SeverityError, Source: "lsp", Summary: "gopls failed", Detail: "first",
 	})
-	if got := center.Notify(types.NotificationRecord{
-		DedupKey: "lsp:gopls", Owner: types.ResourceRef{Kind: types.ResourceLSP, ID: "gopls"},
-		Severity: types.SeverityError, Source: "lsp", Summary: "gopls failed", Detail: "second",
+	if got := center.Notify(statuscenter.NotificationRecord{
+		DedupKey: "lsp:gopls", Owner: statuscenter.ResourceRef{Kind: statuscenter.ResourceLSP, ID: "gopls"},
+		Severity: statuscenter.SeverityError, Source: "lsp", Summary: "gopls failed", Detail: "second",
 	}); got != id {
 		t.Fatalf("deduplicated ID changed: %q != %q", got, id)
 	}
@@ -41,10 +41,10 @@ func TestStatusCenterDeduplicatesAndPersistsNotificationState(t *testing.T) {
 func TestStatusCenterKeepsActivityAndIssueCountersIndependent(t *testing.T) {
 	center := NewStatusCenter(nil, nil)
 	defer center.Close()
-	center.SetOperation(types.OperationSnapshot{ID: "running", Owner: types.ResourceRef{Kind: types.ResourceAgent, ID: "agent"}, Label: "Waiting", State: types.OperationWaiting, StartedAt: time.Now()})
-	center.SetOperation(types.OperationSnapshot{ID: "done", Owner: types.ResourceRef{Kind: types.ResourceFile, ID: "file"}, Label: "Saved", State: types.OperationSucceeded, StartedAt: time.Now().Add(-time.Second)})
-	center.SetIssue(types.IssueSnapshot{ID: "save", Owner: types.ResourceRef{Kind: types.ResourceFile, ID: "file"}, Severity: types.SeverityError, Summary: "Save failed"})
-	center.Notify(types.NotificationRecord{DedupKey: "save", Severity: types.SeverityError, Summary: "Save failed"})
+	center.SetOperation(statuscenter.OperationSnapshot{ID: "running", Owner: statuscenter.ResourceRef{Kind: statuscenter.ResourceAgent, ID: "agent"}, Label: "Waiting", State: statuscenter.OperationWaiting, StartedAt: time.Now()})
+	center.SetOperation(statuscenter.OperationSnapshot{ID: "done", Owner: statuscenter.ResourceRef{Kind: statuscenter.ResourceFile, ID: "file"}, Label: "Saved", State: statuscenter.OperationSucceeded, StartedAt: time.Now().Add(-time.Second)})
+	center.SetIssue(statuscenter.IssueSnapshot{ID: "save", Owner: statuscenter.ResourceRef{Kind: statuscenter.ResourceFile, ID: "file"}, Severity: statuscenter.SeverityError, Summary: "Save failed"})
+	center.Notify(statuscenter.NotificationRecord{DedupKey: "save", Severity: statuscenter.SeverityError, Summary: "Save failed"})
 	if operations := center.Operations(); len(operations) != 2 || operations[0].ID != "running" {
 		t.Fatalf("active operation was not sorted before recent history: %+v", operations)
 	}
@@ -61,7 +61,7 @@ func TestStatusCenterBoundsNotificationHistory(t *testing.T) {
 	center := NewStatusCenter(nil, nil)
 	defer center.Close()
 	for i := 0; i < statusNotificationLimit+100; i++ {
-		center.Notify(types.NotificationRecord{Severity: types.SeverityError, Summary: fmt.Sprintf("failure %d", i)})
+		center.Notify(statuscenter.NotificationRecord{Severity: statuscenter.SeverityError, Summary: fmt.Sprintf("failure %d", i)})
 	}
 	notices := center.Notifications(false)
 	if len(notices) != statusNotificationLimit {
@@ -76,9 +76,9 @@ func TestStatusCenterChangedBroadcastsEverySemanticMutation(t *testing.T) {
 	c := NewStatusCenter(nil, nil)
 	defer c.Close()
 	var notice string
-	agent := types.AgentStatusSnapshot{Ref: types.ResourceRef{ID: "agent"}}
-	op := types.OperationSnapshot{ID: "op", Owner: types.ResourceRef{ID: "agent"}, State: types.OperationRunning}
-	issue := types.IssueSnapshot{ID: "issue", Summary: "failed"}
+	agent := statuscenter.AgentStatusSnapshot{Ref: statuscenter.ResourceRef{ID: "agent"}}
+	op := statuscenter.OperationSnapshot{ID: "op", Owner: statuscenter.ResourceRef{ID: "agent"}, State: statuscenter.OperationRunning}
+	issue := statuscenter.IssueSnapshot{ID: "issue", Summary: "failed"}
 	for _, test := range []struct {
 		name    string
 		mutate  func()
@@ -90,16 +90,16 @@ func TestStatusCenterChangedBroadcastsEverySemanticMutation(t *testing.T) {
 		{"missing agent", func() { c.RemoveAgent("agent") }, false},
 		{"operation", func() { c.SetOperation(op) }, true},
 		{"same operation", func() { c.SetOperation(op) }, false},
-		{"finish", func() { c.FinishOperation("op", types.OperationSucceeded, "") }, true},
-		{"finished", func() { c.FinishOperation("op", types.OperationSucceeded, "") }, false},
+		{"finish", func() { c.FinishOperation("op", statuscenter.OperationSucceeded, "") }, true},
+		{"finished", func() { c.FinishOperation("op", statuscenter.OperationSucceeded, "") }, false},
 		{"second operation", func() { op.ID = "op2"; c.SetOperation(op) }, true},
-		{"finish owner", func() { c.FinishOperations("agent", types.OperationCancelled, "") }, true},
+		{"finish owner", func() { c.FinishOperations("agent", statuscenter.OperationCancelled, "") }, true},
 		{"issue", func() { c.SetIssue(issue) }, true},
 		{"same issue", func() { c.SetIssue(issue) }, false},
 		{"resolve issue", func() { c.ResolveIssue("issue") }, true},
 		{"resolved issue", func() { c.ResolveIssue("issue") }, false},
-		{"notice", func() { notice = c.Notify(types.NotificationRecord{Summary: "notice", DedupKey: "notice"}) }, true},
-		{"dedup occurrence", func() { c.Notify(types.NotificationRecord{Summary: "notice", DedupKey: "notice"}) }, true},
+		{"notice", func() { notice = c.Notify(statuscenter.NotificationRecord{Summary: "notice", DedupKey: "notice"}) }, true},
+		{"dedup occurrence", func() { c.Notify(statuscenter.NotificationRecord{Summary: "notice", DedupKey: "notice"}) }, true},
 		{"read", func() { c.MarkRead(notice, true) }, true},
 		{"already read", func() { c.MarkRead(notice, true) }, false},
 		{"resolve notice", func() { c.ResolveNotification(notice) }, true},
@@ -132,7 +132,7 @@ func TestStatusCenterChangedBroadcastsEverySemanticMutation(t *testing.T) {
 func TestStatusCenterHydrateBroadcastsOnlyNewContent(t *testing.T) {
 	wdb := openTestWorkspaceDB(t)
 	writer := NewStatusCenter(wdb.DB, nil)
-	writer.Notify(types.NotificationRecord{Summary: "saved externally"})
+	writer.Notify(statuscenter.NotificationRecord{Summary: "saved externally"})
 	writer.Close()
 	c := NewStatusCenter(wdb.DB, nil)
 	defer c.Close()
@@ -181,7 +181,7 @@ func TestStatusCenterChangedSupportsLiteralFixture(t *testing.T) {
 func TestStatusCenterExactEvidenceIsRecordedOnce(t *testing.T) {
 	center := NewStatusCenter(nil, nil)
 	defer center.Close()
-	n := types.NotificationRecord{ID: "immutable-outcome", DedupKey: "immutable-outcome", Summary: "Background command failed", Severity: types.SeverityError}
+	n := statuscenter.NotificationRecord{ID: "immutable-outcome", DedupKey: "immutable-outcome", Summary: "Background command failed", Severity: statuscenter.SeverityError}
 	var wg sync.WaitGroup
 	for range 200 {
 		wg.Go(func() { center.notifyOnce(n) })

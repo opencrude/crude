@@ -1,6 +1,6 @@
 package sessiondb
 
-import "crude/metrics"
+import "crude/internal/metrics"
 
 // sessionWrites times durable session writes by operation. Each commit
 // syncs the database, so slow disks (and Windows FlushFileBuffers) show here.

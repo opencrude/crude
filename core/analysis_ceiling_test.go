@@ -1,7 +1,7 @@
 package core
 
 import (
-	"crude/types"
+	"crude/types/setting"
 	"crude/workspace"
 	"path/filepath"
 	"testing"
@@ -18,8 +18,8 @@ func TestAnalysisProcessCeilingHonorsEveryWorkspaceQuota(t *testing.T) {
 		}
 	})
 	ceiling := r.analysisGovernor.Snapshot().Limits.MaxProcesses
-	for quota := 1; quota <= types.MaxLanguageServers; quota++ {
-		settings := types.DefaultLSPSettings()
+	for quota := 1; quota <= setting.MaxLanguageServers; quota++ {
+		settings := setting.DefaultLSP()
 		settings.MaxServers = quota
 		if err := settings.Validate(); err != nil {
 			t.Fatal(err)

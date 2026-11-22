@@ -2,19 +2,20 @@ package workspace
 
 import (
 	"crude/agent/sessiondb"
-	"crude/types"
+	"crude/types/conversation"
 	"crude/types/recovery"
+	"crude/types/statuscenter"
 )
 
 // RecoveryMessage is the one live/hydrated presentation of a retained incident.
 // The runtime owns its lifecycle; this projection never schedules a retry.
-func RecoveryMessage(status recovery.Status) Message {
+func RecoveryMessage(status recovery.Status) conversation.Message {
 	copy := status
 	timestamp := status.StartedAt
 	if timestamp.IsZero() {
 		timestamp = status.UpdatedAt
 	}
-	return Message{
+	return conversation.Message{
 		InternalID: status.ID, Role: MessageRoleStatus, Content: status.Detail,
 		Time: timestamp, TurnGeneration: status.Generation,
 		LifecycleOperationID: status.ID, LifecyclePhase: "recovery_" + string(status.State),
@@ -43,7 +44,7 @@ func (c *Conversation) UpdateRecovery(status recovery.Status) bool {
 	return true
 }
 
-func mergeRecoveryViews(views []ChatMessageView, records []recovery.Status) []ChatMessageView {
+func mergeRecoveryViews(views []conversation.Message, records []recovery.Status) []conversation.Message {
 	byID := make(map[string]int, len(views))
 	for index, view := range views {
 		byID[view.InternalID] = index
@@ -89,7 +90,7 @@ func (a *AgentState) RecoveryStatus() recovery.Status {
 	return status
 }
 
-func (w *Workspace) hydrateRecoveryViews(views []ChatMessageView, owner *Session) []ChatMessageView {
+func (w *Workspace) hydrateRecoveryViews(views []conversation.Message, owner *Session) []conversation.Message {
 	if owner == nil || owner.DB == nil {
 		return views
 	}
@@ -101,15 +102,15 @@ func (w *Workspace) hydrateRecoveryViews(views []ChatMessageView, owner *Session
 	return mergeRecoveryViews(views, records)
 }
 
-func recoveryPhase(status recovery.Status) (types.AgentPhase, bool) {
+func recoveryPhase(status recovery.Status) (statuscenter.AgentPhase, bool) {
 	switch status.State {
 	case recovery.Recovering:
-		return types.AgentRecovering, false
+		return statuscenter.AgentRecovering, false
 	case recovery.NeedsAttention:
-		return types.AgentNeedsAttention, true
+		return statuscenter.AgentNeedsAttention, true
 	case recovery.Interrupted:
-		return types.AgentInterrupted, true
+		return statuscenter.AgentInterrupted, true
 	default:
-		return types.AgentPreparing, false
+		return statuscenter.AgentPreparing, false
 	}
 }

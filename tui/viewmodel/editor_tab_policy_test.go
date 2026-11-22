@@ -7,7 +7,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/types"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -27,7 +27,7 @@ func TestEditorTabPolicySharedCompletionUndoAndSave(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		runAppCommand(t, app, app.saveSettingsShortcut(types.SettingsScopeWorkspace, []types.SettingEdit{{Path: []string{"editor", "tab_size"}, After: raw}}, "Tab size saved.", nil, 0))
+		runAppCommand(t, app, app.saveSettingsShortcut(setting.ScopeWorkspace, []setting.Edit{{Path: []string{"editor", "tab_size"}, After: raw}}, "Tab size saved.", nil, 0))
 		remoteJourneyUntil(t, shells, func() bool {
 			return eds[0].TabWidth() == value && eds[1].TabWidth() == value && linked.TabWidth() == value
 		})

@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	"crude/agent/skills"
-	"crude/types"
 	captypes "crude/types/capability"
+	"crude/types/setting"
 )
 
 func TestCapabilityManualManagerOperationsAndInheritedRemoval(t *testing.T) {
@@ -21,7 +21,7 @@ func TestCapabilityManualManagerOperationsAndInheritedRemoval(t *testing.T) {
 		t.Fatal(err)
 	}
 	workspace := &Workspace{RootPath: root, WorkspaceDir: t.TempDir(), WorkspaceDB: openTestWorkspaceDB(t), Logger: testLogger{}}
-	settings := types.AppSettings{Capabilities: captypes.Settings{Skills: map[string]captypes.SkillConfig{"team:review": {ID: "team:review", Name: "review", Path: skill.Path, Managed: true, Digest: skill.Digest, Scope: captypes.ScopeApplication}}}}
+	settings := setting.App{Capabilities: captypes.Settings{Skills: map[string]captypes.SkillConfig{"team:review": {ID: "team:review", Name: "review", Path: skill.Path, Managed: true, Digest: skill.Digest, Scope: captypes.ScopeApplication}}}}
 	workspace.SetAppDefaults(settings)
 	t.Cleanup(func() {
 		if workspace.Capabilities != nil {
@@ -83,7 +83,7 @@ func TestBuiltInCapabilitySourceCanDisableButNotDisappear(t *testing.T) {
 		RootPath: t.TempDir(), WorkspaceDir: t.TempDir(),
 		WorkspaceDB: openTestWorkspaceDB(t), Logger: testLogger{},
 	}
-	defaults := types.AppSettings{Capabilities: captypes.WithDefaults(captypes.Settings{})}
+	defaults := setting.App{Capabilities: captypes.WithDefaults(captypes.Settings{})}
 	owner.SetAppDefaults(defaults)
 	t.Cleanup(func() {
 		if owner.Capabilities != nil {

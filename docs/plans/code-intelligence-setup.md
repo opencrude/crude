@@ -108,7 +108,7 @@ Built: the Agents sidebar fold; `InvocationSelection.MainAgent` and
 `NewAgentSessionAs` (a session rooted in a built-in role, over the same core
 RPC); the Errand role with no tool or capability restriction, in the agent
 filter, the role policy and the shipped role defaults
-(`types.DefaultAgentRoleCategories`, guarded by
+(`setting.DefaultAgentRoleCategories`, guarded by
 `agent/session/errand_tools_test.go`); the setup screen (the 2026-11-03
 list-and-details review, with every tool selectable and selected at first)
 that sends `prompt.ToolSetupMessage` to the workspace's Errand, minimized and

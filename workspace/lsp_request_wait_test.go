@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/types"
+	"crude/types/insight"
 )
 
 func TestManualLSPRequestDoesNotWaitForMissingOrStoppedServer(t *testing.T) {
@@ -33,7 +33,7 @@ func TestManualLSPRequestDoesNotWaitForMissingOrStoppedServer(t *testing.T) {
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 			defer cancel()
-			result, err := m.RequestNavigation(ctx, path, types.LSPNavigationReferences, 0, 1, true)
+			result, err := m.RequestNavigation(ctx, path, insight.LSPNavigationReferences, 0, 1, true)
 			if err == nil || errors.Is(err, context.DeadlineExceeded) || len(result.Targets) != 0 {
 				t.Fatalf("an unavailable server consumed the wait budget or returned targets: %+v, %v", result, err)
 			}
@@ -50,7 +50,7 @@ func TestManualLSPRequestStartupWaitHonorsCancellation(t *testing.T) {
 	awaitLSP(t, func() bool { return len(runtime.snapshot()) != 0 })
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	result, err := m.RequestNavigation(ctx, path, types.LSPNavigationReferences, 0, 1, true)
+	result, err := m.RequestNavigation(ctx, path, insight.LSPNavigationReferences, 0, 1, true)
 	if !errors.Is(err, context.Canceled) || len(result.Targets) != 0 {
 		t.Fatalf("canceled startup request was not retired: %+v, %v", result, err)
 	}

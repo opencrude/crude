@@ -9,11 +9,12 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/editor"
 	"crude/tui/screens/shellfooter"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 )
 
 // Errand's editor suggestions. The core owns text, context, the model call and
@@ -30,9 +31,9 @@ const (
 )
 
 type suggestionState struct {
-	mode     types.EditorPredictionMode
+	mode     setting.EditorPredictionMode
 	limit    int64
-	status   types.EditorPredictionStatus
+	status   insight.EditorPredictionStatus
 	sequence uint64
 	intent   *suggestionIntent
 	request  *suggestionRequest
@@ -74,7 +75,7 @@ type suggestionIntent struct {
 type suggestionRequest struct {
 	workspace  shellport.Workspace
 	editor     *editor.Editor
-	source     types.InsightSource
+	source     insight.Source
 	revision   uint64
 	generation uint64
 	sequence   uint64
@@ -105,30 +106,30 @@ type suggestionWakeMsg struct{}
 
 type suggestionResultMsg struct {
 	owner  *suggestionRequest
-	result types.EditorPredictionResult
+	result insight.EditorPredictionResult
 	err    error
 }
 
 type suggestionStatusMsg struct {
 	workspace shellport.Workspace
-	status    types.EditorPredictionStatus
+	status    insight.EditorPredictionStatus
 	err       error
 }
 
 // suggestionMode is the shell's suggestion mode. Anything other than When I
 // ask or As I type, including a shell that has not read its settings yet, is
 // Off.
-func (m *App) suggestionMode() types.EditorPredictionMode {
-	if m.suggest.mode == types.PredictionAsk || m.suggest.mode == types.PredictionType {
+func (m *App) suggestionMode() setting.EditorPredictionMode {
+	if m.suggest.mode == setting.PredictionAsk || m.suggest.mode == setting.PredictionType {
 		return m.suggest.mode
 	}
-	return types.PredictionOff
+	return setting.PredictionOff
 }
 
 // applySuggestionSettings follows the effective workspace choice.
-func (m *App) applySuggestionSettings(settings types.WorkspacePredictionSettings) {
-	if settings.Mode != types.PredictionAsk && settings.Mode != types.PredictionType {
-		settings.Mode = types.PredictionOff // an unset choice is Off
+func (m *App) applySuggestionSettings(settings setting.WorkspacePrediction) {
+	if settings.Mode != setting.PredictionAsk && settings.Mode != setting.PredictionType {
+		settings.Mode = setting.PredictionOff // an unset choice is Off
 	}
 	if m.suggestionMode() != settings.Mode {
 		m.cancelSuggestion()
@@ -192,7 +193,7 @@ func (m *App) onSuggestionTyping(ed *editor.Editor, key tea.KeyPressMsg) {
 		m.suggest.request = nil
 	}
 	m.suggest.jump, m.suggest.held = nil, nil
-	if m.suggestionMode() != types.PredictionType || !editorTypingKey(key) && key.Code != tea.KeyEnter {
+	if m.suggestionMode() != setting.PredictionType || !editorTypingKey(key) && key.Code != tea.KeyEnter {
 		return
 	}
 	m.scheduleSuggestion(ed, m.suggest.pause, true, false)
@@ -225,10 +226,10 @@ func (m *App) onSuggestionOutcome(ed *editor.Editor, owner string, outcome edito
 		}
 	}
 	m.suggest.shown, m.suggest.jump = nil, nil
-	if m.suggestionMode() == types.PredictionOff {
+	if m.suggestionMode() == setting.PredictionOff {
 		return
 	}
-	m.scheduleSuggestion(ed, 0, m.suggestionMode() == types.PredictionType, m.suggestionMode() != types.PredictionType)
+	m.scheduleSuggestion(ed, 0, m.suggestionMode() == setting.PredictionType, m.suggestionMode() != setting.PredictionType)
 }
 
 func (m *App) scheduleSuggestion(ed *editor.Editor, pause time.Duration, automatic, follow bool) {
@@ -282,7 +283,7 @@ func (m *App) suggestionEditorOwnsInput(ed *editor.Editor) bool {
 // arrives before the edit's acknowledgement does not lose it.
 func (m *App) syncSuggestion(now time.Time) tea.Cmd {
 	var cmds []tea.Cmd
-	if m.suggest.statusStale && m.suggestionMode() != types.PredictionOff {
+	if m.suggest.statusStale && m.suggestionMode() != setting.PredictionOff {
 		if cmd := m.refreshSuggestionStatus(); cmd != nil {
 			m.suggest.statusStale = false
 			cmds = append(cmds, cmd)
@@ -349,7 +350,7 @@ func (m *App) cancelSuggestionIntent() {
 func (m *App) requestSuggestionNow() tea.Cmd {
 	ed := m.EditorState.Editor
 	switch {
-	case m.suggestionMode() == types.PredictionOff:
+	case m.suggestionMode() == setting.PredictionOff:
 		m.Feedback.NotifyInfo("Errand suggestions are off. Turn them on from Errand in the footer.")
 		return nil
 	case !m.suggestionEditorOwnsInput(ed):
@@ -387,7 +388,7 @@ func (m *App) startSuggestion(ed *editor.Editor, automatic, follow bool, began t
 		generation: generation, sequence: m.suggest.sequence, caret: start, began: began,
 		automatic: automatic, follow: follow, cancel: cancel}
 	m.suggest.request, m.suggest.live = request, true
-	wire := types.EditorPredictionRequest{Source: source, ViewID: suggestionViewID, Sequence: request.sequence,
+	wire := insight.EditorPredictionRequest{Source: source, ViewID: suggestionViewID, Sequence: request.sequence,
 		Caret: start, Automatic: automatic, Follow: follow, Completions: m.visibleCompletionLabels(ed)}
 	return m.clientIOCommand(ctx, func(parent context.Context) tea.Msg {
 		call, stop := context.WithTimeout(parent, 70*time.Second)
@@ -478,7 +479,7 @@ func (m *App) applySuggestionResult(msg suggestionResultMsg) {
 
 // suggestionStillAsked reports whether the editor is still where it was when
 // it asked: the same focus, revision, single caret and canonical source.
-func (m *App) suggestionStillAsked(request *suggestionRequest, result types.EditorPredictionResult) bool {
+func (m *App) suggestionStillAsked(request *suggestionRequest, result insight.EditorPredictionResult) bool {
 	ed := request.editor
 	start, end, ok := ed.SourceByteRange()
 	return m.suggestionEditorOwnsInput(ed) && ed.Revision() == request.revision && ok && start == end &&
@@ -488,7 +489,7 @@ func (m *App) suggestionStillAsked(request *suggestionRequest, result types.Edit
 // completionHoldsSuggestion reports that the completion list owns Tab: a
 // row is chosen, its own inline text shows, or the suggestion does not
 // continue the single row. The suggestion then waits for the list to close.
-func (m *App) completionHoldsSuggestion(ed *editor.Editor, result types.EditorPredictionResult) bool {
+func (m *App) completionHoldsSuggestion(ed *editor.Editor, result insight.EditorPredictionResult) bool {
 	if owner := ed.GhostOwner(); owner != "" && owner != suggestionGhostOwner {
 		return true
 	}
@@ -500,7 +501,7 @@ func (m *App) completionHoldsSuggestion(ed *editor.Editor, result types.EditorPr
 		return true
 	}
 	rows := rankCompletions(s.set.Entries, s.typed)
-	if len(rows) != 1 || result.Kind != types.PredictionInsert {
+	if len(rows) != 1 || result.Kind != insight.PredictionInsert {
 		return true
 	}
 	label := rows[0].Insertion.Label
@@ -511,16 +512,16 @@ func (m *App) completionHoldsSuggestion(ed *editor.Editor, result types.EditorPr
 }
 
 // showSuggestion paints one checked answer in its editor.
-func (m *App) showSuggestion(request *suggestionRequest, result types.EditorPredictionResult) {
+func (m *App) showSuggestion(request *suggestionRequest, result insight.EditorPredictionResult) {
 	if !m.suggestionStillAsked(request, result) {
 		return
 	}
 	ed := request.editor
 	var err error
 	switch result.Kind {
-	case types.PredictionInsert, types.PredictionEdit:
+	case insight.PredictionInsert, insight.PredictionEdit:
 		err = ed.SetSuggestion(suggestionGhostOwner, request.revision, editor.Suggestion{Start: result.Start, End: result.End, Text: result.Text})
-	case types.PredictionJump:
+	case insight.PredictionJump:
 		line, _, _ := ed.SourceLineBounds(result.Start)
 		_, _, lineEnd := ed.SourceLineBounds(request.caret)
 		err = ed.SetSuggestion(suggestionGhostOwner, request.revision, editor.Suggestion{Start: lineEnd, End: lineEnd,
@@ -567,7 +568,7 @@ func (m *App) showPendingJump() {
 // suggestionKey identifies a change for dismissal memory by the lines it
 // would produce, whatever form shows it (inline text, a nearby change or the
 // next place). It changes when the code near the change changes.
-func suggestionKey(ed *editor.Editor, result types.EditorPredictionResult) string {
+func suggestionKey(ed *editor.Editor, result insight.EditorPredictionResult) string {
 	_, start, _ := ed.SourceLineBounds(result.Start)
 	_, _, end := ed.SourceLineBounds(result.End)
 	return ed.SourceSlice(start, result.Start) + result.Text + ed.SourceSlice(result.End, end) + "\x00" + ed.SourceSlice(start, end)
@@ -585,10 +586,10 @@ func (m *App) noteSuggestionDismissed(ed *editor.Editor) {
 	}
 	if s.Marker != "" {
 		if jump := m.suggest.jump; jump != nil {
-			m.suggest.dismissed = suggestionKey(ed, types.EditorPredictionResult{Start: jump.start, End: jump.end, Text: jump.text})
+			m.suggest.dismissed = suggestionKey(ed, insight.EditorPredictionResult{Start: jump.start, End: jump.end, Text: jump.text})
 		}
 	} else {
-		m.suggest.dismissed = suggestionKey(ed, types.EditorPredictionResult{Start: s.Start, End: s.End, Text: s.Text})
+		m.suggest.dismissed = suggestionKey(ed, insight.EditorPredictionResult{Start: s.Start, End: s.End, Text: s.Text})
 	}
 	if shown := m.suggest.shown; shown != nil {
 		recordSuggestionOutcome(suggestionDismissed, shown)
@@ -630,7 +631,7 @@ func (m *App) applySuggestionStatus(msg suggestionStatusMsg) {
 		return
 	}
 	m.suggest.status = msg.status
-	if msg.status.Mode != types.PredictionOff && !msg.status.Ready {
+	if msg.status.Mode != setting.PredictionOff && !msg.status.Ready {
 		m.suggest.problem = msg.status.Reason
 	} else if msg.status.Ready {
 		m.suggest.problem = ""
@@ -642,13 +643,13 @@ func (m *App) applySuggestionStatus(msg suggestionStatusMsg) {
 func (m *App) suggestionFooterSegment() (shellfooter.Segment, bool) {
 	mode := m.suggestionMode()
 	if m.EditorState == nil || m.EditorState.Editor == nil || !m.EditorState.Editor.IsOpen() {
-		if mode == types.PredictionOff {
+		if mode == setting.PredictionOff {
 			return shellfooter.Segment{}, false
 		}
 	}
 	segment := shellfooter.Segment{Text: "Errand", FillRole: ui.ColorAccent2, Pill: true, Action: suggestionFooter, Priority: 0}
 	switch {
-	case mode == types.PredictionOff:
+	case mode == setting.PredictionOff:
 		segment.Text, segment.FillRole = "Errand off", ui.ColorMuted
 	case m.suggest.problem != "":
 		segment.Text, segment.FillRole, segment.Attention = "Errand !", ui.ColorWarning, true
@@ -662,7 +663,7 @@ func (m *App) suggestionFooterSegment() (shellfooter.Segment, bool) {
 // measured speed, the hourly meter and Settings.
 func (m *App) openSuggestionMenu() tea.Cmd {
 	mode := m.suggestionMode()
-	choice := func(label string, value types.EditorPredictionMode, detail string) ui.ContextMenuItem {
+	choice := func(label string, value setting.EditorPredictionMode, detail string) ui.ContextMenuItem {
 		mark := "  "
 		if mode == value {
 			mark = "• "
@@ -670,9 +671,9 @@ func (m *App) openSuggestionMenu() tea.Cmd {
 		return ui.ContextMenuItem{Label: mark + label, Detail: detail, Action: func() { m.chooseSuggestionMode(value) }}
 	}
 	modes := ui.ContextMenuSection{SectionLabel: "Suggestions", Items: []ui.ContextMenuItem{
-		choice("Off", types.PredictionOff, ""),
-		choice("When I ask", types.PredictionAsk, "Alt+\\"),
-		choice("As I type", types.PredictionType, ""),
+		choice("Off", setting.PredictionOff, ""),
+		choice("When I ask", setting.PredictionAsk, "Alt+\\"),
+		choice("As I type", setting.PredictionType, ""),
 	}}
 	var info []ui.ContextMenuItem
 	if m.suggest.problem != "" {
@@ -687,7 +688,7 @@ func (m *App) openSuggestionMenu() tea.Cmd {
 		info = append(info, ui.ContextMenuItem{Label: fmt.Sprintf("This hour: %s of %s tokens", groupDigits(used), groupDigits(status.LimitTokens)), Disabled: true})
 	}
 	actions := ui.ContextMenuSection{Items: []ui.ContextMenuItem{
-		{Label: "Suggest now", Detail: "Alt+\\", Disabled: mode == types.PredictionOff, Action: func() {
+		{Label: "Suggest now", Detail: "Alt+\\", Disabled: mode == setting.PredictionOff, Action: func() {
 			m.runDetachedAsyncCmd(m.requestSuggestionNow())
 		}},
 		{Label: "Suggestion settings", Action: func() { m.runDetachedAsyncCmd(m.openApplicationAgentPage("role/errand", "suggestions")) }},
@@ -719,28 +720,28 @@ func groupDigits(n int64) string {
 
 // chooseSuggestionMode turns suggestions on after asking once, the first time
 // in a workspace, where the code goes. Off needs no question.
-func (m *App) chooseSuggestionMode(mode types.EditorPredictionMode) {
+func (m *App) chooseSuggestionMode(mode setting.EditorPredictionMode) {
 	if mode == m.suggestionMode() {
 		return
 	}
-	edits := []types.SettingEdit{{Path: []string{"prediction", "mode"}, After: []byte(`"` + string(mode) + `"`)}}
-	if mode == types.PredictionOff {
-		m.runDetachedAsyncCmd(m.saveSettingsShortcut(types.SettingsScopeWorkspace, edits, "Errand suggestions are off.", nil, 0))
+	edits := []setting.Edit{{Path: []string{"prediction", "mode"}, After: []byte(`"` + string(mode) + `"`)}}
+	if mode == setting.PredictionOff {
+		m.runDetachedAsyncCmd(m.saveSettingsShortcut(setting.ScopeWorkspace, edits, "Errand suggestions are off.", nil, 0))
 		return
 	}
 	limit := m.suggest.limit
 	if limit <= 0 {
-		limit = types.DefaultPredictionHourlyTokens
+		limit = setting.DefaultPredictionHourlyTokens
 	}
-	edits = append(edits, types.SettingEdit{Path: []string{"prediction", "hourly_token_limit"}, After: []byte(fmt.Sprint(limit))})
+	edits = append(edits, setting.Edit{Path: []string{"prediction", "hourly_token_limit"}, After: []byte(fmt.Sprint(limit))})
 	label := "Errand suggests when you press Alt+\\."
-	if mode == types.PredictionType {
+	if mode == setting.PredictionType {
 		label = "Errand suggests as you type."
 	}
 	save := func() tea.Cmd {
-		return tea.Batch(m.saveSettingsShortcut(types.SettingsScopeWorkspace, edits, label, nil, 0), m.refreshSuggestionStatus())
+		return tea.Batch(m.saveSettingsShortcut(setting.ScopeWorkspace, edits, label, nil, 0), m.refreshSuggestionStatus())
 	}
-	if m.suggestionMode() != types.PredictionOff {
+	if m.suggestionMode() != setting.PredictionOff {
 		m.runDetachedAsyncCmd(save())
 		return
 	}

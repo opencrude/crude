@@ -9,8 +9,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 	"crude/types/recovery"
+	"crude/types/statuscenter"
 	"crude/workspace"
 )
 
@@ -29,7 +30,7 @@ func TestRecoveryJourneyPreservesDraftAndCanonicalHydration(t *testing.T) {
 	for _, state := range []recovery.State{recovery.Recovering, recovery.NeedsAttention, recovery.Recovered, recovery.Interrupted, recovery.Cancelled} {
 		status.State = state
 		status.UpdatedAt = status.UpdatedAt.Add(time.Second)
-		_ = app.handleAgentEvent(types.AgentEventMsg{Type: "recovery", AgentID: status.AgentID, Data: status})
+		_ = app.handleAgentEvent(AgentEventMsg{Type: "recovery", AgentID: status.AgentID, Data: status})
 		if app.Input.Value() != draft {
 			t.Fatalf("state %s consumed the composer draft", state)
 		}
@@ -39,7 +40,7 @@ func TestRecoveryJourneyPreservesDraftAndCanonicalHydration(t *testing.T) {
 			t.Fatalf("state %s did not retain one incident: %+v", state, messages)
 		}
 		projected := ChatMessagesFromViews(messages)
-		hydrated := ChatMessagesFromViews([]workspace.ChatMessageView{workspace.RecoveryMessage(status)})
+		hydrated := ChatMessagesFromViews([]conversation.Message{workspace.RecoveryMessage(status)})
 		if !reflect.DeepEqual(projected, hydrated) {
 			t.Fatalf("live/hydrated recovery changed at %s", state)
 		}
@@ -56,7 +57,7 @@ func TestSendingWhilePassivelyInterruptedKeepsExactComposerDraft(t *testing.T) {
 	const draft = "My exact new instruction.\nKeep it until the pending run is resolved."
 	app.Input.SetInput(draft)
 	app.Input.SetCursorFlat(7)
-	_ = app.handleAgentEvent(types.AgentEventMsg{Type: "recovery", AgentID: "owner", Data: recovery.Status{
+	_ = app.handleAgentEvent(AgentEventMsg{Type: "recovery", AgentID: "owner", Data: recovery.Status{
 		ID: "pending", AgentID: "owner", Generation: 1, State: recovery.Interrupted,
 	}})
 	_, _ = app.dispatchKeyPress(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -72,20 +73,20 @@ func TestRecoveryCancelAcknowledgementPassesShieldButLateRetryCannotReactivate(t
 	app := newFullTestApp(t)
 	app.AddOrchestrator("owner")
 	status := recovery.Status{ID: "incident", AgentID: "owner", Generation: 1, State: recovery.NeedsAttention}
-	_ = app.handleAgentEvent(types.AgentEventMsg{Type: "recovery", AgentID: "owner", Data: status})
+	_ = app.handleAgentEvent(AgentEventMsg{Type: "recovery", AgentID: "owner", Data: status})
 	node := app.ws.AgentMgr().Get("owner")
 	node.State.BeginCancellation()
 	status.State = recovery.Recovering
-	_ = app.handleAgentEvent(types.AgentEventMsg{Type: "recovery", AgentID: "owner", Data: status})
+	_ = app.handleAgentEvent(AgentEventMsg{Type: "recovery", AgentID: "owner", Data: status})
 	if !node.State.Cancelling || node.State.RecoveryStatus().State != recovery.NeedsAttention {
 		t.Fatal("late recovering status defeated the explicit stop")
 	}
 	status.State = recovery.Cancelled
-	_ = app.handleAgentEvent(types.AgentEventMsg{Type: "recovery", AgentID: "owner", Data: status})
-	_ = app.handleAgentEvent(types.AgentEventMsg{Type: "done", AgentID: "owner", Data: map[string]any{"reason": "cancelled"}})
+	_ = app.handleAgentEvent(AgentEventMsg{Type: "recovery", AgentID: "owner", Data: status})
+	_ = app.handleAgentEvent(AgentEventMsg{Type: "done", AgentID: "owner", Data: map[string]any{"reason": "cancelled"}})
 	app.syncAgentStatusInventory()
 	snapshot, _ := app.ws.Status().Agent("owner")
-	if node.State.IsActive() || app.canRetryAgentRecovery("owner") || snapshot.NeedsAction || snapshot.Phase != types.AgentCancelled {
+	if node.State.IsActive() || app.canRetryAgentRecovery("owner") || snapshot.NeedsAction || snapshot.Phase != statuscenter.AgentCancelled {
 		t.Fatalf("stopped recovery is still working/actionable: %+v", snapshot)
 	}
 }
@@ -110,7 +111,7 @@ func TestNetworkPaletteDeepLinkAndRecoveryActionsAreDiscoverable(t *testing.T) {
 	}
 	app.overlayHost.Close(ui.OverlayWorkspaceSettings)
 	app.AddOrchestrator("owner")
-	_ = app.handleAgentEvent(types.AgentEventMsg{Type: "recovery", AgentID: "owner", Data: recovery.Status{
+	_ = app.handleAgentEvent(AgentEventMsg{Type: "recovery", AgentID: "owner", Data: recovery.Status{
 		ID: "incident", AgentID: "owner", Generation: 1, State: recovery.NeedsAttention,
 		Summary: "Account needs attention", Detail: "HTTP 401", Action: "Update Accounts, then Continue",
 	}})

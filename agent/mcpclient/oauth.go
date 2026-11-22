@@ -19,7 +19,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/oauthex"
 	"golang.org/x/oauth2"
 
-	"crude/network"
+	"crude/internal/network"
 	captypes "crude/types/capability"
 )
 

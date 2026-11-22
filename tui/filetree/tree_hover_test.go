@@ -27,7 +27,7 @@ func TestHover_SetsIndexOnMotion(t *testing.T) {
 	for _, c := range root.Children {
 		c.Parent = root
 	}
-	m := &FileTreeModel{
+	m := &Model{
 		Root:          root,
 		nodes:         map[string]*TreeNode{root.Path: root},
 		showHidden:    false,
@@ -84,7 +84,7 @@ func TestHover_ClearsOnOutOfRange(t *testing.T) {
 		},
 	}
 	root.Children[0].Parent = root
-	m := &FileTreeModel{
+	m := &Model{
 		Root:          root,
 		nodes:         map[string]*TreeNode{root.Path: root},
 		visibleHeight: 5,

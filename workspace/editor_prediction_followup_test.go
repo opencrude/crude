@@ -14,18 +14,19 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/session"
-	"crude/metrics"
-	"crude/types"
+	"crude/internal/metrics"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace/document"
 )
 
-func requestSuggestionFollow(t *testing.T, f *suggestionFixture, caret int) types.EditorPredictionResult {
+func requestSuggestionFollow(t *testing.T, f *suggestionFixture, caret int) insight.EditorPredictionResult {
 	t.Helper()
 	f.docs.mu.Lock()
 	source := f.docs.analysisIdentityLocked(f.docs.docs[f.id])
 	f.docs.mu.Unlock()
 	f.seq++
-	got, err := f.service.Request(t.Context(), f.owner, types.EditorPredictionRequest{
+	got, err := f.service.Request(t.Context(), f.owner, insight.EditorPredictionRequest{
 		Source: source, ViewID: "editor", Sequence: f.seq, Caret: caret, Follow: true,
 	})
 	if err != nil {
@@ -58,22 +59,22 @@ func TestSuggestionFollowNamesItsSourcesAndReleaseDiscardsRemainingHunks(t *test
 	f.edit(t, 0, len("count"), "total")
 	first, err := f.request(t, len("total"))
 	logStart := strings.Index(edited, "log(count)") + len("log(")
-	if err != nil || first.Kind != types.PredictionEdit || first.Start != logStart || first.End != logStart+len("count") ||
+	if err != nil || first.Kind != insight.PredictionEdit || first.Start != logStart || first.End != logStart+len("count") ||
 		first.Text != "total" || first.CacheHit || f.server.calls.Load() != 1 {
 		t.Fatalf("first edit = %+v, err=%v, model calls=%d", first, err, f.server.calls.Load())
 	}
-	if !slices.Contains(first.Sources, types.PredictionSourceEdits) {
-		t.Errorf("first answer sources = %v; missing %q", first.Sources, types.PredictionSourceEdits)
+	if !slices.Contains(first.Sources, insight.PredictionSourceEdits) {
+		t.Errorf("first answer sources = %v; missing %q", first.Sources, insight.PredictionSourceEdits)
 	}
 	f.edit(t, first.Start, first.End, first.Text)
 	next := requestSuggestionFollow(t, f, first.Start+len(first.Text))
 	saveStart := strings.Index(edited, "save(count)") + len("save(")
-	if next.Kind != types.PredictionEdit || next.Start != saveStart || next.End != saveStart+len("count") ||
+	if next.Kind != insight.PredictionEdit || next.Start != saveStart || next.End != saveStart+len("count") ||
 		next.Text != "total" || !next.CacheHit || f.server.calls.Load() != 1 {
 		t.Fatalf("second edit = %+v, model calls=%d", next, f.server.calls.Load())
 	}
-	if !slices.Equal(next.Sources, []string{types.PredictionSourceChain}) {
-		t.Errorf("follow-up sources = %v, want [%s]", next.Sources, types.PredictionSourceChain)
+	if !slices.Equal(next.Sources, []string{insight.PredictionSourceChain}) {
+		t.Errorf("follow-up sources = %v, want [%s]", next.Sources, insight.PredictionSourceChain)
 	}
 	f.service.Release(f.owner, "editor", next.Sequence)
 	// The remaining third rename now matches this document exactly. It must
@@ -96,17 +97,17 @@ func TestSuggestionAgentBusyUsesAuthorshipFileAndAge(t *testing.T) {
 		age                time.Duration
 		busy               bool
 	}{
-		{"other recently changed the hunk line", types.RecentEditOther, path, 3, time.Second, true},
-		{"disk recently changed the hunk line", types.RecentEditDisk, path, 3, time.Second, true},
-		{"old changes by another author", types.RecentEditOther, path, 3, suggestionAgentWindow + time.Second, false},
-		{"old disk changes", types.RecentEditDisk, path, 3, suggestionAgentWindow + time.Second, false},
-		{"my own change", types.RecentEditYou, path, 3, time.Second, false},
-		{"change in another file", types.RecentEditOther, "another.txt", 3, time.Second, false},
-		{"change away from the hunk", types.RecentEditOther, path, 5, time.Second, false},
+		{"other recently changed the hunk line", insight.RecentEditOther, path, 3, time.Second, true},
+		{"disk recently changed the hunk line", insight.RecentEditDisk, path, 3, time.Second, true},
+		{"old changes by another author", insight.RecentEditOther, path, 3, suggestionAgentWindow + time.Second, false},
+		{"old disk changes", insight.RecentEditDisk, path, 3, suggestionAgentWindow + time.Second, false},
+		{"my own change", insight.RecentEditYou, path, 3, time.Second, false},
+		{"change in another file", insight.RecentEditOther, "another.txt", 3, time.Second, false},
+		{"change away from the hunk", insight.RecentEditOther, path, 5, time.Second, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			edit := types.RecentEdit{Path: tc.path, Author: tc.author, Line: tc.line, Inserted: "1", Unix: now.Add(-tc.age).Unix()}
-			if got := agentBusy([]byte(text), hunk, path, []types.RecentEdit{edit}, now); got != tc.busy {
+			edit := insight.RecentEdit{Path: tc.path, Author: tc.author, Line: tc.line, Inserted: "1", Unix: now.Add(-tc.age).Unix()}
+			if got := agentBusy([]byte(text), hunk, path, []insight.RecentEdit{edit}, now); got != tc.busy {
 				t.Fatalf("agentBusy = %t, want %t", got, tc.busy)
 			}
 		})
@@ -120,11 +121,11 @@ func TestSuggestionRequestHidesAChangeOnRecentlyEditedPeerOrDiskLines(t *testing
 		old          bool
 		hidden       bool
 	}{
-		{"recent peer edit", types.RecentEditOther, false, true},
-		{"recent disk edit", types.RecentEditDisk, false, true},
-		{"old peer edit", types.RecentEditOther, true, false},
-		{"old disk edit", types.RecentEditDisk, true, false},
-		{"my recent edit", types.RecentEditYou, false, false},
+		{"recent peer edit", insight.RecentEditOther, false, true},
+		{"recent disk edit", insight.RecentEditDisk, false, true},
+		{"old peer edit", insight.RecentEditOther, true, false},
+		{"old disk edit", insight.RecentEditDisk, true, false},
+		{"my recent edit", insight.RecentEditYou, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newSuggestionFixture(t, initial, func(input string) string {
@@ -134,12 +135,12 @@ func TestSuggestionRequestHidesAChangeOnRecentlyEditedPeerOrDiskLines(t *testing
 			})
 			valueAt := strings.Index(initial, "0")
 			switch tc.author {
-			case types.RecentEditYou:
+			case insight.RecentEditYou:
 				f.edit(t, valueAt, valueAt+1, "1")
-			case types.RecentEditOther:
+			case insight.RecentEditOther:
 				// The existing document fixture opens the same document for b.
 				documentEdit(t, f.docs, document.Owner{ClientID: "b", Epoch: 1}, f.id, "peer-edit", 1, valueAt, valueAt+1, "1")
-			case types.RecentEditDisk:
+			case insight.RecentEditDisk:
 				// Keep a non-overlapping unsaved edit so the on-disk change
 				// reaches the document as a real disk merge.
 				f.edit(t, 0, len("header"), "HEADER")
@@ -155,14 +156,14 @@ func TestSuggestionRequestHidesAChangeOnRecentlyEditedPeerOrDiskLines(t *testing
 				}
 			}
 			wantSource := strings.Replace(initial, "count = 0", "count = 1", 1)
-			if tc.author == types.RecentEditDisk {
+			if tc.author == insight.RecentEditDisk {
 				wantSource = strings.Replace(wantSource, "header", "HEADER", 1)
 			}
 			if snapshot := documentText(t, f.docs, f.id, wantSource); snapshot.Conflict {
 				t.Fatalf("fixture unexpectedly has a disk conflict: %+v", snapshot)
 			}
 			edits := f.docs.RecentEdits(f.owner, 16)
-			recorded := slices.ContainsFunc(edits, func(e types.RecentEdit) bool { return e.Author == tc.author && e.Line == 4 })
+			recorded := slices.ContainsFunc(edits, func(e insight.RecentEdit) bool { return e.Author == tc.author && e.Line == 4 })
 			if !recorded {
 				t.Errorf("committed change on line 4 was not recorded as %s: %+v", tc.author, edits)
 			}
@@ -185,7 +186,7 @@ func TestSuggestionRequestHidesAChangeOnRecentlyEditedPeerOrDiskLines(t *testing
 				if !got.Empty() || got.Text != "" {
 					t.Fatalf("suggestion exposed a change on a recently edited %s line: %+v", tc.author, got)
 				}
-			} else if got.Kind != types.PredictionEdit || got.Text != "total" || got.Start != at || got.End != at+len("count") {
+			} else if got.Kind != insight.PredictionEdit || got.Text != "total" || got.Start != at || got.End != at+len("count") {
 				t.Fatalf("uncontested suggestion was not offered at the hunk: %+v", got)
 			}
 		})
@@ -201,7 +202,7 @@ func TestSuggestionStagesAreReportedToTheCoreMetrics(t *testing.T) {
 	query := metrics.Query{Seconds: metrics.HistorySeconds, Points: 1}
 	before := metrics.Take(query)
 	got, err := f.request(t, len("value ="))
-	if err != nil || got.Kind != types.PredictionInsert || got.Text != " 23" || got.CacheHit || f.server.calls.Load() != 1 {
+	if err != nil || got.Kind != insight.PredictionInsert || got.Text != " 23" || got.CacheHit || f.server.calls.Load() != 1 {
 		t.Fatalf("model insertion = %+v, err=%v, model calls=%d", got, err, f.server.calls.Load())
 	}
 	s := got.Stages
@@ -263,8 +264,8 @@ func TestSuggestionFIMOnlyReportsSourcesSentToTheModel(t *testing.T) {
 	account := provider.Account{ID: "fim", ProviderID: "openai", APIKey: "fixture-only",
 		Connection: provider.Template{Name: "Local fixture", ProviderURL: server.URL, APIStandard: "openai", AuthType: provider.AuthBearer}}
 	cfg := &session.Config{Accounts: map[string]provider.Account{account.ID: account},
-		Agents: session.AgentsConfig{Suggestions: types.SuggestionSettings{
-			AccountID: account.ID, Model: "fast", Format: types.SuggestionFormatOpenAI, EndpointPath: "/completions",
+		Agents: session.AgentsConfig{Suggestions: setting.Suggestion{
+			AccountID: account.ID, Model: "fast", Format: setting.SuggestionFormatOpenAI, EndpointPath: "/completions",
 		}}}
 	completer, err := cfg.SuggestionCompleter()
 	if err != nil {
@@ -276,7 +277,7 @@ func TestSuggestionFIMOnlyReportsSourcesSentToTheModel(t *testing.T) {
 	f.edit(t, 0, len("value"), "score")
 	caret := len("score = (")
 	got, err := f.request(t, caret)
-	if err != nil || got.Kind != types.PredictionInsert || got.Start != caret || got.End != caret || got.Text != "23" ||
+	if err != nil || got.Kind != insight.PredictionInsert || got.Start != caret || got.End != caret || got.Text != "23" ||
 		fimCalls.Load() != 1 || f.server.calls.Load() != 0 {
 		t.Fatalf("FIM suggestion=%+v err=%v (calls=%d FIM, %d Chat)", got, err, fimCalls.Load(), f.server.calls.Load())
 	}
@@ -304,7 +305,7 @@ func TestSuggestionRecentEditsCoalesceDeleteAndBackspaceRenames(t *testing.T) {
 			}
 			documentText(t, s, snap.ID, prefix+suffix)
 			edits := s.RecentEdits(owner, 16)
-			if len(edits) != 1 || edits[0].Author != types.RecentEditYou || edits[0].Line != 1 ||
+			if len(edits) != 1 || edits[0].Author != insight.RecentEditYou || edits[0].Line != 1 ||
 				edits[0].Removed != old || edits[0].Inserted != "" {
 				t.Fatalf("%s would show fragmented removals instead of one -%s edit: %+v", key, old, edits)
 			}
@@ -316,7 +317,7 @@ func TestSuggestionRecentEditsCoalesceDeleteAndBackspaceRenames(t *testing.T) {
 			documentText(t, s, snap.ID, prefix+replacement+suffix)
 			edits = s.RecentEdits(owner, 16)
 			if len(edits) != 1 || edits[0].Removed != old || edits[0].Inserted != replacement ||
-				edits[0].Author != types.RecentEditYou || edits[0].Line != 1 {
+				edits[0].Author != insight.RecentEditYou || edits[0].Line != 1 {
 				t.Fatalf("%s plus typing would not show one complete rename -%s/+%s: %+v", key, old, replacement, edits)
 			}
 		})

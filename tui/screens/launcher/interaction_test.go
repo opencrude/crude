@@ -229,7 +229,7 @@ func TestLauncherClipsEveryThemeAndSize(t *testing.T) {
 		for _, size := range []ui.Size{{W: 1, H: 1}, {W: 20, H: 3}, {W: 40, H: 12}, {W: 50, H: 20}, {W: 80, H: 24}, {W: 120, H: 40}, {W: 200, H: 50}} {
 			t.Run(fmt.Sprintf("%s-%dx%d", theme.PresetName(th), size.W, size.H), func(t *testing.T) {
 				s := New(th)
-				s.SetData("/projects/日本語-👨‍👩‍👧", []workspace.WorkspaceInfo{{ProjectName: "日本語-👨‍👩‍👧-long-worktree", ProjectDir: "/projects/日本語-👨‍👩‍👧-long-worktree", SessionCount: 3}})
+				s.SetData("/projects/日本語-👨‍👩‍👧", []workspace.Info{{ProjectName: "日本語-👨‍👩‍👧-long-worktree", ProjectDir: "/projects/日本語-👨‍👩‍👧-long-worktree", SessionCount: 3}})
 				s.SetCapabilities(captypes.Snapshot{})
 				ctx := ui.LayoutContext{Theme: th}
 				s.Layout(ctx, ui.Rect{X: 3, Y: 2, W: size.W, H: size.H})

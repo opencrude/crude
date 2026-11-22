@@ -10,11 +10,12 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/agent/prompthistory"
 	"crude/agent/provider"
+	"crude/agent/session"
 	"crude/agent/sessiondb"
-	"crude/buildinfo"
-	"crude/core/port"
-	"crude/history"
+	"crude/core/shellport"
+	"crude/internal/buildinfo"
 	"crude/tui/cell"
 	"crude/tui/compositor"
 	"crude/tui/editor"
@@ -25,13 +26,14 @@ import (
 	"crude/tui/screens/activitylist"
 	"crude/tui/screens/boardbrowser"
 	filepickerscreen "crude/tui/screens/filepicker"
-	findinfiles "crude/tui/screens/findinfiles"
+	"crude/tui/screens/findinfiles"
 	"crude/tui/screens/gitpanel"
 	"crude/tui/screens/launcher"
 	historyscreen "crude/tui/screens/localhistory"
-	memorybrowser "crude/tui/screens/memorybrowser"
+	"crude/tui/screens/memorybrowser"
 	"crude/tui/screens/problems"
-	sessionpicker "crude/tui/screens/sessionpicker"
+	"crude/tui/screens/sessionpicker"
+	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/screens/shellchat"
 	"crude/tui/screens/shelleditor"
 	"crude/tui/screens/shellfooter"
@@ -41,20 +43,19 @@ import (
 	"crude/tui/screens/shellterm"
 	"crude/tui/screens/shelltree"
 	"crude/tui/screens/termdock"
-	settingsui "crude/tui/settings"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
 	"crude/tui/ui/popup"
 	"crude/tui/window"
 	"crude/tui/wm"
-	roottypes "crude/types"
 	captypes "crude/types/capability"
+	"crude/types/insight"
 	"crude/types/inspect"
+	"crude/types/setting"
+	"crude/types/statuscenter"
 	"crude/workspace"
 )
-
-type Mode = workspace.Mode
 
 const (
 	ModeChat        = workspace.ModeChat
@@ -62,7 +63,6 @@ const (
 	ModeFilePicker  = workspace.ModeFilePicker
 )
 
-type Logger = workspace.Logger
 type App struct {
 	ws                   shellport.Workspace
 	hostBidi             hostBidi // host terminal BiDi mode (text_direction.go)
@@ -88,7 +88,7 @@ type App struct {
 	Input    input.Model
 	Feedback *feedbackSink
 	// settingsLSPHealth is the language-server snapshot last given to Settings.
-	settingsLSPHealth         []roottypes.LSPServerHealth
+	settingsLSPHealth         []statuscenter.LSPServerHealth
 	workspacePanelLastVersion uint64
 	workspacePanelLastSecond  int64
 	workspacePanelVisible     workspacePanelVisibility
@@ -170,7 +170,7 @@ type App struct {
 	composerDraftOwners        map[*workspace.Session]*composerDraftOwner
 	composerDraftWrites        sync.WaitGroup
 	composerDraftStopping      atomic.Bool
-	pendingInputAdmissions     map[*workspace.InputAdmissionIntent]struct{}
+	pendingInputAdmissions     map[*session.InputAdmissionIntent]struct{}
 	referenceOverlay           *referenceOverlayState
 	attachmentOpen             *attachmentOpenState
 	terminalImages             terminalImageState
@@ -181,7 +181,7 @@ type App struct {
 	DirtyPromptPath            string
 	DirtyPromptChoice          int
 	operationIssue             *operationIssueOwner
-	pendingOperationIssues     []roottypes.OperationIssue
+	pendingOperationIssues     []statuscenter.OperationIssue
 	settingsPrompt             *settingsPromptState
 	capabilityOperations       map[uint64]capabilityOperation
 	capabilityPicker           *capabilityPickerOwner
@@ -206,16 +206,16 @@ type App struct {
 	ChatAreaHeight      int
 	LastInteractionTime time.Time
 	SpinFrame           int
-	Prompts             *history.Store
+	Prompts             *prompthistory.Store
 	promptHistoryPath   string
-	LastSettings        roottypes.Settings
+	LastSettings        setting.Settings
 
 	// Display state (owned by viewmodel; tracks what's visible/active)
 	EditorState       *EditorState
 	editorClipboard   editor.LineClipboard
 	OverlayState      *OverlayState
 	LSPPopup          *LSPPopupState
-	editorSettings    roottypes.EditorSettings
+	editorSettings    setting.Editor
 	treeHiddenSetting bool
 	editorSaves       map[string]*editorSaveState
 	editorChanges     *editorChangesView
@@ -281,7 +281,7 @@ type App struct {
 	// preview (FramePreviewMsg). It sits on top of the persisted theme frame
 	// so the inset tracks each keystroke; CancelMsg clears it back to the
 	// saved values. Nil = no live override for that side.
-	frameOverlay *ui.Insets
+	frameOverlay *theme.Insets
 
 	actionRegistry     *ui.ActionRegistry
 	overlayHost        *ui.OverlayHost
@@ -339,7 +339,7 @@ type App struct {
 	launcherScreen         *launcher.Screen
 	onboarding             onboardingState
 	projectTools           projectToolsState
-	workspaceInfos         []workspace.WorkspaceInfo
+	workspaceInfos         []workspace.Info
 	workspaceActivity      workspaceActivityState
 	workspaceListLoading   bool
 	workspaceListError     string
@@ -394,7 +394,7 @@ type App struct {
 	rememberedAgent      string // agent this client last had selected here
 	agentFoldRevision    uint64
 	capabilitySnapshot   captypes.Snapshot
-	providerPresets      []roottypes.ProviderPreset
+	providerPresets      []setting.ProviderPreset
 	asyncIO              atomic.Pointer[appAsyncIOState]
 	asyncIOStopped       atomic.Bool
 	asyncIOStopOnce      sync.Once
@@ -454,7 +454,7 @@ type App struct {
 	editorSnippet        *editorSnippetState
 	editorGhost          *editorGhostView
 	lspDiagnostics       shellport.LSPDiagnosticConsumer
-	lspFacts             map[string]roottypes.InsightDiagnostics
+	lspFacts             map[string]insight.Diagnostics
 	lspTreeProjection    map[string]diagnosticTreeProjection
 	lspTreeVisible       bool
 	reveals              map[string]revealAnim // in-flight popup reveal animations (overlay ID → anim)
@@ -466,7 +466,8 @@ type App struct {
 	lastCancelTime time.Time
 }
 
-func NewApp(ws shellport.Workspace, presets []roottypes.ProviderPreset) *App {
+// NewApp builds the shell app around a workspace port and its provider presets.
+func NewApp(ws shellport.Workspace, presets []setting.ProviderPreset) *App {
 	th := theme.FromPreset(themePresetFromSettings(ws.LoadAppSettings()))
 	applyWorkspaceFrame(&th, ws)
 	im := input.NewModel(th)
@@ -481,7 +482,7 @@ func NewApp(ws shellport.Workspace, presets []roottypes.ProviderPreset) *App {
 			ws.Logger().Warn(tag, msg, pairs...)
 		}
 	})
-	var treeModel *filetree.FileTreeModel
+	var treeModel *filetree.Model
 	if _, connected := ws.(shellport.ClientFiles); connected {
 		treeModel = filetree.NewPlaceholderFileTreeModel(ws.RootPath())
 	} else {
@@ -649,12 +650,12 @@ func (m *App) SwitchProject(projectDir string) error {
 
 // SetPromptHistory installs the global prompt-history store and seeds
 // composer up/down recall from it.
-func (m *App) SetPromptHistory(store *history.Store) {
+func (m *App) SetPromptHistory(store *prompthistory.Store) {
 	if store == nil {
-		store = history.New()
+		store = prompthistory.New()
 	}
 	m.Prompts = store
-	m.promptHistoryPath = history.DefaultPath()
+	m.promptHistoryPath = prompthistory.DefaultPath()
 	m.syncPromptRecall()
 }
 
@@ -666,7 +667,7 @@ func (m *App) recordPrompt(text string, referenceIDs ...string) tea.Cmd {
 	var refs []sessiondb.Reference
 	if store := m.RefStore(); store != nil {
 		for _, id := range referenceIDs {
-			if ref, ok := store.GetReference(id); ok && ref.Active() {
+			if ref, ok := store.Reference(id); ok && ref.Active() {
 				refs = append(refs, ref)
 			}
 		}
@@ -682,11 +683,11 @@ func (m *App) recordPromptWithReferences(text string, refs []sessiondb.Reference
 		return nil
 	}
 	text = strings.TrimSpace(text)
-	var attachments []history.Attachment
+	var attachments []prompthistory.Attachment
 	for _, span := range input.FindRefRanges(text, refs) {
 		for _, ref := range refs {
 			if ref.ID == span.ID {
-				attachments = append(attachments, history.Attachment{Start: span.Start, End: span.End, Reference: ref})
+				attachments = append(attachments, prompthistory.Attachment{Start: span.Start, End: span.End, Reference: ref})
 				break
 			}
 		}
@@ -705,7 +706,7 @@ func (m *App) syncPromptRecall() {
 	m.Input.SetHistory(m.Prompts.Entries())
 }
 
-func modeName(m Mode) string {
+func modeName(m workspace.Mode) string {
 	return workspace.ModeName(m)
 }
 
@@ -917,15 +918,15 @@ func (m *App) openFilePickerWindow() {
 
 // openWorkspaceSettings opens the JetBrains-style workspace settings as a floating window.
 func (m *App) openWorkspaceSettings() {
-	m.openSettings(roottypes.SettingsScopeWorkspace)
+	m.openSettings(setting.ScopeWorkspace)
 }
 
 func (m *App) openApplicationSettings() {
-	m.openSettings(roottypes.SettingsScopeApplication)
+	m.openSettings(setting.ScopeApplication)
 }
 
 func (m *App) openApplicationAccounts() {
-	m.openSettingsTo(roottypes.SettingsScopeApplication, true)
+	m.openSettingsTo(setting.ScopeApplication, true)
 }
 
 func (m *App) openApplicationMainAgent() tea.Cmd {
@@ -938,7 +939,7 @@ func (m *App) openApplicationAgent(id string) tea.Cmd {
 
 // openApplicationAgentPage opens one agent's settings on one tab.
 func (m *App) openApplicationAgentPage(id, page string) tea.Cmd {
-	m.openSettingsTo(roottypes.SettingsScopeApplication, false)
+	m.openSettingsTo(setting.ScopeApplication, false)
 	if fw := m.windowManager.Window(string(ui.OverlayWorkspaceSettings)); fw != nil {
 		if frame, ok := fw.Content.(*ui.WindowFrameWidget); ok {
 			if body, ok := frame.Body().(*settingsui.WorkspaceSettingsSurface); ok {
@@ -954,7 +955,7 @@ func (m *App) openApplicationAgentPage(id, page string) tea.Cmd {
 // settingsLayers is the one source Settings is built from: the application
 // layer, the effective workspace settings and the sparse workspace overlay,
 // read together so a form never mixes a fresh layer with a stale one.
-func (m *App) settingsLayers() (application, effective roottypes.AppSettings, overrides roottypes.WorkspaceOverrides) {
+func (m *App) settingsLayers() (application, effective setting.App, overrides setting.WorkspaceOverrides) {
 	application, effective, overrides = m.ws.AppDefaults(), m.ws.LoadAppSettings(), m.ws.LoadWorkspaceOverrides()
 	if len(effective.Agents.Categories) == 0 {
 		effective.Agents = m.ws.WorkspaceAgentDefaults()
@@ -962,18 +963,18 @@ func (m *App) settingsLayers() (application, effective roottypes.AppSettings, ov
 	return application, effective, overrides
 }
 
-func (m *App) openSettings(scope roottypes.SettingsScope) {
+func (m *App) openSettings(scope setting.Scope) {
 	m.openSettingsTo(scope, false)
 }
 
-func (m *App) openSettingsTo(scope roottypes.SettingsScope, accounts bool) {
+func (m *App) openSettingsTo(scope setting.Scope, accounts bool) {
 	m.overlayHost.Close(ui.OverlaySettingsPrompt)
 	m.overlayHost.Close(ui.OverlayWorkspaceSettings)
 
 	appDefaults, effective, overrides := m.settingsLayers()
 	working := appDefaults
 	title := "Application Settings"
-	if scope == roottypes.SettingsScopeWorkspace {
+	if scope == setting.ScopeWorkspace {
 		working = effective
 		title = "Workspace Settings"
 	}

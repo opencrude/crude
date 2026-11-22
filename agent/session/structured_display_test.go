@@ -9,12 +9,12 @@ import (
 	"testing"
 	"time"
 
-	"crude/agent"
 	"crude/agent/provider"
 	"crude/agent/safety"
 	"crude/agent/sessiondb"
 	"crude/agent/tools"
-	"crude/logger"
+	"crude/agent/turnloop"
+	"crude/internal/logger"
 	captypes "crude/types/capability"
 )
 
@@ -56,8 +56,8 @@ func TestMCPBinaryAndUnknownEvidenceReachToolResults(t *testing.T) {
 	owner.SetCapabilities(structuredResultRuntime{result: captypes.Result{
 		Content:    []captypes.Content{{Type: "resource", MIMEType: "application/pdf", URI: "docs://document", Data: base64.StdEncoding.EncodeToString([]byte("bytes"))}},
 		Structured: json.RawMessage(`{"status":"pending"}`), Unknown: true,
-	}}, agent.NewFileOwnership())
-	live := &agent.Agent{AgentID: "owner", Policy: safety.ReadOnlyPolicy(), ToolFn: func(context.Context, string, map[string]any) (tools.ToolResult, error) {
+	}}, turnloop.NewFileOwnership())
+	live := &turnloop.Agent{AgentID: "owner", Policy: safety.ReadOnlyPolicy(), ToolFn: func(context.Context, string, map[string]any) (tools.ToolResult, error) {
 		return tools.ToolResult{}, errors.New("unexpected native tool")
 	}}
 	owner.bindAgentRuntime(t.Context(), live, captypes.RuntimeActor{ID: "owner"}, "Owner")

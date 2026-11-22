@@ -13,7 +13,7 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 func TestScheduledLoopRunsInSessionAndCoalescesBusyOccurrences(t *testing.T) {
@@ -80,7 +80,7 @@ func TestScheduledLoopRunsInSessionAndCoalescesBusyOccurrences(t *testing.T) {
 	// Several missed times while the first turn is busy become one later
 	// iteration, never concurrent requests or a replay of every missed time.
 	s.loopMu.Lock()
-	next := append([]types.Loop(nil), s.loops...)
+	next := append([]conversation.Loop(nil), s.loops...)
 	next[0].NextAt = time.Now().Add(-5 * time.Minute)
 	err = s.saveLoopsLocked(next)
 	s.loopMu.Unlock()
@@ -134,7 +134,7 @@ func TestScheduledLoopWaitsForPlanGoalAndPassiveReopen(t *testing.T) {
 	}
 	s.goalMu.Lock()
 	s.goal.present = true
-	s.goal.record.Goal.Status = types.GoalActive
+	s.goal.record.Goal.Status = conversation.GoalActive
 	s.goalMu.Unlock()
 	if s.startLoopTurn(o, time.Now()) {
 		t.Fatal("loop competed with an active goal")
@@ -308,7 +308,7 @@ func TestLoopRunsOldestDueScheduleFirst(t *testing.T) {
 	}
 	now := time.Now()
 	s.loopMu.Lock()
-	next := append([]types.Loop(nil), s.loops...)
+	next := append([]conversation.Loop(nil), s.loops...)
 	next[0].NextAt = now.Add(-time.Second)
 	next[1].NextAt = now.Add(-2 * time.Second)
 	next[2].NextAt = now.Add(-3 * time.Second)

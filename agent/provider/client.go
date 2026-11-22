@@ -18,10 +18,10 @@ import (
 	"strings"
 	"time"
 
-	"crude/logger"
-	"crude/metrics"
-	"crude/network"
-	"crude/retry"
+	"crude/internal/logger"
+	"crude/internal/metrics"
+	"crude/internal/network"
+	"crude/internal/retry"
 	"crude/types/reasoning"
 )
 

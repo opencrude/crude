@@ -1,0 +1,818 @@
+package setting
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"maps"
+	"reflect"
+	"slices"
+	"strings"
+
+	"crude/agent/provider"
+	"crude/insight/catalog"
+	"crude/internal/network"
+	captypes "crude/types/capability"
+)
+
+const (
+	// Explicit verbatim-retention bounds; unset retention is adaptive.
+	MinContextRetentionTokens = 1_000
+	MaxContextRetentionTokens = 200_000
+)
+
+// AccountChange is one identity-scoped application account mutation.
+// Removal also releases the application settings that use the account.
+type AccountChange struct {
+	ID         string
+	ProviderID string
+	Before     *provider.Account
+	After      *provider.Account
+	// RemovalPreview binds the confirmation to the consequences shown in Settings.
+	RemovalPreview string
+}
+
+// SettingsScope selects which layer a settings editor is writing.
+type Scope string
+
+const (
+	// ScopeApplication marks settings that the whole application uses.
+	ScopeApplication Scope = "application"
+	// ScopeWorkspace marks settings that only one workspace uses.
+	ScopeWorkspace Scope = "workspace"
+)
+
+// WorkspaceOverrides is a sparse overlay on AppSettings. This is the
+// JetBrains project-settings model: the workspace stores only what it
+// changes, down to the individual FIELD.
+//
+// Each category holds a partial JSON object carrying just the leaf values
+// the workspace explicitly set; an absent key inherits from the application
+// layer forever, including later application-level edits. Whole-category
+// snapshots are what made a workspace behave like a hard copy: changing
+// one editor field used to freeze every other editor field at whatever the
+// application happened to hold that day, so a later app-level change to an
+// untouched field silently did nothing.
+type WorkspaceOverrides struct {
+	Theme      json.RawMessage `json:"theme,omitempty"`
+	Editor     json.RawMessage `json:"editor,omitempty"`
+	LSP        json.RawMessage `json:"lsp,omitempty"`
+	Analysis   json.RawMessage `json:"analysis,omitempty"`
+	Prediction json.RawMessage `json:"prediction,omitempty"`
+	// Generated only by the explicit workspace preference transaction.
+	PredictionRootIdentity       string `json:"prediction_root_identity,omitempty"`
+	PredictionConnectionIdentity string `json:"prediction_connection_identity,omitempty"`
+	PredictionGrantID            string `json:"prediction_grant_id,omitempty"`
+	// AnalysisRootIdentity is owner-generated metadata, not an editable setting.
+	// The workspace preference transaction binds a grant to a native directory;
+	// no application, session, form or recipe may supply this value.
+	AnalysisRootIdentity string          `json:"analysis_root_identity,omitempty"`
+	UI                   json.RawMessage `json:"ui,omitempty"`
+	Agents               json.RawMessage `json:"agents,omitempty"`
+	Memory               json.RawMessage `json:"memory,omitempty"`
+	Safety               json.RawMessage `json:"safety,omitempty"`
+	LocalHistory         json.RawMessage `json:"local_history,omitempty"`
+	Capabilities         json.RawMessage `json:"capabilities,omitempty"`
+	Terminal             json.RawMessage `json:"terminal,omitempty"`
+}
+
+// IsEmpty reports that the workspace inherits everything.
+func (o WorkspaceOverrides) IsEmpty() bool {
+	return len(o.Theme) == 0 && len(o.Editor) == 0 && len(o.LSP) == 0 &&
+		len(o.Analysis) == 0 && len(o.Prediction) == 0 && len(o.UI) == 0 && len(o.Agents) == 0 && len(o.Memory) == 0 && len(o.Safety) == 0 && len(o.LocalHistory) == 0 && len(o.Capabilities) == 0 && len(o.Terminal) == 0
+}
+
+// DefaultLSPSettings is the application-level language-intelligence baseline.
+//
+// Languages has an enabled entry for every catalog language with a language
+// server. An entry without a command follows the catalog's first server.
+func DefaultLSP() LSP {
+	delay := 200
+	languages := map[string]LSPLanguage{}
+	for _, language := range catalog.Current().Languages() {
+		if len(language.Servers) > 0 {
+			languages[language.ID] = LSPLanguage{Enabled: true}
+		}
+	}
+	return LSP{
+		Enabled:            true,
+		AutoDetect:         true,
+		StartOnOpen:        true,
+		Diagnostics:        true,
+		Completions:        true,
+		Hover:              true,
+		Definition:         true,
+		References:         true,
+		Outline:            true,
+		Rename:             true,
+		InlayHints:         false,
+		DiagInEditor:       true,
+		DiagInTree:         true,
+		DiagInStatus:       true,
+		AutoComplete:       true,
+		CompletionDelayMS:  &delay,
+		CompletionAccept:   "tab-enter",
+		ProjectCheck:       ProjectCheckIdle,
+		AskErrand:          "on",
+		MinSeverity:        "hint",
+		UpdateDebounceMS:   300,
+		MaxServers:         6,
+		ServerThreads:      2,
+		ServerMemoryMB:     1024,
+		IdleTimeoutSeconds: 300,
+		MaxDocumentBytes:   2 * 1024 * 1024,
+		Languages:          languages,
+	}
+}
+
+// ApplyAppDefaults fills zero-value IDE preferences so an empty config.json
+// still produces a usable application layer.
+func ApplyAppDefaults(s *App) {
+	if s == nil {
+		return
+	}
+	s.Capabilities = captypes.WithDefaults(s.Capabilities)
+	s.Network = network.Normalize(s.Network)
+	if s.Theme.Preset == "" {
+		s.Theme.Preset = "dark"
+	}
+	if s.Editor.TabSize == 0 {
+		s.Editor.TabSize = 4
+	}
+	if s.Editor.SyntaxTheme == "" {
+		s.Editor.SyntaxTheme = "catppuccin"
+	}
+	if s.Editor.RenderWhitespace == "" {
+		s.Editor.RenderWhitespace = "none"
+	}
+	s.Editor = NormalizeEditor(s.Editor)
+	s.Terminal = NormalizeTerminal(s.Terminal)
+	s.Analysis = NormalizeWorkspaceAnalysis(s.Analysis)
+	s.Prediction = NormalizeWorkspacePrediction(s.Prediction)
+	if lspUnset(s.LSP) {
+		s.LSP = DefaultLSP()
+	} else {
+		s.LSP = NormalizeLSP(s.LSP)
+	}
+	if s.UI.SidebarWidth == 0 {
+		s.UI.SidebarWidth = 30
+	}
+	if s.UI.ContextHelp == "" {
+		s.UI.ContextHelp = "compact"
+	}
+	s.UI.AttachmentOpen = s.UI.AttachmentOpenOrDefault()
+	s.UI.DesktopNotifications.AwayMinutes = s.UI.DesktopNotifications.AwayMinutesOrDefault()
+	if s.Accounts == nil {
+		s.Accounts = make(map[string]provider.Account)
+	}
+	if s.Memory.AutoRecall == "" {
+		s.Memory.AutoRecall = "on"
+	}
+	if s.Memory.AutoExtract == "" {
+		s.Memory.AutoExtract = "on"
+	}
+	if s.Memory.Consolidation == "" {
+		s.Memory.Consolidation = "on"
+	}
+	if s.Memory.RecallBudgetTokens == 0 {
+		s.Memory.RecallBudgetTokens = DefaultMemoryRecallBudget
+	}
+	if s.Memory.RecallLimit == 0 {
+		s.Memory.RecallLimit = DefaultMemoryRecallLimit
+	}
+	if s.Memory.ExtractEveryTurns == 0 {
+		s.Memory.ExtractEveryTurns = DefaultMemoryExtractCadence
+	}
+	if s.Safety.ConfirmAt == "" {
+		s.Safety.ConfirmAt = "unknown"
+	}
+	if s.Safety.UnknownCommandRisk == "" {
+		s.Safety.UnknownCommandRisk = "unknown"
+	}
+	if s.Safety.ScriptExecutionRisk == "" {
+		s.Safety.ScriptExecutionRisk = "unknown"
+	}
+	if s.Safety.NotifyDangerous == "" {
+		s.Safety.NotifyDangerous = "on"
+	}
+	if s.LocalHistory.Enabled == "" {
+		s.LocalHistory.Enabled = "on"
+	}
+	if s.LocalHistory.UseGitIgnore == "" {
+		s.LocalHistory.UseGitIgnore = "on"
+	}
+	if s.LocalHistory.CaptureExternalChanges == "" {
+		s.LocalHistory.CaptureExternalChanges = "on"
+	}
+	if s.LocalHistory.SafetySnapshotBeforeRestore == "" {
+		s.LocalHistory.SafetySnapshotBeforeRestore = "on"
+	}
+	if s.LocalHistory.MaxFileSizeMB == 0 {
+		s.LocalHistory.MaxFileSizeMB = 100
+	}
+	if s.LocalHistory.DebounceMS == 0 {
+		s.LocalHistory.DebounceMS = 750
+	}
+	if s.LocalHistory.ReconcileIntervalSeconds == 0 {
+		s.LocalHistory.ReconcileIntervalSeconds = 60
+	}
+	if s.LocalHistory.RetentionKeepHours == 0 {
+		s.LocalHistory.RetentionKeepHours = 24
+	}
+	if s.LocalHistory.RetentionKeepDaily == 0 {
+		s.LocalHistory.RetentionKeepDaily = 30
+	}
+	if s.LocalHistory.RetentionMaxSnapshots == 0 {
+		s.LocalHistory.RetentionMaxSnapshots = 500
+	}
+	if s.LocalHistory.StorageBudgetMB == 0 {
+		s.LocalHistory.StorageBudgetMB = 1024
+	}
+}
+
+func lspUnset(s LSP) bool {
+	return !s.Enabled && !s.AutoDetect && !s.Diagnostics && !s.Completions &&
+		!s.Hover && !s.Definition && !s.InlayHints && s.MinSeverity == "" && len(s.Languages) == 0
+}
+
+// DefaultEditorSettings is the application editor layer before any stored
+// choice. Stored leaves decode onto it, so a preference that is on by default
+// (Line numbers, Indent guides) stays on until the user explicitly turns it off.
+func DefaultEditor() Editor {
+	return NormalizeEditor(Editor{TabSize: 4, LineNumbers: true, IndentGuides: true, SyntaxTheme: "catppuccin", RenderWhitespace: "none", AutoSave: AutoSaveOff})
+}
+
+// NormalizeEditor replaces invalid editor values with valid defaults.
+func NormalizeEditor(s Editor) Editor {
+	if s.IndentStyle != "space" && s.IndentStyle != "tab" {
+		s.IndentStyle = ""
+	}
+	s.IndentSize = min(32, max(0, s.IndentSize))
+	if s.TabSize <= 0 {
+		s.TabSize = 4
+	}
+	s.TabSize = min(s.TabSize, 32)
+	if !s.NewFileEncoding.Valid() {
+		s.NewFileEncoding = ""
+	}
+	switch s.AutoSave {
+	case AutoSaveOff, AutoSaveAfterDelay, AutoSaveEditorFocusChange, AutoSaveTerminalFocusLoss:
+	default:
+		s.AutoSave = AutoSaveOff
+	}
+	if s.AutoSaveDelay <= 0 {
+		s.AutoSaveDelay = 1000
+	}
+	s.AutoSaveDelay = min(60000, max(250, s.AutoSaveDelay))
+	return s
+}
+
+// NormalizeLSP fills missing language-intelligence fields without turning an
+// explicit all-off configuration back on.
+func NormalizeLSP(s LSP) LSP {
+	s = CloneLSP(s)
+	def := DefaultLSP()
+	delay := s.CompletionDelay()
+	s.CompletionDelayMS = &delay
+	s.CompletionAccept = s.CompletionAcceptance()
+	s.ProjectCheck = s.ProjectCheckMode()
+	if s.AskErrand != "off" {
+		s.AskErrand = "on"
+	}
+	if s.ServerThreads == 0 {
+		s.ServerThreads = def.ServerThreads
+	}
+	if s.ServerMemoryMB == 0 {
+		s.ServerMemoryMB = def.ServerMemoryMB
+	}
+	if s.MinSeverity == "" {
+		s.MinSeverity = def.MinSeverity
+	}
+	if s.UpdateDebounceMS == 0 {
+		s.UpdateDebounceMS = def.UpdateDebounceMS
+	}
+	if s.MaxServers == 0 {
+		s.MaxServers = def.MaxServers
+	}
+	if s.IdleTimeoutSeconds == 0 {
+		s.IdleTimeoutSeconds = def.IdleTimeoutSeconds
+	}
+	if s.MaxDocumentBytes == 0 {
+		s.MaxDocumentBytes = def.MaxDocumentBytes
+	}
+	if s.Languages == nil {
+		s.Languages = def.Languages
+	} else {
+		for id, lang := range def.Languages {
+			if _, ok := s.Languages[id]; !ok {
+				s.Languages[id] = lang
+			}
+		}
+	}
+	return s
+}
+
+// WorkspaceAnalysisChoice is the merged analysis setting. Trust never inherits
+// from application preferences, even a forged or accidentally populated
+// application projection, so it needs only the workspace overlay.
+func WorkspaceAnalysisChoice(ws WorkspaceOverrides) WorkspaceAnalysis {
+	return workspaceAnalysisChoice(ws.Analysis)
+}
+
+// MergeAppWorkspace returns application settings with workspace overrides
+// applied field by field. Any leaf the workspace does not name inherits from
+// the application layer, so later app-level edits keep flowing through.
+func MergeAppWorkspace(app App, ws WorkspaceOverrides) App {
+	app = cloneAppSettings(app)
+	ApplyAppDefaults(&app)
+	out := cloneAppSettings(app)
+	applySparse(&out.Theme, ws.Theme)
+	applySparse(&out.Editor, ws.Editor)
+	applySparse(&out.LSP, ws.LSP)
+	out.Analysis = WorkspaceAnalysisChoice(ws)
+	out.Prediction = DefaultWorkspacePrediction()
+	if choice, err := DecodeWorkspacePrediction(ws.Prediction); err == nil {
+		out.Prediction = choice
+	}
+	applySparse(&out.UI, ws.UI)
+	applySparse(&out.Agents, ws.Agents)
+	applySparse(&out.Memory, ws.Memory)
+	applySparse(&out.Safety, ws.Safety)
+	applySparse(&out.LocalHistory, ws.LocalHistory)
+	applySparse(&out.Terminal, ws.Terminal)
+	out.Terminal = NormalizeTerminal(out.Terminal)
+	out.Capabilities = mergeCapabilities(out.Capabilities, ws.Capabilities)
+	return out
+}
+
+// OverridesFromDiff records the individual leaf values in working that
+// differ from app. Everything else inherits.
+func OverridesFromDiff(app, working App) WorkspaceOverrides {
+	var out WorkspaceOverrides
+	out.Theme = sparseDiff(app.Theme, working.Theme)
+	out.Editor = sparseDiff(app.Editor, working.Editor)
+	out.LSP = sparseDiff(app.LSP, working.LSP)
+	out.Analysis = sparseDiff(DefaultWorkspaceAnalysis(), NormalizeWorkspaceAnalysis(working.Analysis))
+	out.Prediction = sparseDiff(DefaultWorkspacePrediction(), NormalizeWorkspacePrediction(working.Prediction))
+	out.UI = sparseDiff(app.UI, working.UI)
+	out.Agents = sparseDiff(app.Agents, working.Agents)
+	out.Memory = sparseDiff(app.Memory, working.Memory)
+	out.Safety = sparseDiff(app.Safety, working.Safety)
+	out.LocalHistory = sparseDiff(app.LocalHistory, working.LocalHistory)
+	out.Terminal = sparseDiff(app.Terminal, working.Terminal)
+	out.Capabilities = capabilityDiff(app.Capabilities, working.Capabilities)
+	return out
+}
+
+func capabilityDiff(base, working captypes.Settings) json.RawMessage {
+	delta := make(map[string]any)
+	if raw := sparseDiff(base, working); len(raw) > 0 {
+		_ = json.Unmarshal(raw, &delta)
+	}
+	// Only Application can choose the accounts the Web MCP sends queries to.
+	delete(delta, "web_search_routes")
+	baseMap, _ := jsonObject(base)
+	workingMap, _ := jsonObject(working)
+	for _, collection := range []string{"skills", "connections", "sources"} {
+		before, _ := baseMap[collection].(map[string]any)
+		after, _ := workingMap[collection].(map[string]any)
+		changes, _ := delta[collection].(map[string]any)
+		for id := range before {
+			if _, exists := after[id]; !exists {
+				if changes == nil {
+					changes = make(map[string]any)
+				}
+				changes[id] = nil
+			}
+		}
+		if len(changes) > 0 {
+			delta[collection] = changes
+		}
+	}
+	if len(delta) == 0 {
+		return nil
+	}
+	encoded, _ := json.Marshal(delta)
+	return encoded
+}
+
+func mergeCapabilities(base captypes.Settings, overlay json.RawMessage) captypes.Settings {
+	// Project decisions never inherit from application settings.
+	base.ProjectToolDecisions = nil
+	if len(overlay) == 0 {
+		return base
+	}
+	var rawFields map[string]json.RawMessage
+	if json.Unmarshal(overlay, &rawFields) != nil {
+		return base
+	}
+	projectDecisions := append(json.RawMessage(nil), rawFields["project_tool_decisions"]...)
+	var changes map[string]any
+	if json.Unmarshal(overlay, &changes) != nil {
+		return base
+	}
+	// A stored workspace override cannot add or redirect search methods.
+	for key := range changes {
+		if strings.EqualFold(key, "web_search_routes") {
+			delete(changes, key)
+		}
+	}
+	values, _ := jsonObject(base)
+	mergeCapabilityObjects(values, changes)
+	encoded, err := json.Marshal(values)
+	if err != nil {
+		return base
+	}
+	var merged captypes.Settings
+	if json.Unmarshal(encoded, &merged) != nil {
+		return base
+	}
+	merged = captypes.Normalize(merged)
+	merged.ProjectToolDecisions = projectDecisions
+	return merged
+}
+
+// MarshalWorkspaceOverridesPreservingToolDecisions encodes a generic snapshot
+// while retaining the exact workspace-owned raw decision from the latest row.
+// It must be called under the workspace settings writer lock.
+func MarshalWorkspaceOverridesPreservingToolDecisions(next WorkspaceOverrides, current json.RawMessage) ([]byte, error) {
+	var old map[string]json.RawMessage
+	if len(current) != 0 && string(current) != "null" {
+		if err := json.Unmarshal(current, &old); err != nil {
+			return nil, err
+		}
+	}
+	var fields map[string]json.RawMessage
+	if len(next.Capabilities) != 0 && string(next.Capabilities) != "null" {
+		if err := json.Unmarshal(next.Capabilities, &fields); err != nil {
+			return nil, err
+		}
+	}
+	if fields == nil {
+		fields = make(map[string]json.RawMessage)
+	}
+	const marker = `"__crude_reserved_project_tool_decisions_51bd5b__"`
+	raw, exists := old["project_tool_decisions"]
+	if exists {
+		fields["project_tool_decisions"] = json.RawMessage(marker)
+	} else {
+		delete(fields, "project_tool_decisions")
+	}
+	if len(fields) == 0 {
+		next.Capabilities = nil
+	} else {
+		var err error
+		next.Capabilities, err = json.Marshal(fields)
+		if err != nil {
+			return nil, err
+		}
+	}
+	encoded, err := json.Marshal(next)
+	if err != nil || !exists {
+		return encoded, err
+	}
+	token := []byte(`"project_tool_decisions":` + marker)
+	if bytes.Count(encoded, token) != 1 || !json.Valid(raw) {
+		return nil, fmt.Errorf("invalid stored project tool decisions")
+	}
+	index := bytes.Index(encoded, token) + len(token) - len(marker)
+	out := append([]byte(nil), encoded[:index]...)
+	out = append(out, raw...)
+	out = append(out, encoded[index+len(marker):]...)
+	return out, nil
+}
+
+func mergeCapabilityObjects(values, changes map[string]any) {
+	for key, value := range changes {
+		if value == nil {
+			delete(values, key)
+			continue
+		}
+		before, beforeObject := values[key].(map[string]any)
+		after, afterObject := value.(map[string]any)
+		if beforeObject && afterObject {
+			mergeCapabilityObjects(before, after)
+		} else {
+			values[key] = value
+		}
+	}
+}
+
+// sparseDiff returns a partial JSON object holding only the leaves of
+// working that differ from base, or nil when the two agree. Nested objects
+// recurse so one changed leaf never captures its siblings.
+func sparseDiff(base, working any) json.RawMessage {
+	baseMap, ok1 := jsonObject(base)
+	workingMap, ok2 := jsonObject(working)
+	if !ok1 || !ok2 {
+		return nil
+	}
+	delta := diffObjects(baseMap, workingMap)
+	if len(delta) == 0 {
+		return nil
+	}
+	data, err := json.Marshal(delta)
+	if err != nil {
+		return nil
+	}
+	return data
+}
+
+// applySparse deep-merges a partial JSON object onto dst, which must already
+// hold the inherited value.
+func applySparse(dst any, overlay json.RawMessage) {
+	if len(overlay) != 0 {
+		_ = DecodeStored(overlay, dst)
+	}
+}
+
+func jsonObject(v any) (map[string]any, bool) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return nil, false
+	}
+	var out map[string]any
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, false
+	}
+	if out == nil {
+		out = map[string]any{}
+	}
+	return out, true
+}
+
+func diffObjects(base, working map[string]any) map[string]any {
+	out := map[string]any{}
+	for key, wv := range working {
+		bv, present := base[key]
+		if !present {
+			out[key] = wv
+			continue
+		}
+		bm, bIsObj := bv.(map[string]any)
+		wm, wIsObj := wv.(map[string]any)
+		if bIsObj && wIsObj {
+			if sub := diffObjects(bm, wm); len(sub) > 0 {
+				out[key] = sub
+			}
+			continue
+		}
+		if !reflect.DeepEqual(bv, wv) {
+			out[key] = wv
+		}
+	}
+	// A key the base carries but working dropped means working holds the
+	// zero value and `omitempty` elided it. Record that zero explicitly so
+	// "turned this off" is a real override rather than silent inheritance.
+	for key, bv := range base {
+		if _, present := working[key]; present {
+			continue
+		}
+		if zero, ok := jsonZero(bv); ok {
+			out[key] = zero
+		}
+	}
+	return out
+}
+
+// jsonZero is the elided-by-omitempty counterpart of a JSON value. Objects
+// have no sparse representation for "cleared", so they report false.
+func jsonZero(v any) (any, bool) {
+	switch v.(type) {
+	case bool:
+		return false, true
+	case float64:
+		return float64(0), true
+	case string:
+		return "", true
+	case []any:
+		return []any{}, true
+	}
+	return nil, false
+}
+
+// WorkspaceOverridesFromDiff is OverridesFromDiff for the workspace layer:
+// API keys never leave the application config, so credential-only edits do
+// not create a workspace provider overlay.
+func WorkspaceOverridesFromDiff(app, working App) WorkspaceOverrides {
+	appSans := cloneAppSettings(app)
+	workingSans := cloneAppSettings(working)
+	// Accounts are app-global: never compare or persist their credentials in workspace overlays.
+	appSans.Accounts = nil
+	workingSans.Accounts = nil
+	stripAgentAPIKeys(&appSans.Agents)
+	stripAgentAPIKeys(&workingSans.Agents)
+	return OverridesFromDiff(appSans, workingSans)
+}
+
+func stripAgentAPIKeys(agents *Agents) {
+	if agents == nil {
+		return
+	}
+	for id, cat := range agents.Categories {
+		cat.APIKey = ""
+		agents.Categories[id] = cat
+	}
+}
+
+// CategoryOverridden reports whether a settings page is stored as a workspace
+// override rather than inherited from the application layer.
+func (o WorkspaceOverrides) CategoryOverridden(name string) bool {
+	switch name {
+	case "theme", "appearance":
+		return len(o.Theme) > 0
+	case "editor":
+		return len(o.Editor) > 0
+	case "lsp", "language servers":
+		return len(o.LSP) > 0
+	case "analysis":
+		return len(o.Analysis) > 0
+	case "prediction":
+		return len(o.Prediction) > 0
+	case "ui", "interface":
+		return len(o.UI) > 0
+	case "agents":
+		return len(o.Agents) > 0
+	case "memory":
+		return len(o.Memory) > 0
+	case "capabilities", "skills", "mcp", "sources", "acquisition":
+		return len(o.Capabilities) > 0
+	case "safety":
+		return len(o.Safety) > 0
+	case "local_history", "local history", "history":
+		return len(o.LocalHistory) > 0
+	case "terminal":
+		return len(o.Terminal) > 0
+	}
+	return false
+}
+
+// ClearCategory drops one page of workspace overrides so it inherits again.
+func (o *WorkspaceOverrides) ClearCategory(name string) {
+	if o == nil {
+		return
+	}
+	switch name {
+	case "theme", "appearance":
+		o.Theme = nil
+	case "editor":
+		o.Editor = nil
+	case "lsp", "language servers":
+		o.LSP = nil
+	case "analysis":
+		o.Analysis = nil
+		o.AnalysisRootIdentity = ""
+	case "prediction":
+		o.Prediction = nil
+		o.PredictionRootIdentity, o.PredictionConnectionIdentity, o.PredictionGrantID = "", "", ""
+	case "ui", "interface":
+		o.UI = nil
+	case "agents":
+		o.Agents = nil
+	case "memory":
+		o.Memory = nil
+	case "capabilities", "skills", "mcp", "sources", "acquisition":
+		o.Capabilities = nil
+	case "safety":
+		o.Safety = nil
+	case "local_history", "local history", "history":
+		o.LocalHistory = nil
+	case "terminal":
+		o.Terminal = nil
+	}
+}
+
+func cloneAppSettings(s App) App {
+	out := s
+	if s.UI.ShowHiddenFiles != nil {
+		value := *s.UI.ShowHiddenFiles
+		out.UI.ShowHiddenFiles = &value
+	}
+	out.Capabilities = captypes.Clone(s.Capabilities)
+	out.Accounts = provider.CloneAccounts(s.Accounts)
+	out.Agents = cloneAgents(s.Agents)
+	out.Memory.MemoryCategory = CloneCategory(s.Memory.MemoryCategory)
+	out.Theme.PadTop = cloneIntSetting(s.Theme.PadTop)
+	out.Theme.PadBottom = cloneIntSetting(s.Theme.PadBottom)
+	out.Theme.PadLeft = cloneIntSetting(s.Theme.PadLeft)
+	out.Theme.PadRight = cloneIntSetting(s.Theme.PadRight)
+	out.Safety.CommandRules = append([]CommandSeverityRule(nil), s.Safety.CommandRules...)
+	out.LocalHistory.ExtraIgnorePatterns = append([]string(nil), s.LocalHistory.ExtraIgnorePatterns...)
+	out.LSP = CloneLSP(s.LSP)
+	out.Terminal = CloneTerminal(s.Terminal)
+	out.TerminalShells = CloneTerminalShells(s.TerminalShells)
+	out.AgentShells = CloneTerminalShells(s.AgentShells)
+	return out
+}
+
+// CloneAppSettings detaches a read projection; no mutable child can modify its parent.
+func CloneApp(s App) App { return cloneAppSettings(s) }
+
+func cloneAgents(src Agents) Agents {
+	out := src
+	out.AgentProfiles = CloneAgentProfiles(src.AgentProfiles)
+	if src.Categories != nil {
+		out.Categories = make(map[string]Category, len(src.Categories))
+		for k, v := range src.Categories {
+			out.Categories[k] = CloneCategory(v)
+		}
+	}
+	return out
+}
+
+// CloneCategory returns a deep copy of one category.
+func CloneCategory(v Category) Category {
+	v.ContextCompactionPercent = cloneIntSetting(v.ContextCompactionPercent)
+	v.ContextRetentionTokens = cloneIntSetting(v.ContextRetentionTokens)
+	v.AllowedTools = slices.Clone(v.AllowedTools)
+	v.DeniedTools = slices.Clone(v.DeniedTools)
+	v.SkillModes = maps.Clone(v.SkillModes)
+	v.ModelModalities = slices.Clone(v.ModelModalities)
+	if v.Enabled != nil {
+		value := *v.Enabled
+		v.Enabled = &value
+	}
+	if v.ModelTemperature != nil {
+		value := *v.ModelTemperature
+		v.ModelTemperature = &value
+	}
+	if v.ModelTopP != nil {
+		value := *v.ModelTopP
+		v.ModelTopP = &value
+	}
+	return v
+}
+
+func cloneIntSetting(src *int) *int {
+	if src == nil {
+		return nil
+	}
+	value := *src
+	return &value
+}
+
+func cloneLanguages(src map[string]LSPLanguage) map[string]LSPLanguage {
+	if src == nil {
+		return nil
+	}
+	out := make(map[string]LSPLanguage, len(src))
+	for k, v := range src {
+		v.Args = append([]string(nil), v.Args...)
+		v.Extensions = append([]string(nil), v.Extensions...)
+		v.RootMarkers = append([]string(nil), v.RootMarkers...)
+		v.Environment = cloneStringMap(v.Environment)
+		v.Settings = cloneJSONObject(v.Settings)
+		v.InitializationOptions = cloneJSONObject(v.InitializationOptions)
+		out[k] = v
+	}
+	return out
+}
+
+func cloneStringMap(src map[string]string) map[string]string {
+	if src == nil {
+		return nil
+	}
+	out := make(map[string]string, len(src))
+	for k, v := range src {
+		out[k] = v
+	}
+	return out
+}
+
+// LanguageEnabled reports whether the language server for ext should start.
+func (s LSP) LanguageEnabled(ext string) bool {
+	_, ok := s.ResolveServer("document" + ext)
+	return ok
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// SeverityAtLeast reports whether severity (1=error … 4=hint) should be shown
+// given the configured minimum.
+func (s LSP) SeverityAtLeast(severity int) bool {
+	min := 4
+	switch s.MinSeverity {
+	case "error":
+		min = 1
+	case "warning":
+		min = 2
+	case "info":
+		min = 3
+	case "hint", "":
+		min = 4
+	}
+	if severity < 1 {
+		severity = 1
+	}
+	return severity <= min
+}

@@ -38,7 +38,7 @@ func TestLauncherAsyncLoad_AppliesLatestGen(t *testing.T) {
 	app.openLauncher()
 	gen := app.launcherLoadGen.Load()
 
-	infos := []workspace.WorkspaceInfo{
+	infos := []workspace.Info{
 		{ID: "w1", ProjectDir: "C:\\one", SessionCount: 2},
 		{ID: "w2", ProjectDir: "C:\\two", SessionCount: 0},
 	}
@@ -86,7 +86,7 @@ func TestLauncherAsyncLoad_DroppedWhenLauncherClosed(t *testing.T) {
 
 	_, _ = app.Update(launcherWorkspacesMsg{
 		Cwd:   ".",
-		Infos: []workspace.WorkspaceInfo{{ID: "w1", ProjectDir: "C:\\one"}},
+		Infos: []workspace.Info{{ID: "w1", ProjectDir: "C:\\one"}},
 		Gen:   gen,
 	})
 	if app.launcherScreen != nil {

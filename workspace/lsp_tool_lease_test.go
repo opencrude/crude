@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"crude/agent/toolstore"
-	"crude/types"
+	"crude/types/setting"
 )
 
 func managedLSPFixture(t *testing.T) (*toolstore.Store, toolstore.Tool) {
@@ -83,7 +83,7 @@ func managedLifecycleManager(t *testing.T, store *toolstore.Store, executable st
 	m, r, root := lifecycleManager(t)
 	m.SetToolStore(store)
 	settings := m.Settings()
-	settings.Languages["lease-fixture"] = types.LSPLanguageSettings{
+	settings.Languages["lease-fixture"] = setting.LSPLanguage{
 		Enabled: true, Command: executable, Extensions: []string{".leasefixture"}, LanguageID: "lease-fixture",
 	}
 	m.SetSettings(settings)

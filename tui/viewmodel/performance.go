@@ -6,8 +6,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/port"
-	"crude/metrics"
+	"crude/core/shellport"
+	"crude/internal/metrics"
+	"crude/internal/perfdata"
 	"crude/tui/screens/perfdash"
 	"crude/tui/screens/shellfooter"
 	"crude/tui/screens/termdock"
@@ -24,7 +25,7 @@ type perfState struct {
 	requestedAt time.Time
 	// attention is the footer's recent-stall summary, refreshed once a
 	// second from the shell's own event ring.
-	attention       perfdash.Severity
+	attention       perfdata.Severity
 	attentionSecond int64
 	attentionSeq    uint64
 }
@@ -147,7 +148,7 @@ func (m *App) syncPerfAttention(now time.Time) {
 	}
 }
 
-func (m *App) syncPerfAttentionFrom(findings []perfdash.Finding) {
+func (m *App) syncPerfAttentionFrom(findings []perfdata.Finding) {
 	m.perf.attention = perfdash.SeverityOK
 	if len(findings) > 0 {
 		m.perf.attention = findings[0].Severity

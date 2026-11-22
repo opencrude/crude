@@ -2,8 +2,8 @@ package workspace
 
 import (
 	"crude/insight/catalog"
-	"crude/lsp/client"
-	model "crude/types"
+	"crude/lsp/lspclient"
+	"crude/types/setting"
 )
 
 // defaultLSPRuntime supplies the real subprocess transport without a shell.
@@ -21,7 +21,7 @@ type runtimeLSPClient struct {
 var _ LSPRuntime = defaultLSPRuntime{}
 var _ LSPClient = (*runtimeLSPClient)(nil)
 
-func (defaultLSPRuntime) NewClient(spec model.LSPServerSpec, rootURI string, startAdmission func() error) LSPClient {
+func (defaultLSPRuntime) NewClient(spec setting.LSPServerSpec, rootURI string, startAdmission func() error) LSPClient {
 	return &runtimeLSPClient{LSPIntegration: lspclient.NewLSPIntegration(
 		spec.Command, spec.Args, rootURI,
 		lspclient.WithPackageProgram(serverPackageProgram(spec)),
@@ -31,7 +31,7 @@ func (defaultLSPRuntime) NewClient(spec model.LSPServerSpec, rootURI string, sta
 	)}
 }
 
-func serverPackageProgram(spec model.LSPServerSpec) catalog.PackageManagerRecipe {
+func serverPackageProgram(spec setting.LSPServerSpec) catalog.PackageManagerRecipe {
 	c := catalog.Current()
 	server, ok := c.Server(spec.ServerID)
 	if !ok {

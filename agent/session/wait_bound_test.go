@@ -7,13 +7,13 @@ import (
 	"time"
 
 	"crude/agent/collaboration"
-	ttypes "crude/types"
+	"crude/types/setting"
 	"crude/workspace/fileio"
 )
 
 func TestWaitBoundFollowsSettingsAndAuto(t *testing.T) {
 	s := &Session{cfg: &Config{}}
-	if got, bounded := s.boundWait(time.Hour); !bounded || got != ttypes.DefaultMaxWaitMinutes*time.Minute {
+	if got, bounded := s.boundWait(time.Hour); !bounded || got != setting.DefaultMaxWaitMinutes*time.Minute {
 		t.Fatalf("Auto bound = %v bounded=%v", got, bounded)
 	}
 	s.cfg.Agents.MaxWaitMinutes = 3

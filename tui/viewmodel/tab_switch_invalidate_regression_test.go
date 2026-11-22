@@ -7,14 +7,14 @@ import (
 	"time"
 
 	"crude/tui/editor"
-	ttypes "crude/types"
+	"crude/types/conversation"
 	"crude/workspace"
 )
 
 // tabSwitchCacheProbe returns the cached-render state of the given content in
 // the projection's retained messages. ok=false when the message is absent.
 func tabSwitchCacheProbe(app *App, paneID, content string) (cached bool, ok bool) {
-	proj := app.subPaneProjections.GetExisting(paneID)
+	proj := app.subPaneProjections.Existing(paneID)
 	if proj == nil {
 		return false, false
 	}
@@ -38,8 +38,8 @@ func TestTabSwitchSteadyStateKeepsRenderCache(t *testing.T) {
 		t.Fatal("root projection missing")
 	}
 	const body = "steady state cached body"
-	app.appendActiveMessage(ttypes.ChatMessage{
-		Role:    ttypes.RoleAssistant,
+	app.appendActiveMessage(conversation.ChatMessage{
+		Role:    conversation.RoleAssistant,
 		Content: body,
 		Time:    time.Now(),
 	})
@@ -75,8 +75,8 @@ func TestTabSwitchAwayAndBackKeepsRenderCache(t *testing.T) {
 	app.BufferMgr = editor.NewBufferManager()
 	app.AddOrchestrator("root")
 	const body = "transition cached body"
-	app.appendActiveMessage(ttypes.ChatMessage{
-		Role:    ttypes.RoleAssistant,
+	app.appendActiveMessage(conversation.ChatMessage{
+		Role:    conversation.RoleAssistant,
 		Content: body,
 		Time:    time.Now(),
 	})

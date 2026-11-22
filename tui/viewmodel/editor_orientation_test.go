@@ -3,10 +3,10 @@ package viewmodel
 import (
 	tea "charm.land/bubbletea/v2"
 	"crude/tui/editor"
-	settingsui "crude/tui/settings"
+	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/types/control"
+	"crude/types/setting"
 	"crude/workspace"
 	"fmt"
 	"os"
@@ -122,7 +122,7 @@ func TestEditorOrientationPreferencesSavePeerResetAndPointer(t *testing.T) {
 			})
 			renameConnectedKey(t, shells[0], tea.KeyPressMsg{Code: 'z', Mod: tea.ModCtrl})
 			remoteJourneyUntil(t, shells, func() bool { return ed.Value() == source })
-			runAppCommand(t, app, app.saveSettingsShortcut(types.SettingsScopeWorkspace, []types.SettingEdit{{Path: []string{"editor", "indent_guides"}}, {Path: []string{"editor", "minimap"}}}, "Editor settings reset.", nil, 0))
+			runAppCommand(t, app, app.saveSettingsShortcut(setting.ScopeWorkspace, []setting.Edit{{Path: []string{"editor", "indent_guides"}}, {Path: []string{"editor", "minimap"}}}, "Editor settings reset.", nil, 0))
 			remoteJourneyUntil(t, shells, func() bool {
 				return !shells[1].app.editorSettings.IndentGuides && !shells[1].app.editorSettings.Minimap
 			})

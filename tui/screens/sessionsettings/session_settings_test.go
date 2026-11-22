@@ -11,16 +11,16 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/setting"
 )
 
 func TestScreenUsesNativeNestedRoleForm(t *testing.T) {
-	base := types.Settings{ProviderID: "openrouter", Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+	base := setting.Settings{ProviderID: "openrouter", Agents: setting.Agents{Categories: map[string]setting.Category{
 		"default": {Provider: "openrouter", AccountID: "router", Model: "workspace-main", ThinkingEffort: "low"},
 	}}}
 	effective := cloneSettings(base)
-	setCategory(&effective, "default", types.CategorySettings{Provider: "openai", Model: "session-main", ThinkingEffort: "high"})
-	screen := New(theme.DefaultDark(), effective, base, map[string]types.CategorySettings{
+	setCategory(&effective, "default", setting.Category{Provider: "openai", Model: "session-main", ThinkingEffort: "high"})
+	screen := New(theme.DefaultDark(), effective, base, map[string]setting.Category{
 		"default": {Provider: "openai", Model: "session-main", ThinkingEffort: "high"},
 	})
 	screen.ConfigureAccounts(map[string]provider.Account{"router": {ID: "router", ProviderID: "openrouter", Label: "Personal", APIKey: "secret", Connection: provider.DefaultTemplates()["openrouter"]}})
@@ -51,10 +51,10 @@ func TestScreenUsesNativeNestedRoleForm(t *testing.T) {
 }
 
 func TestRoleFormPersistsExplicitCompactionDisable(t *testing.T) {
-	base := types.Settings{ProviderID: "openrouter", Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+	base := setting.Settings{ProviderID: "openrouter", Agents: setting.Agents{Categories: map[string]setting.Category{
 		"default": {Provider: "openrouter", Model: "model"},
 	}}}
-	screen := New(theme.DefaultDark(), cloneSettings(base), base, map[string]types.CategorySettings{})
+	screen := New(theme.DefaultDark(), cloneSettings(base), base, map[string]setting.Category{})
 	screen.openRole("default")
 	screen.formModel.SetValue(fieldContextCompaction, ui.StringValue("0"))
 	screen.applyRoleForm()
@@ -68,7 +68,7 @@ func TestRoleFormPersistsExplicitCompactionDisable(t *testing.T) {
 // The Skills and MCP views own per-session capability control, so Session
 // Settings must expose no Capabilities row or page of its own.
 func TestSessionSettingsHasNoCapabilitiesRow(t *testing.T) {
-	base := types.Settings{ProviderID: "openrouter", Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+	base := setting.Settings{ProviderID: "openrouter", Agents: setting.Agents{Categories: map[string]setting.Category{
 		"default": {Provider: "openrouter", AccountID: "router", Model: "workspace-main"},
 	}}}
 	screen := New(theme.DefaultDark(), cloneSettings(base), base, nil)
@@ -106,7 +106,7 @@ func TestSessionSettingsHasNoCapabilitiesRow(t *testing.T) {
 }
 
 func TestRootActionOrderPutsSaveAsWorkspaceLast(t *testing.T) {
-	base := types.Settings{Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{}}}
+	base := setting.Settings{Agents: setting.Agents{Categories: map[string]setting.Category{}}}
 	screen := New(theme.DefaultDark(), cloneSettings(base), base, nil)
 	labels := screen.actions.ButtonLabelsForTest()
 	want := []string{"Save", "Cancel", "Reset", "Save as workspace"}
@@ -121,9 +121,9 @@ func TestRootActionOrderPutsSaveAsWorkspaceLast(t *testing.T) {
 }
 
 func TestRootIncludesMultiAgentToggle(t *testing.T) {
-	settings := types.Settings{ProviderID: "openrouter", Agents: types.AgentsSettings{
+	settings := setting.Settings{ProviderID: "openrouter", Agents: setting.Agents{
 		Enabled: false,
-		Categories: map[string]types.CategorySettings{
+		Categories: map[string]setting.Category{
 			"default": {Provider: "openrouter", AccountID: "router", Model: "workspace-main"},
 		},
 	}}
@@ -142,13 +142,13 @@ func TestRootIncludesMultiAgentToggle(t *testing.T) {
 }
 
 func TestSessionDefaultAgentSwitchKeepsOtherRolesAndAccountPin(t *testing.T) {
-	base := types.Settings{Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+	base := setting.Settings{Agents: setting.Agents{Categories: map[string]setting.Category{
 		"default":    {AccountID: "home", Model: "main-model"},
 		"researcher": {AccountID: "work", Model: "research-model"},
-	}, AgentProfiles: map[string]types.AgentProfileSettings{
+	}, AgentProfiles: map[string]setting.AgentProfile{
 		"reviewer": {Category: "researcher", Model: "review-model", AccountID: "work"},
 	}}}
-	s := New(theme.DefaultDark(), base, base, map[string]types.CategorySettings{"default": {AccountID: "home"}})
+	s := New(theme.DefaultDark(), base, base, map[string]setting.Category{"default": {AccountID: "home"}})
 	s.ConfigureAccounts(map[string]provider.Account{"home": {ID: "home", Label: "Home"}, "work": {ID: "work", Label: "Work"}})
 	s.formModel.SetValue(fieldMainAgent, ui.StringValue("profile/reviewer"))
 	s.HandleAction(ui.EventContext{}, ui.Action{ID: "form.changed"})
@@ -167,9 +167,9 @@ func TestSessionDefaultAgentSwitchKeepsOtherRolesAndAccountPin(t *testing.T) {
 }
 
 func TestDefaultAgentUsesTheExistingNavigationPicker(t *testing.T) {
-	base := types.Settings{Agents: types.AgentsSettings{
-		Categories: map[string]types.CategorySettings{"default": {Model: "main-model"}, "researcher": {AccountID: "work"}},
-		AgentProfiles: map[string]types.AgentProfileSettings{
+	base := setting.Settings{Agents: setting.Agents{
+		Categories: map[string]setting.Category{"default": {Model: "main-model"}, "researcher": {AccountID: "work"}},
+		AgentProfiles: map[string]setting.AgentProfile{
 			"reviewer":          {Category: "researcher", Model: "review-model", Description: "Review changes"},
 			"background-memory": {Category: memoryRole},
 		},
@@ -234,12 +234,12 @@ func TestDefaultAgentUsesTheExistingNavigationPicker(t *testing.T) {
 }
 
 func TestRoleResetRestoresInheritanceAndRemovesOverride(t *testing.T) {
-	base := types.Settings{Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+	base := setting.Settings{Agents: setting.Agents{Categories: map[string]setting.Category{
 		"default": {Provider: "openrouter", AccountID: "router", Model: "workspace-main"},
 	}}}
 	effective := cloneSettings(base)
-	setCategory(&effective, "crafter", types.CategorySettings{Provider: "openai", Model: "session-crafter", ThinkingEffort: "high"})
-	screen := New(theme.DefaultDark(), effective, base, map[string]types.CategorySettings{
+	setCategory(&effective, "crafter", setting.Category{Provider: "openai", Model: "session-crafter", ThinkingEffort: "high"})
+	screen := New(theme.DefaultDark(), effective, base, map[string]setting.Category{
 		"crafter": {Provider: "openai", Model: "session-crafter", ThinkingEffort: "high"},
 	})
 
@@ -257,7 +257,7 @@ func TestRoleResetRestoresInheritanceAndRemovesOverride(t *testing.T) {
 }
 
 func TestInheritMainIsLiveReference(t *testing.T) {
-	base := types.Settings{Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+	base := setting.Settings{Agents: setting.Agents{Categories: map[string]setting.Category{
 		"default": {Provider: "openai", Model: "gpt-5.6", ThinkingEffort: "high"},
 		"crafter": {Provider: "openrouter", Model: "workspace-crafter"},
 	}}}
@@ -280,7 +280,7 @@ func TestInheritMainIsLiveReference(t *testing.T) {
 }
 
 func TestInheritWorkspaceIsLiveReference(t *testing.T) {
-	base := types.Settings{Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+	base := setting.Settings{Agents: setting.Agents{Categories: map[string]setting.Category{
 		"default": {Provider: "openai", Model: "gpt-5.6"},
 	}}}
 	screen := New(theme.DefaultDark(), cloneSettings(base), base, nil)
@@ -292,7 +292,7 @@ func TestInheritWorkspaceIsLiveReference(t *testing.T) {
 }
 
 func TestInheritMainNoopForDefaultRole(t *testing.T) {
-	base := types.Settings{Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+	base := setting.Settings{Agents: setting.Agents{Categories: map[string]setting.Category{
 		"default": {Provider: "openai", Model: "gpt-5.6"},
 	}}}
 	screen := New(theme.DefaultDark(), cloneSettings(base), base, nil)
@@ -303,12 +303,12 @@ func TestInheritMainNoopForDefaultRole(t *testing.T) {
 }
 
 func TestRoleResetPointsAtWorkspace(t *testing.T) {
-	base := types.Settings{Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+	base := setting.Settings{Agents: setting.Agents{Categories: map[string]setting.Category{
 		"default": {Provider: "openrouter", AccountID: "router", Model: "workspace-main"},
 	}}}
 	effective := cloneSettings(base)
-	setCategory(&effective, "default", types.CategorySettings{Provider: "openai", Model: "session-main"})
-	screen := New(theme.DefaultDark(), effective, base, map[string]types.CategorySettings{
+	setCategory(&effective, "default", setting.Category{Provider: "openai", Model: "session-main"})
+	screen := New(theme.DefaultDark(), effective, base, map[string]setting.Category{
 		"default": {Provider: "openai", Model: "session-main"},
 	})
 
@@ -324,7 +324,7 @@ func TestRoleResetPointsAtWorkspace(t *testing.T) {
 }
 
 func TestModelSelectEmitsFetchAndAppliesAsyncResult(t *testing.T) {
-	settings := types.Settings{ProviderID: "openrouter", Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+	settings := setting.Settings{ProviderID: "openrouter", Agents: setting.Agents{Categories: map[string]setting.Category{
 		"default": {Provider: "openrouter", AccountID: "router"},
 	}}}
 	screen := New(theme.DefaultDark(), settings, settings, nil)
@@ -341,14 +341,14 @@ func TestModelSelectEmitsFetchAndAppliesAsyncResult(t *testing.T) {
 	if screen.page != modelPage {
 		t.Fatalf("page=%d, want model picker", screen.page)
 	}
-	screen.ApplyModelsForAccount("openrouter", "router", screen.fetchGeneration[sessionModelKey("openrouter", "router")], []types.ModelEntry{{ID: "model-a", Name: "Model A"}})
+	screen.ApplyModelsForAccount("openrouter", "router", screen.fetchGeneration[sessionModelKey("openrouter", "router")], []setting.ModelEntry{{ID: "model-a", Name: "Model A"}})
 	if item, ok := screen.modelList.Selected(); !ok || item.ID != "model-a" {
 		t.Fatalf("picker after result=%#v ok=%v", item, ok)
 	}
 }
 
 func TestModelPickerEnterCommitsToRolePage(t *testing.T) {
-	settings := types.Settings{ProviderID: "openrouter", Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+	settings := setting.Settings{ProviderID: "openrouter", Agents: setting.Agents{Categories: map[string]setting.Category{
 		"default": {Provider: "openrouter", AccountID: "router", Model: "workspace-main"},
 	}}}
 	screen := New(theme.DefaultDark(), settings, settings, nil)
@@ -356,7 +356,7 @@ func TestModelPickerEnterCommitsToRolePage(t *testing.T) {
 
 	screen.openRole("default")
 	screen.OpenModelPicker("default")
-	screen.ApplyModelsForAccount("openrouter", "router", screen.fetchGeneration[sessionModelKey("openrouter", "router")], []types.ModelEntry{{ID: "model-b", Name: "Model B"}})
+	screen.ApplyModelsForAccount("openrouter", "router", screen.fetchGeneration[sessionModelKey("openrouter", "router")], []setting.ModelEntry{{ID: "model-b", Name: "Model B"}})
 
 	// Enter on the selected model row commits the pick.
 	res := screen.Handle(ui.EventContext{}, ui.NormalizeEvent(tea.KeyPressMsg{Code: tea.KeyEnter}))
@@ -376,7 +376,7 @@ func TestModelPickerEnterCommitsToRolePage(t *testing.T) {
 }
 
 func TestModelPickerClickCommitsToRolePage(t *testing.T) {
-	settings := types.Settings{ProviderID: "openrouter", Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+	settings := setting.Settings{ProviderID: "openrouter", Agents: setting.Agents{Categories: map[string]setting.Category{
 		"default": {Provider: "openrouter", AccountID: "router", Model: "workspace-main"},
 	}}}
 	screen := New(theme.DefaultDark(), settings, settings, nil)
@@ -384,7 +384,7 @@ func TestModelPickerClickCommitsToRolePage(t *testing.T) {
 
 	screen.openRole("default")
 	screen.OpenModelPicker("default")
-	screen.ApplyModelsForAccount("openrouter", "router", screen.fetchGeneration[sessionModelKey("openrouter", "router")], []types.ModelEntry{{ID: "model-c", Name: "Model C"}})
+	screen.ApplyModelsForAccount("openrouter", "router", screen.fetchGeneration[sessionModelKey("openrouter", "router")], []setting.ModelEntry{{ID: "model-c", Name: "Model C"}})
 	screen.Layout(ui.LayoutContext{}, ui.Rect{W: 72, H: 16})
 	screen.modelList.SelectIndex(0)
 
@@ -403,7 +403,7 @@ func TestModelPickerClickCommitsToRolePage(t *testing.T) {
 }
 
 func TestRootArrowsDoNotCloseOrTrap(t *testing.T) {
-	settings := types.Settings{ProviderID: "openrouter", Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+	settings := setting.Settings{ProviderID: "openrouter", Agents: setting.Agents{Categories: map[string]setting.Category{
 		"default": {Provider: "openrouter", AccountID: "router", Model: "workspace-main"},
 	}}}
 	screen := New(theme.DefaultDark(), settings, settings, nil)
@@ -446,7 +446,7 @@ func TestRootArrowsDoNotCloseOrTrap(t *testing.T) {
 }
 
 func TestNavRowsPaintChevronNotPrompt(t *testing.T) {
-	settings := types.Settings{ProviderID: "openrouter", Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+	settings := setting.Settings{ProviderID: "openrouter", Agents: setting.Agents{Categories: map[string]setting.Category{
 		"default": {Provider: "openrouter", AccountID: "router", Model: "workspace-main"},
 	}}}
 	screen := New(theme.DefaultDark(), settings, settings, nil)
@@ -470,7 +470,7 @@ func TestNavRowsPaintChevronNotPrompt(t *testing.T) {
 }
 
 func TestRootPaintsAlignedModelThenProvider(t *testing.T) {
-	settings := types.Settings{Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+	settings := setting.Settings{Agents: setting.Agents{Categories: map[string]setting.Category{
 		"default":    {Provider: "opencode-go", AccountID: "work", Model: "deepseek-v4-flash"},
 		"researcher": {Provider: "opencode-go", AccountID: "work", Model: "deepseek-v4-flash"},
 		"crafter":    {Provider: "crof", AccountID: "craft", Model: "glm-5.1-precision"},
@@ -518,7 +518,7 @@ func TestRootPaintsAlignedModelThenProvider(t *testing.T) {
 }
 
 func TestRolePageUsesBreadcrumbAndAlignedValues(t *testing.T) {
-	settings := types.Settings{Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+	settings := setting.Settings{Agents: setting.Agents{Categories: map[string]setting.Category{
 		"default": {Provider: "opencode-go", AccountID: "work", Model: "deepseek-v4-flash"},
 	}}}
 	screen := New(theme.DefaultDark(), settings, settings, nil)
@@ -544,7 +544,7 @@ func TestRolePageUsesBreadcrumbAndAlignedValues(t *testing.T) {
 
 func TestSessionBreadcrumbSegmentsNavigateThroughHost(t *testing.T) {
 	for _, width := range []int{28, 90} {
-		base := types.Settings{Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{"default": {Model: "model"}}}}
+		base := setting.Settings{Agents: setting.Agents{Categories: map[string]setting.Category{"default": {Model: "model"}}}}
 		s := New(theme.DefaultDark(), base, base, nil)
 		host := ui.NewHost(theme.DefaultDark(), s)
 		host.Resize(width, 16)
@@ -579,7 +579,7 @@ func TestSessionBreadcrumbSegmentsNavigateThroughHost(t *testing.T) {
 }
 
 func TestRolePageTextEditorJoinsValueColumn(t *testing.T) {
-	settings := types.Settings{Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+	settings := setting.Settings{Agents: setting.Agents{Categories: map[string]setting.Category{
 		"default": {Provider: "opencode-go", AccountID: "work", Model: "deepseek-v4-flash"},
 	}}}
 	screen := New(theme.DefaultDark(), settings, settings, nil)
@@ -610,7 +610,7 @@ func TestRolePageTextEditorJoinsValueColumn(t *testing.T) {
 }
 
 func TestProviderPickerHasOwnPage(t *testing.T) {
-	settings := types.Settings{ProviderID: "openrouter", Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+	settings := setting.Settings{ProviderID: "openrouter", Agents: setting.Agents{Categories: map[string]setting.Category{
 		"default": {Provider: "openrouter", AccountID: "router"},
 	}}}
 	screen := New(theme.DefaultDark(), settings, settings, nil)
@@ -629,11 +629,11 @@ func TestProviderPickerHasOwnPage(t *testing.T) {
 }
 
 func TestInheritedAccountChangeRefreshesModelPicker(t *testing.T) {
-	base := types.Settings{Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+	base := setting.Settings{Agents: setting.Agents{Categories: map[string]setting.Category{
 		"default": {Provider: "custom", AccountID: "old", Model: "old-model"},
 	}}}
 	effective := cloneSettings(base)
-	setCategory(&effective, "default", types.CategorySettings{Inherit: InheritWorkspaceMarker})
+	setCategory(&effective, "default", setting.Category{Inherit: InheritWorkspaceMarker})
 	screen := New(theme.DefaultDark(), effective, base, nil)
 	screen.ConfigureAccounts(map[string]provider.Account{
 		"old": {ID: "old", ProviderID: "custom", Label: "Personal"},
@@ -654,7 +654,7 @@ func TestInheritedAccountChangeRefreshesModelPicker(t *testing.T) {
 	if request.AccountID != "new" {
 		t.Fatalf("model discovery still targets inherited account: %+v", request)
 	}
-	screen.ApplyModelsForAccount("custom", "new", request.Generation, []types.ModelEntry{{ID: "work-model"}})
+	screen.ApplyModelsForAccount("custom", "new", request.Generation, []setting.ModelEntry{{ID: "work-model"}})
 	if rows := screen.modelList.Items(); len(rows) != 1 || rows[0].ID != "work-model" {
 		t.Fatalf("new account models not displayed: %+v", rows)
 	}
@@ -667,7 +667,7 @@ func TestInheritedAccountChangeRefreshesModelPicker(t *testing.T) {
 }
 
 func TestAccountPickerHasNoTemplateRows(t *testing.T) {
-	screen := New(theme.DefaultDark(), types.Settings{}, types.Settings{}, nil)
+	screen := New(theme.DefaultDark(), setting.Settings{}, setting.Settings{}, nil)
 
 	screen.ConfigureAccounts(map[string]provider.Account{"work": {ID: "work", ProviderID: "custom", Label: "Work"}})
 	screen.OpenAccountPicker("default")
@@ -757,8 +757,8 @@ func colOfPos(buf *surface.CellBuffer, y int, needle string) int {
 }
 
 func TestMultiAgentControlAlignsUnderModelColumn(t *testing.T) {
-	settings := types.Settings{ProviderID: "openrouter", Agents: types.AgentsSettings{
-		Categories: map[string]types.CategorySettings{
+	settings := setting.Settings{ProviderID: "openrouter", Agents: setting.Agents{
+		Categories: map[string]setting.Category{
 			"default": {Provider: "openrouter", Model: "stealth/ox-alpha"},
 		},
 	}}
@@ -802,8 +802,8 @@ func TestMultiAgentControlAlignsUnderModelColumn(t *testing.T) {
 // The row shows the workspace LSP switch until the user changes it; an
 // untouched row never pins an override on save.
 func TestCodeIntelligenceRowInheritsUntilChanged(t *testing.T) {
-	settings := types.Settings{ProviderID: "openrouter", Agents: types.AgentsSettings{
-		Categories: map[string]types.CategorySettings{"default": {Provider: "openrouter", AccountID: "router", Model: "m"}},
+	settings := setting.Settings{ProviderID: "openrouter", Agents: setting.Agents{
+		Categories: map[string]setting.Category{"default": {Provider: "openrouter", AccountID: "router", Model: "m"}},
 	}}
 	screen := New(theme.DefaultDark(), settings, settings, nil)
 	screen.SetWorkspaceCodeIntelligence(true)
@@ -827,8 +827,8 @@ func TestCodeIntelligenceRowInheritsUntilChanged(t *testing.T) {
 
 // The sub-agent limit shows the workspace value until changed, then pins it.
 func TestSessionSubAgentLimitInheritsUntilChanged(t *testing.T) {
-	settings := types.Settings{ProviderID: "openrouter", Agents: types.AgentsSettings{MaxConcurrent: 6,
-		Categories: map[string]types.CategorySettings{"default": {Provider: "openrouter", AccountID: "router", Model: "m"}},
+	settings := setting.Settings{ProviderID: "openrouter", Agents: setting.Agents{MaxConcurrent: 6,
+		Categories: map[string]setting.Category{"default": {Provider: "openrouter", AccountID: "router", Model: "m"}},
 	}}
 	screen := New(theme.DefaultDark(), settings, settings, nil)
 	field := screen.formModel.Field(fieldMaxSubAgents)

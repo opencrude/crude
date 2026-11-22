@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"crude/agent"
 	"crude/agent/collaboration"
 	"crude/agent/provider"
+	"crude/agent/turnloop"
 )
 
 // TestParentControlsStoppedChildWithoutHuman: a child whose provider rejects
@@ -134,7 +134,7 @@ func checkParentControlsStoppedChild(t *testing.T, operation string) {
 		t.Helper()
 		for _, message := range request.Messages {
 			if message.Role == "tool" && message.ToolCallID == id {
-				if message.ToolError || agent.IsToolError(message.ContentString()) {
+				if message.ToolError || turnloop.IsToolError(message.ContentString()) {
 					t.Fatalf("tool %s failed: %s", id, message.ContentString())
 				}
 				return message.ContentString()
@@ -202,7 +202,7 @@ func checkParentControlsStoppedChild(t *testing.T, operation string) {
 			t.Fatalf("parent cancel did not settle the stopped child: open=%v child requests=%d", open, childRequests.Load())
 		}
 		completed := s.CompletedSubAgentSnapshots()
-		if len(completed) != 1 || completed[0].Result.Status != agent.SubAgentCancelled {
+		if len(completed) != 1 || completed[0].Result.Status != turnloop.SubAgentCancelled {
 			t.Fatalf("cancelled child result = %+v", completed)
 		}
 		return
@@ -223,7 +223,7 @@ func checkParentControlsStoppedChild(t *testing.T, operation string) {
 		t.Fatal("continued child did not settle")
 	}
 	completed := s.CompletedSubAgentSnapshots()
-	if len(completed) != 1 || completed[0].Result.Status != agent.SubAgentCompleted {
+	if len(completed) != 1 || completed[0].Result.Status != turnloop.SubAgentCompleted {
 		t.Fatalf("continued child did not complete: %+v", completed)
 	}
 	waitTurnDone(t, sender, root.ID)

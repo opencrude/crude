@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"crude/agent"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
 	"crude/agent/tools"
+	"crude/agent/turnloop"
 	recoverytypes "crude/types/recovery"
 )
 
@@ -75,7 +75,7 @@ func TestParallelCheckpointsRetainImmutableContextAcrossCompletion(t *testing.T)
 				}
 				run := newRecoveryRunState(provider.PlainInput("task"), &sessiondb.RecoveryCheckpoint{Archive: state.Messages, ActiveContext: state.Messages, ContextOwnerID: owner, ContextRevision: state.Revision, ContextGeneration: 1, ContextReason: "test"})
 				status := recoverytypes.Status{ID: "incident", AgentID: owner, Generation: 1}
-				a := agent.NewAgent(provider.FromPreset("openai-chat", "key", server.URL), "checkpoint-test", s.logger)
+				a := turnloop.NewAgent(provider.FromPreset("openai-chat", "key", server.URL), "checkpoint-test", s.logger)
 				a.FilteredTools = append(append([]tools.ToolDef(nil), tools.AgentTools...), tools.ParallelTool())
 				a.ContextArchive, a.FrozenPrefix = state.Messages, state.Messages
 				fastSaved := make(chan struct{}, 1)

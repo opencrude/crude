@@ -7,29 +7,29 @@ import (
 	"testing"
 	"time"
 
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/types/setting"
 	"crude/workspace"
 	"crude/workspace/document"
 )
 
 func TestApplicationPreferenceIngressRejectsWorkspaceAnalysisAuthority(t *testing.T) {
 	setCoreTestHome(t, t.TempDir())
-	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, coreTestLogger{})
+	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", setting.Settings{}, coreTestLogger{})
 	t.Cleanup(ws.Close)
 	calls := 0
-	ws.OnAppPreferencesCommit = func([]types.SettingEdit) (types.AppSettings, error) {
+	ws.OnAppPreferencesCommit = func([]setting.Edit) (setting.App, error) {
 		calls++
 		return ws.AppDefaults(), nil
 	}
 	a := &actor{ws: ws}
-	for _, edit := range []types.SettingEdit{
+	for _, edit := range []setting.Edit{
 		{Path: []string{"analysis", "trust"}, After: json.RawMessage(`"trusted"`)},
 		{Path: []string{"analysis"}, After: json.RawMessage(`{"trust":"trusted"}`)},
 		{Path: []string{"analysis", "trust"}},
 		{Path: []string{"analysis"}},
 	} {
-		in := coreprotocol.ApplicationPreferencesRequest{Edits: []types.SettingEdit{edit}}
+		in := coreprotocol.ApplicationPreferencesRequest{Edits: []setting.Edit{edit}}
 		payload, err := json.Marshal(in)
 		if err != nil {
 			t.Fatal(err)
@@ -55,9 +55,9 @@ func TestAnalysisCoreReplacedFolderAsksAgainWithoutNotice(t *testing.T) {
 	}
 	// Seed the old folder through the real preference transaction, then close
 	// its resources before replacing the native directory at the same path.
-	original := workspace.NewWorkspace(root, "", "tester", types.Settings{}, coreTestLogger{})
+	original := workspace.NewWorkspace(root, "", "tester", setting.Settings{}, coreTestLogger{})
 	t.Cleanup(original.Close)
-	result := original.PreparePreferencesSave(types.SettingsScopeWorkspace, []types.SettingEdit{
+	result := original.PreparePreferencesSave(setting.ScopeWorkspace, []setting.Edit{
 		{Path: []string{"analysis", "trust"}, After: json.RawMessage(`"trusted"`)},
 	})()
 	if result.Err != nil {
@@ -82,7 +82,7 @@ func TestAnalysisCoreReplacedFolderAsksAgainWithoutNotice(t *testing.T) {
 
 	engine := &countedAnalysisRuntime{engine: &semanticLSPClient{}}
 	r, err := New(func(root string) (*workspace.Workspace, error) {
-		ws := workspace.NewWorkspace(root, "", "tester", types.Settings{}, coreTestLogger{})
+		ws := workspace.NewWorkspace(root, "", "tester", setting.Settings{}, coreTestLogger{})
 		ws.LSPMgr.SetRuntime(engine)
 		return ws, nil
 	}, filepath.Join(t.TempDir(), "receipts.db"))

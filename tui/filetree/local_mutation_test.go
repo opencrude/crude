@@ -55,7 +55,7 @@ func TestApplyLocalMutationUpdatesTreeWithoutWatcherCallback(t *testing.T) {
 	}
 }
 
-func assertTreePathState(t *testing.T, model *FileTreeModel, path string, wantPresent, wantDir bool) {
+func assertTreePathState(t *testing.T, model *Model, path string, wantPresent, wantDir bool) {
 	t.Helper()
 
 	node := model.NodeByPath(path)
@@ -135,7 +135,7 @@ func TestVisibleProjectionReconcilesCollapsedAndHiddenSelections(t *testing.T) {
 	assertTreeSelectionInvariant(t, model)
 }
 
-func assertTreeSelectionInvariant(t *testing.T, model *FileTreeModel) {
+func assertTreeSelectionInvariant(t *testing.T, model *Model) {
 	t.Helper()
 	nodes := model.VisibleNodes()
 	if len(nodes) == 0 {

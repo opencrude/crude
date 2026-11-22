@@ -13,10 +13,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"crude/agent/prompthistory"
 	"crude/agent/sessiondb"
-	"crude/history"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 	"crude/types/reasoning"
 	"crude/types/recovery"
 	"crude/workspace"
@@ -39,8 +39,8 @@ func TestRunRecoveryVisualAcceptance(t *testing.T) {
 	}
 	app.AddOrchestrator("visual-recovery")
 	state := app.ws.AgentMgr().Get("visual-recovery").State
-	state.Messages.AppendMessage(workspace.Message{Role: types.RoleUser, Time: time.Now(), Content: "Complete the refactor and verify it, keeping the accepted edits."})
-	state.Messages.AppendMessage(workspace.Message{Role: types.RoleAssistant, Time: time.Now(), Content: "The refactor is saved. Verification is still pending; recovery will continue from these exact results."})
+	state.Messages.AppendMessage(conversation.Message{Role: conversation.RoleUser, Time: time.Now(), Content: "Complete the refactor and verify it, keeping the accepted edits."})
+	state.Messages.AppendMessage(conversation.Message{Role: conversation.RoleAssistant, Time: time.Now(), Content: "The refactor is saved. Verification is still pending; recovery will continue from these exact results."})
 	app.maybeHydrateComposerDraft()
 	app.Input.SetInput("My next instruction is still a draft. Recovery must not consume it.")
 	if os.Getenv("CRUDE_VISUAL_RECOVERY_MEDIA") == "1" {
@@ -53,7 +53,7 @@ func TestRunRecoveryVisualAcceptance(t *testing.T) {
 			t.Fatal(err)
 		}
 		text := "Retained draft: [image] with [notes]. Do not send during recovery."
-		entry := history.Entry{Text: text, Attachments: []history.Attachment{
+		entry := prompthistory.Entry{Text: text, Attachments: []prompthistory.Attachment{
 			{Start: 16, End: 23, Reference: sessiondb.Reference{ID: "image", Label: "[image]", Kind: sessiondb.KindPastedImage, Title: "Retained screenshot", Mime: "image/png", FilePath: path}},
 			{Start: 29, End: 36, Reference: sessiondb.Reference{ID: "notes", Label: "[notes]", Kind: sessiondb.KindPastedText, Content: "Exact recalled notes", Title: "Notes"}},
 		}}
@@ -101,9 +101,9 @@ func (model *runRecoveryVisualModel) setRecovery(state recovery.State) {
 		model.status.Detail = "The connection is healthy and the completed verification was saved."
 		model.status.Action = ""
 	}
-	_ = model.handleAgentEvent(types.AgentEventMsg{Type: "recovery", AgentID: model.status.AgentID, Data: model.status})
+	_ = model.handleAgentEvent(AgentEventMsg{Type: "recovery", AgentID: model.status.AgentID, Data: model.status})
 	if state == recovery.Recovered {
-		_ = model.handleAgentEvent(types.AgentEventMsg{Type: "done", AgentID: model.status.AgentID, Data: map[string]any{"reason": "completed", "content": "Verification passed."}})
+		_ = model.handleAgentEvent(AgentEventMsg{Type: "done", AgentID: model.status.AgentID, Data: map[string]any{"reason": "completed", "content": "Verification passed."}})
 	}
 }
 
@@ -164,16 +164,16 @@ func (model *runRecoveryVisualModel) Update(message tea.Msg) (tea.Model, tea.Cmd
 			model.status.State = recovery.Recovering
 			model.status.RetryAt = time.Time{}
 			model.status.Summary, model.status.UpdatedAt = "Retrying unfinished run", time.Now()
-			_ = model.handleAgentEvent(types.AgentEventMsg{Type: "recovery", AgentID: model.status.AgentID, Data: model.status})
-			_ = model.handleAgentEvent(types.AgentEventMsg{Type: "phase", AgentID: model.status.AgentID, Data: map[string]any{
+			_ = model.handleAgentEvent(AgentEventMsg{Type: "recovery", AgentID: model.status.AgentID, Data: model.status})
+			_ = model.handleAgentEvent(AgentEventMsg{Type: "phase", AgentID: model.status.AgentID, Data: map[string]any{
 				"name": "waiting_provider", "provider": "Test Provider", "request_id": "resumed-request",
 			}})
 			return model, nil
 		case tea.KeyF11:
-			_ = model.handleAgentEvent(types.AgentEventMsg{Type: "thinking", AgentID: model.status.AgentID, Data: reasoning.Delta{
+			_ = model.handleAgentEvent(AgentEventMsg{Type: "thinking", AgentID: model.status.AgentID, Data: reasoning.Delta{
 				Text: "Checking the resumed work without replaying accepted changes", Kind: reasoning.Summary, BlockID: "resumed-thought",
 			}})
-			_ = model.handleAgentEvent(types.AgentEventMsg{Type: "tool_call", AgentID: model.status.AgentID, Data: map[string]any{
+			_ = model.handleAgentEvent(AgentEventMsg{Type: "tool_call", AgentID: model.status.AgentID, Data: map[string]any{
 				"name": "read_async_output", "tool_id": "resumed-read", "args": `{"handle":"recovery_repo_tests"}`,
 			}})
 			return model, nil

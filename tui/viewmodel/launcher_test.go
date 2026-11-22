@@ -11,7 +11,6 @@ import (
 	"crude/tui/screens/launcher"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/workspace"
 )
 
@@ -27,9 +26,9 @@ func newTestAppWithLauncher(t *testing.T) *App {
 	app := newTestApp(t)
 	wsOf(app).Logger = &testLogger{}
 	// Seed enough list rows for pointer-capture geometry tests that click mid-list.
-	workspaces := make([]workspace.WorkspaceInfo, 12)
+	workspaces := make([]workspace.Info, 12)
 	for i := range workspaces {
-		workspaces[i] = workspace.WorkspaceInfo{
+		workspaces[i] = workspace.Info{
 			ID:           fmt.Sprintf("ws%d", i),
 			ProjectName:  fmt.Sprintf("proj-%02d", i),
 			ProjectDir:   fmt.Sprintf("/tmp/proj-%02d", i),
@@ -149,7 +148,7 @@ func TestSubAgentStarted_SubAgentWithParent(t *testing.T) {
 	parent.State.Messages.UpdateToolCall("tool-1", "internal-1", "agent_start", "category: researcher description: inspect lifecycle")
 
 	// Create a sub-agent with parent_id
-	subEvt := types.AgentEventMsg{
+	subEvt := AgentEventMsg{
 		Type:    "sub_agent_started",
 		AgentID: "ses_1_orch_1_sub_abc",
 		Data: map[string]string{
@@ -239,7 +238,7 @@ func TestLauncher_NoSessions_StartActionsOnly(t *testing.T) {
 // affects workspace results; the fixed action cards remain.
 func TestLauncherWorkspaceSearchKeepsActionsFixed(t *testing.T) {
 	screen := launcher.New(theme.DefaultDark())
-	screen.SetData("/projects/current", []workspace.WorkspaceInfo{
+	screen.SetData("/projects/current", []workspace.Info{
 		{ProjectName: "alpha", ProjectDir: "/projects/alpha"},
 		{ProjectName: "beta", ProjectDir: "/projects/beta"},
 	})
@@ -278,9 +277,9 @@ func TestLauncherWheelOnlyScrollsWorkspacePane(t *testing.T) {
 	app.Tree = &TreeState{}
 	app.paintShellFrame()
 
-	workspaces := make([]workspace.WorkspaceInfo, 30)
+	workspaces := make([]workspace.Info, 30)
 	for i := range workspaces {
-		workspaces[i] = workspace.WorkspaceInfo{
+		workspaces[i] = workspace.Info{
 			ProjectName: fmt.Sprintf("workspace-%02d", i),
 			ProjectDir:  fmt.Sprintf("/projects/workspace-%02d", i),
 		}
@@ -326,7 +325,7 @@ func TestLauncherUsesMainPaneWithoutHelpStrip(t *testing.T) {
 func TestLauncher_GlobalEvent_HandledWithoutMode(t *testing.T) {
 	app := newTestAppWithLauncher(t)
 
-	evt := types.AgentEventMsg{
+	evt := AgentEventMsg{
 		Type:    "async_command_status",
 		AgentID: "",
 		Data:    []struct{}{},

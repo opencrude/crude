@@ -2,7 +2,7 @@ package session
 
 import (
 	"crude/agent/sessiondb"
-	"crude/types"
+	"crude/types/setting"
 	"testing"
 )
 
@@ -11,14 +11,14 @@ func TestSessionFieldEditsSurviveParentAndUnrelatedLocalChanges(t *testing.T) {
 	snap := s.SettingsSnapshots()
 	draft := snap.Effective
 	draft.SessionOverrides = snap.Overrides
-	base := types.SessionPreferencesOf(draft)
+	base := setting.SessionPreferencesOf(draft)
 	code := false
 	draft.SessionCodeIntelligence = &code
-	draft.SessionEdits = types.SettingsEdits(base, types.SessionPreferencesOf(draft))
+	draft.SessionEdits = setting.Edits(base, setting.SessionPreferencesOf(draft))
 	if _, err := s.ToggleMultiAgent(); err != nil {
 		t.Fatal(err)
 	}
-	s.UpdateWorkspaceDefaults(types.AppSettings{Accounts: s.cfg.Accounts, Agents: snap.Base.Agents})
+	s.UpdateWorkspaceDefaults(setting.App{Accounts: s.cfg.Accounts, Agents: snap.Base.Agents})
 	got, err := s.SaveSettingsSnapshot(draft)
 	if err != nil {
 		t.Fatal(err)
@@ -45,12 +45,12 @@ func TestSessionStaleSelectionLeafKeepsValidNeighbors(t *testing.T) {
 func TestSessionRemovingLastExplicitRoleDoesNotRepinEffectiveValues(t *testing.T) {
 	s := newSettingsOperationSession(t, true)
 	settings := s.SettingsSnapshot()
-	settings.SessionOverrides = map[string]types.CategorySettings{"default": {Model: "local-model"}}
+	settings.SessionOverrides = map[string]setting.Category{"default": {Model: "local-model"}}
 	if _, err := s.SaveSettingsSnapshot(settings); err != nil {
 		t.Fatal(err)
 	}
 	settings = s.SettingsSnapshot()
-	settings.SessionEdits = []types.SettingEdit{{Path: []string{"overrides", "default"}}}
+	settings.SessionEdits = []setting.Edit{{Path: []string{"overrides", "default"}}}
 	got, err := s.SaveSettingsSnapshot(settings)
 	if err != nil {
 		t.Fatal(err)

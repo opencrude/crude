@@ -2,12 +2,13 @@ package workspace
 
 import (
 	"crude/agent/provider"
+	"crude/agent/session"
 	"errors"
 )
 
 // PrepareControlInputAdmission shares normal immutable admission, but does not
 // use the human-only queue projection. Busy/compacting owners keep the draft.
-func (w *Workspace) PrepareControlInputAdmission(sessionID, agentID string, input provider.UserInput, revision uint64) (*InputAdmissionIntent, error) {
+func (w *Workspace) PrepareControlInputAdmission(sessionID, agentID string, input provider.UserInput, revision uint64) (*session.InputAdmissionIntent, error) {
 	if w == nil || w.AgentMgr == nil {
 		return nil, errors.New("control input workspace unavailable")
 	}

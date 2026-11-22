@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"crude/core/client"
-	"crude/core/protocol"
-	"crude/text/encoding"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
+	"crude/text/textencoding"
 	"crude/types/control"
 	"crude/workspace/document"
 )

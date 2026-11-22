@@ -17,7 +17,7 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
-	ttypes "crude/types"
+	"crude/types/setting"
 )
 
 func TestResponsesDeltaSessionToolsTurnsAndPassiveResume(t *testing.T) {
@@ -207,7 +207,7 @@ func TestResponsesDeltaSessionToolsTurnsAndPassiveResume(t *testing.T) {
 	settings := resumed.SettingsSnapshot()
 	settings.Model = otherModel
 	settings.ProviderID = "openrouter"
-	settings.SessionOverrides = map[string]ttypes.CategorySettings{CategoryDefault: {Provider: "openrouter", Model: otherModel, APIStandard: "openai-responses"}}
+	settings.SessionOverrides = map[string]setting.Category{CategoryDefault: {Provider: "openrouter", Model: otherModel, APIStandard: "openai-responses"}}
 	if err := resumed.HandleSettingsSave(settings); err != nil {
 		t.Fatal(err)
 	}

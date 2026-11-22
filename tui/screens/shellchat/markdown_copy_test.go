@@ -13,7 +13,7 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 func TestMarkdownDragCopiesSourceWithoutLayoutSpacing(t *testing.T) {
@@ -23,7 +23,7 @@ func TestMarkdownDragCopiesSourceWithoutLayoutSpacing(t *testing.T) {
 			r := chatprojection.NewRenderer(th)
 			r.SetSize(width, 40)
 			r.SetChatAreaBounds(0, 40)
-			r.AppendMessage(types.ChatMessage{InternalID: "copy", Role: types.RoleAssistant, Content: "Run `alpha beta` next."})
+			r.AppendMessage(conversation.ChatMessage{InternalID: "copy", Role: conversation.RoleAssistant, Content: "Run `alpha beta` next."})
 			rows, _, _ := r.ExportMessageRows(width)
 			s := New(th)
 			s.SetMessages(rows, PaintParams{Compose: ComposeParams{InnerW: width, PadLR: th.Spacing.PadLR, Theme: th}})
@@ -65,7 +65,7 @@ func TestMarkdownCodeDragKeepsTabsBlankLinesAndSoftWraps(t *testing.T) {
 			r := chatprojection.NewRenderer(th)
 			r.SetSize(width, 40)
 			r.SetChatAreaBounds(0, 40)
-			r.AppendMessage(types.ChatMessage{InternalID: "code", Role: types.RoleAssistant, Content: "- Code:\n\n  ```python\n  " + strings.ReplaceAll(code, "\n", "\n  ") + "\n  ```"})
+			r.AppendMessage(conversation.ChatMessage{InternalID: "code", Role: conversation.RoleAssistant, Content: "- Code:\n\n  ```python\n  " + strings.ReplaceAll(code, "\n", "\n  ") + "\n  ```"})
 			rows, _, _ := r.ExportMessageRows(width)
 			s := New(th)
 			flat := flattenMessageLines(rows)
@@ -102,7 +102,7 @@ func TestMarkdownWrappedParagraphCopyKeepsSourceNotVisualNewlines(t *testing.T) 
 	r := chatprojection.NewRenderer(th)
 	r.SetSize(40, 40)
 	r.SetChatAreaBounds(0, 40)
-	r.AppendMessage(types.ChatMessage{InternalID: "paragraph", Role: types.RoleAssistant, Content: text})
+	r.AppendMessage(conversation.ChatMessage{InternalID: "paragraph", Role: conversation.RoleAssistant, Content: text})
 	rows, _, _ := r.ExportMessageRows(40)
 	flat := flattenMessageLines(rows)
 	first, last := -1, -1
@@ -128,7 +128,7 @@ func TestMarkdownDragKeepsTheSelectedSourceAcrossReflow(t *testing.T) {
 	r.SetSize(40, 40)
 	r.SetChatAreaBounds(0, 40)
 	source := "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu"
-	r.AppendMessage(types.ChatMessage{InternalID: "reflow", Role: types.RoleAssistant, Content: source})
+	r.AppendMessage(conversation.ChatMessage{InternalID: "reflow", Role: conversation.RoleAssistant, Content: source})
 	rows, _, _ := r.ExportMessageRows(40)
 	flat := flattenMessageLines(rows)
 	s := New(th)
@@ -189,7 +189,7 @@ func TestMarkdownSelectionUsesSemanticBreaksAndLiteralCode(t *testing.T) {
 				r := chatprojection.NewRenderer(th)
 				r.SetSize(width, 100)
 				r.SetChatAreaBounds(0, 100)
-				r.AppendMessage(types.ChatMessage{InternalID: "semantic", Role: types.RoleAssistant, Content: tc.input})
+				r.AppendMessage(conversation.ChatMessage{InternalID: "semantic", Role: conversation.RoleAssistant, Content: tc.input})
 				rows, _, _ := r.ExportMessageRows(width)
 				first, last, global := -1, -1, 0
 				for _, row := range rows {
@@ -219,7 +219,7 @@ func TestMarkdownPartialSelectionAfterExpandedTabCopiesOnlyCrossedSource(t *test
 	r := chatprojection.NewRenderer(th)
 	r.SetSize(80, 40)
 	r.SetChatAreaBounds(0, 40)
-	r.AppendMessage(types.ChatMessage{InternalID: "partial", Role: types.RoleAssistant, Content: "```text\n\talpha beta\n```"})
+	r.AppendMessage(conversation.ChatMessage{InternalID: "partial", Role: conversation.RoleAssistant, Content: "```text\n\talpha beta\n```"})
 	rows, _, _ := r.ExportMessageRows(80)
 	for y, text := range flattenMessageLines(rows) {
 		if at := strings.Index(text, "beta"); at >= 0 {
@@ -242,7 +242,7 @@ func TestMarkdownDragWithinWrappedTableCellCopiesItsSourceNotNeighbors(t *testin
 	r := chatprojection.NewRenderer(th)
 	r.SetSize(40, 40)
 	r.SetChatAreaBounds(0, 40)
-	r.AppendMessage(types.ChatMessage{InternalID: "cell", Role: types.RoleAssistant, Content: "| Command | Note |\n| --- | --- |\n| `" + code + "` | other cell |"})
+	r.AppendMessage(conversation.ChatMessage{InternalID: "cell", Role: conversation.RoleAssistant, Content: "| Command | Note |\n| --- | --- |\n| `" + code + "` | other cell |"})
 	rows, _, _ := r.ExportMessageRows(40)
 	flat := flattenMessageLines(rows)
 	first, last, start, end := -1, -1, 0, 0
@@ -292,7 +292,7 @@ func TestReverseDragIncludesPressedGraphemeInPaintAndClipboard(t *testing.T) {
 			r.SetSize(80, 16)
 			r.SetChatAreaBounds(0, 16)
 			want := "Hello Worl" + last
-			r.AppendMessage(types.ChatMessage{InternalID: "drag", Role: types.RoleAssistant, Content: want})
+			r.AppendMessage(conversation.ChatMessage{InternalID: "drag", Role: conversation.RoleAssistant, Content: want})
 			rows, _, _ := r.ExportMessageRows(80)
 			height := len(flattenMessageLines(rows))
 			s, h := newShellChatHost(t, rows, ComposeParams{InnerW: 80, PadLR: th.Spacing.PadLR, Theme: th}, height)

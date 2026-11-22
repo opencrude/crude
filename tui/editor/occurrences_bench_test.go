@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"crude/types"
+	"crude/types/insight"
 )
 
 // A provider returns 128 occurrences near the end of a 64 KiB source line.
@@ -16,12 +16,12 @@ func BenchmarkOccurrenceProjectionLongLine(b *testing.B) {
 	if !ok {
 		b.Fatal("source is not acknowledged")
 	}
-	marks := make([]types.LSPHighlight, 128)
+	marks := make([]insight.LSPHighlight, 128)
 	for i := range marks {
 		start := len(text) - 2*len(marks) + i*2
-		marks[i] = types.LSPHighlight{Range: occurrenceRange(0, start, start+1), Kind: types.LSPHighlightRead}
+		marks[i] = insight.LSPHighlight{Range: occurrenceRange(0, start, start+1), Kind: insight.LSPHighlightRead}
 	}
-	result := types.LSPHighlights{Boundary: types.InsightBoundary{Source: source}, Highlights: marks}
+	result := insight.LSPHighlights{Boundary: insight.Boundary{Source: source}, Highlights: marks}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

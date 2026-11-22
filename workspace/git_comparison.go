@@ -14,7 +14,7 @@ import (
 	"sort"
 	"strings"
 
-	"crude/text/encoding"
+	"crude/text/textencoding"
 	"crude/workspace/fileio"
 
 	"github.com/go-git/go-git/v5"

@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
 	"crude/types/control"
 )
 

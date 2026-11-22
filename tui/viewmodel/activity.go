@@ -14,9 +14,9 @@ import (
 	"crude/tui/screens/imageviewer"
 	historyscreen "crude/tui/screens/localhistory"
 	"crude/tui/screens/panelchrome"
+	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/screens/shelltree"
 	"crude/tui/screens/termdock"
-	settingsui "crude/tui/settings"
 	"crude/tui/ui"
 	captypes "crude/types/capability"
 	"crude/workspace"
@@ -557,7 +557,7 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 		if !ok {
 			return nil
 		}
-		if projection := m.subPaneProjections.GetExisting(payload.AgentID); projection != nil {
+		if projection := m.subPaneProjections.Existing(payload.AgentID); projection != nil {
 			projection.renderer.ToggleDisclosure(payload.MessageID)
 		}
 		return nil

@@ -11,39 +11,39 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/types/control"
+	"crude/types/insight"
 )
 
-func fixture() types.LSPInlaySet {
-	r := types.LSPInlayRange{Start: types.LSPInlayPosition{Line: 2}, End: types.LSPInlayPosition{Line: 9}}
-	return types.LSPInlaySet{
+func fixture() insight.LSPInlaySet {
+	r := insight.LSPInlayRange{Start: insight.LSPInlayPosition{Line: 2}, End: insight.LSPInlayPosition{Line: 9}}
+	return insight.LSPInlaySet{
 		ID: "original-set", Digest: "original-digest", ViewID: "private-view", Sequence: 18,
-		WireVersion: 17, Range: r, Answer: types.LSPInlayHints, ResolveSupported: true,
+		WireVersion: 17, Range: r, Answer: insight.LSPInlayHints, ResolveSupported: true,
 		ExpiresAt: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC), Detail: "range-scoped evidence",
-		Boundary: types.InsightBoundary{
-			Source: types.InsightSource{Kind: "canonical", DocumentID: "source-document",
+		Boundary: insight.Boundary{
+			Source: insight.Source{Kind: "canonical", DocumentID: "source-document",
 				WorkspaceGeneration: "workspace-generation", Path: "/workspace/source.go",
 				Lifetime: "source-lifetime", Revision: 29},
-			Context: types.InsightContext{ID: "source-context", Root: "/workspace", Generation: 31,
+			Context: insight.Context{ID: "source-context", Root: "/workspace", Generation: 31,
 				UnknownInputs: []string{"unknown-build-input"}},
-			Producer: types.InsightProducer{InstanceID: "provider-instance", Provider: "test-provider", ToolIdentity: "tool-identity"},
+			Producer: insight.Producer{InstanceID: "provider-instance", Provider: "test-provider", ToolIdentity: "tool-identity"},
 		},
-		Hints: []types.LSPInlayHint{
-			{Index: 7, SourceByte: 27, Position: types.LSPInlayPosition{Line: 3, Character: 4},
+		Hints: []insight.LSPInlayHint{
+			{Index: 7, SourceByte: 27, Position: insight.LSPInlayPosition{Line: 3, Character: 4},
 				Label: "count:", Kind: 2, HasKind: true, LabelIsParts: true, PaddingRight: true,
-				HasTextEdits: true, HasData: true, Parts: []types.LSPInlayLabelPart{
-					{Value: "count:", HasCommand: true, Location: &types.LSPInlayLocation{
+				HasTextEdits: true, HasData: true, Parts: []insight.LSPInlayLabelPart{
+					{Value: "count:", HasCommand: true, Location: &insight.LSPInlayLocation{
 						URI: "command://never-open", Range: r}},
 				}},
-			{Index: 19, SourceByte: 27, Position: types.LSPInlayPosition{Line: 3, Character: 4},
+			{Index: 19, SourceByte: 27, Position: insight.LSPInlayPosition{Line: 3, Character: 4},
 				Label: "Widget", HasKind: true, Kind: 1},
 		},
 	}
 }
 
-func inspection(r types.LSPInlaySet, ordinal int) types.LSPInlayInspection {
-	return types.LSPInlayInspection{
+func inspection(r insight.LSPInlaySet, ordinal int) insight.LSPInlayInspection {
+	return insight.LSPInlayInspection{
 		SetID: r.ID, Digest: r.Digest, Index: r.Hints[ordinal].Index,
 		Boundary: r.Boundary, WireVersion: r.WireVersion, Range: r.Range,
 		Hint: r.Hints[ordinal], ResolveState: "not-requested",
@@ -235,8 +235,8 @@ func TestBackEmitsTheExactReaderCancellationIntent(t *testing.T) {
 func TestDetachedLiteralEvidenceAndNativeCopy(t *testing.T) {
 	r := fixture()
 	unsafe := "\x1b]52;c;injected\a\t\r\n\u2028\u2029\"\\"
-	r.Hints[0].Tooltip = types.LSPInlayMarkup{Present: true, Form: "markup", Kind: "markdown", Value: unsafe}
-	r.Hints[0].Parts[0].Tooltip = types.LSPInlayMarkup{Present: true, Form: "string", Value: unsafe}
+	r.Hints[0].Tooltip = insight.LSPInlayMarkup{Present: true, Form: "markup", Kind: "markdown", Value: unsafe}
+	r.Hints[0].Parts[0].Tooltip = insight.LSPInlayMarkup{Present: true, Form: "string", Value: unsafe}
 	r.Hints[0].Parts[0].Location.URI = unsafe
 	s := New(nil)
 	s.SetResult(r)
@@ -304,9 +304,9 @@ func TestDetachedLiteralEvidenceAndNativeCopy(t *testing.T) {
 
 func TestDistinctNonHintStatesAndClearedActions(t *testing.T) {
 	for answer, want := range map[string]string{
-		types.LSPInlayNull:        "No inlay hints in the visible lines.",
-		types.LSPInlayEmpty:       "No inlay hints in the visible lines.",
-		types.LSPInlayUnsupported: "does not support inlay hints.",
+		insight.LSPInlayNull:        "No inlay hints in the visible lines.",
+		insight.LSPInlayEmpty:       "No inlay hints in the visible lines.",
+		insight.LSPInlayUnsupported: "does not support inlay hints.",
 	} {
 		t.Run(answer, func(t *testing.T) {
 			s, r := New(nil), fixture()
@@ -350,23 +350,23 @@ func TestDistinctNonHintStatesAndClearedActions(t *testing.T) {
 }
 
 func TestRefuseForgedInspectionAndMalformedDisplay(t *testing.T) {
-	for name, change := range map[string]func(*types.LSPInlayInspection){
-		"set":       func(in *types.LSPInlayInspection) { in.SetID = "other" },
-		"digest":    func(in *types.LSPInlayInspection) { in.Digest = "other" },
-		"row":       func(in *types.LSPInlayInspection) { in.Index = 19 },
-		"hint row":  func(in *types.LSPInlayInspection) { in.Hint.Index = 19 },
-		"source":    func(in *types.LSPInlayInspection) { in.Boundary.Source.Revision++ },
-		"provider":  func(in *types.LSPInlayInspection) { in.Boundary.Producer.InstanceID = "other" },
-		"context":   func(in *types.LSPInlayInspection) { in.Boundary.Context.Generation++ },
-		"unknown":   func(in *types.LSPInlayInspection) { in.Boundary.Context.UnknownInputs = []string{"other"} },
-		"wire":      func(in *types.LSPInlayInspection) { in.WireVersion++ },
-		"range":     func(in *types.LSPInlayInspection) { in.Range.End.Line++ },
-		"geometry":  func(in *types.LSPInlayInspection) { in.Hint.Position.Character++ },
-		"command":   func(in *types.LSPInlayInspection) { in.Hint.Parts[0].HasCommand = false },
-		"malformed": func(in *types.LSPInlayInspection) { in.OriginalJSON = []byte(`{"bad":`) },
-		"raw null":  func(in *types.LSPInlayInspection) { in.OriginalJSON = []byte(`null`) },
-		"raw utf8":  func(in *types.LSPInlayInspection) { in.OriginalJSON = []byte("{\"x\":\"\xff\"}") },
-		"raw size":  func(in *types.LSPInlayInspection) { in.ResolvedJSON = make([]byte, (1<<20)+1) },
+	for name, change := range map[string]func(*insight.LSPInlayInspection){
+		"set":       func(in *insight.LSPInlayInspection) { in.SetID = "other" },
+		"digest":    func(in *insight.LSPInlayInspection) { in.Digest = "other" },
+		"row":       func(in *insight.LSPInlayInspection) { in.Index = 19 },
+		"hint row":  func(in *insight.LSPInlayInspection) { in.Hint.Index = 19 },
+		"source":    func(in *insight.LSPInlayInspection) { in.Boundary.Source.Revision++ },
+		"provider":  func(in *insight.LSPInlayInspection) { in.Boundary.Producer.InstanceID = "other" },
+		"context":   func(in *insight.LSPInlayInspection) { in.Boundary.Context.Generation++ },
+		"unknown":   func(in *insight.LSPInlayInspection) { in.Boundary.Context.UnknownInputs = []string{"other"} },
+		"wire":      func(in *insight.LSPInlayInspection) { in.WireVersion++ },
+		"range":     func(in *insight.LSPInlayInspection) { in.Range.End.Line++ },
+		"geometry":  func(in *insight.LSPInlayInspection) { in.Hint.Position.Character++ },
+		"command":   func(in *insight.LSPInlayInspection) { in.Hint.Parts[0].HasCommand = false },
+		"malformed": func(in *insight.LSPInlayInspection) { in.OriginalJSON = []byte(`{"bad":`) },
+		"raw null":  func(in *insight.LSPInlayInspection) { in.OriginalJSON = []byte(`null`) },
+		"raw utf8":  func(in *insight.LSPInlayInspection) { in.OriginalJSON = []byte("{\"x\":\"\xff\"}") },
+		"raw size":  func(in *insight.LSPInlayInspection) { in.ResolvedJSON = make([]byte, (1<<20)+1) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, r := New(nil), fixture()
@@ -382,20 +382,20 @@ func TestRefuseForgedInspectionAndMalformedDisplay(t *testing.T) {
 			}
 		})
 	}
-	for name, change := range map[string]func(*types.LSPInlaySet){
-		"count":     func(r *types.LSPInlaySet) { r.Hints = make([]types.LSPInlayHint, 1025) },
-		"duplicate": func(r *types.LSPInlaySet) { r.Hints[1].Index = 7 },
-		"utf8":      func(r *types.LSPInlaySet) { r.Hints[0].Label = "\xff" },
-		"label":     func(r *types.LSPInlaySet) { r.Hints[0].Label = strings.Repeat("x", 4097) },
-		"field":     func(r *types.LSPInlaySet) { r.Detail = strings.Repeat("x", (64<<10)+1) },
-		"range":     func(r *types.LSPInlaySet) { r.Range.End.Line = -1 },
-		"answer":    func(r *types.LSPInlaySet) { r.Answer = "unknown" },
-		"null rows": func(r *types.LSPInlaySet) { r.Answer = types.LSPInlayNull },
-		"parts":     func(r *types.LSPInlaySet) { r.Hints[0].Parts = make([]types.LSPInlayLabelPart, 33) },
-		"markup": func(r *types.LSPInlaySet) {
-			r.Hints[0].Tooltip = types.LSPInlayMarkup{Present: true, Form: "html", Value: "invalid"}
+	for name, change := range map[string]func(*insight.LSPInlaySet){
+		"count":     func(r *insight.LSPInlaySet) { r.Hints = make([]insight.LSPInlayHint, 1025) },
+		"duplicate": func(r *insight.LSPInlaySet) { r.Hints[1].Index = 7 },
+		"utf8":      func(r *insight.LSPInlaySet) { r.Hints[0].Label = "\xff" },
+		"label":     func(r *insight.LSPInlaySet) { r.Hints[0].Label = strings.Repeat("x", 4097) },
+		"field":     func(r *insight.LSPInlaySet) { r.Detail = strings.Repeat("x", (64<<10)+1) },
+		"range":     func(r *insight.LSPInlaySet) { r.Range.End.Line = -1 },
+		"answer":    func(r *insight.LSPInlaySet) { r.Answer = "unknown" },
+		"null rows": func(r *insight.LSPInlaySet) { r.Answer = insight.LSPInlayNull },
+		"parts":     func(r *insight.LSPInlaySet) { r.Hints[0].Parts = make([]insight.LSPInlayLabelPart, 33) },
+		"markup": func(r *insight.LSPInlaySet) {
+			r.Hints[0].Tooltip = insight.LSPInlayMarkup{Present: true, Form: "html", Value: "invalid"}
 		},
-		"aggregate": func(r *types.LSPInlaySet) {
+		"aggregate": func(r *insight.LSPInlaySet) {
 			r.Boundary.Context.UnknownInputs = []string{strings.Repeat("\x00", 64000)}
 		},
 	} {
@@ -437,10 +437,10 @@ func assertBounds(t *testing.T, component ui.Component, w, h int) {
 
 func TestBoundedRawScrollingGeometryAndThemes(t *testing.T) {
 	s, r := New(nil), fixture()
-	r.Hints = make([]types.LSPInlayHint, 1024)
+	r.Hints = make([]insight.LSPInlayHint, 1024)
 	for i := range r.Hints {
-		r.Hints[i] = types.LSPInlayHint{Index: i, Label: fmt.Sprintf("hint-%04d", i),
-			Position: types.LSPInlayPosition{Line: i}}
+		r.Hints[i] = insight.LSPInlayHint{Index: i, Label: fmt.Sprintf("hint-%04d", i),
+			Position: insight.LSPInlayPosition{Line: i}}
 	}
 	s.SetResult(r)
 	host := mount(s, 60, 16)
@@ -458,7 +458,7 @@ func TestBoundedRawScrollingGeometryAndThemes(t *testing.T) {
 		t.Fatalf("test input size %d", len(raw))
 	}
 	in.OriginalJSON, in.ResolvedJSON = []byte(raw), []byte(raw)
-	in.Hint.Tooltip = types.LSPInlayMarkup{Present: true, Form: "string", Value: strings.Repeat("Useful explanation for this hint.\n", 50) + "Final useful detail."}
+	in.Hint.Tooltip = insight.LSPInlayMarkup{Present: true, Form: "string", Value: strings.Repeat("Useful explanation for this hint.\n", 50) + "Final useful detail."}
 	s.SetInspection(in)
 	if !s.inspected || len(s.text.Value()) > 256<<10 || strings.Contains(s.text.Value(), "opaque") || !strings.Contains(s.text.Value(), "Final useful detail.") {
 		t.Fatal("long hint details or bounded raw validation were lost")

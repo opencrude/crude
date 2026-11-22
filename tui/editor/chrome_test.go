@@ -7,11 +7,13 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"crude/text/textdiff"
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
+	"crude/types/insight"
 )
 
 func TestRenderPaintsSharedScrollbarChrome(t *testing.T) {
@@ -251,7 +253,7 @@ func TestRenderDiagnosticsAndSearchChrome(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ed.Close()
-	setTestDiagnostics(ed, []LSPDiagnostic{{
+	setTestDiagnostics(ed, []insight.LSPDiagnostic{{
 		Line: 0, Col: 0, EndLine: 0, EndCol: 5, Severity: DiagError, Message: "err",
 	}})
 	ed.SetQuery("alpha")
@@ -292,7 +294,7 @@ func TestGutterAlignsNumbersAndPaintsDeletionBoundaries(t *testing.T) {
 	}
 	ed := NewPreview(theme.DefaultDark(), "gutter.txt", strings.Join(lines, "\n"), 1)
 	setEditorAnnotationForTest(ed, ed.Revision(),
-		[]GitHunk{
+		[]textdiff.Hunk{
 			{OldStart: 4, NewStart: 4, OldLines: []string{"old\n"}},
 			{OldStart: 100, NewStart: 100, OldLines: []string{"gone\n"}},
 		},
@@ -322,7 +324,7 @@ func TestGutterAlignsNumbersAndPaintsDeletionBoundaries(t *testing.T) {
 func TestGitHunksShiftAcrossUnrelatedEdits(t *testing.T) {
 	ed := New(theme.DefaultDark())
 	ed.ReplaceDocument(strings.Repeat("line\n", 20))
-	setEditorAnnotationForTest(ed, ed.Revision(), []GitHunk{
+	setEditorAnnotationForTest(ed, ed.Revision(), []textdiff.Hunk{
 		{OldStart: 5, NewStart: 5, OldLines: []string{"old\n"}, NewLines: []string{"new\n"}},
 		{OldStart: 15, NewStart: 15, NewLines: []string{"added\n"}},
 	}, nil, false)
@@ -365,7 +367,7 @@ func TestTypingInsideAHunkKeepsItsGutterMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ed.Close()
-	setEditorAnnotationForTest(ed, ed.Revision(), []GitHunk{
+	setEditorAnnotationForTest(ed, ed.Revision(), []textdiff.Hunk{
 		{OldStart: 5, NewStart: 5, OldLines: []string{"old\n"}, NewLines: []string{"new\n"}},
 	}, nil, false)
 	if got := gutterRailCharAt(t, ed, 5); got != '▌' {
@@ -407,7 +409,7 @@ func TestAnnotationArrivingMidBurstSurvivesTheNextKeystrokes(t *testing.T) {
 	ed.InsertRune('y')
 	snapshotRevision := ed.Revision() - 2 // the annotation was computed before these keys
 
-	setEditorAnnotationForTest(ed, snapshotRevision, []GitHunk{
+	setEditorAnnotationForTest(ed, snapshotRevision, []textdiff.Hunk{
 		{OldStart: 5, NewStart: 5, OldLines: []string{"line\n"}, NewLines: []string{"xyline\n"}},
 	}, nil, false)
 	if got := gutterRailCharAt(t, ed, 5); got != '▌' {
@@ -500,7 +502,7 @@ func TestEditingInsideAHunkAddsNoLocalClaim(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ed.Close()
-	setEditorAnnotationForTest(ed, ed.Revision(), []GitHunk{
+	setEditorAnnotationForTest(ed, ed.Revision(), []textdiff.Hunk{
 		{OldStart: 4, NewStart: 4, OldLines: []string{"line\n"}, NewLines: []string{"line\n"}},
 	}, nil, false)
 
@@ -540,7 +542,7 @@ func TestAuthoritativeAnnotationTakesOverWithoutBlanking(t *testing.T) {
 	}
 
 	// The debounced refresh lands with the authoritative hunk for that line.
-	setEditorAnnotationForTest(ed, ed.Revision(), []GitHunk{
+	setEditorAnnotationForTest(ed, ed.Revision(), []textdiff.Hunk{
 		{OldStart: 5, NewStart: 5, OldLines: []string{"line\n"}, NewLines: []string{"xline\n"}},
 	}, nil, false)
 	if got := gutterRailCharAt(t, ed, 5); got != '▌' {
@@ -593,10 +595,10 @@ func TestRenderGitGutterBesideDiagnostics(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ed.Close()
-	setTestDiagnostics(ed, []LSPDiagnostic{{
+	setTestDiagnostics(ed, []insight.LSPDiagnostic{{
 		Line: 0, Col: 0, EndLine: 0, EndCol: 5, Severity: DiagError, Message: "err",
 	}})
-	setEditorAnnotationForTest(ed, ed.Revision(), []GitHunk{{NewLines: []string{"alpha\n"}}, {NewStart: 1, OldStart: 1, NewLines: []string{"beta\n"}, OldLines: []string{"before\n"}}}, nil, false)
+	setEditorAnnotationForTest(ed, ed.Revision(), []textdiff.Hunk{{NewLines: []string{"alpha\n"}}, {NewStart: 1, OldStart: 1, NewLines: []string{"beta\n"}, OldLines: []string{"before\n"}}}, nil, false)
 
 	surf := surface.NewSurface("ed", 50, 6, cell.TransparentBlank())
 	ed.Render(surf, ui.PaintContext{Theme: ed.th, Focused: true})
@@ -616,7 +618,7 @@ func TestRenderGitGutterBesideDiagnostics(t *testing.T) {
 func TestGitConflictUsesDistinctLineState(t *testing.T) {
 	ed := New(theme.DefaultDark())
 	ed.ReplaceDocument("conflict\n")
-	setEditorAnnotationForTest(ed, ed.Revision(), []GitHunk{{OldLines: []string{"old\n"}, NewLines: []string{"conflict\n"}}}, nil, true)
+	setEditorAnnotationForTest(ed, ed.Revision(), []textdiff.Hunk{{OldLines: []string{"old\n"}, NewLines: []string{"conflict\n"}}}, nil, true)
 	if got := ed.gitKindAt(0); got != GitLineConflict {
 		t.Fatalf("kind=%d", got)
 	}

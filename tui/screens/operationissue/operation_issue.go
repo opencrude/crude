@@ -9,7 +9,7 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/statuscenter"
 )
 
 const ScreenID ui.ComponentID = "operation-issue/body"
@@ -23,13 +23,14 @@ type ActionMsg struct {
 
 type Screen struct {
 	ui.Base
-	issue   types.OperationIssue
+	issue   statuscenter.OperationIssue
 	summary *ui.Label
 	detail  *ui.TextArea
 	actions *ui.ActionBar
 }
 
-func New(th *theme.Theme, issue types.OperationIssue, repairLabel string) *Screen {
+// New builds the screen for one operation issue with its repair label.
+func New(th *theme.Theme, issue statuscenter.OperationIssue, repairLabel string) *Screen {
 	tokens := ui.NewTokenSet(th)
 	s := &Screen{Base: ui.NewBase(ScreenID), issue: issue}
 	s.summary = ui.NewLabel("operation-issue/summary", issue.Summary, th)
@@ -51,7 +52,8 @@ func New(th *theme.Theme, issue types.OperationIssue, repairLabel string) *Scree
 	return s
 }
 
-func (s *Screen) Issue() types.OperationIssue { return s.issue }
+// Issue returns the operation issue that the screen shows.
+func (s *Screen) Issue() statuscenter.OperationIssue { return s.issue }
 
 // PreferredHeight keeps ordinary failures compact; long evidence remains
 // complete in the retained scrollable detail area on constrained terminals.

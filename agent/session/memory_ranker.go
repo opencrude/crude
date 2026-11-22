@@ -9,12 +9,12 @@ import (
 	"strings"
 	"time"
 
-	"crude/agent"
 	"crude/agent/memory"
 	"crude/agent/prompt"
 	"crude/agent/provider"
 	"crude/agent/tools"
-	"crude/types"
+	"crude/agent/turnloop"
+	"crude/types/setting"
 )
 
 // Ranking is a bounded optional read, on the owning run's goroutine. No worker
@@ -31,7 +31,7 @@ type actionMemoryState struct {
 	Candidates map[string]string `json:"memories"`
 }
 
-func (s *Session) bindMemoryRanker(a *agent.Agent, owner string) {
+func (s *Session) bindMemoryRanker(a *turnloop.Agent, owner string) {
 	var preceding int
 	initialized := false
 	a.RankActionMemories = func(ctx context.Context, round int, active, batch []provider.ChatMessage) (func() (string, error), error) {
@@ -119,7 +119,7 @@ func (s *Session) rankActionMemories(parent context.Context, owner, root string,
 		state.Candidates[key] = item
 		pool = append(pool, rec)
 		questions = append(questions, prompt.MemoryRelevanceQuestion(key))
-		if len(pool) == types.MaxRankedMemories {
+		if len(pool) == setting.MaxRankedMemories {
 			break
 		}
 	}
@@ -144,7 +144,7 @@ func (s *Session) rankActionMemories(parent context.Context, owner, root string,
 		return nil, err
 	}
 	var scores []float64
-	if kind == types.ModelTypeDecision {
+	if kind == setting.ModelTypeDecision {
 		decideCtx, done := context.WithTimeout(ctx, rankingDeadline)
 		scores, err = conn.DecideRelevance(decideCtx, string(wire), questions)
 		done()

@@ -163,7 +163,7 @@ func testGitSignature() *object.Signature {
 	return &object.Signature{Name: "Crude Test", Email: "crude@example.test", When: time.Now()}
 }
 
-func applyGitRefreshCommand(t *testing.T, model *FileTreeModel) {
+func applyGitRefreshCommand(t *testing.T, model *Model) {
 	t.Helper()
 	cmd := model.RefreshGitStatus()
 	if cmd == nil {

@@ -39,7 +39,7 @@ on a faster processor is a useful contention test, not T470 certification.
 
 ## Per-tick allocation and frame handoff (2026-11-22, second pass)
 
-The panel still showed "UI froze" on `types.TickMsg`, 21 ms GC pauses and
+The panel still showed "UI froze" on `viewmodel.TickMsg`, 21 ms GC pauses and
 35 ms frame handoffs after the first pass. The local-port Update + View benchmark exposed a separate allocation hotspot:
 Trust reads cloned all settings and the language catalog. Connected shells use
 the remote settings projection, so this benchmark does not attribute the live
@@ -53,7 +53,7 @@ the remote settings projection, so this benchmark does not attribute the live
 
 - `Workspace.EffectiveAnalysisSettings` reads Trust from the workspace overlay
   and root binding only. It shares `boundAnalysis` and
-  `types.WorkspaceAnalysisChoice` with the complete merge, and a test proves
+  `setting.WorkspaceAnalysisChoice` with the complete merge, and a test proves
   both reads agree in every Trust state.
 - The renderer snapshot copies only rows that changed since the generation it
   holds (`uv.DeltaSurface`). Any other state (unknown copy, resize, frame in
@@ -1099,7 +1099,7 @@ are not independent verification of every pixel between them.
 For readings beyond the live ring, see [Durable performance](durable-evidence.md#compare-builds).
 The archive does not change the live measurements or the benchmark ceilings.
 
-`metrics/` records bounded per-second history for one process: the shell and
+`internal/metrics/` records bounded per-second history for one process: the shell and
 the core each own a registry, and the app-level Performance surface (bottom-bar
 **Performance**, palette "Performance", `tui/screens/perfdash/`) reads both, the
 core's through `coreprotocol.CoreMetricsMethod`. An observation is a clock read,
@@ -1123,7 +1123,7 @@ workspaces whose project folder no longer exists. The Overview's Memory and
 CPU tiles are these OS figures; Go heap and runtime CPU stay under Runtime.
 Low disk space (under 10% free, critical under 5%) and memory pressure are
 findings. Process and machine figures come from gopsutil and are read only
-inside demand snapshot collection (`metrics/resources.go`), so a hidden surface
+inside demand snapshot collection (`internal/metrics/resources.go`), so a hidden surface
 starts no periodic sampler; an explicit diagnostic read may request them. Each platform builds the process tree in one pass
 (`/proc`, one Toolhelp snapshot, or the OS process list). Disk usage walks
 every saved file, so the core's `workspace.DataUsage` measures in the
@@ -1135,7 +1135,7 @@ the first measurement takes about 5 s in the background and later ones about
 
 Semantic `performance.core` and `performance.shell` expose the same process-owned
 histogram/counter/gauge/table aggregation, with summary-first bounded immutable
-pages and optional points. `perfdata/` owns findings and headlines for both the
+pages and optional points. `internal/perfdata/` owns findings and headlines for both the
 dashboard and agents; presentation does not own another diagnosis rule set.
 `core.queue` is sampled from current channel occupancy across retained actors,
 including a stalled actor, removing stopped owners. The existing metric sampler
@@ -1285,8 +1285,8 @@ database startup and close, not frame latency or a portable timing promise.
 The 9,000 B / 215-allocation gate, benchmark workload, WAL, synchronization and
 atomic schema initialization are unchanged.
 
-The local [libc](../../third_party/modernc-libc/CRUDE_PATCH.md) and
-[memory](../../third_party/modernc-memory/CRUDE_PATCH.md) replacements retain the
+The local [libc](../../third_party/modernc-libc/CRUDE.md) and
+[memory](../../third_party/modernc-memory/CRUDE.md) replacements retain the
 complete pinned upstream modules, versions and licenses. Only the existing
 Windows call adapters change. Fixed-arity pointer annotations protect direct
 calls, while indirect and pending operations retain explicit caller-owned

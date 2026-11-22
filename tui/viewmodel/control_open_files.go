@@ -5,7 +5,7 @@ import (
 
 	"crude/tui/editor"
 	"crude/tui/window"
-	"crude/types"
+	"crude/types/insight"
 )
 
 type openFilesInspection struct {
@@ -15,14 +15,14 @@ type openFilesInspection struct {
 }
 
 type openFileInspection struct {
-	TabID              window.TabID         `json:"tab_id"`
-	Source             *types.InsightSource `json:"canonical_source,omitempty"`
-	SourceMatchesView  bool                 `json:"source_matches_view"`
-	DiagnosticEvidence string               `json:"diagnostic_evidence"`
-	DiagnosticID       string               `json:"diagnostic_id,omitempty"`
-	Errors             int                  `json:"errors,omitempty"`
-	Warnings           int                  `json:"warnings,omitempty"`
-	Other              int                  `json:"other,omitempty"`
+	TabID              window.TabID    `json:"tab_id"`
+	Source             *insight.Source `json:"canonical_source,omitempty"`
+	SourceMatchesView  bool            `json:"source_matches_view"`
+	DiagnosticEvidence string          `json:"diagnostic_evidence"`
+	DiagnosticID       string          `json:"diagnostic_id,omitempty"`
+	Errors             int             `json:"errors,omitempty"`
+	Warnings           int             `json:"warnings,omitempty"`
+	Other              int             `json:"other,omitempty"`
 }
 
 // This read projects the already-applied Problems facts on Update. It does not
@@ -40,7 +40,7 @@ func (m *App) inspectOpenFiles(shell shellInspection) openFilesInspection {
 	return result
 }
 
-func inspectOpenFile(tab window.TabID, ed *editor.Editor, facts types.InsightDiagnostics) openFileInspection {
+func inspectOpenFile(tab window.TabID, ed *editor.Editor, facts insight.Diagnostics) openFileInspection {
 	source, matches := ed.CurrentInsightSource()
 	file := openFileInspection{TabID: tab, SourceMatchesView: matches, DiagnosticEvidence: "not_observed"}
 	if source.DocumentID != "" {
@@ -53,7 +53,7 @@ func inspectOpenFile(tab window.TabID, ed *editor.Editor, facts types.InsightDia
 	}
 	file.DiagnosticID = facts.ID
 	switch {
-	case facts.State == types.InsightStale:
+	case facts.State == insight.Stale:
 		file.DiagnosticEvidence = "out_of_date"
 	case facts.Limited:
 		file.DiagnosticEvidence = "limited"

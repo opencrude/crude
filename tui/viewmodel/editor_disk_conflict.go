@@ -9,8 +9,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/port"
-	"crude/text/encoding"
+	"crude/core/shellport"
+	"crude/text/textencoding"
 	"crude/tui/editor"
 	"crude/tui/ui"
 	"crude/tui/window"

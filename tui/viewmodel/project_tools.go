@@ -12,12 +12,13 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/agent/prompt"
-	"crude/core/port"
+	"crude/core/shellport"
+	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/screens/toolsetup"
-	settingsui "crude/tui/settings"
 	"crude/tui/ui"
 	"crude/tui/wm"
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/statuscenter"
 )
 
 const projectToolsOverlay ui.OverlayID = "project-tool-setup"
@@ -34,24 +35,24 @@ type projectToolsRequest struct {
 	workspace  shellport.Workspace
 	generation uint64
 	port       shellport.ProjectTools
-	preview    types.ProjectToolSetupReview
+	preview    insight.ProjectToolSetupReview
 	screen     *toolsetup.Screen
 	ctx        context.Context
 	cancel     context.CancelFunc
-	selection  types.ProjectToolSetupRequest
+	selection  insight.ProjectToolSetupRequest
 	origin     *settingsui.OpenProjectToolsMsg
 	submitted  bool
 }
 
 type projectToolsReviewedMsg struct {
 	request *projectToolsRequest
-	preview types.ProjectToolSetupReview
+	preview insight.ProjectToolSetupReview
 	err     error
 }
 
 type projectToolsDecidedMsg struct {
 	request *projectToolsRequest
-	result  types.ProjectToolSetupResult
+	result  insight.ProjectToolSetupResult
 	err     error
 	// quiet means Errand took the work, so Crude's own record needs no notice.
 	quiet bool
@@ -59,7 +60,7 @@ type projectToolsDecidedMsg struct {
 
 // projectToolSetupTask turns the user's switches into the work order for
 // Errand: switched-on tools are set up, the others are left alone.
-func projectToolSetupTask(project string, items []types.ProjectToolCandidate, selected []string) prompt.ToolSetupTask {
+func projectToolSetupTask(project string, items []insight.ProjectToolCandidate, selected []string) prompt.ToolSetupTask {
 	on := make(map[string]bool, len(selected))
 	for _, id := range selected {
 		on[id] = true
@@ -96,7 +97,7 @@ func projectToolSetupDisplay(task prompt.ToolSetupTask) string {
 // changes with every project change, such as each file edit, so the notice
 // is keyed by the tools themselves. A notice that the user read or
 // dismissed is not raised again.
-func (m *App) noticeProjectTools(review types.ProjectToolReview) {
+func (m *App) noticeProjectTools(review insight.ProjectToolReview) {
 	if m.ws == nil || m.ws.Status() == nil || len(review.Items) == 0 {
 		return
 	}
@@ -122,12 +123,12 @@ func (m *App) noticeProjectTools(review types.ProjectToolReview) {
 			return
 		}
 	}
-	m.ws.Status().Notify(types.NotificationRecord{
-		DedupKey: key, Owner: types.ResourceRef{Kind: types.ResourceWorkspace, ID: m.ws.RootPath()},
-		Severity: types.SeverityInfo, Source: "code-intelligence",
+	m.ws.Status().Notify(statuscenter.NotificationRecord{
+		DedupKey: key, Owner: statuscenter.ResourceRef{Kind: statuscenter.ResourceWorkspace, ID: m.ws.RootPath()},
+		Severity: statuscenter.SeverityInfo, Source: "code-intelligence",
 		Summary: "Code intelligence tools are available for this project.",
 		Detail:  "Tools: " + strings.Join(tools, "; ") + ". Choose Set up tools to review them.",
-		Actions: []types.StatusAction{{ID: "lsp:setup", Label: "Set up tools", Enabled: true}},
+		Actions: []statuscenter.Action{{ID: "lsp:setup", Label: "Set up tools", Enabled: true}},
 	})
 }
 
@@ -148,7 +149,7 @@ func (m *App) closeProjectTools() {
 
 // requestProjectTools is a joined, cancellable read. A later language or catalog
 // change gets a quiet notice; only the first project choice opens automatically.
-func (m *App) requestProjectTools(selection types.ProjectToolSetupRequest, origin *settingsui.OpenProjectToolsMsg) tea.Cmd {
+func (m *App) requestProjectTools(selection insight.ProjectToolSetupRequest, origin *settingsui.OpenProjectToolsMsg) tea.Cmd {
 	if m.ws == nil || m.projectTools.request != nil {
 		return nil
 	}
@@ -274,7 +275,7 @@ func (m *App) handleProjectToolsMessage(msg tea.Msg) (bool, tea.Cmd) {
 			}
 		}
 		return true, nil
-	case types.TickMsg:
+	case TickMsg:
 		state := &m.projectTools
 		if state.workspace != m.ws || state.generation != m.workspaceSwitchGen.Load() {
 			m.closeProjectTools()
@@ -286,9 +287,9 @@ func (m *App) handleProjectToolsMessage(msg tea.Msg) (bool, tea.Cmd) {
 			return false, nil
 		}
 		plan := m.ws.LSPMgr().Assembly()
-		if plan.State == types.AssemblyReady && !plan.Limited && plan.Generation != state.checked {
+		if plan.State == insight.AssemblyReady && !plan.Limited && plan.Generation != state.checked {
 			state.checked = plan.Generation
-			return false, m.requestProjectTools(types.ProjectToolSetupRequest{}, nil)
+			return false, m.requestProjectTools(insight.ProjectToolSetupRequest{}, nil)
 		}
 	}
 	return false, nil

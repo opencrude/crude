@@ -9,9 +9,9 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/types/activity"
 	"crude/types/reasoning"
+	"crude/types/statuscenter"
 )
 
 const ActivityPageDuration = 6000 // milliseconds on the shared presentation clock
@@ -19,7 +19,7 @@ const ActivityPageDuration = 6000 // milliseconds on the shared presentation clo
 // ActivityStrip derives retained, bounded rows from workspace facts. It owns
 // presentation cadence only: no domain mutation, protocol parsing, timers or I/O.
 type ActivityStrip struct {
-	source                   types.AgentActivityView
+	source                   statuscenter.AgentActivityView
 	width                    int
 	theme                    *theme.Theme
 	tokens                   *ui.TokenSet
@@ -40,7 +40,7 @@ type ActivityStrip struct {
 // sameActivitySource compares two projections by value. Connected shells
 // copy the plan on every read, so its pointer is not its identity: the
 // committed revision is.
-func sameActivitySource(a, b types.AgentActivityView) bool {
+func sameActivitySource(a, b statuscenter.AgentActivityView) bool {
 	if !activity.SameRevision(a.Plan, b.Plan) {
 		return false
 	}
@@ -48,7 +48,8 @@ func sameActivitySource(a, b types.AgentActivityView) bool {
 	return a == b
 }
 
-func (s *ActivityStrip) Update(source types.AgentActivityView, width int, th *theme.Theme, tokens *ui.TokenSet) {
+// Update rebuilds the strip when the activity, the width or the theme changed.
+func (s *ActivityStrip) Update(source statuscenter.AgentActivityView, width int, th *theme.Theme, tokens *ui.TokenSet) {
 	if s.ready && sameActivitySource(s.source, source) && s.width == width && s.theme == th && s.tokens == tokens {
 		return
 	}
@@ -110,27 +111,27 @@ func (s *ActivityStrip) Update(source types.AgentActivityView, width int, th *th
 	if status.NeedsAction {
 		role = ui.ColorWarning
 	}
-	if status.Phase == types.AgentFailed {
+	if status.Phase == statuscenter.AgentFailed {
 		role = ui.ColorError
 		label = "Turn failed · details in transcript"
 	}
 	if !s.animating() {
 		s.tide = ui.TextTideMotion{}
 	}
-	if status.Phase == types.AgentCancelled {
+	if status.Phase == statuscenter.AgentCancelled {
 		s.add(PaintLine{Spans: []RowSpan{{Text: "Stopped", Role: ui.ColorActivityText}}})
 		return
 	}
-	if status.Phase == types.AgentNeedsAttention {
+	if status.Phase == statuscenter.AgentNeedsAttention {
 		label, role = "Needs attention · work kept · /retry to continue", ui.ColorWarning
 	}
-	if status.Phase == types.AgentInterrupted {
+	if status.Phase == statuscenter.AgentInterrupted {
 		label, role = "Interrupted · work kept · /retry to continue", ui.ColorWarning
 	}
-	if status.NeedsAction || status.Phase == types.AgentNeedsAttention || status.Phase == types.AgentInterrupted || status.Phase == types.AgentFailed || status.Phase == types.AgentRetrying || status.Phase == types.AgentRecovering || status.Phase == types.AgentCancelling {
-		if status.Phase == types.AgentRetrying || status.Phase == types.AgentRecovering {
+	if status.NeedsAction || status.Phase == statuscenter.AgentNeedsAttention || status.Phase == statuscenter.AgentInterrupted || status.Phase == statuscenter.AgentFailed || status.Phase == statuscenter.AgentRetrying || status.Phase == statuscenter.AgentRecovering || status.Phase == statuscenter.AgentCancelling {
+		if status.Phase == statuscenter.AgentRetrying || status.Phase == statuscenter.AgentRecovering {
 			label = "Retrying request"
-			if status.Phase == types.AgentRecovering {
+			if status.Phase == statuscenter.AgentRecovering {
 				label = "Recovering"
 				source.RetryAttempt, source.RetryLimit, source.RetryReason = source.Recovery.Attempt, 0, source.Recovery.Summary
 			}
@@ -148,14 +149,14 @@ func (s *ActivityStrip) Update(source types.AgentActivityView, width int, th *th
 		s.add(PaintLine{Spans: []RowSpan{{Text: label, Role: role}}})
 		return
 	}
-	if status.Phase == types.AgentSending || status.Phase == types.AgentPreparing || status.Phase == types.AgentUploading || status.Phase == types.AgentWaiting {
-		if status.Phase == types.AgentSending {
+	if status.Phase == statuscenter.AgentSending || status.Phase == statuscenter.AgentPreparing || status.Phase == statuscenter.AgentUploading || status.Phase == statuscenter.AgentWaiting {
+		if status.Phase == statuscenter.AgentSending {
 			label = "Sending"
 		}
-		if status.Phase == types.AgentPreparing {
+		if status.Phase == statuscenter.AgentPreparing {
 			label = "Preparing"
 		}
-		if status.Phase == types.AgentUploading {
+		if status.Phase == statuscenter.AgentUploading {
 			label = "Uploading"
 		}
 		metrics := ""
@@ -173,14 +174,14 @@ func (s *ActivityStrip) Update(source types.AgentActivityView, width int, th *th
 				label = metrics
 			}
 		}
-		if status.Phase == types.AgentWaiting {
+		if status.Phase == statuscenter.AgentWaiting {
 			s.waitStart = status.PhaseStartedAt
 		}
 		s.add(PaintLine{Spans: []RowSpan{{Text: label, Role: role}}})
 		return // uploads, waits and action states are never hidden by rotation
 	}
 
-	if status.Phase == types.AgentThinking && source.Thinking != "" && source.ThinkingDisplay.Kind.HasCompactPreview() {
+	if status.Phase == statuscenter.AgentThinking && source.Thinking != "" && source.ThinkingDisplay.Kind.HasCompactPreview() {
 		if s.md == nil {
 			s.md = rendering.MakeMdRenderer(max(20, width), th)
 		}
@@ -307,7 +308,7 @@ func (s *ActivityStrip) animating() bool {
 		return s.source.Active
 	}
 	switch s.source.Status.Phase {
-	case types.AgentIdle, types.AgentCancelling, types.AgentCancelled, types.AgentCompleted, types.AgentFailed, types.AgentCompactionResult, types.AgentNeedsAttention, types.AgentInterrupted:
+	case statuscenter.AgentIdle, statuscenter.AgentCancelling, statuscenter.AgentCancelled, statuscenter.AgentCompleted, statuscenter.AgentFailed, statuscenter.AgentCompactionResult, statuscenter.AgentNeedsAttention, statuscenter.AgentInterrupted:
 		return false
 	default:
 		return s.source.Active

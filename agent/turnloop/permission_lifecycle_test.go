@@ -1,0 +1,289 @@
+package turnloop
+
+import (
+	"context"
+	"strconv"
+	"strings"
+	"sync/atomic"
+	"testing"
+
+	"crude/agent/provider"
+	"crude/agent/safety"
+	"crude/agent/tools"
+	"crude/internal/logger"
+	"crude/types/conversation"
+	"crude/types/toolresult"
+)
+
+func newPermissionLifecycleAgent(t *testing.T) *Agent {
+	t.Helper()
+	lg, err := logger.New(logger.Options{HomeDir: t.TempDir(), SessionID: "permission-lifecycle"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = lg.Close() })
+	return NewAgent(nil, "test-model", lg)
+}
+
+func editPermissionCall() provider.ToolCall {
+	return provider.ToolCall{
+		ID: "tool-1", InternalID: "internal-1",
+		Function: provider.FunctionCall{
+			Name:      "edit_file",
+			Arguments: `{"path":"main.go","old_string":"old","new_string":"new"}`,
+		},
+	}
+}
+
+func commandPermissionCall(command string) provider.ToolCall {
+	return provider.ToolCall{
+		ID: "tool-command", InternalID: "internal-command",
+		Function: provider.FunctionCall{Name: "execute_command", Arguments: `{"command":` + strconv.Quote(command) + `}`},
+	}
+}
+
+func TestPermissionEscapeCancellationIsNotDenial(t *testing.T) {
+	agent := newPermissionLifecycleAgent(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	blockResponses := make(chan conversation.BlockResponse, 1)
+	toolCalled := false
+	deniedEvent := false
+	agent.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
+		toolCalled = true
+		return tools.ToolResult{Content: "edited"}, nil
+	}
+
+	result := agent.executeOneToolCall(ctx, editPermissionCall(), func(evt AgentEvent) {
+		if evt.Type == "blocking" {
+			cancel()
+		}
+		if evt.Type == "permission_resolved" {
+			deniedEvent = true
+		}
+	}, blockResponses, new(string))
+
+	if toolCalled {
+		t.Fatal("cancelled permission executed the tool")
+	}
+	if deniedEvent {
+		t.Fatal("turn cancellation emitted an explicit permission decision")
+	}
+	if !strings.Contains(result.result.Content, "active turn was cancelled") || strings.Contains(result.result.Content, "user denied") {
+		t.Fatalf("cancellation result = %q", result.result.Content)
+	}
+	select {
+	case response := <-blockResponses:
+		t.Fatalf("cancellation poisoned permission channel with %q", response)
+	default:
+	}
+}
+
+func TestExplicitPermissionDenialHasDistinctLifecycleEvent(t *testing.T) {
+	agent := newPermissionLifecycleAgent(t)
+	blockResponses := make(chan conversation.BlockResponse, 1)
+	decision := ""
+	agent.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
+		t.Fatal("denied permission executed the tool")
+		return tools.ToolResult{}, nil
+	}
+
+	result := agent.executeOneToolCall(context.Background(), editPermissionCall(), func(evt AgentEvent) {
+		if evt.Type == "blocking" {
+			blockResponses <- conversation.BlockResponse{RequestID: "internal-1", Outcome: conversation.BlockAnswered, Value: "deny"}
+		}
+		if evt.Type == "permission_resolved" {
+			data, _ := evt.Data.(map[string]any)
+			decision, _ = data["decision"].(string)
+		}
+	}, blockResponses, new(string))
+
+	if decision != "denied" {
+		t.Fatalf("permission decision = %q, want denied", decision)
+	}
+	if result.result.Outcome.State != toolresult.Denied || !strings.Contains(result.result.Content, "denied by the user") {
+		t.Fatalf("denial result = %q", result.result.Content)
+	}
+}
+
+func TestHumanPermissionResponsesAlwaysReleaseExactBlock(t *testing.T) {
+	calls := []provider.ToolCall{editPermissionCall(), commandPermissionCall("bash scripts/check.sh")}
+	for _, operation := range []struct{ name, args string }{
+		{"async_execute_command", `{"command":"bash scripts/check.sh","handle":"permission-test"}`},
+		{"exec_command", `{"cmd":"bash scripts/check.sh"}`},
+		{"write_file", `{"path":"main.go","content":"new"}`},
+		{"delete_file", `{"path":"main.go"}`},
+		{"move_file", `{"source":"main.go","destination":"other.go"}`},
+		{"copy_file", `{"source":"main.go","destination":"other.go"}`},
+		{"apply_patch", `{"input":"*** Begin Patch\n*** Add File: main.go\n+new\n*** End Patch\n"}`},
+	} {
+		calls = append(calls, provider.ToolCall{ID: "tool-1", InternalID: "internal-1",
+			Function: provider.FunctionCall{Name: operation.name, Arguments: operation.args}})
+	}
+	for _, call := range calls {
+		for _, choice := range []string{"allow", "always", "deny", "cancel"} {
+			t.Run(call.Function.Name+"/"+choice, func(t *testing.T) {
+				a := newPermissionLifecycleAgent(t)
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				responses := make(chan conversation.BlockResponse, 1)
+				completed, called, decided := 0, false, false
+				a.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
+					called = true
+					if completed != 1 {
+						t.Error("tool ran before its approval block was released")
+					}
+					return tools.ToolResult{Content: "ok"}, nil
+				}
+				result := a.executeOneToolCall(ctx, call, func(evt AgentEvent) {
+					switch evt.Type {
+					case "blocking":
+						if choice == "cancel" {
+							cancel()
+						} else {
+							responses <- conversation.BlockResponse{RequestID: call.InternalID, Outcome: conversation.BlockAnswered, Value: choice}
+						}
+					case "permission_resolved":
+						decided = true
+					case "blocking_complete":
+						completed++
+						data, _ := evt.Data.(map[string]string)
+						if data["block_id"] != call.InternalID {
+							t.Errorf("released another request: %+v", data)
+						}
+					case "tool_result":
+						if completed != 1 {
+							t.Error("tool settled while approval remained pending")
+						}
+					}
+				}, responses, new(string))
+				if completed != 1 {
+					t.Errorf("%s left %d completion events, want exactly one", choice, completed)
+				}
+				wantExecution := choice == "allow" || choice == "always"
+				if called != wantExecution || decided != (choice != "cancel") {
+					t.Errorf("called=%v decided=%v for %s", called, decided, choice)
+				}
+				if choice == "deny" && (result.result.Outcome.State != toolresult.Denied || !strings.Contains(result.result.Content, "denied by the user")) {
+					t.Errorf("lost explicit rejection: %q", result.result.Content)
+				}
+			})
+		}
+	}
+}
+
+func TestLiveYoloPolicyAppliesToAlreadyConstructedAgent(t *testing.T) {
+	agent := newPermissionLifecycleAgent(t)
+	var yolo atomic.Bool
+	agent.YoloMode = yolo.Load
+	agent.PermissionReviewer = func(context.Context, provider.ToolCall, map[string]any, safety.CommandRisk, func(AgentEvent)) PermissionReview {
+		t.Fatal("live YOLO called the permission reviewer")
+		return PermissionReview{}
+	}
+	toolCalled := false
+	blocking := false
+	agent.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
+		toolCalled = true
+		return tools.ToolResult{Content: "edited"}, nil
+	}
+
+	// This simulates /yolo after the turn's Agent was already created.
+	yolo.Store(true)
+	result := agent.executeOneToolCall(context.Background(), editPermissionCall(), func(evt AgentEvent) {
+		blocking = blocking || evt.Type == "blocking"
+	}, make(chan conversation.BlockResponse, 1), new(string))
+
+	if !toolCalled || result.toolError {
+		t.Fatalf("live YOLO did not execute tool: called=%v result=%+v", toolCalled, result)
+	}
+	if blocking {
+		t.Fatal("live YOLO still opened a permission prompt")
+	}
+}
+
+func TestQuestionRequestNormalizationAndValidation(t *testing.T) {
+	encoded, err := normalizeQuestionRequest(map[string]any{
+		"questions": []any{map[string]any{
+			"question": "Choose a runtime",
+			"header":   "Runtime",
+			"options": []any{
+				map[string]any{"label": "Go", "description": "Compiled"},
+				"Rust",
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("normalizeQuestionRequest: %v", err)
+	}
+	text := string(encoded)
+	if !strings.Contains(text, `"options":["Go","Rust"]`) {
+		t.Fatalf("normalized questions = %s", text)
+	}
+
+	_, err = normalizeQuestionRequest(map[string]any{
+		"questions": []any{map[string]any{"question": "Missing a header"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "header must be non-empty") {
+		t.Fatalf("missing header error = %v", err)
+	}
+}
+
+func TestBlockResponseIgnoresStaleRequestIDs(t *testing.T) {
+	responses := make(chan conversation.BlockResponse, 2)
+	responses <- conversation.BlockResponse{RequestID: "old", Outcome: conversation.BlockAnswered, Value: "stale"}
+	responses <- conversation.BlockResponse{RequestID: "current", Outcome: conversation.BlockAnswered, Value: "fresh"}
+
+	response, ok := waitForBlockResponse(context.Background(), responses, "current")
+	if !ok || response.Value != "fresh" {
+		t.Fatalf("response = %#v, ok=%v", response, ok)
+	}
+}
+
+func TestQuestionValidationFailureIsNotUserCancellation(t *testing.T) {
+	result, isError := questionBlockResult(conversation.BlockResponse{
+		Outcome: conversation.BlockValidationError,
+		Detail:  "header is missing",
+	})
+	if !isError || !strings.Contains(result.Content, "validation failed") || strings.Contains(result.Content, "user cancelled") {
+		t.Fatalf("validation result = %+v, error=%v", result, isError)
+	}
+}
+
+func TestLocalScriptUsesConfigurableConfirmationInsteadOfBlindBlock(t *testing.T) {
+	agent := newPermissionLifecycleAgent(t)
+	agent.CommandPolicy = safety.DefaultCommandPolicy()
+	responses := make(chan conversation.BlockResponse, 1)
+	blocked := false
+	agent.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
+		t.Fatal("denied script executed")
+		return tools.ToolResult{}, nil
+	}
+	result := agent.executeOneToolCall(context.Background(), commandPermissionCall("bash scripts/check.sh"), func(event AgentEvent) {
+		if event.Type != "blocking" {
+			return
+		}
+		blocked = true
+		data, _ := event.Data.(map[string]string)
+		if data["risk"] != "unknown" {
+			t.Fatalf("script risk=%q", data["risk"])
+		}
+		responses <- conversation.BlockResponse{RequestID: "internal-command", Outcome: conversation.BlockAnswered, Value: "deny"}
+	}, responses, new(string))
+	if !blocked || result.result.Outcome.State != toolresult.Denied || !strings.Contains(result.result.Content, "denied by the user") {
+		t.Fatalf("script confirmation blocked=%v result=%q", blocked, result.result.Content)
+	}
+}
+
+func TestHardBlockedCommandEmitsPersistentSafetyAlert(t *testing.T) {
+	agent := newPermissionLifecycleAgent(t)
+	agent.CommandPolicy = safety.DefaultCommandPolicy()
+	alerted := false
+	result := agent.executeOneToolCall(context.Background(), commandPermissionCall("rm -rf /"), func(event AgentEvent) {
+		if event.Type == "safety_alert" {
+			alerted = true
+		}
+	}, nil, new(string))
+	if !alerted || !result.toolError || result.result.Outcome.State != toolresult.Denied || !strings.Contains(result.result.Content, "Command blocked") {
+		t.Fatalf("blocked alert=%v result=%#v", alerted, result)
+	}
+}

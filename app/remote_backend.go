@@ -14,13 +14,13 @@ import (
 	"strings"
 	"time"
 
-	"crude/core/client"
-	"crude/core/port"
-	"crude/core/port/remote"
-	"crude/core/protocol"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
+	"crude/core/corewire"
 	"crude/core/remoteconn"
-	"crude/core/wire"
-	"crude/types"
+	"crude/core/shellport"
+	"crude/core/shellport/remote"
+	"crude/types/statuscenter"
 	"crude/workspace"
 )
 
@@ -241,7 +241,7 @@ func (m *remoteBackendManager) Attach(ctx context.Context, id, root string) (she
 	}
 	attached, err := remote.Attach(ctx, remote.Options{Root: root, Dial: dial, Namespace: namespace, ClientID: shellClientID(m.profile, namespace), Logger: m.logger})
 	if err == nil && notice != "" {
-		attached.AddStartupIssues([]types.OperationIssue{{Title: "Remote credential storage", Summary: notice, Guidance: "Re-pair with an OS keychain to move future device credentials out of private-file storage."}})
+		attached.AddStartupIssues([]statuscenter.OperationIssue{{Title: "Remote credential storage", Summary: notice, Guidance: "Re-pair with an OS keychain to move future device credentials out of private-file storage."}})
 	}
 	return attached, err
 }

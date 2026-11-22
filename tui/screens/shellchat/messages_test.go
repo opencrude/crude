@@ -16,7 +16,7 @@ import (
 	"crude/tui/theme"
 	"crude/tui/ui"
 	"crude/tui/wm"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 // Ordinary row padding must keep the window's fill, not inherit a shaded
@@ -89,9 +89,9 @@ func TestUserAndAgentHeadersPaintSubtleThemeRulesAcrossViewport(t *testing.T) {
 				renderer.SetSize(width, 16)
 				renderer.SetChatAreaBounds(0, 16)
 				renderer.SetUsername("You")
-				renderer.SyncMessages([]types.ChatMessage{
-					{InternalID: "user", Role: types.RoleUser, Content: "first", Time: time.Unix(1000, 0)},
-					{InternalID: "agent", Role: types.RoleAssistant, Content: "second", ModelID: "m", Time: time.Unix(1001, 0)},
+				renderer.SyncMessages([]conversation.ChatMessage{
+					{InternalID: "user", Role: conversation.RoleUser, Content: "first", Time: time.Unix(1000, 0)},
+					{InternalID: "agent", Role: conversation.RoleAssistant, Content: "second", ModelID: "m", Time: time.Unix(1001, 0)},
 				}, 1, 0)
 				rows, _, height := renderer.ExportMessageRows(width)
 				screen := shellchat.New(th)
@@ -126,7 +126,7 @@ func TestUserAndAgentHeadersPaintSubtleThemeRulesAcrossViewport(t *testing.T) {
 
 func TestMessageSyncPreservesUnchangedCaches(t *testing.T) {
 	store := chatprojection.NewMessageSync()
-	messages := []types.ChatMessage{{InternalID: "domain-1", Role: types.RoleAssistant, Content: "hello"}}
+	messages := []conversation.ChatMessage{{InternalID: "domain-1", Role: conversation.RoleAssistant, Content: "hello"}}
 	store.SyncMessages(messages, 1, 0)
 	store.Messages[0].CachedLines = []string{"rendered"}
 
@@ -144,7 +144,7 @@ func TestParallelBatchPaintsChildActionsInsteadOfEscapedJSON(t *testing.T) {
 	renderer := chatprojection.NewRenderer(th)
 	renderer.SetSize(116, 18)
 	renderer.SetChatAreaBounds(0, 18)
-	renderer.SyncMessages([]types.ChatMessage{{InternalID: "batch", Role: types.RoleTool, ToolName: "multi_tool_use.parallel", ToolInput: `{"tool_uses":[{"recipient_name":"functions.execute_command","parameters":{"command":"git status --short"}},{"recipient_name":"functions.read_file","parameters":{"path":"main.go"}}]}`, ToolStatus: "success", ToolPreviewPhase: "done", Content: `{"results":[{"recipient_name":"execute_command","result":"M main.go\nM go.mod","error":false},{"recipient_name":"read_file","result":"package main","error":false}]}`}}, 1, 0)
+	renderer.SyncMessages([]conversation.ChatMessage{{InternalID: "batch", Role: conversation.RoleTool, ToolName: "multi_tool_use.parallel", ToolInput: `{"tool_uses":[{"recipient_name":"functions.execute_command","parameters":{"command":"git status --short"}},{"recipient_name":"functions.read_file","parameters":{"path":"main.go"}}]}`, ToolStatus: "success", ToolPreviewPhase: "done", Content: `{"results":[{"recipient_name":"execute_command","result":"M main.go\nM go.mod","error":false},{"recipient_name":"read_file","result":"package main","error":false}]}`}}, 1, 0)
 	renderer.ToggleDisclosure("activity:batch:0")
 	rows, _, height := renderer.ExportMessageRows(116)
 	screen := shellchat.New(th)
@@ -173,11 +173,11 @@ func TestRetainedToolLeavesPaintQuietlyWithColoredActivity(t *testing.T) {
 			r := chatprojection.NewRenderer(th)
 			r.SetSize(width-4, 40)
 			r.SetChatAreaBounds(0, 40)
-			r.SyncMessages([]types.ChatMessage{
-				{InternalID: "read", ToolRoundID: "previous", Role: types.RoleTool, ToolName: "read_file", ToolArgs: "src/source.go", ToolStatus: types.ToolStatusSuccess, ToolPreviewPhase: types.ToolPreviewDone},
-				{InternalID: "command", ToolRoundID: "previous", Role: types.RoleTool, ToolName: "execute_command", ToolCommand: "go test ./tui/chatprojection ./tui/screens/shellchat", ToolStatus: types.ToolStatusSuccess, ToolPreviewPhase: types.ToolPreviewDone},
-				{InternalID: "active", ToolRoundID: "current", Role: types.RoleTool, ToolName: "execute_command", ToolCommand: "go test ./...", ToolStatus: types.ToolStatusCalling, ToolPreviewPhase: types.ToolPreviewStreaming},
-				{InternalID: "failed", ToolRoundID: "current", Role: types.RoleTool, ToolName: "exec_command", ToolCommand: "fixture --fail", ToolStatus: types.ToolStatusError, ToolPreviewPhase: types.ToolPreviewError, Content: `{"exit_code":2,"output":"fixture failed"}`},
+			r.SyncMessages([]conversation.ChatMessage{
+				{InternalID: "read", ToolRoundID: "previous", Role: conversation.RoleTool, ToolName: "read_file", ToolArgs: "src/source.go", ToolStatus: conversation.ToolStatusSuccess, ToolPreviewPhase: conversation.ToolPreviewDone},
+				{InternalID: "command", ToolRoundID: "previous", Role: conversation.RoleTool, ToolName: "execute_command", ToolCommand: "go test ./tui/chatprojection ./tui/screens/shellchat", ToolStatus: conversation.ToolStatusSuccess, ToolPreviewPhase: conversation.ToolPreviewDone},
+				{InternalID: "active", ToolRoundID: "current", Role: conversation.RoleTool, ToolName: "execute_command", ToolCommand: "go test ./...", ToolStatus: conversation.ToolStatusCalling, ToolPreviewPhase: conversation.ToolPreviewStreaming},
+				{InternalID: "failed", ToolRoundID: "current", Role: conversation.RoleTool, ToolName: "exec_command", ToolCommand: "fixture --fail", ToolStatus: conversation.ToolStatusError, ToolPreviewPhase: conversation.ToolPreviewError, Content: `{"exit_code":2,"output":"fixture failed"}`},
 			}, 1, 0)
 			rows, _, height := r.ExportMessageRows(width - 4)
 			s := shellchat.New(th)

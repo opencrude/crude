@@ -13,7 +13,7 @@ import (
 
 	"crude/tui/surface"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -32,7 +32,7 @@ func TestConnectedWorkspaceTrustStartsServerAndClosesPeerPrompt(t *testing.T) {
 	runtime := remoteJourneyRuntime(t, "", func(w *workspace.Workspace) {
 		w.LSPMgr.SetRuntime(server)
 		settings := w.AppDefaults()
-		settings.LSP.Languages["go"] = types.LSPLanguageSettings{Enabled: true, Command: executable}
+		settings.LSP.Languages["go"] = setting.LSPLanguage{Enabled: true, Command: executable}
 		w.SetAppDefaults(settings)
 		authority <- w.LSPMgr
 	})
@@ -40,8 +40,8 @@ func TestConnectedWorkspaceTrustStartsServerAndClosesPeerPrompt(t *testing.T) {
 	manager := <-authority
 	two := newRemoteJourneyShell(t, runtime, root)
 	shells := []remoteJourneyShell{one, two}
-	one.app.Update(types.TickMsg{})
-	two.app.Update(types.TickMsg{})
+	one.app.Update(TickMsg{})
+	two.app.Update(TickMsg{})
 	if !one.app.overlayHost.IsOpen(ui.OverlayWorkspaceTrust) || !two.app.overlayHost.IsOpen(ui.OverlayWorkspaceTrust) {
 		t.Fatal("both undecided shells should ask")
 	}
@@ -51,7 +51,7 @@ func TestConnectedWorkspaceTrustStartsServerAndClosesPeerPrompt(t *testing.T) {
 	_, cmd := one.app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	runAppCommand(t, one.app, cmd)
 	remoteJourneyUntil(t, shells, func() bool {
-		two.app.Update(types.TickMsg{})
+		two.app.Update(TickMsg{})
 		return !two.app.overlayHost.IsOpen(ui.OverlayWorkspaceTrust) && two.app.ws.LoadAppSettings().Analysis.Trusted()
 	})
 	if one.app.ws.LoadWorkspaceOverrides().AnalysisRootIdentity == "" {
@@ -66,7 +66,7 @@ func TestConnectedWorkspaceTrustStartsServerAndClosesPeerPrompt(t *testing.T) {
 		t.Fatal("language-server owner did not receive trust")
 	}
 	three := newRemoteJourneyShell(t, runtime, root)
-	three.app.Update(types.TickMsg{})
+	three.app.Update(TickMsg{})
 	if three.app.overlayHost.IsOpen(ui.OverlayWorkspaceTrust) {
 		t.Fatal("new shell asked despite the stored decision")
 	}
@@ -76,7 +76,7 @@ func TestConnectedWorkspaceRestrictedChoiceSurvivesNextShell(t *testing.T) {
 	root := t.TempDir()
 	runtime := remoteJourneyRuntime(t, "")
 	one := newRemoteJourneyShell(t, runtime, root)
-	one.app.Update(types.TickMsg{})
+	one.app.Update(TickMsg{})
 	if !one.app.overlayHost.IsOpen(ui.OverlayWorkspaceTrust) {
 		t.Fatal("undecided folder did not ask")
 	}
@@ -90,7 +90,7 @@ func TestConnectedWorkspaceRestrictedChoiceSurvivesNextShell(t *testing.T) {
 		t.Fatalf("restricted choice or identity incorrect: %+v", stored)
 	}
 	two := newRemoteJourneyShell(t, runtime, root)
-	two.app.Update(types.TickMsg{})
+	two.app.Update(TickMsg{})
 	if two.app.overlayHost.IsOpen(ui.OverlayWorkspaceTrust) {
 		t.Fatal("new shell asked again after restricted choice")
 	}
@@ -148,7 +148,7 @@ func TestConnectedWorkspaceTrustPersistenceFailureKeepsActionsAndRetries(t *test
 			}
 			_, cmd := one.app.Update(tea.WindowSizeMsg{Width: size.W, Height: size.H})
 			runAppCommand(t, one.app, cmd)
-			one.app.Update(types.TickMsg{})
+			one.app.Update(TickMsg{})
 			paint, _ := workspaceTrustPromptPaint(t, one.app)
 			for _, want := range []string{"Trust folder", "Open in restricted mode", "Workspace settings."} {
 				if !strings.Contains(paint, want) {
@@ -198,7 +198,7 @@ func TestConnectedWorkspaceTrustPersistenceFailureKeepsActionsAndRetries(t *test
 			if err := w.WorkspaceDB.DB.QueryRow("SELECT value FROM workspace_metadata WHERE key = 'workspace_settings'").Scan(&encoded); err != nil {
 				t.Fatal(err)
 			}
-			var saved types.WorkspaceOverrides
+			var saved setting.WorkspaceOverrides
 			if err := json.Unmarshal([]byte(encoded), &saved); err != nil {
 				t.Fatal(err)
 			}
@@ -213,11 +213,11 @@ func TestConnectedWorkspaceTrustEscAsksAfterRealSwitchBack(t *testing.T) {
 	root, away := t.TempDir(), t.TempDir()
 	runtime := remoteJourneyRuntime(t, "")
 	one := newRemoteJourneyShell(t, runtime, root)
-	one.app.Update(types.TickMsg{})
+	one.app.Update(TickMsg{})
 	workspaceTrustPromptPaint(t, one.app)
 	generation := one.app.workspaceSwitchGen.Load()
 	one.app.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
-	one.app.Update(types.TickMsg{})
+	one.app.Update(TickMsg{})
 	if one.app.overlayHost.IsOpen(ui.OverlayWorkspaceTrust) || !one.app.ws.LoadAppSettings().Analysis.DecisionNeeded() ||
 		len(one.app.ws.LoadWorkspaceOverrides().Analysis) != 0 {
 		t.Fatal("Esc stored a choice or asked twice in one attachment")
@@ -226,11 +226,11 @@ func TestConnectedWorkspaceTrustEscAsksAfterRealSwitchBack(t *testing.T) {
 	if one.app.ws.RootPath() != away || one.app.workspaceSwitchGen.Load() <= generation {
 		t.Fatal("test did not complete a real workspace switch")
 	}
-	one.app.Update(types.TickMsg{})
+	one.app.Update(TickMsg{})
 	workspaceTrustPromptPaint(t, one.app)
 	one.app.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	runAppCommand(t, one.app, confirmWorkspaceSwitchTest(t, one.app, root))
-	one.app.Update(types.TickMsg{})
+	one.app.Update(TickMsg{})
 	paint, _ := workspaceTrustPromptPaint(t, one.app)
 	if one.app.ws.RootPath() != root || !strings.Contains(paint, "Trust this folder?") ||
 		!one.app.ws.LoadAppSettings().Analysis.DecisionNeeded() || len(one.app.ws.LoadWorkspaceOverrides().Analysis) != 0 {
@@ -243,7 +243,7 @@ func TestConnectedWorkspaceTrustPageResetRemovesDurableChoice(t *testing.T) {
 	authority := make(chan *workspace.Workspace, 1)
 	runtime := remoteJourneyRuntime(t, "", func(w *workspace.Workspace) {
 		grantSemanticFixture(t, w)
-		result := w.PreparePreferencesSave(types.SettingsScopeWorkspace, []types.SettingEdit{
+		result := w.PreparePreferencesSave(setting.ScopeWorkspace, []setting.Edit{
 			{Path: []string{"editor", "tab_size"}, After: json.RawMessage("7")},
 			{Path: []string{"lsp", "languages", "go", "enabled"}, After: json.RawMessage("false")},
 		})()
@@ -255,7 +255,7 @@ func TestConnectedWorkspaceTrustPageResetRemovesDurableChoice(t *testing.T) {
 	})
 	one := newRemoteJourneyShell(t, runtime, root)
 	w := <-authority
-	one.app.openSettings(types.SettingsScopeWorkspace)
+	one.app.openSettings(setting.ScopeWorkspace)
 	body := one.app.settingsSurface(one.app.overlayHost.Window(ui.OverlayWorkspaceSettings))
 	if body == nil {
 		t.Fatal("Workspace settings did not open")
@@ -298,7 +298,7 @@ func TestConnectedWorkspaceTrustPageResetRemovesDurableChoice(t *testing.T) {
 		t.Fatal("Code Intelligence Reset erased the Language Servers inventory", encoded)
 	}
 	next := newRemoteJourneyShell(t, runtime, root)
-	next.app.Update(types.TickMsg{})
+	next.app.Update(TickMsg{})
 	paint, _ := workspaceTrustPromptPaint(t, next.app)
 	if !strings.Contains(paint, "Trust this folder?") {
 		t.Fatal("new shell did not ask after the persisted page Reset", paint)

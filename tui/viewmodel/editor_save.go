@@ -10,11 +10,11 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/port"
-	"crude/text/encoding"
+	"crude/core/shellport"
+	"crude/text/textencoding"
 	"crude/tui/editor"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -316,7 +316,7 @@ func (m *App) onEditorContentChanged(ed *editor.Editor, filePath, text string) {
 		m.ws.Documents().Cancel(ed.BufferID())
 		return
 	}
-	if filePath != "" && m.editorSettings.AutoSave == types.AutoSaveAfterDelay && ed.Modified() && m.DirtyPromptPath != filePath {
+	if filePath != "" && m.editorSettings.AutoSave == setting.AutoSaveAfterDelay && ed.Modified() && m.DirtyPromptPath != filePath {
 		delay := time.Duration(m.editorSettings.AutoSaveDelay) * time.Millisecond
 		m.ws.Documents().Schedule(ed.BufferID(), filePath, ed.Revision(), delay)
 	}
@@ -514,7 +514,7 @@ func (m *App) handleEditorSaveResult(msg editorSaveResultMsg) tea.Cmd {
 }
 
 func (m *App) handleAutosaveDue(msg workspace.DocumentAutosaveDueMsg) tea.Cmd {
-	if m.editorSettings.AutoSave != types.AutoSaveAfterDelay || m.ws.Documents() == nil || !m.ws.Documents().AcceptDue(msg) {
+	if m.editorSettings.AutoSave != setting.AutoSaveAfterDelay || m.ws.Documents() == nil || !m.ws.Documents().AcceptDue(msg) {
 		return nil
 	}
 	// The deadline carries the buffer lifetime; a rename between scheduling and
@@ -526,8 +526,8 @@ func (m *App) handleAutosaveDue(msg workspace.DocumentAutosaveDueMsg) tea.Cmd {
 	return m.requestEditorSave(tab.Editor, workspace.DocumentSaveAfterDelay, false)
 }
 
-func (m *App) applyEditorSettings(settings types.EditorSettings) {
-	settings = types.NormalizeEditorSettings(settings)
+func (m *App) applyEditorSettings(settings setting.Editor) {
+	settings = setting.NormalizeEditor(settings)
 	m.editorSettings = settings
 	if m.EditorState == nil {
 		return
@@ -546,7 +546,7 @@ func (m *App) applyEditorSettings(settings types.EditorSettings) {
 			state.pending = false
 			state.cancel()
 		}
-		if ed.FilePath() != "" && settings.AutoSave == types.AutoSaveAfterDelay && ed.Modified() {
+		if ed.FilePath() != "" && settings.AutoSave == setting.AutoSaveAfterDelay && ed.Modified() {
 			m.ws.Documents().Schedule(ed.BufferID(), ed.FilePath(), ed.Revision(), time.Duration(settings.AutoSaveDelay)*time.Millisecond)
 		}
 	}

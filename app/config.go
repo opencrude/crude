@@ -12,28 +12,28 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/session"
-	"crude/buildinfo"
-	"crude/network"
-	ttypes "crude/types"
+	"crude/internal/buildinfo"
+	"crude/internal/network"
 	captypes "crude/types/capability"
+	"crude/types/setting"
 )
 
 type FileConfig struct {
 	raw             json.RawMessage
-	Onboarding      *ttypes.OnboardingSettings   `json:"onboarding,omitempty"`
-	Accounts        map[string]provider.Account  `json:"accounts,omitempty"`
-	TurnLogsEnabled *bool                        `json:"turn_logs_enabled,omitempty"`
-	Agents          *session.AgentsConfig        `json:"agents,omitempty"`
-	Theme           *ttypes.ThemeSettings        `json:"theme,omitempty"`
-	Editor          *ttypes.EditorSettings       `json:"editor,omitempty"`
-	LSP             *ttypes.LSPSettings          `json:"lsp,omitempty"`
-	UI              *ttypes.UISettings           `json:"ui,omitempty"`
-	Memory          *ttypes.MemorySettings       `json:"memory,omitempty"`
-	Safety          *ttypes.SafetySettings       `json:"safety,omitempty"`
-	LocalHistory    *ttypes.LocalHistorySettings `json:"local_history,omitempty"`
-	Terminal        *ttypes.TerminalSettings     `json:"terminal,omitempty"`
-	Capabilities    *captypes.Settings           `json:"capabilities,omitempty"`
-	Network         *network.Settings            `json:"network,omitempty"`
+	Onboarding      *setting.Onboarding         `json:"onboarding,omitempty"`
+	Accounts        map[string]provider.Account `json:"accounts,omitempty"`
+	TurnLogsEnabled *bool                       `json:"turn_logs_enabled,omitempty"`
+	Agents          *session.AgentsConfig       `json:"agents,omitempty"`
+	Theme           *setting.Theme              `json:"theme,omitempty"`
+	Editor          *setting.Editor             `json:"editor,omitempty"`
+	LSP             *setting.LSP                `json:"lsp,omitempty"`
+	UI              *setting.UI                 `json:"ui,omitempty"`
+	Memory          *setting.Memory             `json:"memory,omitempty"`
+	Safety          *setting.Safety             `json:"safety,omitempty"`
+	LocalHistory    *setting.LocalHistory       `json:"local_history,omitempty"`
+	Terminal        *setting.Terminal           `json:"terminal,omitempty"`
+	Capabilities    *captypes.Settings          `json:"capabilities,omitempty"`
+	Network         *network.Settings           `json:"network,omitempty"`
 }
 
 // IsTurnLogsEnabled reports whether full request/response dumps are written
@@ -68,7 +68,7 @@ func loadFileConfigFrom(path string) (FileConfig, error) {
 		return FileConfig{}, fmt.Errorf("configuration must contain one JSON object")
 	}
 	cfg := DefaultFileConfig()
-	if err := ttypes.DecodeStoredSettings(data, &cfg); err != nil {
+	if err := setting.DecodeStored(data, &cfg); err != nil {
 		return FileConfig{}, err
 	}
 	// Transport and credentials are atomic security groups: tolerant ordinary
@@ -162,7 +162,7 @@ func updateFileConfigWithFallback(update func(*FileConfig) error, overwriteInval
 		// re-encode their sparse groups through zero-valued Go structs.
 		data = cfg.raw
 	} else if len(originalRaw) != 0 {
-		data, err = ttypes.PatchStoredSettings(originalRaw, ttypes.SettingsEdits(before, cfg))
+		data, err = setting.PatchStored(originalRaw, setting.Edits(before, cfg))
 		if err != nil {
 			return FileConfig{}, err
 		}
@@ -239,8 +239,9 @@ func cloneAccounts(accounts map[string]provider.Account) map[string]provider.Acc
 	return provider.CloneAccounts(accounts)
 }
 
-func FileConfigToAppSettings(fc FileConfig) ttypes.AppSettings {
-	s := ttypes.AppSettings{
+// FileConfigToAppSettings converts the file config into app settings with defaults filled in.
+func FileConfigToAppSettings(fc FileConfig) setting.App {
+	s := setting.App{
 		Accounts: cloneAccounts(fc.Accounts),
 	}
 	if fc.Onboarding != nil {
@@ -249,14 +250,14 @@ func FileConfigToAppSettings(fc FileConfig) ttypes.AppSettings {
 	if fc.Theme != nil {
 		s.Theme = *fc.Theme
 	}
-	s.Editor = ttypes.DefaultEditorSettings()
+	s.Editor = setting.DefaultEditor()
 	if fc.Editor != nil {
 		s.Editor = *fc.Editor
 		if len(fc.raw) != 0 {
 			var groups map[string]json.RawMessage
 			_ = json.Unmarshal(fc.raw, &groups)
-			s.Editor = ttypes.DefaultEditorSettings()
-			_ = ttypes.DecodeStoredSettings(groups["editor"], &s.Editor)
+			s.Editor = setting.DefaultEditor()
+			_ = setting.DecodeStored(groups["editor"], &s.Editor)
 		}
 	}
 	if fc.LSP != nil {
@@ -264,8 +265,8 @@ func FileConfigToAppSettings(fc FileConfig) ttypes.AppSettings {
 		if len(fc.raw) != 0 {
 			var groups map[string]json.RawMessage
 			_ = json.Unmarshal(fc.raw, &groups)
-			s.LSP = ttypes.DefaultLSPSettings()
-			_ = ttypes.DecodeStoredSettings(groups["lsp"], &s.LSP)
+			s.LSP = setting.DefaultLSP()
+			_ = setting.DecodeStored(groups["lsp"], &s.LSP)
 		}
 	}
 	if fc.UI != nil {
@@ -290,27 +291,28 @@ func FileConfigToAppSettings(fc FileConfig) ttypes.AppSettings {
 	}
 	if fc.Safety != nil {
 		s.Safety = *fc.Safety
-		s.Safety.CommandRules = append([]ttypes.CommandSeverityRule(nil), fc.Safety.CommandRules...)
+		s.Safety.CommandRules = append([]setting.CommandSeverityRule(nil), fc.Safety.CommandRules...)
 	}
 	if fc.LocalHistory != nil {
 		s.LocalHistory = *fc.LocalHistory
 		s.LocalHistory.ExtraIgnorePatterns = append([]string(nil), fc.LocalHistory.ExtraIgnorePatterns...)
 	}
 	if fc.Terminal != nil {
-		s.Terminal = ttypes.CloneTerminalSettings(*fc.Terminal)
+		s.Terminal = setting.CloneTerminal(*fc.Terminal)
 	}
-	ttypes.ApplyAppDefaults(&s)
-	return ttypes.CloneAppSettings(s)
+	setting.ApplyAppDefaults(&s)
+	return setting.CloneApp(s)
 }
 
-func ApplyAppSettingsToFileConfig(fc *FileConfig, s ttypes.AppSettings) {
+// ApplyAppSettingsToFileConfig writes app settings back into the file config for saving.
+func ApplyAppSettingsToFileConfig(fc *FileConfig, s setting.App) {
 	if fc == nil {
 		return
 	}
 	onboarding := s.Onboarding
 	fc.Onboarding = &onboarding
 	theme, editor, lsp, ui, memorySettings, safetySettings, historySettings := s.Theme, s.Editor, s.LSP, s.UI, s.Memory, s.Safety, s.LocalHistory
-	safetySettings.CommandRules = append([]ttypes.CommandSeverityRule(nil), s.Safety.CommandRules...)
+	safetySettings.CommandRules = append([]setting.CommandSeverityRule(nil), s.Safety.CommandRules...)
 	fc.Theme = &theme
 	fc.Editor = &editor
 	fc.LSP = &lsp
@@ -318,7 +320,7 @@ func ApplyAppSettingsToFileConfig(fc *FileConfig, s ttypes.AppSettings) {
 	fc.Memory = &memorySettings
 	fc.Safety = &safetySettings
 	fc.LocalHistory = &historySettings
-	terminalSettings := ttypes.CloneTerminalSettings(s.Terminal)
+	terminalSettings := setting.CloneTerminal(s.Terminal)
 	fc.Terminal = &terminalSettings
 	networkSettings := network.Normalize(s.Network)
 	fc.Network = &networkSettings
@@ -329,8 +331,8 @@ func ApplyAppSettingsToFileConfig(fc *FileConfig, s ttypes.AppSettings) {
 	}
 	if len(s.Agents.Categories) > 0 || s.Agents.ActiveProfile != "" ||
 		s.Agents.MaxConcurrent > 0 || s.Agents.Shell != "" || s.Agents.MaxWaitMinutes > 0 ||
-		s.Agents.Suggestions != (ttypes.SuggestionSettings{}) ||
-		fc.Agents != nil && (fc.Agents.Shell != "" || fc.Agents.MaxWaitMinutes > 0 || fc.Agents.Suggestions != (ttypes.SuggestionSettings{})) {
+		s.Agents.Suggestions != (setting.Suggestion{}) ||
+		fc.Agents != nil && (fc.Agents.Shell != "" || fc.Agents.MaxWaitMinutes > 0 || fc.Agents.Suggestions != (setting.Suggestion{})) {
 		agents := session.DefaultAgentsConfig()
 		if fc.Agents != nil {
 			agents = session.CloneAgentsConfig(*fc.Agents)
@@ -364,7 +366,7 @@ func FileConfigToSession(fc FileConfig) *session.Config {
 	cfg.Capabilities = captypes.WithDefaults(cfg.Capabilities)
 	if fc.Safety != nil {
 		cfg.Safety = *fc.Safety
-		cfg.Safety.CommandRules = append([]ttypes.CommandSeverityRule(nil), fc.Safety.CommandRules...)
+		cfg.Safety.CommandRules = append([]setting.CommandSeverityRule(nil), fc.Safety.CommandRules...)
 	}
 	return cfg
 }
@@ -377,7 +379,7 @@ func SessionToFileConfig(sc *session.Config) FileConfig {
 	fc.TurnLogsEnabled = &tl
 	fc.Agents = &sc.Agents
 	safety := sc.Safety
-	safety.CommandRules = append([]ttypes.CommandSeverityRule(nil), sc.Safety.CommandRules...)
+	safety.CommandRules = append([]setting.CommandSeverityRule(nil), sc.Safety.CommandRules...)
 	fc.Safety = &safety
 	return fc
 }

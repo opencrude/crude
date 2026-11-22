@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"crude/types/conversation"
 	"crude/workspace"
 )
 
@@ -26,7 +27,7 @@ func TestMainPaneVisualAcceptance(t *testing.T) {
 		app.ws.SessionsByAgent()[id] = sess
 		app.AddOrchestrator(id)
 		app.ws.AgentMgr().Get(id).Label = id
-		app.ws.AgentMgr().Get(id).State.Messages.AppendMessage(workspace.Message{Role: workspace.MessageRoleAssistant, Content: "This is " + id + ". Drag my tab to an edge to split, or to the middle to join a group. My conversation and draft stay mine.", Time: time.Now()})
+		app.ws.AgentMgr().Get(id).State.Messages.AppendMessage(conversation.Message{Role: workspace.MessageRoleAssistant, Content: "This is " + id + ". Drag my tab to an edge to split, or to the middle to join a group. My conversation and draft stay mine.", Time: time.Now()})
 		app.syncAgentMessages(id, false)
 		app.Input.SetInput(id + " draft stays with this session")
 	}

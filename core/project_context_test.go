@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -21,8 +21,8 @@ func TestRetainedCoreWatcherInvalidatesSelectedArtifactsWithoutAShell(t *testing
 		t.Fatal(err)
 	}
 	runtime, err := New(func(root string) (*workspace.Workspace, error) {
-		w := workspace.NewWorkspace(root, "test", "tester", types.Settings{}, coreTestLogger{})
-		w.SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
+		w := workspace.NewWorkspace(root, "test", "tester", setting.Settings{}, coreTestLogger{})
+		w.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}})
 		return w, nil
 	}, filepath.Join(t.TempDir(), "receipts.db"))
 	if err != nil {

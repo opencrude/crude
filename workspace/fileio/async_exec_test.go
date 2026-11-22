@@ -2,6 +2,7 @@ package fileio
 
 import (
 	"bufio"
+	"crude/types/command"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -114,7 +115,7 @@ func TestRetainedOutputPagePreservesExactRawIntervalsWithValidPayload(t *testing
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !utf8.ValidString(page.Output) || page.NextByte != cursor+1 || len(page.Descriptor.ShownRanges) != 1 || page.Descriptor.ShownRanges[0] != (OutputRange{StartByte: cursor, EndByte: cursor + 1}) {
+		if !utf8.ValidString(page.Output) || page.NextByte != cursor+1 || len(page.Descriptor.ShownRanges) != 1 || page.Descriptor.ShownRanges[0] != (command.OutputRange{StartByte: cursor, EndByte: cursor + 1}) {
 			t.Fatalf("page at %d = %+v valid=%t", cursor, page, utf8.ValidString(page.Output))
 		}
 		payload := []byte(page.Output)
@@ -353,7 +354,7 @@ func TestRetainedOutputPageReportsExactRangesStatusAndCursor(t *testing.T) {
 	}
 	if page.SinceByte != 11 || page.NextByte != 108 || len(page.Output) != 97 || !page.HasMore ||
 		page.Descriptor.Status != AsyncCompleted || page.Descriptor.TotalBytes != totalBytes ||
-		len(page.Descriptor.ShownRanges) != 1 || page.Descriptor.ShownRanges[0] != (OutputRange{StartByte: 11, EndByte: 108}) {
+		len(page.Descriptor.ShownRanges) != 1 || page.Descriptor.ShownRanges[0] != (command.OutputRange{StartByte: 11, EndByte: 108}) {
 		t.Fatalf("page=%+v", page)
 	}
 

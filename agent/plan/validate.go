@@ -67,7 +67,7 @@ func Validate(existing *Plan, req UpdateRequest) error {
 	return nil
 }
 
-func findDependencyCycle(steps []PlanStep) []string {
+func findDependencyCycle(steps []Step) []string {
 	index := make(map[string]int, len(steps))
 	for i, step := range steps {
 		index[step.ID] = i

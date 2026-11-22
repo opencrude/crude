@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"crude/agent/provider"
-	"crude/logger"
+	"crude/internal/logger"
 )
 
 // AdmitBytes validates inline bytes without opening a path, fetching a URI or

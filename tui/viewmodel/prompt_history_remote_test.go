@@ -7,25 +7,25 @@ import (
 	"reflect"
 	"testing"
 
+	"crude/agent/prompthistory"
 	"crude/agent/sessiondb"
-	"crude/core/port"
-	"crude/history"
+	"crude/core/shellport"
 	"crude/workspace"
 )
 
 type promptHistoryRemoteFixture struct {
 	shellport.Workspace
-	entries          []history.Entry
+	entries          []prompthistory.Entry
 	sessionID, text  string
-	attachments      []history.Attachment
+	attachments      []prompthistory.Attachment
 	listed, recorded int
 }
 
-func (f *promptHistoryRemoteFixture) ListPromptHistory(context.Context, string) ([]history.Entry, error) {
+func (f *promptHistoryRemoteFixture) ListPromptHistory(context.Context, string) ([]prompthistory.Entry, error) {
 	f.listed++
 	return f.entries, nil
 }
-func (f *promptHistoryRemoteFixture) RecordPromptHistory(_ context.Context, sessionID, text string, attachments []history.Attachment) ([]history.Entry, error) {
+func (f *promptHistoryRemoteFixture) RecordPromptHistory(_ context.Context, sessionID, text string, attachments []prompthistory.Attachment) ([]prompthistory.Entry, error) {
 	f.recorded++
 	f.sessionID, f.text, f.attachments = sessionID, text, attachments
 	return f.entries, nil
@@ -33,10 +33,10 @@ func (f *promptHistoryRemoteFixture) RecordPromptHistory(_ context.Context, sess
 
 func TestRemotePromptHistoryRecordUsesCoreSnapshotWithoutLocalWriter(t *testing.T) {
 	app := newTestApp(t)
-	f := &promptHistoryRemoteFixture{Workspace: app.ws, entries: []history.Entry{{ID: "core-id", Text: "send [Pasted IMG1]", Count: 9, FirstSeen: 11, LastSeen: 22}}}
+	f := &promptHistoryRemoteFixture{Workspace: app.ws, entries: []prompthistory.Entry{{ID: "core-id", Text: "send [Pasted IMG1]", Count: 9, FirstSeen: 11, LastSeen: 22}}}
 	app.ws = f
 	app.ActiveSession = &workspace.Session{SessionID: "exact-session"}
-	app.SetPromptHistory(history.New())
+	app.SetPromptHistory(prompthistory.New())
 	app.promptHistoryPath = filepath.Join(t.TempDir(), "must-not-exist.json")
 	ref := sessiondb.Reference{ID: "exact-image", Label: "[Pasted IMG1]", SessionID: "exact-session", FilePath: "/ssh-server-only/image.png"}
 	cmd, handled := app.recordRemotePrompt(" send [Pasted IMG1] ", []sessiondb.Reference{ref})
@@ -58,9 +58,9 @@ func TestRemotePromptHistoryRecordUsesCoreSnapshotWithoutLocalWriter(t *testing.
 
 func TestRemotePromptHistoryLoadRejectsLateOwners(t *testing.T) {
 	app := newTestApp(t)
-	f := &promptHistoryRemoteFixture{Workspace: app.ws, entries: []history.Entry{{ID: "core-id", Text: "remote", Count: 4}}}
+	f := &promptHistoryRemoteFixture{Workspace: app.ws, entries: []prompthistory.Entry{{ID: "core-id", Text: "remote", Count: 4}}}
 	app.ws = f
-	app.SetPromptHistory(history.New())
+	app.SetPromptHistory(prompthistory.New())
 	cmd := app.loadRemotePromptHistory()
 	if cmd == nil || f.listed != 0 {
 		t.Fatal("load was not deferred")
@@ -77,10 +77,10 @@ func TestRemotePromptHistoryLoadRejectsLateOwners(t *testing.T) {
 	if app.Prompts.Len() != 0 {
 		t.Fatal("late generation result installed")
 	}
-	app.SetPromptHistory(history.New())
+	app.SetPromptHistory(prompthistory.New())
 	cmd = app.loadRemotePromptHistory()
 	msg = cmd().(remotePromptHistoryMsg)
-	app.SetPromptHistory(history.New())
+	app.SetPromptHistory(prompthistory.New())
 	app.applyRemotePromptHistory(msg)
 	if app.Prompts.Len() != 0 {
 		t.Fatal("late store result installed")
@@ -91,7 +91,7 @@ func TestRemotePromptHistoryMissingSessionNeverFallsBack(t *testing.T) {
 	app := newTestApp(t)
 	f := &promptHistoryRemoteFixture{Workspace: app.ws}
 	app.ws = f
-	app.SetPromptHistory(history.New())
+	app.SetPromptHistory(prompthistory.New())
 	cmd, handled := app.recordRemotePrompt("text-only prompt", nil)
 	if !handled || cmd == nil || cmd().(remotePromptHistoryMsg).err == nil || f.recorded != 0 {
 		t.Fatal("missing exact session did not fail closed")

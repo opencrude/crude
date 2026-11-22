@@ -1,11 +1,11 @@
 package editor
 
 import (
-	"crude/text/diff"
+	"crude/text/textdiff"
 	"strings"
 )
 
-func setEditorAnnotationForTest(ed *Editor, revision uint64, hunks []GitHunk, blame []GitBlameLine, conflicted bool) {
+func setEditorAnnotationForTest(ed *Editor, revision uint64, hunks []textdiff.Hunk, blame []GitBlameLine, conflicted bool) {
 	lines := textdiff.Lines(ed.Value())
 	for i := len(hunks) - 1; i >= 0; i-- {
 		h := hunks[i]

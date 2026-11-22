@@ -8,10 +8,10 @@ import (
 	"slices"
 	"strings"
 
-	"crude/agent"
 	"crude/agent/sessiondb"
 	"crude/agent/tools"
-	ttypes "crude/types"
+	"crude/agent/turnloop"
+	"crude/types/conversation"
 )
 
 // childConnection is a child's account, model and thinking-effort selection.
@@ -23,7 +23,7 @@ type childConnection struct {
 	ThinkingEffort string `json:"thinking_effort"`
 }
 
-func connectionOf(spec agent.SubAgentSpec) childConnection {
+func connectionOf(spec turnloop.SubAgentSpec) childConnection {
 	return childConnection{AccountID: spec.AccountID, Model: spec.Model, ThinkingEffort: spec.ThinkingEffort}
 }
 
@@ -31,7 +31,7 @@ func connectionOf(spec agent.SubAgentSpec) childConnection {
 // from: launch, each supervised attempt, continuation and request-boundary
 // switches. Building from account and model alone silently dropped the
 // configured thinking effort and sampling.
-func childProviderConfig(spec agent.SubAgentSpec) CategoryConfig {
+func childProviderConfig(spec turnloop.SubAgentSpec) CategoryConfig {
 	return CategoryConfig{
 		AccountID: spec.AccountID, Model: spec.Model, ThinkingEffort: spec.ThinkingEffort, ServiceTier: spec.ServiceTier,
 		ModelTemperature: spec.ModelTemperature, ModelTopP: spec.ModelTopP,
@@ -41,7 +41,7 @@ func childProviderConfig(spec agent.SubAgentSpec) CategoryConfig {
 
 // applyConnection installs next into spec. Capability and sampling values
 // describe one model; a different model resolves its own from the registry.
-func applyConnection(spec *agent.SubAgentSpec, next childConnection) {
+func applyConnection(spec *turnloop.SubAgentSpec, next childConnection) {
 	if next.Model != spec.Model || next.AccountID != spec.AccountID {
 		spec.ModelContextWindow, spec.ModelMaxOutput = 0, 0
 		spec.ModelInputPrice, spec.ModelOutputPrice, spec.ModelCachePrice = 0, 0, 0
@@ -73,10 +73,10 @@ func parseConnectionRequest(params map[string]any) (connectionRequest, error) {
 		switch {
 		case value == "default":
 			request.effortDefault, request.hasEffort = true, true
-		case ttypes.ValidThinkingLevel(value):
+		case conversation.ValidThinkingLevel(value):
 			request.effort, request.hasEffort = value, true
 		default:
-			return request, fmt.Errorf("thinking_effort %q is not one of default, %s", value, strings.Join(ttypes.ThinkingLevels, ", "))
+			return request, fmt.Errorf("thinking_effort %q is not one of default, %s", value, strings.Join(conversation.ThinkingLevels, ", "))
 		}
 	}
 	return request, nil
@@ -107,7 +107,7 @@ func (request connectionRequest) resolve(current childConnection, roleDefaultEff
 // session's.
 func (r *SubAgentRunner) currentConfig() *Config {
 	if r.session.runtimeProfile != nil {
-		if cfg := r.session.runtimeProfile.GetEffectiveConfig(r.orchestratorID); cfg != nil {
+		if cfg := r.session.runtimeProfile.EffectiveConfig(r.orchestratorID); cfg != nil {
 			return cfg
 		}
 	}
@@ -121,7 +121,7 @@ func (r *SubAgentRunner) currentConfig() *Config {
 
 // validateConnection proves the account resolves and a provider can be built
 // before a parent's choice is accepted, so a typo never strands the child.
-func (r *SubAgentRunner) validateConnection(spec agent.SubAgentSpec) error {
+func (r *SubAgentRunner) validateConnection(spec turnloop.SubAgentSpec) error {
 	cfg := r.currentConfig()
 	if cfg == nil {
 		return errors.New("child configuration is unavailable")
@@ -135,16 +135,16 @@ func (r *SubAgentRunner) validateConnection(spec agent.SubAgentSpec) error {
 	return nil
 }
 
-func (r *SubAgentRunner) setActiveConnection(id agent.AgentID, connection childConnection) {
+func (r *SubAgentRunner) setActiveConnection(id turnloop.AgentID, connection childConnection) {
 	r.connMu.Lock()
 	defer r.connMu.Unlock()
 	if r.activeConnections == nil {
-		r.activeConnections = make(map[agent.AgentID]childConnection)
+		r.activeConnections = make(map[turnloop.AgentID]childConnection)
 	}
 	r.activeConnections[id] = connection
 }
 
-func (r *SubAgentRunner) forgetConnection(id agent.AgentID) {
+func (r *SubAgentRunner) forgetConnection(id turnloop.AgentID) {
 	r.connMu.Lock()
 	defer r.connMu.Unlock()
 	delete(r.activeConnections, id)
@@ -155,7 +155,7 @@ func (r *SubAgentRunner) forgetConnection(id agent.AgentID) {
 // pending connection change, rebuilds its provider, records the choice in the
 // durable recovery owner (so continuation and resume keep it) and tells the UI
 // which model produces the following output.
-func (r *SubAgentRunner) requestBoundary(handle *agent.SubAgentHandle, state *recoveryRunState, supervisor *agent.Supervisor) func() bool {
+func (r *SubAgentRunner) requestBoundary(handle *turnloop.SubAgentHandle, state *recoveryRunState, supervisor *turnloop.Supervisor) func() bool {
 	return func() bool {
 		r.connMu.Lock()
 		next, pending := r.pendingConnections[handle.Spec.ID]
@@ -198,7 +198,7 @@ func (r *SubAgentRunner) requestBoundary(handle *agent.SubAgentHandle, state *re
 			}
 		}
 		if r.sender != nil {
-			r.sender.SendAgentEventWithID("connection_changed", ttypes.TurnIdentity{ExecutionID: spec.ExecutionID,
+			r.sender.SendAgentEventWithID("connection_changed", conversation.TurnIdentity{ExecutionID: spec.ExecutionID,
 				Generation: live.TurnGeneration, ProviderID: p.ID, AccountID: spec.AccountID, ModelID: p.Model,
 			}, string(spec.ID))
 		}
@@ -230,15 +230,15 @@ func (s *Session) configureChild(ctx context.Context, actorID string, params map
 	if runner == nil {
 		return nil, errors.New("no child runtime is available")
 	}
-	id := agent.AgentID(target)
-	result := func(spec agent.SubAgentSpec, applies string) map[string]any {
+	id := turnloop.AgentID(target)
+	result := func(spec turnloop.SubAgentSpec, applies string) map[string]any {
 		effort := spec.ThinkingEffort
 		if effort == "" {
 			effort = "provider default"
 		}
 		return map[string]any{"agent_id": target, "account_id": spec.AccountID, "model": spec.Model, "thinking_effort": effort, "applies": applies}
 	}
-	if _, active := runner.Manager().GetActive(id); active {
+	if _, active := runner.Manager().Active(id); active {
 		runner.connMu.Lock()
 		current, known := runner.activeConnections[id]
 		if pending, queued := runner.pendingConnections[id]; queued {
@@ -252,14 +252,14 @@ func (s *Session) configureChild(ctx context.Context, actorID string, params map
 		if participant, err := store.Agent(ctx, target); err == nil {
 			category = participant.Category
 		}
-		next := request.resolve(current, runner.currentConfig().GetCategoryConfig(category).ThinkingEffort)
-		probe := agent.SubAgentSpec{AccountID: next.AccountID, Model: next.Model, ThinkingEffort: next.ThinkingEffort}
+		next := request.resolve(current, runner.currentConfig().CategoryConfig(category).ThinkingEffort)
+		probe := turnloop.SubAgentSpec{AccountID: next.AccountID, Model: next.Model, ThinkingEffort: next.ThinkingEffort}
 		if err := runner.validateConnection(probe); err != nil {
 			return nil, err
 		}
 		runner.connMu.Lock()
 		if runner.pendingConnections == nil {
-			runner.pendingConnections = make(map[agent.AgentID]childConnection)
+			runner.pendingConnections = make(map[turnloop.AgentID]childConnection)
 		}
 		runner.pendingConnections[id] = next
 		runner.connMu.Unlock()
@@ -276,7 +276,7 @@ func (s *Session) configureChild(ctx context.Context, actorID string, params map
 		return nil, fmt.Errorf("agent %q has an unreadable task record", target)
 	}
 	spec := owner.Spec
-	applyConnection(&spec, request.resolve(connectionOf(spec), runner.currentConfig().GetCategoryConfig(spec.Category).ThinkingEffort))
+	applyConnection(&spec, request.resolve(connectionOf(spec), runner.currentConfig().CategoryConfig(spec.Category).ThinkingEffort))
 	if err := runner.validateConnection(spec); err != nil {
 		return nil, err
 	}

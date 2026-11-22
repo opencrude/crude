@@ -9,8 +9,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/port"
-	ttypes "crude/types"
+	"crude/core/shellport"
+	"crude/types/conversation"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -25,9 +26,9 @@ func newTransitionApp(t *testing.T) *App {
 	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	ws := workspace.NewWorkspace(dir, "openrouter", "test", ttypes.Settings{}, regressionLogger{})
+	ws := workspace.NewWorkspace(dir, "openrouter", "test", setting.Settings{}, regressionLogger{})
 	ws.SetBackendConfig(testAccountConfig(), home)
-	ws.SetAppDefaults(ttypes.AppSettings{Accounts: ws.AllAccounts()})
+	ws.SetAppDefaults(setting.App{Accounts: ws.AllAccounts()})
 	ws.SetEventSender(noopEventSender{})
 	t.Setenv("MODELS_DEV_URL", "http://127.0.0.1:9/models-dev-unreachable")
 	app := NewApp(shellport.Local(ws), nil)
@@ -40,8 +41,8 @@ func newTransitionApp(t *testing.T) *App {
 	app.AddOrchestrator(
 		"agent-1")
 
-	app.appendActiveMessage(ttypes.ChatMessage{
-		Role:    ttypes.RoleAssistant,
+	app.appendActiveMessage(conversation.ChatMessage{
+		Role:    conversation.RoleAssistant,
 		Content: "hello from the agent view",
 		Time:    time.Now(),
 	})
@@ -216,9 +217,9 @@ func TestTransition_EmptySessionToHydratedSessionPaintsFirstFrame(t *testing.T) 
 	}
 
 	app.AddOrchestrator("resumed-session")
-	app.hydrateActiveMessages([]ttypes.ChatMessage{{
+	app.hydrateActiveMessages([]conversation.ChatMessage{{
 		InternalID: "history-1",
-		Role:       ttypes.RoleAssistant,
+		Role:       conversation.RoleAssistant,
 		Content:    "resumed history paints immediately",
 		Time:       time.Now(),
 	}})

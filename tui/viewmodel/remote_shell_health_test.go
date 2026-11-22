@@ -10,13 +10,15 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/core/port"
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
+	"crude/core/shellport"
 	"crude/tui/filetree"
 	"crude/tui/screens/shellheader"
 	"crude/tui/screens/termdock"
-	"crude/types"
 	captypes "crude/types/capability"
+	"crude/types/insight"
+	"crude/types/setting"
+	"crude/types/statuscenter"
 	"crude/workspace"
 )
 
@@ -197,7 +199,7 @@ func TestRemoteShellColdLauncherLoadsCapabilitiesWithoutSession(t *testing.T) {
 func TestRemoteShellLSPDiagnosticsReachBothTreesBeforeBrowse(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	root, path := createDiagnosticsProject(t)
-	lsp := &immediateTreeDiagRuntime{filePath: path, diags: []workspace.LSPDiagnostic{{Severity: workspace.DiagError, Message: "Connected diagnostic evidence"}}}
+	lsp := &immediateTreeDiagRuntime{filePath: path, diags: []insight.LSPDiagnostic{{Severity: workspace.DiagError, Message: "Connected diagnostic evidence"}}}
 	runtime := remoteJourneyRuntime(t, "http://unused.invalid", func(w *workspace.Workspace) {
 		w.LSPMgr.SetRuntime(lsp)
 		grantSemanticFixture(t, w)
@@ -307,8 +309,8 @@ func TestRemoteShellColdNoticesAndPeerDelivery(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	root := t.TempDir()
-	seed := workspace.NewWorkspace(root, "", "tester", types.Settings{}, nil)
-	seed.Status.Notify(types.NotificationRecord{ID: "persisted-notice", Summary: "Persisted workspace notice", Detail: "Exact persisted evidence.", Source: "fixture"})
+	seed := workspace.NewWorkspace(root, "", "tester", setting.Settings{}, nil)
+	seed.Status.Notify(statuscenter.NotificationRecord{ID: "persisted-notice", Summary: "Persisted workspace notice", Detail: "Exact persisted evidence.", Source: "fixture"})
 	seed.Close()
 	runtime := remoteJourneyRuntime(t, "http://unused.invalid")
 	one := newRemoteJourneyShell(t, runtime, root)
@@ -319,7 +321,7 @@ func TestRemoteShellColdNoticesAndPeerDelivery(t *testing.T) {
 			t.Fatal("cold core omitted saved Notices from the connected panel")
 		}
 	}
-	one.app.ws.Status().Notify(types.NotificationRecord{ID: "peer-notice", Summary: "Peer workspace notice", Source: "fixture"})
+	one.app.ws.Status().Notify(statuscenter.NotificationRecord{ID: "peer-notice", Summary: "Peer workspace notice", Source: "fixture"})
 	remoteJourneyUntil(t, []remoteJourneyShell{one, two}, func() bool {
 		return strings.Contains(ansi.Strip(two.app.View().RenderContent()), "Peer workspace notice")
 	})

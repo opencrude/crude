@@ -9,8 +9,8 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/core/port"
 	"crude/core/remoteconn"
+	"crude/core/shellport"
 	remotesscreen "crude/tui/screens/remotes"
 	"crude/tui/ui"
 	"github.com/charmbracelet/x/ansi"

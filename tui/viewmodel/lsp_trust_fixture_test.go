@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"crude/insight/governor"
-	"crude/types"
+	"crude/types/setting"
 	"crude/workspace"
 	"crude/workspace/fileio"
 )
@@ -14,7 +14,7 @@ import (
 // shell/workspace constructors and static-only journeys deliberately do not.
 func grantSemanticFixture(t *testing.T, w *workspace.Workspace) {
 	t.Helper()
-	result := w.PreparePreferencesSave(types.SettingsScopeWorkspace, []types.SettingEdit{{
+	result := w.PreparePreferencesSave(setting.ScopeWorkspace, []setting.Edit{{
 		Path: []string{"analysis", "trust"}, After: []byte(`"trusted"`),
 	}})()
 	if result.Err != nil {
@@ -22,14 +22,14 @@ func grantSemanticFixture(t *testing.T, w *workspace.Workspace) {
 	}
 	w.ApplyPreferencesSave(result)
 	if w.LoadWorkspaceOverrides().AnalysisRootIdentity == "" ||
-		w.LoadAppSettings().Analysis.Trust != types.AnalysisTrusted {
+		w.LoadAppSettings().Analysis.Trust != setting.AnalysisTrusted {
 		t.Fatal("semantic fixture did not persist its explicit native-root Trust grant")
 	}
 }
 
 func restrictFixture(t testing.TB, w *workspace.Workspace) {
 	t.Helper()
-	result := w.PreparePreferencesSave(types.SettingsScopeWorkspace, []types.SettingEdit{{
+	result := w.PreparePreferencesSave(setting.ScopeWorkspace, []setting.Edit{{
 		Path: []string{"analysis", "trust"}, After: []byte(`"restricted"`),
 	}})()
 	if result.Err != nil {
@@ -67,5 +67,5 @@ func admitSemanticManager(t *testing.T, m *workspace.LSPManager, root string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m.SetAnalysisPolicy(types.WorkspaceAnalysisSettings{Trust: types.AnalysisTrusted}, identity)
+	m.SetAnalysisPolicy(setting.WorkspaceAnalysis{Trust: setting.AnalysisTrusted}, identity)
 }

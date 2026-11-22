@@ -6,12 +6,12 @@ import (
 	"crude/tui/cell"
 	"crude/tui/surface"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
 )
 
-func occurrenceRange(line, start, end int) types.LSPNavigationRange {
-	return types.LSPNavigationRange{Start: types.LSPNavigationPosition{Line: line, Character: start},
-		End: types.LSPNavigationPosition{Line: line, Character: end}}
+func occurrenceRange(line, start, end int) insight.LSPNavigationRange {
+	return insight.LSPNavigationRange{Start: insight.LSPNavigationPosition{Line: line, Character: start},
+		End: insight.LSPNavigationPosition{Line: line, Character: end}}
 }
 
 // Occurrences arrive in UTF-16 and paint at visual columns after a tab and a
@@ -27,9 +27,9 @@ func TestOccurrencesPaintAtVisualColumnsWhileTheCaretIsOnOne(t *testing.T) {
 	at := tab + 6 // "\t" "x(" "界" ", " then value
 	e.SetCursorPosition(1, at+2)
 	line, col := e.LSPCursorPosition()
-	result := &types.LSPHighlights{Boundary: types.InsightBoundary{Source: source}, Line: line, Col: col,
-		Answer: types.LSPHighlightsFound, Highlights: []types.LSPHighlight{
-			{Range: occurrenceRange(0, 0, 5), Kind: types.LSPHighlightWrite}, {Range: occurrenceRange(1, 6, 11), Kind: types.LSPHighlightRead}}}
+	result := &insight.LSPHighlights{Boundary: insight.Boundary{Source: source}, Line: line, Col: col,
+		Answer: insight.LSPHighlightsFound, Highlights: []insight.LSPHighlight{
+			{Range: occurrenceRange(0, 0, 5), Kind: insight.LSPHighlightWrite}, {Range: occurrenceRange(1, 6, 11), Kind: insight.LSPHighlightRead}}}
 	stale := *result
 	stale.Col++
 	if err := e.SetOccurrences(&stale); err == nil {
@@ -77,12 +77,12 @@ func TestOccurrencesHandleNestedMultilineRanges(t *testing.T) {
 	}
 	source, _ := e.CurrentInsightSource()
 	e.SetCursorPosition(1, 1)
-	ranges := []types.LSPHighlight{
-		{Range: types.LSPNavigationRange{Start: types.LSPNavigationPosition{Line: 0, Character: 0}, End: types.LSPNavigationPosition{Line: 3, Character: 3}}, Kind: types.LSPHighlightRead},
-		{Range: occurrenceRange(0, 1, 2), Kind: types.LSPHighlightRead},
-		{Range: occurrenceRange(2, 0, 1), Kind: types.LSPHighlightRead},
+	ranges := []insight.LSPHighlight{
+		{Range: insight.LSPNavigationRange{Start: insight.LSPNavigationPosition{Line: 0, Character: 0}, End: insight.LSPNavigationPosition{Line: 3, Character: 3}}, Kind: insight.LSPHighlightRead},
+		{Range: occurrenceRange(0, 1, 2), Kind: insight.LSPHighlightRead},
+		{Range: occurrenceRange(2, 0, 1), Kind: insight.LSPHighlightRead},
 	}
-	if err := e.SetOccurrences(&types.LSPHighlights{Boundary: types.InsightBoundary{Source: source}, Line: 1, Col: 1, Highlights: ranges}); err != nil {
+	if err := e.SetOccurrences(&insight.LSPHighlights{Boundary: insight.Boundary{Source: source}, Line: 1, Col: 1, Highlights: ranges}); err != nil {
 		t.Fatal(err)
 	}
 	if !e.OccurrencesCoverCaret() {
@@ -107,8 +107,8 @@ func TestOccurrencesPreserveGraphemeAndUTF16Boundaries(t *testing.T) {
 	source, _ := e.CurrentInsightSource()
 	e.SetCursorPosition(0, 4)
 	line, col := e.LSPCursorPosition()
-	result := &types.LSPHighlights{Boundary: types.InsightBoundary{Source: source}, Line: line, Col: col,
-		Highlights: []types.LSPHighlight{{Range: occurrenceRange(1, 2, 4), Kind: types.LSPHighlightRead}, {Range: occurrenceRange(0, 2, 4), Kind: types.LSPHighlightRead}}}
+	result := &insight.LSPHighlights{Boundary: insight.Boundary{Source: source}, Line: line, Col: col,
+		Highlights: []insight.LSPHighlight{{Range: occurrenceRange(1, 2, 4), Kind: insight.LSPHighlightRead}, {Range: occurrenceRange(0, 2, 4), Kind: insight.LSPHighlightRead}}}
 	if err := e.SetOccurrences(result); err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestOccurrencesPreserveGraphemeAndUTF16Boundaries(t *testing.T) {
 		t.Fatal("wide grapheme after a tab used the wrong columns", spans)
 	}
 	bad := *result
-	bad.Highlights = append([]types.LSPHighlight(nil), result.Highlights...)
+	bad.Highlights = append([]insight.LSPHighlight(nil), result.Highlights...)
 	bad.Highlights[0].Range.End.Character = 3 // inside the surrogate pair
 	if err := e.SetOccurrences(&bad); err == nil {
 		t.Fatal("a split surrogate was accepted")

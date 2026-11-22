@@ -6,18 +6,18 @@ import (
 	"testing"
 	"time"
 
-	"crude/agent"
+	"crude/agent/turnloop"
 	captypes "crude/types/capability"
 	"crude/workspace/fileio"
 )
 
-func preparationFixture(t *testing.T, mode string) (*Session, *agent.Agent, captypes.PreparationRequired) {
+func preparationFixture(t *testing.T, mode string) (*Session, *turnloop.Agent, captypes.PreparationRequired) {
 	t.Helper()
 	t.Setenv("CRUDE_PROMOTION_HELPER", mode)
 	manager, lg := promotionTestManager(t)
 	request := captypes.PreparationRequired{ConnectionID: "registry_9a1d", Name: "Computer Use", Command: os.Args[0],
 		Args: []string{"-test.run=^TestCommandPromotionHelperProcess$"}, Key: "key"}
-	return &Session{logger: lg}, &agent.Agent{AsyncMgr: manager, WorkDir: t.TempDir()}, request
+	return &Session{logger: lg}, &turnloop.Agent{AsyncMgr: manager, WorkDir: t.TempDir()}, request
 }
 
 func TestQuickPackagePreparationContinuesInline(t *testing.T) {

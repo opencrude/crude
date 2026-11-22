@@ -7,6 +7,7 @@ import (
 	"crude/tui/surface"
 	"crude/tui/ui"
 	"crude/tui/wm"
+	"crude/types/insight"
 	"fmt"
 	"strings"
 	"testing"
@@ -23,7 +24,7 @@ func diagnosticIndependentMenu(t *testing.T, cols, rows int, message string) (*A
 		t.Fatal(err)
 	}
 	ed.SetCursorPosition(0, 10)
-	ed.SetDiagnostics(editorDiagnosticFacts(ed, []editor.LSPDiagnostic{{Line: 0, Col: 0, EndLine: 0, EndCol: 12, Severity: editor.DiagError, Message: message}}))
+	ed.SetDiagnostics(editorDiagnosticFacts(ed, []insight.LSPDiagnostic{{Line: 0, Col: 0, EndLine: 0, EndCol: 12, Severity: editor.DiagError, Message: message}}))
 	app.width, app.height = cols, rows
 	app.paintShellFrame()
 	r, ok := app.screenRectOf(app.editorScreen.ID())

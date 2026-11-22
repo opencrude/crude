@@ -18,8 +18,8 @@ import (
 	"crude/agent/provider"
 	"crude/agent/session"
 	"crude/agent/sessiondb"
-	ttypes "crude/types"
 	recoverytypes "crude/types/recovery"
+	"crude/types/setting"
 )
 
 func TestWorkspaceStopRetainsOriginalAndCompletesFollowingTurns(t *testing.T) {
@@ -51,9 +51,9 @@ func TestWorkspaceStopRetainsOriginalAndCompletesFollowingTurns(t *testing.T) {
 	home, project := t.TempDir(), t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
-	ws := NewWorkspace(project, "history-model", "tester", ttypes.Settings{}, &testLogger{})
+	ws := NewWorkspace(project, "history-model", "tester", setting.Settings{}, &testLogger{})
 	t.Cleanup(ws.Close)
-	ws.SetAppDefaults(ttypes.AppSettings{LocalHistory: ttypes.LocalHistorySettings{Enabled: "off"}, Memory: ttypes.MemorySettings{AutoExtract: "off", Consolidation: "off"}})
+	ws.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}, Memory: setting.Memory{AutoExtract: "off", Consolidation: "off"}})
 	cfg := historyE2EConfig(server.URL)
 	cfg.Memory.AutoExtract, cfg.Memory.Consolidation = "off", "off"
 	frontend, err := ws.CreateSession(cfg, home)
@@ -239,9 +239,9 @@ func TestWorkspacePeerReferencesPreserveThreeActiveRoots(t *testing.T) {
 		_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":%q},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n", fmt.Sprintf("completed root %d", index))
 	}))
 	t.Cleanup(server.Close)
-	ws := NewWorkspace(project, "history-model", "tester", ttypes.Settings{}, &testLogger{})
+	ws := NewWorkspace(project, "history-model", "tester", setting.Settings{}, &testLogger{})
 	t.Cleanup(ws.Close)
-	ws.SetAppDefaults(ttypes.AppSettings{LocalHistory: ttypes.LocalHistorySettings{Enabled: "off"}})
+	ws.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}})
 	var roots [3]*session.Orchestrator
 	var backends [3]*session.Session
 	sender := &historyE2ESender{events: make(chan historyE2EEvent, 2048)}

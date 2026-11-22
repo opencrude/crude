@@ -4,9 +4,9 @@ import (
 	"reflect"
 	"testing"
 
-	"crude/core/client"
-	"crude/core/protocol"
-	"crude/terminalvt"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
+	"crude/internal/terminalvt"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"

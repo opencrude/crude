@@ -1,7 +1,7 @@
 package tools
 
 import (
-	"crude/types"
+	"crude/types/conversation"
 	"fmt"
 	"strings"
 	"testing"
@@ -10,12 +10,12 @@ import (
 
 func TestCommandTitleWaitsForDispatch(t *testing.T) {
 	for _, name := range []string{"execute_command", "async_execute_command", "exec_command"} {
-		msg := types.ChatMessage{ToolName: name, ToolCommand: "go test .", ToolStatus: types.ToolStatusStreaming}
-		if got := BuildToolTitle(msg, types.ToolPreviewStreaming); !strings.HasPrefix(got.Action, "Preparing") || got.Operand != msg.ToolCommand {
+		msg := conversation.ChatMessage{ToolName: name, ToolCommand: "go test .", ToolStatus: conversation.ToolStatusStreaming}
+		if got := BuildToolTitle(msg, conversation.ToolPreviewStreaming); !strings.HasPrefix(got.Action, "Preparing") || got.Operand != msg.ToolCommand {
 			t.Errorf("before dispatch: %+v", got)
 		}
-		msg.ToolStatus = types.ToolStatusCalling
-		if got := BuildToolTitle(msg, types.ToolPreviewStreaming); got.Action != "Running" {
+		msg.ToolStatus = conversation.ToolStatusCalling
+		if got := BuildToolTitle(msg, conversation.ToolPreviewStreaming); got.Action != "Running" {
 			t.Errorf("after dispatch: %+v", got)
 		}
 	}
@@ -145,24 +145,24 @@ func TestBuildErrorLabelWithReasonKeepsOneLine(t *testing.T) {
 
 func TestToolTitleDoesNotInferRolesOrFailureFromOperandText(t *testing.T) {
 	command := "rg 'Command failed 1s' source.go"
-	msg := types.ChatMessage{ToolName: "execute_command", ToolCommand: command, ToolStatus: types.ToolStatusSuccess, ToolDuration: time.Second}
-	title := BuildToolTitle(msg, types.ToolPreviewDone)
+	msg := conversation.ChatMessage{ToolName: "execute_command", ToolCommand: command, ToolStatus: conversation.ToolStatusSuccess, ToolDuration: time.Second}
+	title := BuildToolTitle(msg, conversation.ToolPreviewDone)
 	if title.Action != "Ran" || title.Operand != command || title.Metadata != "1s" || title.Failed {
 		t.Fatalf("operand text changed title semantics: %+v", title)
 	}
-	msg.ToolStatus = types.ToolStatusError
-	title = BuildToolTitle(msg, types.ToolPreviewError)
+	msg.ToolStatus = conversation.ToolStatusError
+	title = BuildToolTitle(msg, conversation.ToolPreviewError)
 	if !title.Failed || title.Action != "Command failed" || title.Operand != command || title.Metadata != "1s" {
 		t.Fatalf("failure changed operand or metadata semantics: %+v", title)
 	}
 }
 
 func TestAgentStartFailureKeepsItsDiagnostic(t *testing.T) {
-	msg := types.ChatMessage{
-		ToolName: "agent_start", ToolArgs: "Inspect renderer", ToolStatus: types.ToolStatusError,
+	msg := conversation.ChatMessage{
+		ToolName: "agent_start", ToolArgs: "Inspect renderer", ToolStatus: conversation.ToolStatusError,
 		Content: "Error starting agent: account unavailable",
 	}
-	title := BuildToolTitle(msg, types.ToolPreviewError)
+	title := BuildToolTitle(msg, conversation.ToolPreviewError)
 	if !title.Failed || title.Action != "Agent start failed" || title.Operand != "Inspect renderer" {
 		t.Fatalf("launch failure title = %+v", title)
 	}
@@ -179,9 +179,9 @@ func TestToolTitlesNeverPrintRawArgumentEnvelopes(t *testing.T) {
 		{"unknown raw args", "plugin_tool", `{"unknown":{"secret":1}}`, "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			for _, status := range []string{types.ToolStatusStreaming, types.ToolStatusSuccess, types.ToolStatusError, types.ToolStatusCancelled} {
-				msg := types.ChatMessage{ToolName: tc.tool, ToolArgs: tc.args, ToolProgressLabel: tc.progress, ToolStatus: status}
-				title := BuildToolTitle(msg, types.ToolPreviewPreparing)
+			for _, status := range []string{conversation.ToolStatusStreaming, conversation.ToolStatusSuccess, conversation.ToolStatusError, conversation.ToolStatusCancelled} {
+				msg := conversation.ChatMessage{ToolName: tc.tool, ToolArgs: tc.args, ToolProgressLabel: tc.progress, ToolStatus: status}
+				title := BuildToolTitle(msg, conversation.ToolPreviewPreparing)
 				if title.Operand != tc.want || strings.Contains(title.Text(), `"agent_id"`) || strings.Contains(title.Text(), `"secret"`) {
 					t.Fatalf("status=%s title=%+v, want operand %q", status, title, tc.want)
 				}
@@ -194,13 +194,13 @@ func TestCollaborationToolTitlesKeepExactAgentAndReportIdentity(t *testing.T) {
 	for _, tc := range []struct {
 		name, tool, args, content, status, action, want string
 	}{
-		{"start", "agent_start", `{"description":"Inspect renderer"}`, `{"name":"Lily sub Dawn","agent_id":"agent-8f21","category":"researcher","status":"running","run_id":"run-1","run_version":1}`, types.ToolStatusSuccess, "Started agent", "Lily sub Dawn · Researcher (agent-8f21)"},
-		{"wait completed", "agent_wait", `{"run_id":"run-1"}`, `{"id":"run-1","agent_id":"agent-8f21","runtime_epoch":1,"origin":"peer","state":"succeeded","version":2,"outcome":"completed","started_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}`, types.ToolStatusSuccess, "Observed agent event", "run-1"},
-		{"published report", "publish_report", `{"summary":"Renderer review","body":"Outcome"}`, `{"artifact":{"id":"report-1","revision":2,"workspace_id":"/project","author_id":"agent-8f21","kind":"final","summary":"Renderer review","body":"Outcome","digest":"digest","created_at":"0001-01-01T00:00:00Z"},"publish":{"event":{"id":"event-1","kind":"report_published"},"deliveries":[]}}`, types.ToolStatusSuccess, "Published report", "Renderer review · revision 2"},
+		{"start", "agent_start", `{"description":"Inspect renderer"}`, `{"name":"Lily sub Dawn","agent_id":"agent-8f21","category":"researcher","status":"running","run_id":"run-1","run_version":1}`, conversation.ToolStatusSuccess, "Started agent", "Lily sub Dawn · Researcher (agent-8f21)"},
+		{"wait completed", "agent_wait", `{"run_id":"run-1"}`, `{"id":"run-1","agent_id":"agent-8f21","runtime_epoch":1,"origin":"peer","state":"succeeded","version":2,"outcome":"completed","started_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}`, conversation.ToolStatusSuccess, "Observed agent event", "run-1"},
+		{"published report", "publish_report", `{"summary":"Renderer review","body":"Outcome"}`, `{"artifact":{"id":"report-1","revision":2,"workspace_id":"/project","author_id":"agent-8f21","kind":"final","summary":"Renderer review","body":"Outcome","digest":"digest","created_at":"0001-01-01T00:00:00Z"},"publish":{"event":{"id":"event-1","kind":"report_published"},"deliveries":[]}}`, conversation.ToolStatusSuccess, "Published report", "Renderer review · revision 2"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			msg := types.ChatMessage{ToolName: tc.tool, ToolArgs: SummarizeToolArgs(tc.tool, tc.args), ToolStatus: tc.status, Content: tc.content}
-			title := BuildToolTitle(msg, types.ToolPreviewDone)
+			msg := conversation.ChatMessage{ToolName: tc.tool, ToolArgs: SummarizeToolArgs(tc.tool, tc.args), ToolStatus: tc.status, Content: tc.content}
+			title := BuildToolTitle(msg, conversation.ToolPreviewDone)
 			if title.Action != tc.action || title.Operand != tc.want {
 				t.Fatalf("title=%+v, want %s %s", title, tc.action, tc.want)
 			}
@@ -216,14 +216,14 @@ func TestCommandTitlesNeverPaintJSONEscapes(t *testing.T) {
 	raw := `{"command":"cd /home/example/project \u0026\u0026 golangci-lint run ./x 2\u003e\u00261 | tail -20","timeout_seconds":600}`
 	want := "cd /home/example/project && golangci-lint run ./x 2>&1 | tail -20"
 
-	for _, status := range []string{types.ToolStatusStreaming, types.ToolStatusSuccess} {
-		msg := types.ChatMessage{
+	for _, status := range []string{conversation.ToolStatusStreaming, conversation.ToolStatusSuccess} {
+		msg := conversation.ChatMessage{
 			ToolName:    "execute_command",
 			ToolCommand: want,
 			ToolArgs:    SummarizeToolArgs("execute_command", raw),
 			ToolStatus:  status,
 		}
-		title := BuildToolTitle(msg, types.ToolPreviewDone)
+		title := BuildToolTitle(msg, conversation.ToolPreviewDone)
 		if title.Operand != want {
 			t.Fatalf("status=%s operand = %q, want %q", status, title.Operand, want)
 		}
@@ -237,9 +237,9 @@ func TestCommandTitlesNeverPaintJSONEscapes(t *testing.T) {
 
 func TestToolFailureReasonDoesNotAppendNestedJSONPayload(t *testing.T) {
 	for _, reason := range []string{`{"private":"nested evidence"}`, `Error: {"private":"nested evidence"}`} {
-		msg := types.ChatMessage{ToolName: "update_plan", ToolStatus: types.ToolStatusError,
+		msg := conversation.ChatMessage{ToolName: "update_plan", ToolStatus: conversation.ToolStatusError,
 			Content: `{"error":"invalid_plan_update","message":` + fmt.Sprintf("%q", reason) + `}`}
-		title := BuildToolTitle(msg, types.ToolPreviewError)
+		title := BuildToolTitle(msg, conversation.ToolPreviewError)
 		if strings.Contains(title.Text(), `"private"`) || strings.Contains(title.Text(), "nested evidence") || !title.Failed {
 			t.Fatalf("nested structured reason leaked into title: %+v", title)
 		}
@@ -247,8 +247,8 @@ func TestToolFailureReasonDoesNotAppendNestedJSONPayload(t *testing.T) {
 }
 
 func TestToolTitleDoesNotPrintStructuredToolName(t *testing.T) {
-	msg := types.ChatMessage{ToolName: `{"name":"agent_wait","run_id":"run-8f21"}`, ToolStatus: types.ToolStatusError}
-	title := BuildToolTitle(msg, types.ToolPreviewError)
+	msg := conversation.ChatMessage{ToolName: `{"name":"agent_wait","run_id":"run-8f21"}`, ToolStatus: conversation.ToolStatusError}
+	title := BuildToolTitle(msg, conversation.ToolPreviewError)
 	if strings.Contains(title.Text(), `"run_id"`) || !title.Failed || title.Action != "Tool failed" {
 		t.Fatalf("tool name became structured title text: %+v", title)
 	}

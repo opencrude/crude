@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"sync"
 
-	"crude/logger"
-	"crude/text/encoding"
+	"crude/internal/logger"
+	"crude/text/textencoding"
 )
 
 var (

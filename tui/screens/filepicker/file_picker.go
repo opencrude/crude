@@ -1,9 +1,8 @@
-// Package filepicker provides the native file and workspace folder picker body.
 package filepicker
 
 import (
 	"context"
-	"crude/text/encoding"
+	"crude/text/textencoding"
 	"errors"
 	"path/filepath"
 	"sort"
@@ -213,8 +212,8 @@ type Screen struct {
 	savePending      bool
 	saveUnknown      bool
 
-	model        *filetree.FileTreeModel
-	browseModel  *filetree.FileTreeModel
+	model        *filetree.Model
+	browseModel  *filetree.Model
 	searchActive bool
 	searchQuery  string
 	showHidden   bool
@@ -1020,7 +1019,7 @@ func (s *Screen) statusText() string {
 	return plural(count, "item", "items")
 }
 
-func (s *Screen) installModel(model *filetree.FileTreeModel) {
+func (s *Screen) installModel(model *filetree.Model) {
 	s.releasePendingChildLoad()
 	s.model = model
 	s.browseModel = model

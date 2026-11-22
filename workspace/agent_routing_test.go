@@ -3,7 +3,7 @@ package workspace
 import (
 	"testing"
 
-	"crude/types"
+	"crude/types/statuscenter"
 )
 
 func TestResolveAgentBlockRejectsMissingBackendOwner(t *testing.T) {
@@ -119,7 +119,7 @@ func TestRecordAgentUsageUpdatesOwningSession(t *testing.T) {
 		t.Fatal("RecordAgentUsage() rejected valid usage")
 	}
 	if got.InputTotal.Value != 10 || got.Output.Value != 4 || got.CacheRead.Value != 2 ||
-		got.Cost.USD != 0.25 || got.ContextUsed.Value != 37 || got.InputTotal.Confidence != types.ConfidenceEstimated {
+		got.Cost.USD != 0.25 || got.ContextUsed.Value != 37 || got.InputTotal.Confidence != statuscenter.ConfidenceEstimated {
 		t.Fatalf("unexpected usage snapshot: %#v", got)
 	}
 	got, ok = ws.RecordAgentUsage("first", map[string]any{
@@ -140,7 +140,7 @@ func TestRecordAgentUsageUpdatesOwningSession(t *testing.T) {
 	}
 	rootUsage, _ := ws.AgentUsage("first")
 	childUsage, _ := ws.AgentUsage("child")
-	subtreeUsage, _ := ws.UsageSummary("first", types.UsageSubtree)
+	subtreeUsage, _ := ws.UsageSummary("first", statuscenter.UsageSubtree)
 	if rootUsage.InputTotal.Value != 30 || childUsage.InputTotal.Value != 7 || subtreeUsage.InputTotal.Value != 37 || rootUsage.ContextUsed.Value != 50 || childUsage.ContextUsed.Value != 60 {
 		t.Fatalf("scoped totals/per-agent contexts diverged: root=%#v child=%#v subtree=%#v", rootUsage, childUsage, subtreeUsage)
 	}

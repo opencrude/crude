@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"crude/agent"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
-	ttypes "crude/types"
+	"crude/agent/turnloop"
 	recoverytypes "crude/types/recovery"
+	"crude/types/setting"
 )
 
 func TestConfigWithSessionOverridesUsesWorkspaceThenSession(t *testing.T) {
@@ -41,7 +41,7 @@ func TestConfigWithSessionOverridesUsesWorkspaceThenSession(t *testing.T) {
 	}
 
 	effective := configWithSessionOverrides(base, overrides)
-	crafter := effective.GetCategoryConfig("crafter")
+	crafter := effective.CategoryConfig("crafter")
 	if crafter.AccountID != "openai-account" || crafter.Model != "gpt-5" || crafter.ThinkingEffort != "high" {
 		t.Fatalf("crafter override not applied: %#v", crafter)
 	}
@@ -51,14 +51,14 @@ func TestConfigWithSessionOverridesUsesWorkspaceThenSession(t *testing.T) {
 	if crafter.ContextCompactionPercent == nil || *crafter.ContextCompactionPercent != 2 {
 		t.Fatalf("crafter compaction threshold = %v, want 2", crafter.ContextCompactionPercent)
 	}
-	main := effective.GetActiveDefaultCategory()
+	main := effective.ActiveDefaultCategory()
 	if crafter.ContextRetentionTokens == nil || *crafter.ContextRetentionTokens != retention || crafter.ContextRetentionTokens == &retention {
 		t.Fatal("retention override missing or aliases persistence input")
 	}
 	if main.Model != "workspace-main" {
 		t.Fatalf("unoverridden main model = %q, want workspace-main", main.Model)
 	}
-	if base.GetCategoryConfig("crafter").Model != "workspace-crafter" {
+	if base.CategoryConfig("crafter").Model != "workspace-crafter" {
 		t.Fatal("base workspace config was mutated")
 	}
 }
@@ -69,7 +69,7 @@ func TestCategoryModelKeepsVendorPrefix(t *testing.T) {
 	// round-trip nor category resolution may reduce it to the bare name.
 	const vendored = "z-ai/glm-5.3-flash"
 
-	stored := catSettingsToConfig(ttypes.CategorySettings{
+	stored := catSettingsToConfig(setting.Category{
 		AccountID: "command-account",
 		Model:     vendored,
 	})
@@ -94,14 +94,14 @@ func TestCategoryModelKeepsVendorPrefix(t *testing.T) {
 			},
 		},
 	}
-	if got := base.GetActiveDefaultCategory().Model; got != vendored {
+	if got := base.ActiveDefaultCategory().Model; got != vendored {
 		t.Fatalf("GetActiveDefaultCategory model = %q, want %q", got, vendored)
 	}
 }
 
 func TestCategoryAccountRequiresMainAgentSelection(t *testing.T) {
 	cfg := &Config{Agents: DefaultAgentsConfig()}
-	got := cfg.GetActiveDefaultCategory()
+	got := cfg.ActiveDefaultCategory()
 	if got.AccountID != "" {
 		t.Fatalf("category selected an account implicitly: %q", got.AccountID)
 	}
@@ -113,7 +113,7 @@ func TestCategoryAccountRequiresMainAgentSelection(t *testing.T) {
 
 func TestWorkspaceAgentDefaultStoresAccountNotSecret(t *testing.T) {
 	cfg := &Config{Agents: DefaultAgentsConfig()}
-	ApplyWorkspaceAgentDefaults(cfg, ttypes.AgentsSettings{Categories: map[string]ttypes.CategorySettings{
+	ApplyWorkspaceAgentDefaults(cfg, setting.Agents{Categories: map[string]setting.Category{
 		CategoryDefault: {Provider: "opencode-go", AccountID: "account", APIKey: "discarded", Model: "m"},
 	}})
 	stored := cfg.Agents.Profiles["default"].Categories[CategoryDefault]
@@ -189,10 +189,10 @@ func TestApplyWorkspaceAgentDefaultsUpdatesMultiAgentFlag(t *testing.T) {
 			},
 		},
 	}}
-	ApplyWorkspaceAgentDefaults(cfg, ttypes.AgentsSettings{
+	ApplyWorkspaceAgentDefaults(cfg, setting.Agents{
 		Enabled:       false,
 		ActiveProfile: "default",
-		Categories: map[string]ttypes.CategorySettings{
+		Categories: map[string]setting.Category{
 			CategoryDefault: {Provider: "openrouter", Model: "model"},
 		},
 	})
@@ -220,13 +220,13 @@ func TestWorkspaceRefreshPreservesSessionMultiAgentOverride(t *testing.T) {
 
 	workspaceSettings := ConfigToSettings(cfg)
 	workspaceSettings.Agents.Enabled = true
-	sess.UpdateWorkspaceDefaults(ttypes.AppSettings{Agents: workspaceSettings.Agents})
+	sess.UpdateWorkspaceDefaults(setting.App{Agents: workspaceSettings.Agents})
 
 	snapshot := sess.SettingsSnapshot()
 	if snapshot.SessionMultiAgent == nil || *snapshot.SessionMultiAgent || snapshot.Agents.Enabled {
 		t.Fatalf("session UI lost explicit multi-agent off: %#v", snapshot)
 	}
-	if effective := sess.RuntimeProfile().GetEffectiveConfig("main"); effective.IsMultiAgentEnabled() {
+	if effective := sess.RuntimeProfile().EffectiveConfig("main"); effective.IsMultiAgentEnabled() {
 		t.Fatalf("runtime ignored displayed multi-agent off: %#v", effective.Agents)
 	}
 }
@@ -256,19 +256,19 @@ func TestHandleSettingsSavePreservesMultiAgentInheritance(t *testing.T) {
 
 	workspaceSettings := ConfigToSettings(cfg)
 	workspaceSettings.Agents.Enabled = true
-	sess.UpdateWorkspaceDefaults(ttypes.AppSettings{Agents: workspaceSettings.Agents})
-	if !sess.RuntimeProfile().GetEffectiveConfig("main").IsMultiAgentEnabled() {
+	sess.UpdateWorkspaceDefaults(setting.App{Agents: workspaceSettings.Agents})
+	if !sess.RuntimeProfile().EffectiveConfig("main").IsMultiAgentEnabled() {
 		t.Fatal("inherited session did not follow workspace multi-agent change")
 	}
 }
 
 func TestSettingsToSessionOverridesHonorsExplicitMap(t *testing.T) {
 	compact := 2
-	settings := ttypes.Settings{
-		Agents: ttypes.AgentsSettings{Categories: map[string]ttypes.CategorySettings{
+	settings := setting.Settings{
+		Agents: setting.Agents{Categories: map[string]setting.Category{
 			"default": {Provider: "ignored", Model: "ignored"},
 		}},
-		SessionOverrides: map[string]ttypes.CategorySettings{
+		SessionOverrides: map[string]setting.Category{
 			"researcher": {
 				AccountID: "anthropic-account", Model: "claude", ThinkingEffort: "low",
 				ContextCompactionPercent: &compact,
@@ -311,8 +311,8 @@ func TestResumeHydratesCompletedSubAgents(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Insert running SubAgentResult: %v", err)
 	}
-	owner, err := json.Marshal(childRecoveryOwner{Spec: agent.SubAgentSpec{
-		ID: "running-1", Name: "Interrupted", Category: agent.CatCrafter,
+	owner, err := json.Marshal(childRecoveryOwner{Spec: turnloop.SubAgentSpec{
+		ID: "running-1", Name: "Interrupted", Category: turnloop.CatCrafter,
 		Description: "finish pending child work", Model: "test-model",
 		AccountID: "account", ParentID: "parent-orchestrator", ParentTurn: 1, Depth: 1,
 	}})
@@ -376,7 +376,7 @@ func TestResumeHydratesCompletedSubAgents(t *testing.T) {
 		ID: "running-1", ProjectPath: root, ProjectName: "project", Model: "test-model",
 		AccountID: "account", CreatedAt: time.Now().UnixNano(),
 		ParentSessionID: sql.NullString{String: "parent", Valid: true},
-		AgentCategory:   sql.NullString{String: agent.CatCrafter, Valid: true},
+		AgentCategory:   sql.NullString{String: turnloop.CatCrafter, Valid: true},
 		AgentName:       sql.NullString{String: "Interrupted", Valid: true}, Depth: 1,
 	}); err != nil {
 		t.Fatal(err)
@@ -398,12 +398,12 @@ func TestResumeHydratesCompletedSubAgents(t *testing.T) {
 	if resumed.SubAgentRunner() == nil {
 		t.Fatal("sub-agent runner was not restored")
 	}
-	result, ok := resumed.SubAgentRunner().Manager().GetCompleted("research-1")
+	result, ok := resumed.SubAgentRunner().Manager().Completed("research-1")
 	if !ok || result.SummaryGist != "Found the lifecycle bug." ||
 		result.SessionID != "child" {
 		t.Fatalf("hydrated result = %+v, ok=%v", result, ok)
 	}
-	if interrupted, ok := resumed.SubAgentRunner().Manager().GetCompleted("running-1"); ok {
+	if interrupted, ok := resumed.SubAgentRunner().Manager().Completed("running-1"); ok {
 		t.Fatalf("unfinished child was terminalized: %+v", interrupted)
 	}
 	recoveries, err := sessiondb.LoadRecoveryRecords(resumed.DB(), resumed.SessionID())
@@ -479,7 +479,7 @@ func TestResumeRestoresActiveContextIndependentlyFromFullArchive(t *testing.T) {
 
 func TestContextCompactionDefaultsAndLiveInheritance(t *testing.T) {
 	cfg := testConfig()
-	main := cfg.GetActiveDefaultCategory()
+	main := cfg.ActiveDefaultCategory()
 	if main.ContextCompactionPercent != nil {
 		t.Fatalf("default compaction must stay adaptive (unset), got %#v", main.ContextCompactionPercent)
 	}
@@ -490,7 +490,7 @@ func TestContextCompactionDefaultsAndLiveInheritance(t *testing.T) {
 	}
 	profile.Categories[CategoryResearcher] = CategoryConfig{Inherit: InheritMain}
 	cfg.Agents.Profiles[cfg.Agents.ActiveProfile] = profile
-	researcher := cfg.GetCategoryConfig(CategoryResearcher)
+	researcher := cfg.CategoryConfig(CategoryResearcher)
 	if researcher.ContextCompactionPercent == nil || *researcher.ContextCompactionPercent != 0 {
 		t.Fatalf("inherited disabled compaction = %#v", researcher.ContextCompactionPercent)
 	}

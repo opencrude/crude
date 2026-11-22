@@ -7,11 +7,11 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/core/port"
-	"crude/syntax"
+	"crude/core/shellport"
+	"crude/insight/syntax"
 	"crude/text/snippet"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
 	"crude/workspace/document"
 )
 
@@ -56,7 +56,7 @@ func TestParameterHelpFollowsArgumentTypingAndDeletion(t *testing.T) {
 			t.Fatal(err)
 		}
 		service.answer.Boundary.Source, _ = ed.CurrentInsightSource()
-		service.answer.Signatures = append([]types.LSPSignature(nil), service.answer.Signatures...)
+		service.answer.Signatures = append([]insight.LSPSignature(nil), service.answer.Signatures...)
 		service.answer.Signatures[0].Label = fmt.Sprintf("join(first string, count int) · answer %d", i+1)
 		_, cmd = app.Update(struct{}{})
 		runAppCommand(t, app, cmd)
@@ -135,7 +135,7 @@ func TestParameterHelpFollowsMultilineAndIndentedArguments(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !ed.InstallDocumentInsight(types.DocumentInsight{DocumentID: snapshot.ID, Path: snapshot.Path, Revision: snapshot.Revision, Generation: snapshot.AnalysisGeneration, Version: 1, State: types.InsightCurrent, Syntax: &parsed}) {
+			if !ed.InstallDocumentInsight(insight.DocumentInsight{DocumentID: snapshot.ID, Path: snapshot.Path, Revision: snapshot.Revision, Generation: snapshot.AnalysisGeneration, Version: 1, State: insight.Current, Syntax: &parsed}) {
 				t.Fatal("fixture did not publish its source analysis")
 			}
 			service.answer.Boundary.Source, _ = ed.CurrentInsightSource()
@@ -203,7 +203,7 @@ func TestParameterHelpFollowsSnippetFieldsAndFinalLanding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ed.ApplyCompletion(types.CompletionItem{TextEdit: &types.LSPTextEdit{
+	if err := ed.ApplyCompletion(insight.CompletionItem{TextEdit: &insight.LSPTextEdit{
 		Line: 0, Col: 0, EndLine: 0, EndCol: 12, NewText: text,
 	}, Snippet: fields}); err != nil {
 		t.Fatal(err)
@@ -218,7 +218,7 @@ func TestParameterHelpFollowsSnippetFieldsAndFinalLanding(t *testing.T) {
 		!strings.Contains(signaturePaintedText(app), "Active parameter 1 of 2") {
 		t.Fatal("the accepted first argument field lost its parameter information")
 	}
-	service.answer.Signatures = append([]types.LSPSignature(nil), service.answer.Signatures...)
+	service.answer.Signatures = append([]insight.LSPSignature(nil), service.answer.Signatures...)
 	service.answer.Signatures[0].ActiveParameter = 1
 	_, cmd = app.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	runAppCommand(t, app, cmd)
@@ -240,10 +240,10 @@ func TestParameterHelpFollowsSnippetFieldsAndFinalLanding(t *testing.T) {
 
 type signatureCompletionService struct {
 	*completionTestService
-	answer types.LSPSignatureHelp
+	answer insight.LSPSignatureHelp
 }
 
-func (s *signatureCompletionService) RequestSignatureHelp(context.Context, string, int, int, types.LSPSignatureContext) (types.LSPSignatureHelp, error) {
+func (s *signatureCompletionService) RequestSignatureHelp(context.Context, string, int, int, insight.LSPSignatureContext) (insight.LSPSignatureHelp, error) {
 	return s.answer, nil
 }
 
@@ -263,9 +263,9 @@ func TestCompletionAndParameterHelpRemainReadableTogether(t *testing.T) {
 			completionTestKey(t, app, automaticSignatureRune('('))
 			source := acknowledgeCompletionEdit(t, app.EditorState.Editor, 41)
 			port.set.Boundary.Source, port.set.Col = source, 5
-			service.answer = types.LSPSignatureHelp{Boundary: port.set.Boundary, Signatures: []types.LSPSignature{{
+			service.answer = insight.LSPSignatureHelp{Boundary: port.set.Boundary, Signatures: []insight.LSPSignature{{
 				Label: "join(value)", ActiveParameter: 0,
-				Parameters: []types.LSPSignatureParameter{{Label: "value", Documentation: "Argument to repeat."}},
+				Parameters: []insight.LSPSignatureParameter{{Label: "value", Documentation: "Argument to repeat."}},
 			}}}
 			_, cmd := app.Update(struct{}{})
 			runAppCommand(t, app, cmd)

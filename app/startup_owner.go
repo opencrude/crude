@@ -7,8 +7,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/types/setting"
+	"crude/types/statuscenter"
 )
 
 // StartupSnapshot reads current application configuration without opening a
@@ -27,7 +28,7 @@ func (a *App) StartupSnapshot(ctx context.Context) (coreprotocol.StartupSnapshot
 		}
 	}
 	if err != nil && !os.IsNotExist(err) {
-		out.Issues = []types.OperationIssue{configStartupIssue(ConfigPath(), err)}
+		out.Issues = []statuscenter.OperationIssue{configStartupIssue(ConfigPath(), err)}
 		a.configMu.Lock()
 		out.Theme = FileConfigToAppSettings(a.fc).Theme
 		a.configMu.Unlock()
@@ -40,7 +41,7 @@ func (a *App) StartupSnapshot(ctx context.Context) (coreprotocol.StartupSnapshot
 	}
 	used, err := hasSavedWorkspace(ctx, filepath.Join(DataDir(a.home), "workspaces"))
 	if err != nil {
-		out.Issues = append(out.Issues, types.OperationIssue{Title: "Profile state is not available", Summary: "Crude could not read saved workspace state.", Detail: err.Error()})
+		out.Issues = append(out.Issues, statuscenter.OperationIssue{Title: "Profile state is not available", Summary: "Crude could not read saved workspace state.", Detail: err.Error()})
 		return out, nil
 	}
 	out.ShowIntroduction = !used
@@ -77,32 +78,34 @@ func hasSavedWorkspace(ctx context.Context, root string) (bool, error) {
 	}
 }
 
-func (a *App) SaveStartup(ctx context.Context, edits []types.SettingEdit) (types.OnboardingSettings, error) {
+// SaveStartup saves introduction and reminder choices only.
+func (a *App) SaveStartup(ctx context.Context, edits []setting.Edit) (setting.Onboarding, error) {
 	if err := ctx.Err(); err != nil {
-		return types.OnboardingSettings{}, err
+		return setting.Onboarding{}, err
 	}
 	for _, edit := range edits {
 		if len(edit.Path) != 2 || edit.Path[0] != "onboarding" {
-			return types.OnboardingSettings{}, errors.New("startup can save only introduction and reminder choices")
+			return setting.Onboarding{}, errors.New("startup can save only introduction and reminder choices")
 		}
 	}
-	if err := types.ValidateSettingEdits(types.AppSettings{}, edits); err != nil {
-		return types.OnboardingSettings{}, err
+	if err := setting.ValidateEdits(setting.App{}, edits); err != nil {
+		return setting.Onboarding{}, err
 	}
 	settings, err := a.commitCorePreferences(edits)
 	return settings.Onboarding, err
 }
 
-func (a *App) ReadStartupSettings(ctx context.Context) (types.AppSettings, error) {
+// ReadStartupSettings reads the app settings that are needed before the core starts.
+func (a *App) ReadStartupSettings(ctx context.Context) (setting.App, error) {
 	if err := ctx.Err(); err != nil {
-		return types.AppSettings{}, err
+		return setting.App{}, err
 	}
 	config, err := loadFileConfigFrom(ConfigPath())
 	if os.IsNotExist(err) {
-		return types.AppSettings{}, nil
+		return setting.App{}, nil
 	}
 	if err != nil {
-		return types.AppSettings{}, err
+		return setting.App{}, err
 	}
 	return FileConfigToAppSettings(config), nil
 }

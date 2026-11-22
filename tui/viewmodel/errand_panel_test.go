@@ -9,7 +9,7 @@ import (
 	"crude/tui/screens/statusoverview"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -19,7 +19,7 @@ func seedNamedErrandPanel(t *testing.T, app *App) {
 	ws.Logger = stubLogger{}
 	ws.AgentMgr.AddOrchestrator("workspace-agent", workspace.NewAgentState("workspace-agent", nil, nil)).Label = "Naveen"
 	sess := &workspace.Session{SessionID: "workspace-session", AgentID: "workspace-agent",
-		Settings: &workspace.SessionSettingsState{Effective: types.Settings{SessionMainAgent: "errand"}}}
+		Settings: &workspace.SessionSettingsState{Effective: setting.Settings{SessionMainAgent: "errand"}}}
 	if ws.SessionsByAgent == nil {
 		ws.SessionsByAgent = make(map[string]*workspace.Session)
 	}

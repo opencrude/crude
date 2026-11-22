@@ -60,10 +60,10 @@ func decodeEnvironment(raw any) (map[string]string, error) {
 // durable registration change against its reviewed preimage, and authorizes
 // launching the resulting configuration for this run. Credential references
 // remain user-owned and cannot be shadowed.
-func (service *Service) configureEnvironment(ctx context.Context, actor captypes.RuntimeActor, id string, requested map[string]string) error {
-	service.mu.RLock()
-	before := captypes.Clone(service.settings)
-	service.mu.RUnlock()
+func (s *Service) configureEnvironment(ctx context.Context, actor captypes.RuntimeActor, id string, requested map[string]string) error {
+	s.mu.RLock()
+	before := captypes.Clone(s.settings)
+	s.mu.RUnlock()
 	config, exists := before.Connections[id]
 	if !exists || config.Transport != "stdio" {
 		return errors.New("environment applies only to an installed local (stdio) MCP connection")
@@ -120,21 +120,21 @@ func (service *Service) configureEnvironment(ctx context.Context, actor captypes
 		return errors.New("MCP configuration requires an active run identity")
 	}
 	request := &captypes.ConfigurationApprovalRequired{Preview: preview, Actor: actor}
-	if err := service.recordAuthorization(ctx, actor, origin, "configuration", preview.Token, request.Evidence()); err != nil {
+	if err := s.recordAuthorization(ctx, actor, origin, "configuration", preview.Token, request.Evidence()); err != nil {
 		return err
 	}
 	next := captypes.Clone(before)
 	next.Connections[id] = after
-	if err := service.publishRegistration(ctx, id, before, next); err != nil {
+	if err := s.publishRegistration(ctx, id, before, next); err != nil {
 		return err
 	}
 	// Publication revoked run-local launch authority. The approval covered
 	// launching exactly this configuration, so grant it for the run again.
-	service.mu.RLock()
-	published := captypes.Clone(service.settings)
-	service.mu.RUnlock()
+	s.mu.RLock()
+	published := captypes.Clone(s.settings)
+	s.mu.RUnlock()
 	if current, exists := published.Connections[id]; exists && reflect.DeepEqual(current.Environment, after.Environment) {
-		service.grantLaunch(actor, id, launchToken(current, published, actor))
+		s.grantLaunch(actor, id, launchToken(current, published, actor))
 	}
 	return nil
 }

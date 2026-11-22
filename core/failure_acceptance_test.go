@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"crude/buildinfo"
-	"crude/core/client"
-	"crude/core/protocol"
-	"crude/core/wire"
-	"crude/types"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
+	"crude/core/corewire"
+	"crude/internal/buildinfo"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -20,8 +20,8 @@ func failureRuntime(t *testing.T) *Runtime {
 	t.Helper()
 	setCoreTestHome(t, t.TempDir())
 	r, err := New(func(root string) (*workspace.Workspace, error) {
-		ws := workspace.NewWorkspace(root, "", "tester", types.Settings{}, coreTestLogger{})
-		ws.SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
+		ws := workspace.NewWorkspace(root, "", "tester", setting.Settings{}, coreTestLogger{})
+		ws.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}})
 		return ws, nil
 	}, filepath.Join(t.TempDir(), "receipts.db"))
 	if err != nil {

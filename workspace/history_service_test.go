@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"crude/agent/session"
-	ttypes "crude/types"
+	"crude/types/setting"
 	"crude/workspace/fileio"
 	"crude/workspace/localhistory"
 )
@@ -29,7 +29,7 @@ func historyServiceHarness(t *testing.T) (*LocalHistoryService, *localhistory.St
 
 func TestDeleteSafetyCapturesOnlyDeletedTree(t *testing.T) {
 	service, store, root := historyServiceHarness(t)
-	service.settings = ttypes.LocalHistorySettings{Enabled: "on"}
+	service.settings = setting.LocalHistory{Enabled: "on"}
 	for _, path := range []string{"unrelated", "gone/file", "gone/.ignored/file"} {
 		full := filepath.Join(root, filepath.FromSlash(path))
 		if err := os.MkdirAll(filepath.Dir(full), 0700); err != nil {
@@ -87,7 +87,7 @@ func BenchmarkDeleteSafetyInDenseWorkspace(b *testing.B) {
 	}
 	defer store.Close()
 	service := NewLocalHistoryService(root, store, nopLogger{})
-	service.settings = ttypes.LocalHistorySettings{Enabled: "on"}
+	service.settings = setting.LocalHistory{Enabled: "on"}
 	for i := range 1000 {
 		full := filepath.Join(root, "unrelated", fmt.Sprintf("%04d", i))
 		if err := os.MkdirAll(filepath.Dir(full), 0700); err != nil {
@@ -110,7 +110,7 @@ func BenchmarkDeleteSafetyInDenseWorkspace(b *testing.B) {
 
 func TestDisabledHistoryIsDistinctFromCaptureFailure(t *testing.T) {
 	service, _, _ := historyServiceHarness(t)
-	service.settings = ttypes.LocalHistorySettings{Enabled: "off"}
+	service.settings = setting.LocalHistory{Enabled: "off"}
 	if err := service.BeginMessage(context.Background(), "session", "message"); !errors.Is(err, session.ErrHistoryDisabled) {
 		t.Fatalf("disabled history error=%v", err)
 	}
@@ -196,7 +196,7 @@ func prepareHistoryWrite(t *testing.T, service *LocalHistoryService, sessionID, 
 
 func TestHistoryServiceCapturesExternalAndReconciledChanges(t *testing.T) {
 	service, store, root := historyServiceHarness(t)
-	settings := ttypes.LocalHistorySettings{Enabled: "on", UseGitIgnore: "on", CaptureExternalChanges: "on", DebounceMS: 100, ReconcileIntervalSeconds: 5, MaxFileSizeMB: 10, RetentionMaxSnapshots: 50, StorageBudgetMB: 50}
+	settings := setting.LocalHistory{Enabled: "on", UseGitIgnore: "on", CaptureExternalChanges: "on", DebounceMS: 100, ReconcileIntervalSeconds: 5, MaxFileSizeMB: 10, RetentionMaxSnapshots: 50, StorageBudgetMB: 50}
 	service.UpdateSettings(settings)
 	waitHistory(t, func() bool { return service.Status().Ready })
 	before, err := store.Timeline(100)
@@ -218,7 +218,7 @@ func TestHistoryServiceCapturesExternalAndReconciledChanges(t *testing.T) {
 
 func TestHistoryServiceMessageAttributionAndCollision(t *testing.T) {
 	service, store, root := historyServiceHarness(t)
-	service.settings = ttypes.LocalHistorySettings{Enabled: "on", UseGitIgnore: "on", MaxFileSizeMB: 10}
+	service.settings = setting.LocalHistory{Enabled: "on", UseGitIgnore: "on", MaxFileSizeMB: 10}
 	ctx := context.Background()
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("base"), 0o644); err != nil {
 		t.Fatal(err)
@@ -271,7 +271,7 @@ func TestHistoryServiceMessageAttributionAndCollision(t *testing.T) {
 
 func TestHistoryServiceUndoUsesAgentProvenanceNotWatcherScope(t *testing.T) {
 	service, _, root := historyServiceHarness(t)
-	service.settings = ttypes.LocalHistorySettings{Enabled: "on", UseGitIgnore: "on", MaxFileSizeMB: 10}
+	service.settings = setting.LocalHistory{Enabled: "on", UseGitIgnore: "on", MaxFileSizeMB: 10}
 	ctx := context.Background()
 	for _, path := range []string{"agent.txt", "external.txt"} {
 		if err := os.WriteFile(filepath.Join(root, path), []byte("before"), 0o644); err != nil {
@@ -306,7 +306,7 @@ func TestHistoryServiceUndoUsesAgentProvenanceNotWatcherScope(t *testing.T) {
 // "message history scope is unavailable".
 func TestContinuationAfterRetentionKeepsRecordingEdits(t *testing.T) {
 	service, store, root := historyServiceHarness(t)
-	service.settings = ttypes.LocalHistorySettings{Enabled: "on", UseGitIgnore: "on", MaxFileSizeMB: 10}
+	service.settings = setting.LocalHistory{Enabled: "on", UseGitIgnore: "on", MaxFileSizeMB: 10}
 	ctx := context.Background()
 	path := filepath.Join(root, "work.txt")
 	if err := os.WriteFile(path, []byte("one"), 0o644); err != nil {
@@ -360,7 +360,7 @@ func TestContinuationAfterRetentionKeepsRecordingEdits(t *testing.T) {
 // agent work and yield as soon as a turn starts.
 func TestMaintenanceRunsOnlyBetweenAgentTurns(t *testing.T) {
 	service, _, _ := historyServiceHarness(t)
-	service.settings = ttypes.LocalHistorySettings{Enabled: "off"}
+	service.settings = setting.LocalHistory{Enabled: "off"}
 	ctx := context.Background()
 	if err := service.BeginContinuation(ctx, "session", "message"); err != nil {
 		t.Fatal(err)
@@ -395,7 +395,7 @@ func TestMaintenanceRunsOnlyBetweenAgentTurns(t *testing.T) {
 
 func TestDisabledHistoryLetsContinuationEditsProceed(t *testing.T) {
 	service, _, root := historyServiceHarness(t)
-	service.settings = ttypes.LocalHistorySettings{Enabled: "off"}
+	service.settings = setting.LocalHistory{Enabled: "off"}
 	err := service.RecordAgentMutation(context.Background(), session.HistoryMutation{
 		SessionID: "session", MessageID: "message", AgentID: "agent",
 		Receipt: fileio.MutationReceipt{OperationID: "op", OperationName: "write_file", Paths: []fileio.MutationPathState{{
@@ -411,7 +411,7 @@ func TestDisabledHistoryLetsContinuationEditsProceed(t *testing.T) {
 // A deleted folder can be restored from the copy Local History keeps first.
 func TestKeepBeforeDeleteMakesDeletionRestorable(t *testing.T) {
 	service, store, root := historyServiceHarness(t)
-	service.settings = ttypes.LocalHistorySettings{}
+	service.settings = setting.LocalHistory{}
 	if err := os.MkdirAll(filepath.Join(root, "gone"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -439,7 +439,7 @@ func TestKeepBeforeDeleteMakesDeletionRestorable(t *testing.T) {
 		t.Fatalf("restored %q err=%v", data, err)
 	}
 
-	service.settings = ttypes.LocalHistorySettings{Enabled: "off"}
+	service.settings = setting.LocalHistory{Enabled: "off"}
 	if err := service.KeepBeforeDelete(context.Background(), "gone"); err != nil {
 		t.Fatalf("disabled history must not block a delete: %v", err)
 	}

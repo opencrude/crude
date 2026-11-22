@@ -7,7 +7,7 @@ import (
 
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 // A structured planning failure must read as a red contract dot plus a short
@@ -16,10 +16,10 @@ func TestPlanToolFailureShowsRedDotAndReasonNotPayload(t *testing.T) {
 	payload := `{"current_plan":{"id":"normalize-weird-filenames","revision":2,"objective":"Find weirdly-named files",` +
 		`"status":"active","steps":[{"id":"audit","description":"Audit repo","status":"completed"}]},` +
 		`"error":"revision_conflict","expected_revision":1,"received_revision":2}`
-	for _, phase := range []string{types.ToolPreviewError, types.ToolPreviewDone} {
-		msg := types.ChatMessage{
-			InternalID: "p1", Role: types.RoleTool, ToolName: "update_plan",
-			ToolStatus: types.ToolStatusError, ToolPreviewPhase: phase,
+	for _, phase := range []string{conversation.ToolPreviewError, conversation.ToolPreviewDone} {
+		msg := conversation.ChatMessage{
+			InternalID: "p1", Role: conversation.RoleTool, ToolName: "update_plan",
+			ToolStatus: conversation.ToolStatusError, ToolPreviewPhase: phase,
 			ToolArgs: "normalize-weird-filenames", Content: payload, ToolDuration: time.Second,
 		}
 		ml := renderToolMessageLines(msg, theme.DefaultDark(), 100, 100, 100, 0, 20, "done", DisclosureCollapsed)
@@ -49,9 +49,9 @@ func TestPlanToolFailureShowsRedDotAndReasonNotPayload(t *testing.T) {
 // An unstructured planning failure keeps its own message: the reason is only
 // replaced when a structured payload can actually explain it.
 func TestPlanToolPlainFailureKeepsMessage(t *testing.T) {
-	msg := types.ChatMessage{
-		InternalID: "p1", Role: types.RoleTool, ToolName: "update_plan",
-		ToolStatus: types.ToolStatusError, ToolPreviewPhase: types.ToolPreviewError,
+	msg := conversation.ChatMessage{
+		InternalID: "p1", Role: conversation.RoleTool, ToolName: "update_plan",
+		ToolStatus: conversation.ToolStatusError, ToolPreviewPhase: conversation.ToolPreviewError,
 		Content: "Error: update_plan: 'plan_id' is required",
 	}
 	ml := renderToolMessageLines(msg, theme.DefaultDark(), 100, 100, 100, 0, 20, "done", DisclosureCollapsed)

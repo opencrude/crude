@@ -8,8 +8,8 @@ import (
 	"slices"
 	"strings"
 
-	"crude/buildinfo"
-	"crude/types"
+	"crude/internal/buildinfo"
+	"crude/internal/terminalvt"
 )
 
 // HostKind identifies the outer terminal emulator Crude is running in.
@@ -74,7 +74,7 @@ func ghosttyVersionMatchesPin(version string) bool {
 	if version == "" {
 		return false
 	}
-	pin := types.PinnedGhosttyVersion
+	pin := terminalvt.PinnedGhosttyVersion
 	if version == pin {
 		return true
 	}
@@ -105,7 +105,7 @@ func PTYEnviron(base []string) []string {
 	if base == nil {
 		env = os.Environ()
 	}
-	env = setEnv(env, "TERM", types.GhosttyTermName)
+	env = setEnv(env, "TERM", terminalvt.GhosttyTermName)
 	env = setEnv(env, "COLORTERM", "truecolor")
 	env = setEnv(env, "TERM_PROGRAM", "crude")
 	// Outer-window identity does not describe this embedded terminal's renderer
@@ -145,14 +145,14 @@ func TerminfoDir() string {
 		return ""
 	}
 	dir := filepath.Join(home, buildinfo.DataDir(), "terminfo")
-	entry := filepath.Join(dir, "x", types.GhosttyTermName)
-	if existing, err := os.ReadFile(entry); err == nil && bytes.Equal(existing, types.GhosttyTerminfoEntry) {
+	entry := filepath.Join(dir, "x", terminalvt.GhosttyTermName)
+	if existing, err := os.ReadFile(entry); err == nil && bytes.Equal(existing, terminalvt.GhosttyTerminfoEntry) {
 		return dir
 	}
 	if err := os.MkdirAll(filepath.Dir(entry), 0o755); err != nil {
 		return ""
 	}
-	if err := os.WriteFile(entry, types.GhosttyTerminfoEntry, 0o644); err != nil {
+	if err := os.WriteFile(entry, terminalvt.GhosttyTerminfoEntry, 0o644); err != nil {
 		return ""
 	}
 	return dir

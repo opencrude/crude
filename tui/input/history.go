@@ -3,17 +3,18 @@ package input
 import (
 	"strings"
 
-	"crude/history"
+	"crude/agent/prompthistory"
 )
 
 type HistoryRecallEvent struct {
-	Entry      history.Entry
+	Entry      prompthistory.Entry
 	Generation uint64
 }
 
 func (HistoryRecallEvent) event() {}
 
-func (m *Model) RecallPrompt(entry history.Entry) HistoryRecallEvent {
+// RecallPrompt starts loading a history entry and returns the event that carries its generation.
+func (m *Model) RecallPrompt(entry prompthistory.Entry) HistoryRecallEvent {
 	m.historyGeneration++
 	m.historyLoading = true
 	m.draftRevision++ // explicit recall intent outranks an older cold draft load

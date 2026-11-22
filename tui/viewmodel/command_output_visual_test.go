@@ -14,7 +14,7 @@ import (
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
 	"crude/tui/filetree"
-	ctypes "crude/types"
+	"crude/types/conversation"
 	"crude/workspace"
 )
 
@@ -36,7 +36,7 @@ func TestCommandOutputVisualAcceptance(t *testing.T) {
 	app.ApplyThemePreset("dark")
 	app.AddOrchestrator("command-audit")
 	state := app.ws.AgentMgr().Get("command-audit").State
-	state.Messages.AppendMessage(workspace.Message{Role: ctypes.RoleUser, Content: "Audit captured command output and file icons."})
+	state.Messages.AppendMessage(conversation.Message{Role: conversation.RoleUser, Content: "Audit captured command output and file icons."})
 	for i, tc := range []struct {
 		tool, cmd, output string
 		code              int
@@ -79,16 +79,16 @@ func (m *commandOutputVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if key, ok := msg.(tea.KeyPressMsg); ok {
 		switch key.Code {
 		case tea.KeyF2:
-			m.subPaneProjections.GetExisting(m.owner).renderer.ToggleDisclosure("async")
+			m.subPaneProjections.Existing(m.owner).renderer.ToggleDisclosure("async")
 			return m, nil
 		case tea.KeyF3:
 			state := m.ws.AgentMgr().Get(m.owner).State
 			messages := state.Messages.Messages()
 			var records []sessiondb.MessageWithMeta
 			for _, message := range messages {
-				records = append(records, sessiondb.MessageWithMeta{Msg: provider.ChatMessage{Role: message.Role}, Meta: sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []ctypes.ConversationMessage{message}}})
+				records = append(records, sessiondb.MessageWithMeta{Msg: provider.ChatMessage{Role: message.Role}, Meta: sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []conversation.Message{message}}})
 			}
-			m.subPaneProjections.GetExisting(m.owner).renderer.SyncMessages(ChatMessagesFromViews(workspace.ConvertMessagesForDisplay(records)), state.Messages.Version()+1, 0)
+			m.subPaneProjections.Existing(m.owner).renderer.SyncMessages(ChatMessagesFromViews(workspace.ConvertMessagesForDisplay(records)), state.Messages.Version()+1, 0)
 			return m, nil
 		case tea.KeyF4:
 			m.light = !m.light

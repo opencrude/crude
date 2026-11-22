@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/types/statuscenter"
 	"crude/workspace"
 	"crude/workspace/fileio"
 )
@@ -20,7 +20,7 @@ type workspaceStorageGate struct {
 
 type workspaceDeletionPreview struct {
 	owner   coreprotocol.Owner
-	plan    workspace.WorkspaceDeletion
+	plan    workspace.Deletion
 	expires time.Time
 }
 
@@ -110,14 +110,14 @@ func (c *Connection) dispatchWorkspaceDeletion(ctx context.Context, request core
 	return ready
 }
 
-func deletionIssue(summary, detail, guidance string) *types.OperationIssue {
-	return &types.OperationIssue{Title: "Workspace is in use", Summary: summary, Detail: detail, Guidance: guidance}
+func deletionIssue(summary, detail, guidance string) *statuscenter.OperationIssue {
+	return &statuscenter.OperationIssue{Title: "Workspace is in use", Summary: summary, Detail: detail, Guidance: guidance}
 }
 
 // retireSavedWorkspace runs under the saved-ID gate. Opening attempts are
 // excluded, existing activity is refused, and idle session admissions are fenced
 // before the decision. Dirty accepted documents remain durable saved data.
-func (r *Runtime) retireSavedWorkspace(ctx context.Context, id string) (*types.OperationIssue, error) {
+func (r *Runtime) retireSavedWorkspace(ctx context.Context, id string) (*statuscenter.OperationIssue, error) {
 	r.mu.Lock()
 	// A timed-out attach may have left a factory worker running without a client.
 	for _, creation := range r.creating {
@@ -128,7 +128,7 @@ func (r *Runtime) retireSavedWorkspace(ctx context.Context, id string) (*types.O
 	}
 	var target *actor
 	for _, a := range r.workspaces {
-		if workspace.WorkspaceID(a.ws.RootPath) == id {
+		if workspace.ID(a.ws.RootPath) == id {
 			target = a
 			break
 		}
@@ -138,7 +138,7 @@ func (r *Runtime) retireSavedWorkspace(ctx context.Context, id string) (*types.O
 		return nil, ctx.Err()
 	}
 	type retirement struct {
-		issue   *types.OperationIssue
+		issue   *statuscenter.OperationIssue
 		release func()
 	}
 	decision := make(chan retirement, 1)
@@ -222,7 +222,7 @@ func (c *Connection) workspaceDeletionCall(ctx context.Context, request coreprot
 	}
 	r := c.runtime
 	var id, project string
-	var plan workspace.WorkspaceDeletion
+	var plan workspace.Deletion
 	var deleted workspace.DeletedWorkspace
 	switch request.Method {
 	case coreprotocol.WorkspaceDeletePreview:
@@ -253,10 +253,10 @@ func (c *Connection) workspaceDeletionCall(ctx context.Context, request coreprot
 		}
 		id, project = deleted.ID, deleted.ProjectDir
 	}
-	if id == "" || id != workspace.WorkspaceID(project) {
+	if id == "" || id != workspace.ID(project) {
 		return fault(request, "invalid_request", "Workspace identity does not match the selected project.")
 	}
-	if id == workspace.WorkspaceID(current.ws.RootPath) {
+	if id == workspace.ID(current.ws.RootPath) {
 		return fault(request, "workspace_in_use", "This is the current workspace. Switch to another workspace before deleting its saved data.")
 	}
 	release, err := r.lockWorkspaceStorage(ctx, id)
@@ -270,7 +270,7 @@ func (c *Connection) workspaceDeletionCall(ctx context.Context, request coreprot
 		r.mu.Lock()
 		replacement := false
 		for _, a := range r.workspaces {
-			replacement = replacement || workspace.WorkspaceID(a.ws.RootPath) == id
+			replacement = replacement || workspace.ID(a.ws.RootPath) == id
 		}
 		for _, opening := range r.creating {
 			replacement = replacement || opening.savedID == id
@@ -288,7 +288,7 @@ func (c *Connection) workspaceDeletionCall(ctx context.Context, request coreprot
 	}
 	if issue != nil {
 		if request.Method == coreprotocol.WorkspaceDeletePreview {
-			return response(request, workspace.WorkspaceDeletion{ID: id, ProjectDir: project, Issue: issue})
+			return response(request, workspace.Deletion{ID: id, ProjectDir: project, Issue: issue})
 		}
 		return fault(request, "workspace_in_use", strings.Join([]string{issue.Summary, issue.Detail, issue.Guidance}, "\n"))
 	}

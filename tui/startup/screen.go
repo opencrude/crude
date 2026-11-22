@@ -6,7 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/screens/filepicker"
@@ -14,7 +14,7 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/statuscenter"
 	"crude/workspace"
 )
 
@@ -91,7 +91,7 @@ func newScreen(th *theme.Theme, picker *filepicker.Screen, initial coreprotocol.
 	items := make([]ui.ListItem, 0, len(initial.Workspaces))
 	for _, info := range initial.Workspaces {
 		if info.ProjectDir != "" {
-			items = append(items, ui.ListItem{ID: info.ProjectDir, Label: workspace.WorkspaceDisplayName(info), Detail: info.ShortPath(), Trailing: launcher.WorkspaceBadges(info.Activity), Payload: info.ProjectDir})
+			items = append(items, ui.ListItem{ID: info.ProjectDir, Label: workspace.DisplayName(info), Detail: info.ShortPath(), Trailing: launcher.WorkspaceBadges(info.Activity), Payload: info.ProjectDir})
 		}
 	}
 	if len(items) == 0 {
@@ -147,7 +147,7 @@ func (s *screen) Children() []ui.Component {
 	return children
 }
 
-func (s *screen) setIssues(issues []types.OperationIssue) {
+func (s *screen) setIssues(issues []statuscenter.OperationIssue) {
 	var blocks []string
 	for _, issue := range issues {
 		parts := []string{issue.Title}

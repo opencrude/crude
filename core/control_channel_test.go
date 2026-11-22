@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"crude/core/client"
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
 	"crude/types/control"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -54,7 +54,7 @@ func controlWireClient(t *testing.T, r *Runtime, id string) *coreclient.Client {
 
 func TestControlWireExactTargetAndImmutableOutcome(t *testing.T) {
 	r, err := New(func(root string) (*workspace.Workspace, error) {
-		return workspace.NewWorkspace(root, "model", "tester", types.Settings{}, coreTestLogger{}), nil
+		return workspace.NewWorkspace(root, "model", "tester", setting.Settings{}, coreTestLogger{}), nil
 	}, t.TempDir()+"/receipts.db")
 	if err != nil {
 		t.Fatal(err)

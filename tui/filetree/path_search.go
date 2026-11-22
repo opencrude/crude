@@ -1,19 +1,19 @@
 package filetree
 
 import (
-	"crude/text/search"
+	"crude/text/textsearch"
 	"maps"
 	"path/filepath"
 	"sort"
 	"strings"
 
-	"crude/third_party/pathwalk"
+	"crude/third_party/fastwalk"
 )
 
 // PathMatch is a ranked path result. NamePositions are rune offsets in Entry.Name
 // and are consumed by the shared tree row painter for highlighting.
 type PathMatch struct {
-	Entry         pathwalk.Entry
+	Entry         fastwalk.Entry
 	Score         int
 	NamePositions []int
 }
@@ -21,7 +21,7 @@ type PathMatch struct {
 // RankPathEntries performs Crude's filename/path fuzzy ranking without reading
 // file contents. It is deliberately independent of the tree's loaded-node
 // state, so unloaded descendants are searchable once the path catalog exists.
-func RankPathEntries(entries []pathwalk.Entry, query string) []PathMatch {
+func RankPathEntries(entries []fastwalk.Entry, query string) []PathMatch {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return nil
@@ -56,14 +56,14 @@ func RankPathEntries(entries []pathwalk.Entry, query string) []PathMatch {
 // their necessary ancestors. It performs no filesystem I/O. The input should
 // contain only paths that matched the current query; ancestor directories are
 // synthesized so the result still looks like the normal file tree.
-func NewPickerSearchModel(rootPath string, directoriesOnly bool, matches []PathMatch) *FileTreeModel {
+func NewPickerSearchModel(rootPath string, directoriesOnly bool, matches []PathMatch) *Model {
 	return NewSearchModel(rootPath, ModelOptions{DirectoriesOnly: directoriesOnly}, matches)
 }
 
 // NewSearchModel builds a no-I/O tree projection from ranked path matches.
 // Callers may enable the normal tree services when the projection belongs to a
 // persistent workspace tree; picker callers use the service-free defaults.
-func NewSearchModel(rootPath string, options ModelOptions, matches []PathMatch) *FileTreeModel {
+func NewSearchModel(rootPath string, options ModelOptions, matches []PathMatch) *Model {
 	options.InitialLoad = false
 	options.NoLocalIO = true
 	m := NewFileTreeModelWithOptions(rootPath, options)
@@ -141,7 +141,7 @@ func NewSearchModel(rootPath string, options ModelOptions, matches []PathMatch) 
 
 // NewSearchModelFromBase preserves complete Git and diagnostic metadata, even
 // for unloaded search matches, without a resolver or filesystem work.
-func NewSearchModelFromBase(base *FileTreeModel, matches []PathMatch) *FileTreeModel {
+func NewSearchModelFromBase(base *Model, matches []PathMatch) *Model {
 	if base == nil {
 		return NewSearchModel(".", ModelOptions{}, matches)
 	}
@@ -160,7 +160,7 @@ func NewSearchModelFromBase(base *FileTreeModel, matches []PathMatch) *FileTreeM
 
 // RefreshStatusFrom updates only presentation metadata on an existing search
 // projection. Its selection, disclosure and scroll remain privately owned.
-func (m *FileTreeModel) RefreshStatusFrom(base *FileTreeModel) {
+func (m *Model) RefreshStatusFrom(base *Model) {
 	if m == nil || base == nil || m == base {
 		return
 	}

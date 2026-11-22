@@ -10,11 +10,11 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
 )
 
-func setupFixture() types.ProjectToolReview {
-	return types.ProjectToolReview{Project: "/project", Items: []types.ProjectToolCandidate{
+func setupFixture() insight.ProjectToolReview {
+	return insight.ProjectToolReview{Project: "/project", Items: []insight.ProjectToolCandidate{
 		{ID: "download", Package: "fixture-server", Version: "v1", Source: "github", URL: "https://example.invalid/server.zip",
 			File: "server.zip", Command: "fixture-server", Languages: []string{"fixture"}, Licenses: []string{"MIT"}, Installable: true},
 		{ID: "manager", Package: "package-manager-server", Version: "v2", Source: "fixture registry",

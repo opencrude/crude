@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/terminalvt"
+	"crude/internal/terminalvt"
 	"crude/tui/rendering"
 	"crude/tui/screens/shellterm"
 	"crude/tui/screens/termdock"

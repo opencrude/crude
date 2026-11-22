@@ -1,0 +1,24 @@
+# Doc comments on new exported names (docs/reference/code-layout.md).
+# Run through `make lint-new`, which passes --new-from-rev, so only code added
+# since that revision is checked. Older undocumented names are not reported.
+version: "2"
+run:
+  tests: false
+  relative-path-mode: gomod
+linters:
+  default: none
+  enable:
+    - revive
+  settings:
+    revive:
+      rules:
+        - name: exported
+          arguments:
+            - disable-stuttering-check
+  exclusions:
+    generated: strict
+    paths:
+      - third_party$
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

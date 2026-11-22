@@ -18,7 +18,7 @@ import (
 	"crude/agent/collaboration"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
-	ttypes "crude/types"
+	"crude/types/conversation"
 	recoverytypes "crude/types/recovery"
 )
 
@@ -229,7 +229,7 @@ func TestFinalizationCannotOverwriteNewerInputAdmission(t *testing.T) {
 	}
 	before := s.contextRevision
 	stale := []provider.ChatMessage{provider.NewTextMessage("assistant", "old terminal answer")}
-	if err := s.finalizeTurn(stale, 0, &displayMetaTracker{metas: make(map[string]*sessiondb.DisplayMeta)}, "", "old", ttypes.TurnIdentity{Generation: 1}, stale); err == nil {
+	if err := s.finalizeTurn(stale, 0, &displayMetaTracker{metas: make(map[string]*sessiondb.DisplayMeta)}, "", "old", conversation.TurnIdentity{Generation: 1}, stale); err == nil {
 		t.Fatal("stale finalization replaced a newer submitted source")
 	}
 	current, found, err := sessiondb.LoadContextState(s.db, s.sessionID, s.sessionID)

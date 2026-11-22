@@ -2,6 +2,9 @@ package viewmodel
 
 import (
 	"crude/tui/screens/gitdiff"
+	"crude/types/conversation"
+	"crude/types/insight"
+	"crude/types/setting"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -19,7 +22,6 @@ import (
 	"crude/tui/screens/shelltree"
 	"crude/tui/ui"
 	"crude/tui/window"
-	"crude/types"
 	"crude/workspace"
 )
 
@@ -129,21 +131,21 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	if canRequest {
 		lspSection.Items = append(lspSection.Items, ui.ContextMenuItem{
 			Label: "Go to definition", Detail: "Alt+.", Action: func() {
-				m.runDetachedAsyncCmd(m.requestNavigationCmd(types.LSPNavigationDefinition))
+				m.runDetachedAsyncCmd(m.requestNavigationCmd(insight.LSPNavigationDefinition))
 			},
 		})
 		lspSection.Items = append(lspSection.Items, ui.ContextMenuItem{
 			Label: "Find references", Detail: "Alt+;", Action: func() {
-				m.runDetachedAsyncCmd(m.requestNavigationCmd(types.LSPNavigationReferences))
+				m.runDetachedAsyncCmd(m.requestNavigationCmd(insight.LSPNavigationReferences))
 			},
 		})
 		lspSection.Items = append(lspSection.Items, ui.ContextMenuItem{
 			Label: "Go to type definition", Detail: "Alt+T", Action: func() {
-				m.runDetachedAsyncCmd(m.requestNavigationCmd(types.LSPNavigationTypeDefinition))
+				m.runDetachedAsyncCmd(m.requestNavigationCmd(insight.LSPNavigationTypeDefinition))
 			},
 		}, ui.ContextMenuItem{
 			Label: "Go to implementation", Detail: "Alt+M", Action: func() {
-				m.runDetachedAsyncCmd(m.requestNavigationCmd(types.LSPNavigationImplementation))
+				m.runDetachedAsyncCmd(m.requestNavigationCmd(insight.LSPNavigationImplementation))
 			},
 		})
 		lspSection.Items = append(lspSection.Items, ui.ContextMenuItem{
@@ -849,7 +851,7 @@ func (m *App) buildAttachmentContextMenu(rr input.RefRange) *ui.ContextMenuState
 	if m.RefStore() == nil {
 		return nil
 	}
-	ref, ok := m.RefStore().GetReference(rr.ID)
+	ref, ok := m.RefStore().Reference(rr.ID)
 	if !ok || !ref.Active() {
 		return nil
 	}
@@ -870,8 +872,8 @@ func (m *App) buildAttachmentContextMenu(rr input.RefRange) *ui.ContextMenuState
 		}},
 	}
 	items = append(items,
-		ui.ContextMenuItem{Label: "Open with default app", Action: func() { m.runDetachedAsyncCmd(m.openAttachmentIn(ref.ID, types.AttachmentOpenSystem)) }},
-		ui.ContextMenuItem{Label: "Show in file manager", Action: func() { m.runDetachedAsyncCmd(m.openAttachmentIn(ref.ID, types.AttachmentOpenFileManager)) }},
+		ui.ContextMenuItem{Label: "Open with default app", Action: func() { m.runDetachedAsyncCmd(m.openAttachmentIn(ref.ID, setting.AttachmentOpenSystem)) }},
+		ui.ContextMenuItem{Label: "Show in file manager", Action: func() { m.runDetachedAsyncCmd(m.openAttachmentIn(ref.ID, setting.AttachmentOpenFileManager)) }},
 	)
 	if ref.FilePath != "" {
 		path := ref.FilePath
@@ -1007,7 +1009,7 @@ func (m *App) buildChatContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 		if rect, ok := m.screenRectOf(m.chatScreen.VirtualList().ID()); ok {
 			if row, ok := m.chatScreen.MessageAtLocalY(mouse.Y - rect.Y); ok {
 				role := ""
-				var canonical workspace.Message
+				var canonical conversation.Message
 				canonicalFound := false
 				if node := m.AgentView.ActiveNode(); node != nil && node.State != nil && node.State.Messages != nil {
 					for _, msg := range node.State.Messages.Messages() {

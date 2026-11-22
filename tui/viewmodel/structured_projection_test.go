@@ -16,8 +16,8 @@ import (
 	"crude/tui/screens/shellchat"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	ctypes "crude/types"
 	captypes "crude/types/capability"
+	"crude/types/conversation"
 	"crude/workspace"
 )
 
@@ -79,7 +79,7 @@ func TestStructuredToolFamilyLiveSQLiteHydrationParity(t *testing.T) {
 				for caseIndex, c := range structuredProjectionCases(t) {
 					t.Run(c.name, func(t *testing.T) {
 						id := fmt.Sprintf("call-%s-%d", c.name, caseIndex)
-						for _, evt := range []ctypes.AgentEventMsg{
+						for _, evt := range []AgentEventMsg{
 							{AgentID: state.ID, Type: "tool_call", Data: map[string]any{"tool_id": id, "internal_id": id, "name": c.name, "args": c.input}},
 							{AgentID: state.ID, Type: "tool_result", Data: map[string]any{"tool_id": id, "internal_id": id, "name": c.name, "result": c.result}},
 						} {
@@ -96,16 +96,16 @@ func TestStructuredToolFamilyLiveSQLiteHydrationParity(t *testing.T) {
 						}
 						wire := provider.NewTextMessage("tool", c.result)
 						wire.ToolCallID = id
-						if err := sessiondb.AppendMessageWithMeta(database, state.ID, wire, 1, sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []ctypes.ConversationMessage{snapshot}}); err != nil {
+						if err := sessiondb.AppendMessageWithMeta(database, state.ID, wire, 1, sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []conversation.Message{snapshot}}); err != nil {
 							t.Fatal(err)
 						}
 						loaded, err := sessiondb.LoadMessagesWithMeta(database)
 						if err != nil {
 							t.Fatal(err)
 						}
-						live := ChatMessagesFromViews([]workspace.ChatMessageView{snapshot})
+						live := ChatMessagesFromViews([]conversation.Message{snapshot})
 						hydrated := ChatMessagesFromViews(workspace.ConvertMessagesForDisplay(loaded[len(loaded)-1:]))
-						render := func(input []ctypes.ChatMessage) *chatprojection.Renderer {
+						render := func(input []conversation.ChatMessage) *chatprojection.Renderer {
 							r := chatprojection.NewRenderer(themeCase.th)
 							r.SetSize(width, 40)
 							r.SetChatAreaBounds(0, 30)
@@ -141,8 +141,8 @@ func TestStructuredToolFamilyLiveSQLiteHydrationParity(t *testing.T) {
 								t.Fatalf("bare envelope or arbitrary elision: %s", text)
 							}
 						}
-						lp, _ := left.BuildSubPaneToolLines([]*ctypes.ChatMessage{&live[0]}, width, 0)
-						rp, _ := right.BuildSubPaneToolLines([]*ctypes.ChatMessage{&hydrated[0]}, width, 0)
+						lp, _ := left.BuildSubPaneToolLines([]*conversation.ChatMessage{&live[0]}, width, 0)
+						rp, _ := right.BuildSubPaneToolLines([]*conversation.ChatMessage{&hydrated[0]}, width, 0)
 						if len(lp) != len(rp) {
 							t.Fatal("compact child projection changed on resume")
 						}
@@ -167,9 +167,9 @@ func TestStructuredFamilyParallelLeavesSharePresentation(t *testing.T) {
 				t.Fatal(err)
 			}
 			r, resumed := newParityRenderer(), newParityRenderer()
-			batch := ctypes.ChatMessage{InternalID: "batch", Role: ctypes.RoleTool, ToolName: "multi_tool_use.parallel", ToolInput: input, Content: string(output), ToolStatus: "success", ToolPreviewPhase: "done"}
-			r.SyncMessages([]ctypes.ChatMessage{batch}, 1, 0)
-			views := workspace.ConvertMessagesForDisplay([]sessiondb.MessageWithMeta{{Meta: sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []ctypes.ConversationMessage{workspaceMessageFromChat(batch)}}}})
+			batch := conversation.ChatMessage{InternalID: "batch", Role: conversation.RoleTool, ToolName: "multi_tool_use.parallel", ToolInput: input, Content: string(output), ToolStatus: "success", ToolPreviewPhase: "done"}
+			r.SyncMessages([]conversation.ChatMessage{batch}, 1, 0)
+			views := workspace.ConvertMessagesForDisplay([]sessiondb.MessageWithMeta{{Meta: sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []conversation.Message{workspaceMessageFromChat(batch)}}}})
 			resumed.SyncMessages(ChatMessagesFromViews(views), 1, 0)
 			rows, _, _ := r.ExportMessageRows(200)
 			rrows, _, _ := resumed.ExportMessageRows(200)

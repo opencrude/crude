@@ -9,13 +9,13 @@ import (
 	"slices"
 	"time"
 
-	"crude/agent"
 	"crude/agent/provider"
 	"crude/agent/safety"
 	"crude/agent/sessiondb"
-	"crude/clipboard"
-	"crude/logger"
-	"crude/search"
+	"crude/agent/turnloop"
+	"crude/agent/websearch"
+	"crude/internal/clipboard"
+	"crude/internal/logger"
 	"crude/text/jsonrepair"
 	"crude/text/unidiff"
 	"crude/workspace/fileio"
@@ -37,7 +37,7 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 		return nil, fmt.Errorf("resume: open db: %w", err)
 	}
 
-	meta, err := sessiondb.GetMeta(db)
+	meta, err := sessiondb.LoadMeta(db)
 	if err != nil {
 		db.Close()
 		return nil, fmt.Errorf("resume: get meta: %w", err)
@@ -118,10 +118,10 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 	permStore.SetLogger(lg)
 	safety.SetCapabilitiesLogger(lg)
 	provider.SetLogger(lg)
-	search.SetLogger(lg)
+	websearch.SetLogger(lg)
 	clipboard.SetLogger(lg)
 	jsonrepair.SetLogger(lg)
-	diff.SetLogger(lg)
+	unidiff.SetLogger(lg)
 	fileio.SetSafetyLogger(lg)
 
 	editor = fileio.NewEditor(meta.ID, lg)
@@ -155,7 +155,7 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 	if flags.TurnLogs != nil {
 		cfg.TurnLogsEnabled = *flags.TurnLogs
 	}
-	activeCfg := cfg.GetActiveDefaultCategory()
+	activeCfg := cfg.ActiveDefaultCategory()
 	var p *provider.Provider
 	if _, accountErr := cfg.resolveAccount(activeCfg.AccountID); accountErr != nil {
 		lg.Warn("SESSION", "selected_account_unavailable", "account", activeCfg.AccountID, "error", accountErr.Error())
@@ -306,13 +306,13 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 	if loadErr != nil {
 		lg.Warn("SUBAGENT", "hydrate_results_failed", "error", loadErr.Error())
 	}
-	results := make([]agent.SubAgentResult, 0, len(rows))
+	results := make([]turnloop.SubAgentResult, 0, len(rows))
 	for _, row := range rows {
 		result := subAgentResultFromRow(row)
 		if err := sess.restoreChildPlanActivity(string(result.AgentID), result.SessionID); err != nil {
 			return nil, fmt.Errorf("restore child %s plan: %w", result.AgentID, err)
 		}
-		if result.Status == agent.SubAgentRunning {
+		if result.Status == turnloop.SubAgentRunning {
 			if checkpoint, pending := sess.pendingRecoveries[string(result.AgentID)]; pending &&
 				len(checkpoint.OwnerData) > 0 {
 				continue
@@ -363,7 +363,7 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 	return sess, nil
 }
 
-func subAgentResultRow(parentSessionID string, result agent.SubAgentResult) sessiondb.SubAgentResultRow {
+func subAgentResultRow(parentSessionID string, result turnloop.SubAgentResult) sessiondb.SubAgentResultRow {
 	return sessiondb.SubAgentResultRow{
 		ParentSessionID: parentSessionID, ChildSessionID: result.SessionID,
 		AgentID: string(result.AgentID), AgentName: result.Name, AgentCategory: result.Category,
@@ -375,13 +375,13 @@ func subAgentResultRow(parentSessionID string, result agent.SubAgentResult) sess
 	}
 }
 
-func subAgentResultFromRow(row sessiondb.SubAgentResultRow) agent.SubAgentResult {
-	return agent.SubAgentResult{
-		AgentID:        agent.AgentID(row.AgentID),
+func subAgentResultFromRow(row sessiondb.SubAgentResultRow) turnloop.SubAgentResult {
+	return turnloop.SubAgentResult{
+		AgentID:        turnloop.AgentID(row.AgentID),
 		Name:           row.AgentName,
 		Category:       row.AgentCategory,
 		SessionID:      row.ChildSessionID,
-		Status:         agent.SubAgentStatus(row.Status),
+		Status:         turnloop.SubAgentStatus(row.Status),
 		SummaryGist:    row.SummaryGist,
 		ReportID:       row.ReportID,
 		ReportRevision: row.ReportRevision,

@@ -13,12 +13,13 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/rendering"
 	"crude/tui/screens/perfdash"
 	"crude/tui/screens/shellfooter"
 	"crude/tui/screens/termdock"
-	"crude/types"
+	"crude/types/setting"
+	"crude/types/statuscenter"
 	"crude/workspace"
 	"crude/workspace/localhistory"
 )
@@ -56,15 +57,15 @@ func runFeatureVisual(t *testing.T, headless bool, width, height int) {
 	t.Setenv("USERPROFILE", home)
 	root := newGitRepoFixture(t)
 	path := filepath.Join(root, "tracked.txt")
-	seed := workspace.NewWorkspace(root, "", "tester", types.Settings{}, nil)
-	choice := seed.PreparePreferencesSave(types.SettingsScopeWorkspace, []types.SettingEdit{{
+	seed := workspace.NewWorkspace(root, "", "tester", setting.Settings{}, nil)
+	choice := seed.PreparePreferencesSave(setting.ScopeWorkspace, []setting.Edit{{
 		Path: []string{"analysis", "trust"}, After: []byte(`"restricted"`),
 	}})()
 	if choice.Err != nil {
 		t.Fatal(choice.Err)
 	}
 	seed.ApplyPreferencesSave(choice)
-	seed.Status.Notify(types.NotificationRecord{ID: "feature-notice", Summary: "Saved feature notice", Detail: "Read from the retained workspace status owner.", Source: "acceptance"})
+	seed.Status.Notify(statuscenter.NotificationRecord{ID: "feature-notice", Summary: "Saved feature notice", Detail: "Read from the retained workspace status owner.", Source: "acceptance"})
 	seed.Close()
 	runtime := remoteJourneyRuntime(t, "http://127.0.0.1:1")
 	shell := newRemoteJourneyShell(t, runtime, root)

@@ -6,14 +6,14 @@ import (
 	"strings"
 	"testing"
 
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
 	captypes "crude/types/capability"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
 func TestCapabilityFailurePreservesReasonWithoutPublishing(t *testing.T) {
-	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, coreTestLogger{})
+	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", setting.Settings{}, coreTestLogger{})
 	defer ws.Close()
 	if _, err := ws.CapabilitySnapshot(t.Context()); err != nil {
 		t.Fatal(err)
@@ -34,7 +34,7 @@ func TestCapabilityFailurePreservesReasonWithoutPublishing(t *testing.T) {
 }
 
 func TestCapabilityDiagnosticsRedactPrivateOperands(t *testing.T) {
-	settings := types.AppSettings{Capabilities: captypes.Normalize(captypes.Settings{
+	settings := setting.App{Capabilities: captypes.Normalize(captypes.Settings{
 		Sources: map[string]captypes.SourceConfig{"private": {Location: "https://example.test/catalog?token=source-secret"}},
 		Connections: map[string]captypes.ConnectionConfig{"private": {
 			URL: "https://example.test/mcp?token=endpoint-secret", Args: []string{"argument-secret"},

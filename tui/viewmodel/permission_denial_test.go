@@ -8,7 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/rendering"
-	coretypes "crude/types"
+	"crude/types/statuscenter"
 )
 
 func TestPermissionDenyImmediatelyClearsApprovalWithoutWaitingForBackend(t *testing.T) {
@@ -27,7 +27,7 @@ func TestPermissionDenyImmediatelyClearsApprovalWithoutWaitingForBackend(t *test
 				emitTestPermission(app, "child-a", "denied-block")
 				app.paintShellFrame()
 				status, _ := app.ws.Status().Agent("child-a")
-				if !status.NeedsAction || status.Phase != coretypes.AgentApproval {
+				if !status.NeedsAction || status.Phase != statuscenter.AgentApproval {
 					t.Fatal("fixture did not reproduce a pending approval")
 				}
 				request := app.agentPrompts[0]
@@ -79,7 +79,7 @@ func TestPermissionDenyImmediatelyClearsApprovalWithoutWaitingForBackend(t *test
 					app.syncAgentStatusInventory()
 					app.paintShellFrame()
 					status, _ = app.ws.Status().Agent("child-a")
-					if status.NeedsAction || status.Phase == coretypes.AgentApproval {
+					if status.NeedsAction || status.Phase == statuscenter.AgentApproval {
 						t.Errorf("Deny resurfaced approval: %+v", status)
 					}
 					if strip := shellBufferRow(app, app.chatRect.Y+app.chatRect.H-1); strings.Contains(strip, "Needs approval") {
@@ -97,7 +97,7 @@ func TestPermissionDenyImmediatelyClearsApprovalWithoutWaitingForBackend(t *test
 					t.Errorf("Deny changed the draft: %q", app.Input.Value())
 				}
 				emitTestPermission(app, "child-a", "new-block")
-				app.handleAgentEvent(coretypes.AgentEventMsg{AgentID: "child-a", Type: "blocking_complete", Data: map[string]string{"block_id": "denied-block"}})
+				app.handleAgentEvent(AgentEventMsg{AgentID: "child-a", Type: "blocking_complete", Data: map[string]string{"block_id": "denied-block"}})
 				if app.ws.AgentMgr().Get("child-a").State.PendingBlockID != "new-block" || len(app.agentPrompts) != 1 {
 					t.Error("late denial completion removed a newer request")
 				}

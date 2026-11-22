@@ -9,8 +9,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"crude/text/encoding"
-	"crude/types"
+	"crude/text/textencoding"
+	"crude/types/insight"
 	"crude/workspace/document"
 )
 
@@ -43,7 +43,7 @@ type Buffer struct {
 	savepoint               textSnapshot
 	encoding, savedEncoding textencoding.Encoding
 
-	diags   types.InsightDiagnostics
+	diags   insight.Diagnostics
 	diagsMu sync.RWMutex
 }
 
@@ -209,17 +209,17 @@ func (b *Buffer) NoteDiskMissing() {
 }
 
 // SetDiagnostics stores LSP diagnostics for this buffer. Thread-safe.
-func (b *Buffer) SetDiagnostics(diags types.InsightDiagnostics) {
+func (b *Buffer) SetDiagnostics(diags insight.Diagnostics) {
 	b.diagsMu.Lock()
 	defer b.diagsMu.Unlock()
-	b.diags = types.CloneInsightDiagnostics(diags)
+	b.diags = insight.CloneDiagnostics(diags)
 }
 
 // Diagnostics returns the cached LSP diagnostics for this buffer.
-func (b *Buffer) Diagnostics() types.InsightDiagnostics {
+func (b *Buffer) Diagnostics() insight.Diagnostics {
 	b.diagsMu.RLock()
 	defer b.diagsMu.RUnlock()
-	return types.CloneInsightDiagnostics(b.diags)
+	return insight.CloneDiagnostics(b.diags)
 }
 
 // BufferManager owns all open buffers. It is the single source of truth

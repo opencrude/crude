@@ -11,7 +11,7 @@ import (
 	"crude/agent/sessiondb"
 	"crude/tui/chatprojection"
 	"crude/tui/theme"
-	"crude/types"
+	"crude/types/conversation"
 	"crude/workspace"
 )
 
@@ -26,20 +26,20 @@ func newRecursiveScrollFixture(t *testing.T, width int, hydrate bool) recursiveS
 	reg := newSubPaneProjectionRegistry(theme.DefaultDark())
 	panes := workspace.NewPaneManager()
 	for _, id := range []string{"outer", "child", "leaf"} {
-		pane := panes.GetOrCreate(id, workspace.PaneThinking, id)
+		pane := panes.Ensure(id, workspace.PaneThinking, id)
 		pane.StartTime = time.Unix(1, 0)
 		if id == "leaf" {
 			var body []string
 			for row := range 12 {
 				body = append(body, fmt.Sprintf("LEAF-%02d", row))
 			}
-			pane.Messages.AppendMessage(workspace.Message{InternalID: "leaf-body", Role: types.RoleThinking, Content: strings.Join(body, "\n")})
+			pane.Messages.AppendMessage(conversation.Message{InternalID: "leaf-body", Role: conversation.RoleThinking, Content: strings.Join(body, "\n")})
 		} else {
 			nested := "child"
 			if id == "child" {
 				nested = "leaf"
 			}
-			pane.Messages.AppendMessage(workspace.Message{InternalID: id + "-body", Role: types.RoleTool, SubPaneID: nested})
+			pane.Messages.AppendMessage(conversation.Message{InternalID: id + "-body", Role: conversation.RoleTool, SubPaneID: nested})
 		}
 		projection := reg.Get(id, pane.Type)
 		projection.scroll.SetAutoScroll(false)
@@ -59,7 +59,7 @@ func newRecursiveScrollFixture(t *testing.T, width int, hydrate bool) recursiveS
 	main.SetSize(width, 60)
 	main.SetChatAreaBounds(0, 60)
 	main.SetSubPaneContentFn(render)
-	root := []workspace.Message{{InternalID: "main-body", Role: types.RoleTool, SubPaneID: "outer"}}
+	root := []conversation.Message{{InternalID: "main-body", Role: conversation.RoleTool, SubPaneID: "outer"}}
 	messages := ChatMessagesFromViews(root)
 	if hydrate {
 		messages = hydrateScrollMessages(t, root)
@@ -68,7 +68,7 @@ func newRecursiveScrollFixture(t *testing.T, width int, hydrate bool) recursiveS
 	return recursiveScrollFixture{registry: reg, panes: panes, main: main}
 }
 
-func hydrateScrollMessages(t *testing.T, snapshots []workspace.Message) []types.ChatMessage {
+func hydrateScrollMessages(t *testing.T, snapshots []conversation.Message) []conversation.ChatMessage {
 	t.Helper()
 	database := sessiondb.OpenAndMigrateAt(t.TempDir())
 	t.Cleanup(func() { database.Close() })
@@ -78,7 +78,7 @@ func hydrateScrollMessages(t *testing.T, snapshots []workspace.Message) []types.
 	for _, snapshot := range snapshots {
 		wire := provider.NewTextMessage("assistant", snapshot.Content)
 		if err := sessiondb.AppendMessageWithMeta(database, "scroll-session", wire, 1, sessiondb.DisplayMeta{
-			SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []types.ConversationMessage{snapshot},
+			SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []conversation.Message{snapshot},
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -182,7 +182,7 @@ func TestRecursiveSubpaneScrollMetadataLiveAndHydrated(t *testing.T) {
 			// Replace the enclosing canonical source entirely. Retained descendant
 			// projections may survive, but no longer own any painted outer rows.
 			replacement := workspace.NewConversation()
-			replacement.AppendMessage(workspace.Message{InternalID: "replacement", Role: types.RoleThinking, Content: "REPLACED-BODY"})
+			replacement.AppendMessage(conversation.Message{InternalID: "replacement", Role: conversation.RoleThinking, Content: "REPLACED-BODY"})
 			live.registry.SyncFromWorkspace("outer", replacement, false)
 			live.main.InvalidateSubPane("outer")
 			replaced := live.main.ExportMessageRowsSnapshot(width)
@@ -201,10 +201,10 @@ func TestRecursiveSubpaneScrollMetadataLiveAndHydrated(t *testing.T) {
 func TestSubpaneScrollMetadataSourceLifetimeAndCompactRows(t *testing.T) {
 	reg := newSubPaneProjectionRegistry(theme.DefaultDark()).ForOwner("left")
 	panes := workspace.NewPaneManager()
-	pane := panes.GetOrCreate("compact", workspace.PaneAgent, "compact")
+	pane := panes.Ensure("compact", workspace.PaneAgent, "compact")
 	for row := range 8 {
-		pane.Messages.AppendMessage(workspace.Message{InternalID: fmt.Sprintf("tool-%d", row), Role: types.RoleTool,
-			ToolName: "read_file", ToolArgs: fmt.Sprintf("file-%d.go", row), ToolStatus: types.ToolStatusSuccess, SubPaneID: "not-actually-rendered"})
+		pane.Messages.AppendMessage(conversation.Message{InternalID: fmt.Sprintf("tool-%d", row), Role: conversation.RoleTool,
+			ToolName: "read_file", ToolArgs: fmt.Sprintf("file-%d.go", row), ToolStatus: conversation.ToolStatusSuccess, SubPaneID: "not-actually-rendered"})
 	}
 	lines := reg.Render(pane.ID, pane, 40, 3, 0, true)
 	if lines[0].PaneInfo.PaneID != pane.ID || lines[0].PaneInfo.LineIdx != -1 {
@@ -218,15 +218,15 @@ func TestSubpaneScrollMetadataSourceLifetimeAndCompactRows(t *testing.T) {
 	old := reg.ScrollModel(pane.ID)
 	old.SetAutoScroll(false)
 	old.ScrollTo(1)
-	pane.Messages.AppendMessage(workspace.Message{InternalID: "appended", Role: types.RoleTool, ToolName: "read_file", ToolArgs: "new.go", ToolStatus: types.ToolStatusSuccess})
+	pane.Messages.AppendMessage(conversation.Message{InternalID: "appended", Role: conversation.RoleTool, ToolName: "read_file", ToolArgs: "new.go", ToolStatus: conversation.ToolStatusSuccess})
 	reg.Render(pane.ID, pane, 40, 3, 0, true)
 	if reg.ScrollModel(pane.ID) != old || old.AutoScroll() || old.Offset() != 1 {
 		t.Fatal("ordinary source append replaced scroll lifetime or user position")
 	}
 	pane.Messages = workspace.NewConversation()
 	for row := range 9 { // same version/count as the old source, different identity
-		pane.Messages.AppendMessage(workspace.Message{InternalID: fmt.Sprintf("replacement-%d", row), Role: types.RoleTool,
-			ToolName: "read_file", ToolArgs: fmt.Sprintf("replacement-%d.go", row), ToolStatus: types.ToolStatusSuccess})
+		pane.Messages.AppendMessage(conversation.Message{InternalID: fmt.Sprintf("replacement-%d", row), Role: conversation.RoleTool,
+			ToolName: "read_file", ToolArgs: fmt.Sprintf("replacement-%d.go", row), ToolStatus: conversation.ToolStatusSuccess})
 	}
 	replacedLines := reg.Render(pane.ID, pane, 40, 3, 0, true)
 	current := reg.ScrollModel(pane.ID)

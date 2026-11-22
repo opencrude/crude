@@ -13,7 +13,8 @@ import (
 	"crude/tui/editor"
 	"crude/tui/rendering"
 	"crude/tui/theme"
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -50,10 +51,10 @@ func newInstalledSemanticFixture(t *testing.T) installedSemanticFixture {
 	runtime := remoteJourneyRuntime(t, "http://unused.invalid", func(w *workspace.Workspace) {
 		owned = w
 		settings := w.AppDefaults()
-		settings.LSP = types.DefaultLSPSettings()
+		settings.LSP = setting.DefaultLSP()
 		settings.LSP.AutoDetect = false
 		settings.LSP.AutoComplete = false
-		settings.LSP.Languages = map[string]types.LSPLanguageSettings{"go": {Enabled: true, Command: executable, Args: []string{"serve"}, RootMarkers: []string{"go.mod"}, Environment: map[string]string{"GOPROXY": "off", "GOSUMDB": "off"}}}
+		settings.LSP.Languages = map[string]setting.LSPLanguage{"go": {Enabled: true, Command: executable, Args: []string{"serve"}, RootMarkers: []string{"go.mod"}, Environment: map[string]string{"GOPROXY": "off", "GOSUMDB": "off"}}}
 		w.SetAppDefaults(settings)
 		grantSemanticFixture(t, w)
 	})
@@ -61,7 +62,7 @@ func newInstalledSemanticFixture(t *testing.T) installedSemanticFixture {
 	ed := liveTestOpen(t, shell.app, path)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	if _, _, err := owned.LSPMgr.ProbeHover(ctx, path, types.LSPSourcePosition{Line: 3, Column: 6}); err != nil {
+	if _, _, err := owned.LSPMgr.ProbeHover(ctx, path, insight.LSPSourcePosition{Line: 3, Column: 6}); err != nil {
 		t.Fatal(err)
 	}
 	return installedSemanticFixture{shell, ed, runtime, owned, path, root, executable}

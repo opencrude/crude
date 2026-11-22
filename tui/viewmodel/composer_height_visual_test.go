@@ -8,7 +8,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/types"
+	"crude/types/conversation"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -20,12 +21,12 @@ func TestComposerSizingVisualAcceptance(t *testing.T) {
 		t.Skip("requires the dedicated terminal capture workflow")
 	}
 	app := newFullTestApp(t)
-	setAttachmentDestination(t, app, types.AttachmentOpenCrude)
+	setAttachmentDestination(t, app, setting.AttachmentOpenCrude)
 	wsOf(app).Logger = stubLogger{}
 	app.AddOrchestrator("draft-owner")
 	app.ActiveSession = workspace.NewSession("draft-owner", t.TempDir(), nil, stubLogger{})
 	app.maybeHydrateComposerDraft()
-	app.ws.AgentMgr().Get("draft-owner").State.Messages.AppendMessage(workspace.Message{
+	app.ws.AgentMgr().Get("draft-owner").State.Messages.AppendMessage(conversation.Message{
 		Role:    workspace.MessageRoleAssistant,
 		Content: "The conversation stays readable while the composer grows a little, then scrolls internally. Small notes and lists stay inline; a substantial diagnostic becomes an attachment.",
 	})

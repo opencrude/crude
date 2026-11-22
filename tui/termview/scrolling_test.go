@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"crude/terminalvt"
+	"crude/internal/terminalvt"
 	"crude/tui/cell"
 	"crude/tui/surface"
 	"crude/tui/theme"

@@ -8,7 +8,7 @@ import (
 
 	"crude/agent/hostshell"
 	"crude/agent/tools"
-	"crude/types"
+	"crude/types/setting"
 )
 
 func commandOutput(t *testing.T, tool, content string) string {
@@ -83,7 +83,7 @@ func TestAgentCommandsRunInTheConfiguredShellEndToEnd(t *testing.T) {
 		if !powerShell.Usable() {
 			t.Skip("PowerShell is not installed")
 		}
-		sess.UpdateWorkspaceDefaults(types.AppSettings{Accounts: cfg.Accounts, Agents: types.AgentsSettings{Categories: ConfigToSettings(cfg).Agents.Categories, Shell: powerShell.ID}})
+		sess.UpdateWorkspaceDefaults(setting.App{Accounts: cfg.Accounts, Agents: setting.Agents{Categories: ConfigToSettings(cfg).Agents.Categories, Shell: powerShell.ID}})
 		if got := commandOutput(t, "execute_command", mustTool(t, sess, "execute_command", map[string]any{"command": "Write-Output 'powershell_ok'"})); got != "powershell_ok\n" {
 			t.Fatalf("PowerShell output %q", got)
 		}
@@ -93,7 +93,7 @@ func TestAgentCommandsRunInTheConfiguredShellEndToEnd(t *testing.T) {
 		if prompt := sess.systemPrompt(false); !strings.Contains(prompt, "write PowerShell") || strings.Contains(prompt, "write bash as on Linux") {
 			t.Fatal("prompt did not follow the PowerShell setting")
 		}
-		sess.UpdateWorkspaceDefaults(types.AppSettings{Accounts: cfg.Accounts, Agents: types.AgentsSettings{Categories: ConfigToSettings(cfg).Agents.Categories, Shell: "git-bash"}})
+		sess.UpdateWorkspaceDefaults(setting.App{Accounts: cfg.Accounts, Agents: setting.Agents{Categories: ConfigToSettings(cfg).Agents.Categories, Shell: "git-bash"}})
 		if got := commandOutput(t, "execute_command", mustTool(t, sess, "execute_command", map[string]any{"command": `printf 'bash_again\n'`})); got != "bash_again\n" {
 			t.Fatalf("Git Bash output after switching back %q", got)
 		}
@@ -102,7 +102,7 @@ func TestAgentCommandsRunInTheConfiguredShellEndToEnd(t *testing.T) {
 		}
 	})
 
-	sess.UpdateWorkspaceDefaults(types.AppSettings{Accounts: cfg.Accounts, Agents: types.AgentsSettings{Categories: ConfigToSettings(cfg).Agents.Categories, Shell: "cmd"}})
+	sess.UpdateWorkspaceDefaults(setting.App{Accounts: cfg.Accounts, Agents: setting.Agents{Categories: ConfigToSettings(cfg).Agents.Categories, Shell: "cmd"}})
 	if got := commandOutput(t, "execute_command", mustTool(t, sess, "execute_command", map[string]any{"command": "echo %OS%"})); strings.TrimSpace(got) != "Windows_NT" {
 		t.Fatalf("after switching to Command Prompt, output %q", got)
 	}

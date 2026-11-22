@@ -3,7 +3,7 @@ package editor
 import (
 	tea "charm.land/bubbletea/v2"
 	"crude/insight/catalog"
-	"crude/text/indent"
+	"crude/text/indentation"
 	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"

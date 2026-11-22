@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"crude/core/client"
+	"crude/core/coreclient"
 	historyscreen "crude/tui/screens/localhistory"
 	"crude/workspace/fileio"
 	"crude/workspace/localhistory"

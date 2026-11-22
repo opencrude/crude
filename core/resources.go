@@ -7,10 +7,10 @@ import (
 	"os"
 	"path/filepath"
 
+	"crude/core/coreprotocol"
+	"crude/core/corewire"
 	"crude/core/projectpath"
-	"crude/core/protocol"
-	"crude/core/wire"
-	"crude/terminalvt"
+	"crude/internal/terminalvt"
 	"crude/workspace"
 	"crude/workspace/document"
 )

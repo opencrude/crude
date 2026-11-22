@@ -152,25 +152,27 @@ type ViewState struct {
 	Offset            int
 }
 
-func (screen *Screen) ViewState() ViewState {
-	state := ViewState{Filter: screen.filter.Value(), Offset: screen.list.inner.Scroll().Offset()}
-	if selected, ok := screen.list.inner.Selected(); ok {
+// ViewState returns the filter, selection and scroll offset of the view.
+func (s *Screen) ViewState() ViewState {
+	state := ViewState{Filter: s.filter.Value(), Offset: s.list.inner.Scroll().Offset()}
+	if selected, ok := s.list.inner.Selected(); ok {
 		state.Selection = selected.ID
 	}
 	return state
 }
 
-func (screen *Screen) RestoreViewState(state ViewState) {
-	screen.list.lastClickID, screen.list.lastClickAt, screen.list.hoverID = "", time.Time{}, ""
-	screen.filter.field.SetValue(state.Filter)
-	screen.applyFilter()
-	for index, item := range screen.list.inner.Items() {
+// RestoreViewState applies a saved filter, selection and scroll offset.
+func (s *Screen) RestoreViewState(state ViewState) {
+	s.list.lastClickID, s.list.lastClickAt, s.list.hoverID = "", time.Time{}, ""
+	s.filter.field.SetValue(state.Filter)
+	s.applyFilter()
+	for index, item := range s.list.inner.Items() {
 		if item.ID == state.Selection {
-			screen.list.inner.SelectIndex(index)
+			s.list.inner.SelectIndex(index)
 			break
 		}
 	}
-	screen.list.inner.Scroll().ScrollTo(state.Offset)
+	s.list.inner.Scroll().ScrollTo(state.Offset)
 }
 
 func (s *Screen) headerTitle() panelchrome.Title {

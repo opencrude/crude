@@ -15,20 +15,20 @@ import (
 	"testing"
 	"time"
 
-	"crude/agent"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
-	"crude/logger"
+	"crude/agent/turnloop"
+	"crude/internal/logger"
 	"crude/text/anchor"
-	"crude/types"
 	"crude/types/control"
+	"crude/types/conversation"
 )
 
 func planReply(plan string) string {
 	return "Here is the plan.\n\n<proposed_plan>\n" + plan + "\n</proposed_plan>"
 }
 
-func latestReview(t *testing.T, s *Session) types.PlanRevision {
+func latestReview(t *testing.T, s *Session) conversation.PlanRevision {
 	t.Helper()
 	review, _ := s.PlanReview()
 	revision, ok := review.Latest()
@@ -84,7 +84,7 @@ func TestPlanReviewRootCompletionUsesStartingMode(t *testing.T) {
 			t.Fatal("no provider request")
 		}
 	}
-	respond := func(reply string) types.TurnIdentity {
+	respond := func(reply string) conversation.TurnIdentity {
 		t.Helper()
 		select {
 		case replies <- reply:
@@ -140,7 +140,7 @@ func TestPlanReviewRootCompletionUsesStartingMode(t *testing.T) {
 	next, _ := review.Latest()
 	prior, _ := review.Revision(1)
 	if len(review.Revisions) != 2 || next.Number != 2 || next.Generation != nextTurn.Generation ||
-		next.Path != filepath.Join(s.SessionDir(), "plans", "plan-v2.md") || prior.Outcome != types.PlanOutcomeReplaced {
+		next.Path != filepath.Join(s.SessionDir(), "plans", "plan-v2.md") || prior.Outcome != conversation.PlanOutcomeReplaced {
 		t.Fatalf("second proposal did not replace the open revision: %+v", review)
 	}
 	assertPlanFile(t, next.Path, "# 第二\n")
@@ -165,8 +165,8 @@ func TestPlanReviewChildProposalDoesNotCreateRootRevision(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("child did not settle")
 	}
-	result, ok := h.session.SubAgentRunner().Manager().GetCompleted(agent.AgentID(child))
-	if !ok || result.Status != agent.SubAgentCompleted {
+	result, ok := h.session.SubAgentRunner().Manager().Completed(turnloop.AgentID(child))
+	if !ok || result.Status != turnloop.SubAgentCompleted {
 		t.Fatalf("child did not complete successfully: %+v", result)
 	}
 	if _, ok := h.session.PlanReview(); ok {
@@ -187,7 +187,7 @@ func TestPlanReviewPersistsRelativePathAndRecreatesInFork(t *testing.T) {
 	if err := s.recordProposedPlan(1, planReply(proposal), "", ""); err != nil {
 		t.Fatal(err)
 	}
-	edit := types.PlanCommentEdit{Revision: 1, Op: types.PlanCommentAdd, Comment: types.PlanComment{ID: "one", Body: "Keep this."}}
+	edit := conversation.PlanCommentEdit{Revision: 1, Op: conversation.PlanCommentAdd, Comment: conversation.PlanComment{ID: "one", Body: "Keep this."}}
 	if err := s.EditPlanComment(edit); err != nil {
 		t.Fatal(err)
 	}
@@ -309,23 +309,25 @@ func TestPlanReviewCommentValidationAndSettlement(t *testing.T) {
 	const quote = "Path A\nPath B"
 	const proposal = "# Improve tests\n\n" + quote + "\nDelete this sentence."
 	s, sender := reviewFixture(t, proposal)
-	feedback := func(text string) (types.PlanReviewSettlement, error) {
-		return s.SettlePlanReview(types.PlanReviewSettle{Revision: 1, Action: types.PlanReviewFeedback, Text: text})
+	feedback := func(text string) (conversation.PlanReviewSettlement, error) {
+		return s.SettlePlanReview(conversation.PlanReviewSettle{Revision: 1, Action: conversation.PlanReviewFeedback, Text: text})
 	}
 	if _, err := feedback(proposal + "\n\n"); err == nil || err.Error() != "Add a comment or edit the plan first." {
 		t.Fatalf("trailing newlines were counted as edits: %v", err)
 	}
 	start := strings.Index(proposal, quote)
-	edit := types.PlanCommentEdit{Revision: 1, Op: types.PlanCommentAdd, Comment: types.PlanComment{
+	edit := conversation.PlanCommentEdit{Revision: 1, Op: conversation.PlanCommentAdd, Comment: conversation.PlanComment{
 		ID: "comment", Body: "  Cover this path.  ", Anchor: anchor.Capture(proposal, start, start+len(quote)),
 		CreatedAt: time.Unix(1, 0), Sent: true,
 	}}
-	for _, change := range []func(*types.PlanComment){
-		func(c *types.PlanComment) { c.ID = "" },
-		func(c *types.PlanComment) { c.ID = strings.Repeat("1", 65) },
-		func(c *types.PlanComment) { c.Body = " \t" },
-		func(c *types.PlanComment) { c.Body = strings.Repeat("x", types.PlanCommentMaxBody+1) },
-		func(c *types.PlanComment) { c.Anchor.Exact = strings.Repeat("x", types.PlanCommentMaxQuote+1) },
+	for _, change := range []func(*conversation.PlanComment){
+		func(c *conversation.PlanComment) { c.ID = "" },
+		func(c *conversation.PlanComment) { c.ID = strings.Repeat("1", 65) },
+		func(c *conversation.PlanComment) { c.Body = " \t" },
+		func(c *conversation.PlanComment) { c.Body = strings.Repeat("x", conversation.PlanCommentMaxBody+1) },
+		func(c *conversation.PlanComment) {
+			c.Anchor.Exact = strings.Repeat("x", conversation.PlanCommentMaxQuote+1)
+		},
 	} {
 		bad := edit
 		change(&bad.Comment)
@@ -352,24 +354,24 @@ func TestPlanReviewCommentValidationAndSettlement(t *testing.T) {
 	if err := s.EditPlanComment(edit); err == nil {
 		t.Fatal("different add under same ID accepted")
 	}
-	edit.Op = types.PlanCommentUpdate
+	edit.Op = conversation.PlanCommentUpdate
 	if err := s.EditPlanComment(edit); err != nil {
 		t.Fatal(err)
 	}
 	deleted := edit
-	deleted.Op, deleted.Comment.ID = types.PlanCommentAdd, "delete-me"
+	deleted.Op, deleted.Comment.ID = conversation.PlanCommentAdd, "delete-me"
 	if err := s.EditPlanComment(deleted); err != nil {
 		t.Fatal(err)
 	}
-	deleted.Op = types.PlanCommentDelete
+	deleted.Op = conversation.PlanCommentDelete
 	if err := s.EditPlanComment(deleted); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.EditPlanComment(deleted); err == nil {
 		t.Fatal("missing comment deletion accepted")
 	}
-	for _, action := range []types.PlanReviewAction{types.PlanReviewImplement, types.PlanReviewNewSession} {
-		if _, err := s.SettlePlanReview(types.PlanReviewSettle{Revision: 1, Action: action, Text: proposal}); err == nil || err.Error() != "Send or delete the comments first." {
+	for _, action := range []conversation.PlanReviewAction{conversation.PlanReviewImplement, conversation.PlanReviewNewSession} {
+		if _, err := s.SettlePlanReview(conversation.PlanReviewSettle{Revision: 1, Action: action, Text: proposal}); err == nil || err.Error() != "Send or delete the comments first." {
 			t.Fatalf("%s accepted pending comments: %v", action, err)
 		}
 	}
@@ -396,17 +398,17 @@ func TestPlanReviewCommentValidationAndSettlement(t *testing.T) {
 	if err := s.EditPlanComment(edit); err == nil {
 		t.Fatal("sent comment update accepted")
 	}
-	edit.Op = types.PlanCommentDelete
+	edit.Op = conversation.PlanCommentDelete
 	if err := s.EditPlanComment(edit); err == nil {
 		t.Fatal("sent comment deletion accepted")
 	}
 	waitTurnDone(t, sender, s.liveOrchestrator().ID)
-	if out, err := s.SettlePlanReview(types.PlanReviewSettle{Revision: 1, Action: types.PlanReviewImplement, Text: edited}); err != nil ||
+	if out, err := s.SettlePlanReview(conversation.PlanReviewSettle{Revision: 1, Action: conversation.PlanReviewImplement, Text: edited}); err != nil ||
 		out.Display != "Implement the plan (revision 1, with my edits)." ||
 		!strings.Contains(out.Text, "<approved_plan>\n# Improve tests") {
 		t.Fatalf("edited approval: %+v, %v", out, err)
 	}
-	if s.PlanMode() || latestReview(t, s).Outcome != types.PlanOutcomeImplemented {
+	if s.PlanMode() || latestReview(t, s).Outcome != conversation.PlanOutcomeImplemented {
 		t.Fatal("implementation did not settle review and turn off Plan mode")
 	}
 	modeRows := s.StatusRows()
@@ -418,55 +420,55 @@ func TestPlanReviewCommentValidationAndSettlement(t *testing.T) {
 func TestPlanReviewActionsRespectBoundsAndStaleRevisions(t *testing.T) {
 	const plan = "# A fresh plan"
 	s, _ := reviewFixture(t, plan)
-	for i := range types.PlanCommentMaxCount {
-		edit := types.PlanCommentEdit{Revision: 1, Op: types.PlanCommentAdd, Comment: types.PlanComment{ID: fmt.Sprint(i), Body: "Note."}}
+	for i := range conversation.PlanCommentMaxCount {
+		edit := conversation.PlanCommentEdit{Revision: 1, Op: conversation.PlanCommentAdd, Comment: conversation.PlanComment{ID: fmt.Sprint(i), Body: "Note."}}
 		if err := s.EditPlanComment(edit); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := s.EditPlanComment(types.PlanCommentEdit{Revision: 1, Op: types.PlanCommentAdd, Comment: types.PlanComment{ID: "extra", Body: "Extra."}}); err == nil {
+	if err := s.EditPlanComment(conversation.PlanCommentEdit{Revision: 1, Op: conversation.PlanCommentAdd, Comment: conversation.PlanComment{ID: "extra", Body: "Extra."}}); err == nil {
 		t.Fatal("accepted more than the allowed comments")
 	}
 	first := latestReview(t, s)
 	if err := s.recordProposedPlan(2, planReply(plan), "", ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.SettlePlanReview(types.PlanReviewSettle{Revision: 1, Text: plan, Action: types.PlanReviewFeedback}); err == nil {
+	if _, err := s.SettlePlanReview(conversation.PlanReviewSettle{Revision: 1, Text: plan, Action: conversation.PlanReviewFeedback}); err == nil {
 		t.Fatal("stale plan revision was settled")
 	}
-	if err := s.EditPlanComment(types.PlanCommentEdit{Revision: 1, Op: types.PlanCommentAdd, Comment: types.PlanComment{ID: "late", Body: "Late."}}); err == nil {
+	if err := s.EditPlanComment(conversation.PlanCommentEdit{Revision: 1, Op: conversation.PlanCommentAdd, Comment: conversation.PlanComment{ID: "late", Body: "Late."}}); err == nil {
 		t.Fatal("replaced revision accepted new comments")
 	}
-	big := strings.Repeat("x", types.PlanReviewMaxPlanText)
+	big := strings.Repeat("x", conversation.PlanReviewMaxPlanText)
 	if err := s.recordProposedPlan(3, planReply(big+"x"), "", ""); err != nil || latestReview(t, s).Number != 2 {
 		t.Fatalf("oversize proposal was recorded: %v", err)
 	}
-	if _, err := s.SettlePlanReview(types.PlanReviewSettle{Revision: 2, Text: big + "x", Action: types.PlanReviewNewSession}); err == nil {
+	if _, err := s.SettlePlanReview(conversation.PlanReviewSettle{Revision: 2, Text: big + "x", Action: conversation.PlanReviewNewSession}); err == nil {
 		t.Fatal("oversize settlement was accepted")
 	}
 	destination, _ := reviewSessionFixture(t)
 	out, err := s.SettlePlanReviewForAgent(t.Context(), s.liveOrchestrator().ID,
-		types.PlanReviewSettle{Revision: 2, Text: plan + "\n", Action: types.PlanReviewNewSession, DestinationSessionID: destination.sessionID},
+		conversation.PlanReviewSettle{Revision: 2, Text: plan + "\n", Action: conversation.PlanReviewNewSession, DestinationSessionID: destination.sessionID},
 		provider.UserInput{}, destination)
 	if err != nil || out.Display != "" || !strings.HasSuffix(out.Text, plan+"\n") ||
-		!s.PlanMode() || latestReview(t, s).Outcome != types.PlanOutcomeNewSession {
+		!s.PlanMode() || latestReview(t, s).Outcome != conversation.PlanOutcomeNewSession {
 		t.Fatalf("fresh context settlement: %+v, %v", out, err)
 	}
 	if err := s.recordProposedPlan(3, planReply(big), "", ""); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := s.SettlePlanReview(types.PlanReviewSettle{Revision: 3, Text: big + "\n", Action: types.PlanReviewImplement}); err != nil ||
+	if out, err := s.SettlePlanReview(conversation.PlanReviewSettle{Revision: 3, Text: big + "\n", Action: conversation.PlanReviewImplement}); err != nil ||
 		out.Text != "Implement the plan." || out.Display != "" {
 		t.Fatalf("maximum length unchanged approval: len=%d, %q, %v", len(out.Text), out.Display, err)
 	}
-	for n := 4; n <= types.PlanRevisionMaxCount+2; n++ {
+	for n := 4; n <= conversation.PlanRevisionMaxCount+2; n++ {
 		if err := s.recordProposedPlan(uint64(n), planReply(plan), "", ""); err != nil {
 			t.Fatal(err)
 		}
 	}
 	review, _ := s.PlanReview()
-	if len(review.Revisions) != types.PlanRevisionMaxCount || review.Revisions[0].Number != 3 ||
-		review.Revisions[0].Outcome != types.PlanOutcomeImplemented || latestReview(t, s).Number != types.PlanRevisionMaxCount+2 {
+	if len(review.Revisions) != conversation.PlanRevisionMaxCount || review.Revisions[0].Number != 3 ||
+		review.Revisions[0].Outcome != conversation.PlanOutcomeImplemented || latestReview(t, s).Number != conversation.PlanRevisionMaxCount+2 {
 		t.Fatal("review pruning lost numbering, settled outcome or count")
 	}
 	if _, err := os.Stat(first.Path); !errors.Is(err, os.ErrNotExist) {
@@ -484,7 +486,7 @@ func TestPlanReviewApprovalRollsBackWhenPlanModeCannotPersist(t *testing.T) {
 		WHEN OLD.key = 'plan_mode' BEGIN SELECT RAISE(ABORT, 'read-only plan mode'); END`); err != nil {
 		t.Fatal(err)
 	}
-	input := types.PlanReviewSettle{Revision: 1, Text: plan, Action: types.PlanReviewImplement}
+	input := conversation.PlanReviewSettle{Revision: 1, Text: plan, Action: conversation.PlanReviewImplement}
 	if _, err := s.SettlePlanReview(input); err == nil || !s.PlanMode() || !latestReview(t, s).Open() {
 		t.Fatalf("failed approval committed live changes: %v", err)
 	}
@@ -506,15 +508,15 @@ func TestPlanReviewFeedbackPreservesChangedQuoteAndTruncatesOnlyDisplay(t *testi
 	quote := strings.Repeat("é", 61)
 	plan := "# Review this\n" + quote
 	s, _ := reviewFixture(t, plan)
-	edit := types.PlanCommentEdit{
-		Revision: 1, Op: types.PlanCommentAdd,
-		Comment: types.PlanComment{ID: "changed", Body: "Keep the intent.",
+	edit := conversation.PlanCommentEdit{
+		Revision: 1, Op: conversation.PlanCommentAdd,
+		Comment: conversation.PlanComment{ID: "changed", Body: "Keep the intent.",
 			Anchor: anchor.Capture(plan, len("# Review this\n"), len(plan))},
 	}
 	if err := s.EditPlanComment(edit); err != nil {
 		t.Fatal(err)
 	}
-	out, err := s.SettlePlanReview(types.PlanReviewSettle{Revision: 1, Action: types.PlanReviewFeedback, Text: "# Review this\nReplacement.\n"})
+	out, err := s.SettlePlanReview(conversation.PlanReviewSettle{Revision: 1, Action: conversation.PlanReviewFeedback, Text: "# Review this\nReplacement.\n"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -584,7 +586,7 @@ func TestPlanNewSessionHandoffFirstTurnRemainsImplementation(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, err := source.SettlePlanReviewForAgent(t.Context(), source.liveOrchestrator().ID,
-		types.PlanReviewSettle{Revision: 1, Text: plan, Action: types.PlanReviewNewSession, DestinationSessionID: destination.sessionID},
+		conversation.PlanReviewSettle{Revision: 1, Text: plan, Action: conversation.PlanReviewNewSession, DestinationSessionID: destination.sessionID},
 		provider.UserInput{ControlTarget: &target}, destination)
 	if err != nil || toggleErr != nil {
 		t.Fatalf("handoff failed: %v; mode change: %v", err, toggleErr)
@@ -620,7 +622,7 @@ func TestPlanNewSessionHandoffIsCheckedNeverResent(t *testing.T) {
 	s, _ := reviewFixture(t, plan)
 	agentID := s.liveOrchestrator().ID
 	destination, sender := reviewSessionFixture(t)
-	settle := types.PlanReviewSettle{Revision: 1, Text: plan, Action: types.PlanReviewNewSession, DestinationSessionID: destination.sessionID}
+	settle := conversation.PlanReviewSettle{Revision: 1, Text: plan, Action: conversation.PlanReviewNewSession, DestinationSessionID: destination.sessionID}
 	if _, err := s.db.Exec(`CREATE TRIGGER block_handoff_close BEFORE INSERT ON session_runtime_state
 		WHEN NEW.key = 'plan_review' AND instr(CAST(NEW.value AS TEXT), '"outcome":"new_session"') > 0
 		BEGIN SELECT RAISE(ABORT, 'source storage failure'); END`); err != nil {
@@ -637,21 +639,21 @@ func TestPlanNewSessionHandoffIsCheckedNeverResent(t *testing.T) {
 	if inputs := genuineUserInputs(destination); len(inputs) != 1 || !strings.Contains(inputs[0], "- Do the work") {
 		t.Fatalf("destination inputs after delivery = %q", inputs)
 	}
-	for _, refused := range []types.PlanReviewSettle{
-		{Revision: 1, Text: plan, Action: types.PlanReviewImplement},
-		{Revision: 1, Text: plan, Action: types.PlanReviewNewSession},
+	for _, refused := range []conversation.PlanReviewSettle{
+		{Revision: 1, Text: plan, Action: conversation.PlanReviewImplement},
+		{Revision: 1, Text: plan, Action: conversation.PlanReviewNewSession},
 	} {
 		if _, err := s.SettlePlanReviewForAgent(t.Context(), agentID, refused, provider.UserInput{}, destination); err != errPlanHandoffOpen {
 			t.Fatalf("%s while bound: %v", refused.Action, err)
 		}
 	}
-	if err := s.EditPlanComment(types.PlanCommentEdit{Revision: 1, Op: types.PlanCommentAdd, Comment: types.PlanComment{ID: "late", Body: "Late."}}); err != errPlanHandoffOpen {
+	if err := s.EditPlanComment(conversation.PlanCommentEdit{Revision: 1, Op: conversation.PlanCommentAdd, Comment: conversation.PlanComment{ID: "late", Body: "Late."}}); err != errPlanHandoffOpen {
 		t.Fatalf("comment on a bound handoff: %v", err)
 	}
 	if _, err := s.db.Exec(`DROP TRIGGER block_handoff_close`); err != nil {
 		t.Fatal(err)
 	}
-	check := types.PlanReviewSettle{Revision: 1, Action: types.PlanReviewNewSession, DestinationSessionID: destination.sessionID}
+	check := conversation.PlanReviewSettle{Revision: 1, Action: conversation.PlanReviewNewSession, DestinationSessionID: destination.sessionID}
 	exact, err := sessiondb.LoadRuntimeState(t.Context(), destination.db, planHandoffReceiptKey)
 	if err != nil {
 		t.Fatal(err)
@@ -669,7 +671,7 @@ func TestPlanNewSessionHandoffIsCheckedNeverResent(t *testing.T) {
 	if _, err := s.SettlePlanReviewForAgent(t.Context(), agentID, check, provider.UserInput{}, destination); err != nil {
 		t.Fatalf("check of the delivered handoff: %v", err)
 	}
-	if closed := latestReview(t, s); closed.Outcome != types.PlanOutcomeNewSession || closed.NewSessionID != destination.sessionID || !s.PlanMode() {
+	if closed := latestReview(t, s); closed.Outcome != conversation.PlanOutcomeNewSession || closed.NewSessionID != destination.sessionID || !s.PlanMode() {
 		t.Fatalf("checked handoff did not close the source review: %+v", closed)
 	}
 	if inputs := genuineUserInputs(destination); len(inputs) != 1 || len(destination.QueuedInputs()) != 0 {
@@ -711,7 +713,7 @@ func TestPlanNewSessionHandoffIsCheckedNeverResent(t *testing.T) {
 		t.Fatalf("missing receipt did not reopen the choice: %+v", reopened)
 	}
 	if _, err := s2.SettlePlanReviewForAgent(t.Context(), s2.liveOrchestrator().ID, lost, provider.UserInput{}, empty); err != nil ||
-		latestReview(t, s2).Outcome != types.PlanOutcomeNewSession {
+		latestReview(t, s2).Outcome != conversation.PlanOutcomeNewSession {
 		t.Fatalf("New session after a reopened choice: %v", err)
 	}
 	waitTurnDone(t, emptySender, empty.liveOrchestrator().ID)

@@ -14,11 +14,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"crude/logger"
+	"crude/internal/logger"
 	"crude/types/command"
 )
-
-type AsyncStatus = command.Status
 
 const (
 	AsyncRunning   = command.Running
@@ -39,7 +37,7 @@ type AsyncCmdInfo struct {
 	Command   string
 	CWD       string
 	PID       int
-	Status    AsyncStatus
+	Status    command.Status
 	StartedAt time.Time
 	EndedAt   time.Time
 	Duration  time.Duration
@@ -55,23 +53,14 @@ type AsyncCmdInfo struct {
 	SettledOutput *command.Result
 }
 
-// OutputRange identifies one half-open raw byte range included in a bounded
-// command result. Multiple ranges mean the middle was omitted from the model-
-// visible excerpt; the complete bytes remain addressable through Handle.
-type OutputRange = command.OutputRange
-
-// OutputDescriptor is the shared, presentation-neutral contract describing a
-// bounded command result and the retained bytes behind it.
-type OutputDescriptor = command.OutputDescriptor
-
 // OutputPage is one contiguous bounded read from retained command output.
 type OutputPage struct {
-	Command    string           `json:"command,omitempty"`
-	CWD        string           `json:"cwd,omitempty"`
-	Descriptor OutputDescriptor `json:"descriptor"`
-	SinceByte  int              `json:"since_byte"`
-	NextByte   int              `json:"next_byte"`
-	HasMore    bool             `json:"has_more"`
+	Command    string                   `json:"command,omitempty"`
+	CWD        string                   `json:"cwd,omitempty"`
+	Descriptor command.OutputDescriptor `json:"descriptor"`
+	SinceByte  int                      `json:"since_byte"`
+	NextByte   int                      `json:"next_byte"`
+	HasMore    bool                     `json:"has_more"`
 	// OutputEncoding is omitted for ordinary UTF-8 text. A base64 value means
 	// Output encodes the exact raw ShownRanges bytes because the requested byte
 	// interval was not independently valid UTF-8 (for example, a mid-rune cursor
@@ -359,10 +348,10 @@ func (m *AsyncCommandManager) notifySettled(state *asyncCmdState) {
 	}()
 }
 
-func (state *asyncCmdState) outputExcerpt(info AsyncCmdInfo) command.Result {
-	state.outputMu.Lock()
-	defer state.outputMu.Unlock()
-	raw := state.output.Bytes()
+func (st *asyncCmdState) outputExcerpt(info AsyncCmdInfo) command.Result {
+	st.outputMu.Lock()
+	defer st.outputMu.Unlock()
+	raw := st.output.Bytes()
 	d := command.OutputDescriptor{Handle: info.Handle, Status: info.Status, TotalBytes: len(raw)}
 	var output string
 	if len(raw) > 0 {
@@ -392,8 +381,8 @@ func (state *asyncCmdState) outputExcerpt(info AsyncCmdInfo) command.Result {
 
 // markSettleObserved records that a caller already returned this command's
 // terminal state, so the owner is not told the same outcome twice.
-func (state *asyncCmdState) markSettleObserved() {
-	state.settleOnce.Do(func() {})
+func (st *asyncCmdState) markSettleObserved() {
+	st.settleOnce.Do(func() {})
 }
 
 // RetainSettled keeps a finished command's complete output addressable under
@@ -715,9 +704,9 @@ func (m *AsyncCommandManager) ReadOutputPage(handle string, sinceByte, maxBytes 
 	state.mu.Lock()
 	info := state.info
 	state.mu.Unlock()
-	descriptor := OutputDescriptor{Handle: handle, Status: info.Status, TotalBytes: total}
+	descriptor := command.OutputDescriptor{Handle: handle, Status: info.Status, TotalBytes: total}
 	if end > sinceByte && sinceByte < total {
-		descriptor.ShownRanges = []OutputRange{{StartByte: sinceByte, EndByte: end}}
+		descriptor.ShownRanges = []command.OutputRange{{StartByte: sinceByte, EndByte: end}}
 	}
 	page := OutputPage{Command: info.Command, CWD: info.CWD, Descriptor: descriptor, SinceByte: sinceByte, NextByte: end, HasMore: end < total, OutputEncoding: encoding, Output: out}
 	if m.logger != nil {
@@ -1006,7 +995,8 @@ func (uc *UntrackedCmd) PID() int {
 	return uc.state.info.PID
 }
 
-func (uc *UntrackedCmd) Status() AsyncStatus {
+// Status returns the current state of the background command.
+func (uc *UntrackedCmd) Status() command.Status {
 	uc.state.mu.Lock()
 	defer uc.state.mu.Unlock()
 	return uc.state.info.Status

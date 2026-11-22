@@ -14,7 +14,7 @@ import (
 
 	"crude/tui/ui"
 	"crude/tui/window"
-	ttypes "crude/types"
+	"crude/types/conversation"
 )
 
 func paneJourneySize(app *App, width, height int) {
@@ -254,7 +254,7 @@ func TestMainPaneJourneyAgentsAndEditorsKeepIndependentSelection(t *testing.T) {
 	defer ws.Close()
 	paneJourneySize(app, 160, 40)
 	app.AddOrchestrator("alpha")
-	app.appendActiveMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: "ALPHA_TRANSCRIPT_MARKER", Time: time.Unix(1, 0)})
+	app.appendActiveMessage(conversation.ChatMessage{Role: conversation.RoleAssistant, Content: "ALPHA_TRANSCRIPT_MARKER", Time: time.Unix(1, 0)})
 	alpha := app.Win.ActiveTab().ID
 	left := app.Win.ActiveGroup()
 	paths := openEditorTabs(t, app, "DOCUMENT_MARKER.go")
@@ -271,7 +271,7 @@ func TestMainPaneJourneyAgentsAndEditorsKeepIndependentSelection(t *testing.T) {
 		t.Fatal("painting/background sync stole an independently selected resource")
 	}
 	app.AddOrchestrator("beta")
-	app.appendActiveMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: "BETA_TRANSCRIPT_MARKER", Time: time.Unix(2, 0)})
+	app.appendActiveMessage(conversation.ChatMessage{Role: conversation.RoleAssistant, Content: "BETA_TRANSCRIPT_MARKER", Time: time.Unix(2, 0)})
 	beta := app.Win.ActiveTab().ID
 	_ = app.View()
 	paneJourneyRequireText(t, app, left, "ALPHA_TRANSCRIPT_MARKER")

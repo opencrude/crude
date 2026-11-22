@@ -3,8 +3,8 @@ package input
 import (
 	tea "charm.land/bubbletea/v2"
 
+	"crude/agent/prompthistory"
 	"crude/agent/sessiondb"
-	"crude/history"
 	"crude/tui/rendering"
 	"crude/tui/ui"
 )
@@ -16,7 +16,7 @@ import (
 type PromptFragment struct {
 	Text string
 	// Attachments bind reference snapshots to exact rune spans of Text.
-	Attachments []history.Attachment
+	Attachments []prompthistory.Attachment
 	// Store is the reference owner the attachments were copied from.
 	Store ReferenceStore
 }
@@ -99,11 +99,11 @@ func (m Model) Fragment(start, end int) PromptFragment {
 		if rr.Start < start || rr.End > end {
 			continue
 		}
-		ref, ok := m.refStore.GetReference(rr.ID)
+		ref, ok := m.refStore.Reference(rr.ID)
 		if !ok || !ref.Active() {
 			continue
 		}
-		fragment.Attachments = append(fragment.Attachments, history.Attachment{Start: rr.Start - start, End: rr.End - start, Reference: ref})
+		fragment.Attachments = append(fragment.Attachments, prompthistory.Attachment{Start: rr.Start - start, End: rr.End - start, Reference: ref})
 	}
 	return fragment
 }

@@ -12,7 +12,7 @@ import (
 	"crude/workspace/document"
 )
 
-func durableDeltaFixture(t *testing.T) (*DocumentService, *WorkspaceDB, document.Snapshot, document.Owner) {
+func durableDeltaFixture(t *testing.T) (*DocumentService, *DB, document.Snapshot, document.Owner) {
 	t.Helper()
 	root := t.TempDir()
 	path := filepath.Join(root, "text.txt")

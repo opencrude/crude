@@ -7,10 +7,11 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/port"
-	ttypes "crude/types"
+	"crude/core/shellport"
 	"crude/types/activity"
+	"crude/types/conversation"
 	"crude/types/reasoning"
+	"crude/types/statuscenter"
 	"crude/workspace"
 )
 
@@ -35,7 +36,7 @@ func TestManualCompactionShowsOperationStatusInsteadOfIdlePlan(t *testing.T) {
 		return shellBufferRow(app, app.chatRect.Y+app.chatRect.H-1)
 	}
 	send := func(kind string, data any) {
-		_, command := app.Update(ttypes.AgentMsg{AgentID: id, Type: kind, Data: data})
+		_, command := app.Update(AgentMsg{AgentID: id, Type: kind, Data: data})
 		runAppCommand(t, app, command)
 	}
 	send("context_compaction_started", data)
@@ -44,7 +45,7 @@ func TestManualCompactionShowsOperationStatusInsteadOfIdlePlan(t *testing.T) {
 		t.Fatalf("active compaction strip=%q", got)
 	}
 	status, _ := app.ws.Status().Agent(id)
-	if status.Phase != ttypes.AgentCompacting || status.RequestID != "compact-status-1" {
+	if status.Phase != statuscenter.AgentCompacting || status.RequestID != "compact-status-1" {
 		t.Fatalf("active status=%+v", status)
 	}
 	data["stage"], data["completed_stages"] = 4, 4
@@ -56,7 +57,7 @@ func TestManualCompactionShowsOperationStatusInsteadOfIdlePlan(t *testing.T) {
 		}
 	}
 	status, _ = app.ws.Status().Agent(id)
-	if status.Phase != ttypes.AgentCompactionResult || status.NeedsAction {
+	if status.Phase != statuscenter.AgentCompactionResult || status.NeedsAction {
 		t.Fatalf("settled status=%+v", status)
 	}
 	// A resumed boundary is still the authoritative latest operation even when
@@ -66,7 +67,7 @@ func TestManualCompactionShowsOperationStatusInsteadOfIdlePlan(t *testing.T) {
 	if got := paint(); !strings.Contains(got, "Context compacted") || strings.Contains(got, "Plan 3/4") {
 		t.Fatalf("rehydrated boundary strip=%q", got)
 	}
-	send("turn_started", ttypes.TurnIdentity{Generation: 1, ModelID: "model"})
+	send("turn_started", conversation.TurnIdentity{Generation: 1, ModelID: "model"})
 	send("stream_token", "Ready")
 	if got := paint(); strings.Contains(got, "Context compacted") || !strings.Contains(got, "4/4 Run build") {
 		t.Fatalf("new turn did not restore the compact current task: %q", got)
@@ -80,7 +81,7 @@ type compactionPlanFixture struct {
 	plan *activity.Plan
 }
 
-func (w compactionPlanFixture) AgentActivity(id string) ttypes.AgentActivityView {
+func (w compactionPlanFixture) AgentActivity(id string) statuscenter.AgentActivityView {
 	view := w.Workspace.AgentActivity(id)
 	view.Plan = w.plan
 	return view
@@ -92,15 +93,15 @@ func TestResumedManualCompactionBoundaryShowsReadyStatus(t *testing.T) {
 	id := addBackendTestOrchestrator(t, app)
 	planView := &activity.Plan{ID: "resumed-plan", Status: "active", Total: 4, Completed: 3,
 		Current: []activity.Step{{Number: 4, Text: "Run build, tests, and lint"}}}
-	app.ws.AgentMgr().Get(id).State.Messages.AppendMessage(workspace.Message{
+	app.ws.AgentMgr().Get(id).State.Messages.AppendMessage(conversation.Message{
 		InternalID: "resumed-compaction", Role: workspace.MessageRoleStatus,
 		LifecyclePhase: "compaction_completed", LifecycleOperationID: "resumed-compaction",
 		LifecycleTrigger: "manual", LifecycleCompleted: 4, LifecycleStageCount: 4,
 		LifecycleBeforeTokens: 510100, LifecycleAfterTokens: 20500, Time: time.Now(),
 	})
 	app.syncAgentMessages(id, true)
-	wsOf(app).Status.SetAgent(ttypes.AgentStatusSnapshot{Ref: ttypes.ResourceRef{ID: id}, Phase: ttypes.AgentIdle, Detail: "Idle", RequestID: "old-request"})
-	if status, found := app.ws.Status().Agent(id); found && status.Phase == ttypes.AgentCompactionResult {
+	wsOf(app).Status.SetAgent(statuscenter.AgentStatusSnapshot{Ref: statuscenter.ResourceRef{ID: id}, Phase: statuscenter.AgentIdle, Detail: "Idle", RequestID: "old-request"})
+	if status, found := app.ws.Status().Agent(id); found && status.Phase == statuscenter.AgentCompactionResult {
 		t.Fatal("fixture should restore from the durable boundary, not an event snapshot")
 	}
 	app.configureShell()
@@ -112,7 +113,7 @@ func TestResumedManualCompactionBoundaryShowsReadyStatus(t *testing.T) {
 	if !strings.Contains(got, "Context compacted") || !strings.Contains(got, "Ready to continue") || strings.Contains(got, "Plan 3/4") {
 		t.Fatalf("resumed boundary strip=%q", got)
 	}
-	app.appendAgentMessage(id, ttypes.ChatMessage{Role: ttypes.RoleUser, Content: "continue", Time: time.Now()})
+	app.appendAgentMessage(id, conversation.ChatMessage{Role: conversation.RoleUser, Content: "continue", Time: time.Now()})
 	app.paintShellFrame()
 	if got := shellBufferRow(app, app.chatRect.Y+app.chatRect.H-1); strings.Contains(got, "Context compacted") {
 		t.Fatalf("new input still showed old compaction: %q", got)
@@ -134,7 +135,7 @@ func TestAutomaticCompactionBoundaryPaintsIdenticallyLiveAndResumed(t *testing.T
 		_ = app.handleAgentDomainEvent(workspace.AgentEvent{Type: "context_compaction_stage", AgentID: id, Data: data})
 	})
 	resumed := compactionBoundaryLines(t, func(app *App, id string) {
-		app.ws.AgentMgr().Get(id).State.Messages.AppendMessage(workspace.Message{
+		app.ws.AgentMgr().Get(id).State.Messages.AppendMessage(conversation.Message{
 			InternalID: "compact-auto", Role: workspace.MessageRoleStatus, LifecyclePhase: "compaction_extracting",
 			LifecycleOperationID: "compact-auto", LifecycleTrigger: "automatic",
 			LifecycleStageName: "Distilling work", LifecycleStageIndex: 2, LifecycleCompleted: 1, LifecycleStageCount: 4,
@@ -174,7 +175,7 @@ func TestSubmitProjectsLifecycleIntoChatNotBottomStatus(t *testing.T) {
 
 	runAppCommand(t, app, app.submitInput(agentID, "inspect lifecycle", nil))
 	messages := app.ws.AgentMgr().Get(agentID).State.Messages.Messages()
-	if len(messages) != 2 || messages[1].Role != ttypes.RoleStatus || messages[1].LifecyclePhase != "preparing" {
+	if len(messages) != 2 || messages[1].Role != conversation.RoleStatus || messages[1].LifecyclePhase != "preparing" {
 		t.Fatalf("submitted conversation = %#v", messages)
 	}
 	if bottom := testStatusText(app); strings.Contains(bottom, "Getting next turn ready") || strings.Contains(bottom, "uploading context") {
@@ -197,7 +198,7 @@ func TestPostCompactionThinkingCoalescesAndPaintsAfterBoundary(t *testing.T) {
 	}
 	_ = app.handleAgentDomainEvent(workspace.AgentEvent{Type: "context_compaction_started", AgentID: agentID, Data: base})
 	_ = app.handleAgentDomainEvent(workspace.AgentEvent{Type: "context_compacted", AgentID: agentID, Data: base})
-	app.appendAgentMessage(agentID, ttypes.ChatMessage{Role: ttypes.RoleUser, Content: "continue after compact"})
+	app.appendAgentMessage(agentID, conversation.ChatMessage{Role: conversation.RoleUser, Content: "continue after compact"})
 	_ = app.handleAgentDomainEvent(workspace.AgentEvent{Type: "thinking", AgentID: agentID, Data: reasoning.Delta{Text: "first "}})
 	_ = app.handleAgentDomainEvent(workspace.AgentEvent{Type: "thinking", AgentID: agentID, Data: reasoning.Delta{Text: "second"}})
 
@@ -209,7 +210,7 @@ func TestPostCompactionThinkingCoalescesAndPaintsAfterBoundary(t *testing.T) {
 			statusAt = index
 		case message.Content == "continue after compact":
 			userAt = index
-		case message.Role == ttypes.RoleThinking:
+		case message.Role == conversation.RoleThinking:
 			thinkingAt = index
 			thinkingCount++
 			if message.Content != "first second" {

@@ -6,18 +6,18 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/session"
-	textencoding "crude/text/encoding"
-	"crude/types"
+	"crude/text/textencoding"
+	"crude/types/conversation"
 	"crude/workspace/fileio"
 )
 
 const errPlanReviewOwner = session.PlanReviewError("This agent has no plan review. Select the main agent.")
 
 // PlanReviewForAgent reads the main agent's detached review without doing I/O.
-func (w *Workspace) PlanReviewForAgent(agentID string) (types.PlanReview, bool) {
+func (w *Workspace) PlanReviewForAgent(agentID string) (conversation.PlanReview, bool) {
 	sess := w.SessionsByAgent[agentID]
 	if sess == nil || sess.backend == nil {
-		return types.PlanReview{}, false
+		return conversation.PlanReview{}, false
 	}
 	return sess.backend.PlanReview()
 }
@@ -43,7 +43,7 @@ func (w *Workspace) PrepareReadPlanEvidence(agentID string, revision int, digest
 }
 
 // PrepareEditPlanComment resolves the owner before persistence.
-func (w *Workspace) PrepareEditPlanComment(agentID string, edit types.PlanCommentEdit) (func() error, error) {
+func (w *Workspace) PrepareEditPlanComment(agentID string, edit conversation.PlanCommentEdit) (func() error, error) {
 	sess := w.SessionsByAgent[agentID]
 	if sess == nil || sess.backend == nil {
 		return nil, errPlanReviewOwner
@@ -55,19 +55,19 @@ func (w *Workspace) PrepareEditPlanComment(agentID string, edit types.PlanCommen
 // PrepareSettlePlanReview captures the owner and document service. The worker
 // resolves missing text from the live document, or its disk file if not open.
 // The session rechecks the revision at commit, even if text was supplied.
-func (w *Workspace) PrepareSettlePlanReview(agentID string, settle types.PlanReviewSettle, sender provider.UserInput) (func(context.Context) (types.PlanReviewSettlement, error), error) {
+func (w *Workspace) PrepareSettlePlanReview(agentID string, settle conversation.PlanReviewSettle, sender provider.UserInput) (func(context.Context) (conversation.PlanReviewSettlement, error), error) {
 	sess := w.SessionsByAgent[agentID]
 	if sess == nil || sess.backend == nil {
 		return nil, errPlanReviewOwner
 	}
 	backend, docs := sess.backend, w.LiveDocuments
 	var destination *session.Session
-	if settle.Action == types.PlanReviewNewSession {
+	if settle.Action == conversation.PlanReviewNewSession {
 		destination = w.BackendSession(settle.DestinationSessionID)
 	}
-	return func(ctx context.Context) (types.PlanReviewSettlement, error) {
+	return func(ctx context.Context) (conversation.PlanReviewSettlement, error) {
 		if err := ctx.Err(); err != nil {
-			return types.PlanReviewSettlement{}, err
+			return conversation.PlanReviewSettlement{}, err
 		}
 		input := settle
 		if input.Text == "" {
@@ -84,18 +84,18 @@ func (w *Workspace) PrepareSettlePlanReview(agentID string, settle types.PlanRev
 				if !open {
 					path, err := backend.OpenPlanRevision(input.Revision)
 					if err != nil {
-						return types.PlanReviewSettlement{}, err
+						return conversation.PlanReviewSettlement{}, err
 					}
 					text, err := readPlanReviewText(ctx, path)
 					if err != nil {
-						return types.PlanReviewSettlement{}, err
+						return conversation.PlanReviewSettlement{}, err
 					}
 					input.Text = text
 				}
 			}
 		}
 		if err := ctx.Err(); err != nil {
-			return types.PlanReviewSettlement{}, err
+			return conversation.PlanReviewSettlement{}, err
 		}
 		return backend.SettlePlanReviewForAgent(ctx, agentID, input, sender, destination)
 	}, nil
@@ -104,7 +104,7 @@ func (w *Workspace) PrepareSettlePlanReview(agentID string, settle types.PlanRev
 func readPlanReviewText(ctx context.Context, path string) (string, error) {
 	// Allow a line terminator and a UTF-16 BOM even at the plan text limit.
 	// The session checks the decoded text after trimming trailing newlines.
-	raw, err := fileio.ReadRegularNoFollow(ctx, path, 2*(types.PlanReviewMaxPlanText+1)+2)
+	raw, err := fileio.ReadRegularNoFollow(ctx, path, 2*(conversation.PlanReviewMaxPlanText+1)+2)
 	if err != nil {
 		if errors.Is(err, fileio.ErrReadLimit) {
 			return "", session.ErrPlanReviewTooLong
@@ -131,7 +131,7 @@ func (w *Workspace) OpenPlanRevision(agentID string, revision int) (string, erro
 }
 
 // EditPlanComment runs the prepared change for the local port.
-func (w *Workspace) EditPlanComment(agentID string, edit types.PlanCommentEdit) error {
+func (w *Workspace) EditPlanComment(agentID string, edit conversation.PlanCommentEdit) error {
 	run, err := w.PrepareEditPlanComment(agentID, edit)
 	if err != nil {
 		return err
@@ -140,10 +140,10 @@ func (w *Workspace) EditPlanComment(agentID string, edit types.PlanCommentEdit) 
 }
 
 // SettlePlanReview runs the prepared review action for the local port.
-func (w *Workspace) SettlePlanReview(agentID string, settle types.PlanReviewSettle) (types.PlanReviewSettlement, error) {
+func (w *Workspace) SettlePlanReview(agentID string, settle conversation.PlanReviewSettle) (conversation.PlanReviewSettlement, error) {
 	run, err := w.PrepareSettlePlanReview(agentID, settle, provider.UserInput{})
 	if err != nil {
-		return types.PlanReviewSettlement{}, err
+		return conversation.PlanReviewSettlement{}, err
 	}
 	return run(context.Background())
 }

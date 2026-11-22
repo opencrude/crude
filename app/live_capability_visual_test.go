@@ -7,9 +7,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/agent/prompthistory"
 	"crude/agent/provider"
-	"crude/core/port"
-	"crude/history"
+	"crude/core/shellport"
 	"crude/tui"
 	"crude/workspace"
 )
@@ -23,7 +23,7 @@ func startLiveCapabilityVisual(t *testing.T, ws *workspace.Workspace, agentID st
 	if os.Getenv("CRUDE_VISUAL_CAPABILITIES") != "1" {
 		return nil
 	}
-	terminal, err := tui.Start(shellport.Local(ws), providerPresets(), history.New(), &appLogger{})
+	terminal, err := tui.Start(shellport.Local(ws), providerPresets(), prompthistory.New(), &appLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}

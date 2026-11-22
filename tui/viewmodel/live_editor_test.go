@@ -3,9 +3,10 @@ package viewmodel
 import (
 	"context"
 	"crude/core"
-	"crude/core/client"
-	"crude/core/port/remote"
-	"crude/core/protocol"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
+	"crude/core/shellport/remote"
+	"crude/types/insight"
 	"errors"
 	"net"
 	"os"
@@ -15,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/editor"
 	"crude/workspace"
 	"crude/workspace/document"
@@ -386,7 +387,7 @@ func TestLiveEditorAsyncNavigationAndStaleOpenOwnership(t *testing.T) {
 	}
 	shell := newRemoteJourneyShell(t, runtime, root)
 	a := liveTestOpen(t, shell.app, aPath)
-	shell.app.queueLiveNavigation(bPath, editor.LSPDiagnostic{Line: 1, Col: 2, EndLine: 1, EndCol: 3})
+	shell.app.queueLiveNavigation(bPath, insight.LSPDiagnostic{Line: 1, Col: 2, EndLine: 1, EndCol: 3})
 	if a.CursorLine() != 0 || a.CursorCol() != 0 {
 		t.Fatal("async navigation moved previous editor")
 	}
@@ -405,7 +406,7 @@ func TestLiveEditorAsyncNavigationAndStaleOpenOwnership(t *testing.T) {
 		t.Fatalf("stale open closed newer document ref: %v", state.err)
 	}
 	// A user selection after preparation wins; no position may leak to it.
-	shell.app.queueLiveNavigation(bPath, editor.LSPDiagnostic{Line: 0, Col: 1, EndLine: 0, EndCol: 1})
+	shell.app.queueLiveNavigation(bPath, insight.LSPDiagnostic{Line: 0, Col: 1, EndLine: 0, EndCol: 1})
 	queued := shell.app.editorCommands
 	shell.app.editorCommands = nil
 	result := queued[0]().(paneFilesOpenedMsg)

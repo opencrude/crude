@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"crude/core/port"
-	"crude/terminalvt"
+	"crude/core/shellport"
+	"crude/internal/terminalvt"
 	"crude/tui/screens/shellterm"
 	"crude/tui/surface"
 	"crude/tui/ui"

@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/network"
+	"crude/internal/network"
 )
 
 func preserveNetworkDefaults(t *testing.T) {

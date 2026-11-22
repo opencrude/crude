@@ -1,5 +1,3 @@
-// Package core owns retained workspace lifetimes and serialized domain ingress.
-// It never imports a terminal renderer or uses a shell as a runtime scheduler.
 package core
 
 import (
@@ -19,18 +17,20 @@ import (
 	"sync/atomic"
 	"time"
 
-	"crude/agent"
+	"crude/agent/prompthistory"
 	"crude/agent/provider"
-	"crude/buildinfo"
-	"crude/core/protocol"
-	"crude/core/wire"
-	"crude/history"
+	"crude/agent/turnloop"
+	"crude/core/coreprotocol"
+	"crude/core/corewire"
 	"crude/insight/governor"
-	"crude/metrics"
-	"crude/perfdata"
-	"crude/types"
+	"crude/internal/buildinfo"
+	"crude/internal/metrics"
+	"crude/internal/perfdata"
 	"crude/types/control"
+	"crude/types/conversation"
 	"crude/types/inspect"
+	"crude/types/setting"
+	"crude/types/statuscenter"
 	"crude/workspace"
 	"crude/workspace/document"
 	"crude/workspace/fileio"
@@ -58,7 +58,7 @@ type Runtime struct {
 	tools            *toolstore.Store
 	toolsErr         error
 	codeTools        codeToolsState
-	history          *history.Store
+	history          *prompthistory.Store
 	historyPath      string
 	uploads          *ReferenceUploads
 	startup          StartupOwner
@@ -92,7 +92,7 @@ func New(factory Factory, receiptPath string) (*Runtime, error) {
 	analysis, err := governor.New(governor.Limits{
 		// Workspace quotas stay authoritative on small machines too. This
 		// shared backstop limits process count, not CPU or RSS usage.
-		MaxProcesses: types.MaxLanguageServers, MaxWaiting: 256,
+		MaxProcesses: setting.MaxLanguageServers, MaxWaiting: 256,
 	})
 	if err != nil {
 		_ = journal.close()
@@ -103,7 +103,7 @@ func New(factory Factory, receiptPath string) (*Runtime, error) {
 
 // SetPromptHistory installs the one application-owned history before clients
 // attach. Shells receive value snapshots, never another whole-file writer.
-func (r *Runtime) SetPromptHistory(store *history.Store, path string) error {
+func (r *Runtime) SetPromptHistory(store *prompthistory.Store, path string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.closed || len(r.clients) != 0 || len(r.workspaces) != 0 || len(r.creating) != 0 {
@@ -493,7 +493,7 @@ func (c *Connection) attach(ctx context.Context, request coreprotocol.Request) c
 	}
 	// Cover creation, subscription and RecordAccess, not just the factory wait.
 	// A cancelled factory may outlive this lease; deletion also checks creating.
-	release, err := c.runtime.lockWorkspaceStorage(ctx, workspace.WorkspaceID(root))
+	release, err := c.runtime.lockWorkspaceStorage(ctx, workspace.ID(root))
 	if err != nil {
 		return fault(request, "workspace_unavailable", err.Error())
 	}
@@ -567,7 +567,7 @@ func (r *Runtime) workspace(ctx context.Context, id, root string) (*actor, error
 	}
 	creation := r.creating[id]
 	if creation == nil {
-		creation = &workspaceCreation{done: make(chan struct{}), savedID: workspace.WorkspaceID(root)}
+		creation = &workspaceCreation{done: make(chan struct{}), savedID: workspace.ID(root)}
 		r.creating[id] = creation
 		r.factoryWG.Add(1)
 		go func() {
@@ -586,14 +586,14 @@ func (r *Runtime) workspace(ctx context.Context, id, root string) (*actor, error
 					ws.LSPMgr.SetToolStore(r.tools)
 				}
 				if analysisErr := ws.InitializeAnalysisRuntime(r.analysisGovernor, id, rand.Text()); analysisErr != nil {
-					ws.Status.Notify(types.NotificationRecord{Severity: types.SeverityWarning, Source: "analysis", Summary: "Could not check this folder", Detail: analysisErr.Error()})
+					ws.Status.Notify(statuscenter.NotificationRecord{Severity: statuscenter.SeverityWarning, Source: "analysis", Summary: "Could not check this folder", Detail: analysisErr.Error()})
 				}
 				initCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 				initErr := ws.InitializeCoreResources(initCtx)
 				cancel()
 				if initErr != nil {
 					ws.Logger.Warn("CORE", "workspace_resources_failed", "error", initErr.Error())
-					ws.Status.Notify(types.NotificationRecord{Severity: types.SeverityError, Source: "workspace", Summary: "Workspace resources need attention", Detail: "Saved Notices or capabilities could not be loaded. Inspect the workspace persistence and Skills/MCP settings before retrying."})
+					ws.Status.Notify(statuscenter.NotificationRecord{Severity: statuscenter.SeverityError, Source: "workspace", Summary: "Workspace resources need attention", Detail: "Saved Notices or capabilities could not be loaded. Inspect the workspace persistence and Skills/MCP settings before retrying."})
 				}
 				if ws.Capabilities != nil {
 					ws.Capabilities.SetHostDispatcher(r)
@@ -642,7 +642,7 @@ type actor struct {
 	// activity is the last activity this actor's goroutine sampled for the
 	// workspace overview. A read that finds the actor busy reports it instead
 	// of dropping the workspace, so badges do not blink off during long steps.
-	activity atomic.Pointer[workspace.WorkspaceActivity]
+	activity atomic.Pointer[workspace.Activity]
 	// statusVersion is the status-center version last announced to shells.
 	statusVersion uint64
 	lspVersion    uint64
@@ -654,7 +654,7 @@ type actor struct {
 	projectTools   *workspace.ProjectToolSetupOwner
 	id             string
 	ws             *workspace.Workspace
-	accessDB       *workspace.WorkspaceDB // immutable lifetime handle; sql.DB fences concurrent close
+	accessDB       *workspace.DB // immutable lifetime handle; sql.DB fences concurrent close
 	receipts       *receiptJournal
 	commands       chan actorCommand
 	ingress        chan workspace.AgentEvent
@@ -773,7 +773,7 @@ func (a *actor) SendAgentEvent(kind string, data any) { a.SendAgentEventWithID(k
 func (a *actor) SendAgentEventWithID(kind string, data any, id string) {
 	a.enqueue(workspace.AgentEvent{Type: kind, Data: data, AgentID: id})
 }
-func (a *actor) SendAgentEventEnvelope(event agent.AgentEvent) {
+func (a *actor) SendAgentEventEnvelope(event turnloop.AgentEvent) {
 	a.enqueue(workspace.AgentEvent{Type: event.Type, Data: event.Data, AgentID: event.AgentID, Identity: event.Identity})
 }
 func (a *actor) enqueue(event workspace.AgentEvent) {
@@ -856,7 +856,7 @@ func (a *actor) serviceEvent(message any) {
 			continue
 		}
 		if !subscriber.offerClipboard(a.id, coreprotocol.TerminalClipboard{TerminalID: id, Generation: lease.Generation, Clipboard: effects.Effects.Clipboard}) {
-			a.ws.Status.Notify(types.NotificationRecord{Severity: types.SeverityWarning, Source: "terminal", Summary: "Terminal clipboard offer refused", Detail: "The controlling shell's private inbox is full or the offer exceeds its 1 MiB limit. Copy again after the shell catches up."})
+			a.ws.Status.Notify(statuscenter.NotificationRecord{Severity: statuscenter.SeverityWarning, Source: "terminal", Summary: "Terminal clipboard offer refused", Detail: "The controlling shell's private inbox is full or the offer exceeds its 1 MiB limit. Copy again after the shell catches up."})
 			a.queueState(coreprotocol.TopicStatus)
 		}
 	}
@@ -1397,7 +1397,7 @@ func (a *actor) mutate(request coreprotocol.Request) coreprotocol.Response {
 		if input.Reject != "" {
 			accepted = a.ws.RejectQuestion(input.AgentID, input.BlockID, input.Reject)
 		} else if input.Choice != "" {
-			if input.Choice != "allow" && input.Choice != "deny" && input.Choice != "always" && input.Choice != types.PlanInvestigationHostAllow {
+			if input.Choice != "allow" && input.Choice != "deny" && input.Choice != "always" && input.Choice != conversation.PlanInvestigationHostAllow {
 				return fault(request, "invalid_decision", "invalid permission choice")
 			}
 			accepted = a.ws.ResolveConfirmation(input.AgentID, input.BlockID, input.Choice)
@@ -1694,7 +1694,7 @@ func (a *actor) startJob(command actorCommand) bool {
 		var labels []string
 		if owner.RefStore != nil {
 			for _, id := range input.ReferenceIDs {
-				if ref, ok := owner.RefStore.GetReference(id); ok {
+				if ref, ok := owner.RefStore.Reference(id); ok {
 					labels = append(labels, ref.DisplayName())
 				}
 			}

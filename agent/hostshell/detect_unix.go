@@ -8,7 +8,7 @@ import (
 	"runtime"
 	"strings"
 
-	ttypes "crude/types"
+	"crude/types/setting"
 )
 
 var unixShellLabels = map[string]string{"zsh": "Zsh", "bash": "Bash", "fish": "Fish", "sh": "sh", "nu": "Nushell", "ksh": "Korn shell", "tcsh": "tcsh"}
@@ -16,12 +16,12 @@ var unixShellLabels = map[string]string{"zsh": "Zsh", "bash": "Bash", "fish": "F
 // detect lists installed shells: the user's login shell ($SHELL) first, then
 // the platform's conventional default (zsh on macOS, bash elsewhere) and the
 // remaining common shells.
-func detect(env SearchEnvironment) []ttypes.TerminalShell {
+func detect(env SearchEnvironment) []setting.TerminalShell {
 	order := []string{"bash", "zsh", "fish", "sh"}
 	if runtime.GOOS == "darwin" {
 		order = []string{"zsh", "bash", "fish", "sh"}
 	}
-	var shells []ttypes.TerminalShell
+	var shells []setting.TerminalShell
 	seen := make(map[string]bool)
 	add := func(id, path string) {
 		if path == "" || seen[id] {
@@ -33,7 +33,7 @@ func detect(env SearchEnvironment) []ttypes.TerminalShell {
 			label = id
 		}
 		// POSIX shells, fish and nu all accept -l for a login shell.
-		shells = append(shells, ttypes.TerminalShell{ID: id, Label: label, Path: path, LoginArgs: []string{"-l"}})
+		shells = append(shells, setting.TerminalShell{ID: id, Label: label, Path: path, LoginArgs: []string{"-l"}})
 	}
 	if login := strings.TrimSpace(env.values[searchShell]); filepath.IsAbs(login) {
 		add(filepath.Base(login), env.executable(login))

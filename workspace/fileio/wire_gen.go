@@ -17,7 +17,7 @@ func (z *AsyncCmdInfo) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.AppendString(o, z.Command)
 	o = msgp.AppendString(o, z.CWD)
 	o = msgp.AppendInt(o, z.PID)
-	o, err = (*command.Status)(&z.Status).MarshalMsg(o)
+	o, err = z.Status.MarshalMsg(o)
 	if err != nil {
 		err = msgp.WrapError(err, "Status")
 		return
@@ -78,7 +78,7 @@ func (z *AsyncCmdInfo) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.WrapError(err, "PID")
 		return
 	}
-	bts, err = (*command.Status)(&z.Status).UnmarshalMsg(bts)
+	bts, err = z.Status.UnmarshalMsg(bts)
 	if err != nil {
 		err = msgp.WrapError(err, "Status")
 		return
@@ -145,7 +145,7 @@ func (z *AsyncCmdInfo) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *AsyncCmdInfo) Msgsize() (s int) {
-	s = 1 + msgp.StringPrefixSize + len(z.Handle) + msgp.StringPrefixSize + len(z.Command) + msgp.StringPrefixSize + len(z.CWD) + msgp.IntSize + (*command.Status)(&z.Status).Msgsize() + msgp.TimeSize + msgp.TimeSize + msgp.DurationSize + msgp.IntSize + msgp.StringPrefixSize + len(z.Error) + msgp.BoolSize + msgp.BoolSize + msgp.IntSize
+	s = 1 + msgp.StringPrefixSize + len(z.Handle) + msgp.StringPrefixSize + len(z.Command) + msgp.StringPrefixSize + len(z.CWD) + msgp.IntSize + z.Status.Msgsize() + msgp.TimeSize + msgp.TimeSize + msgp.DurationSize + msgp.IntSize + msgp.StringPrefixSize + len(z.Error) + msgp.BoolSize + msgp.BoolSize + msgp.IntSize
 	if z.SettledOutput == nil {
 		s += msgp.NilSize
 	} else {

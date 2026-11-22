@@ -9,8 +9,8 @@ import (
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
 	"crude/agent/tools"
-	ttypes "crude/types"
 	"crude/types/command"
+	"crude/types/conversation"
 	"crude/types/toolresult"
 )
 
@@ -134,10 +134,10 @@ func (t *displayMetaTracker) setPermTag(toolID, internalID, tool, tag string) {
 	t.setPendingPermTag(tool, tag)
 }
 
-func ensureToolSnapshot(meta *sessiondb.DisplayMeta) *ttypes.ConversationMessage {
+func ensureToolSnapshot(meta *sessiondb.DisplayMeta) *conversation.Message {
 	meta.SnapshotVersion = sessiondb.ConversationSnapshotVersion
 	if len(meta.Snapshots) == 0 {
-		meta.Snapshots = []ttypes.ConversationMessage{{Role: "tool"}}
+		meta.Snapshots = []conversation.Message{{Role: "tool"}}
 	}
 	return &meta.Snapshots[0]
 }
@@ -149,7 +149,7 @@ func canonicalizeDisplayMeta(message provider.ChatMessage, meta sessiondb.Displa
 		internalID = message.InternalID
 	}
 	if message.EffectiveOrigin() == provider.OriginTurnStopped {
-		meta.Snapshots = []ttypes.ConversationMessage{{InternalID: internalID, Role: ttypes.RoleStatus, LifecyclePhase: "stopped", LifecycleOperationID: internalID, Time: now, TurnGeneration: meta.TurnGeneration}}
+		meta.Snapshots = []conversation.Message{{InternalID: internalID, Role: conversation.RoleStatus, LifecyclePhase: "stopped", LifecycleOperationID: internalID, Time: now, TurnGeneration: meta.TurnGeneration}}
 		return meta
 	}
 	// Context-only messages (turn context, runtime continuity, enrichment) are
@@ -172,7 +172,7 @@ func canonicalizeDisplayMeta(message provider.ChatMessage, meta sessiondb.Displa
 				if message.ToolError {
 					role = "error"
 				}
-				meta.Snapshots = []ttypes.ConversationMessage{{
+				meta.Snapshots = []conversation.Message{{
 					InternalID: "reply:" + toolResultKey(message), Role: role, Content: message.Content.String(), Time: now,
 					ExecutionID: meta.ExecutionID, TurnGeneration: meta.TurnGeneration, ProviderID: meta.ProviderID, AccountID: meta.AccountID, ModelID: meta.ModelID,
 				}}
@@ -212,7 +212,7 @@ func canonicalizeDisplayMeta(message provider.ChatMessage, meta sessiondb.Displa
 		if snapshot.ToolName == "agent_start" {
 			snapshot.SubPaneID = childAgentIDFromResult(snapshot.Content)
 		}
-		meta.Snapshots = []ttypes.ConversationMessage{*snapshot}
+		meta.Snapshots = []conversation.Message{*snapshot}
 	case "assistant":
 		meta.Snapshots = nil
 		if message.ReasoningContent != "" || message.Reasoning != "" {
@@ -220,7 +220,7 @@ func canonicalizeDisplayMeta(message provider.ChatMessage, meta sessiondb.Displa
 			if content == "" {
 				content = message.Reasoning
 			}
-			thinking := ttypes.ConversationMessage{
+			thinking := conversation.Message{
 				InternalID: internalID + "-thinking", Role: "thinking", Content: content,
 				Time: now, ThinkingDuration: message.ReasoningDuration,
 				ThinkingDisplay: message.ReasoningDisplay,
@@ -229,7 +229,7 @@ func canonicalizeDisplayMeta(message provider.ChatMessage, meta sessiondb.Displa
 			meta.Snapshots = append(meta.Snapshots, thinking)
 		}
 		if message.Content.String() != "" {
-			assistant := ttypes.ConversationMessage{
+			assistant := conversation.Message{
 				InternalID: internalID + "-assistant", Role: "assistant", Content: message.Content.String(), Time: now,
 			}
 			applyTurnIdentity(&assistant, meta)
@@ -247,13 +247,13 @@ func canonicalizeDisplayMeta(message provider.ChatMessage, meta sessiondb.Displa
 		if meta.DisplayRole == "assignment" {
 			role = "assignment"
 		}
-		meta.Snapshots = []ttypes.ConversationMessage{{
+		meta.Snapshots = []conversation.Message{{
 			InternalID: internalID, Role: role, Content: content,
 			Origin: message.EffectiveOrigin(), Collaboration: cloneCollaborationAttribution(message.Collaboration),
 			ReferenceLabels: append([]string(nil), meta.ReferenceLabels...), Attachments: slices.Clone(meta.Attachments), Time: now,
 		}}
 	default:
-		meta.Snapshots = []ttypes.ConversationMessage{{
+		meta.Snapshots = []conversation.Message{{
 			InternalID: internalID, Role: message.Role, Content: message.Content.String(), Time: now,
 		}}
 	}
@@ -277,7 +277,7 @@ func cloneCollaborationAttribution(input *provider.CollaborationAttribution) *pr
 	return &result
 }
 
-func applyTurnIdentity(snapshot *ttypes.ConversationMessage, meta sessiondb.DisplayMeta) {
+func applyTurnIdentity(snapshot *conversation.Message, meta sessiondb.DisplayMeta) {
 	if snapshot == nil {
 		return
 	}
@@ -288,7 +288,7 @@ func applyTurnIdentity(snapshot *ttypes.ConversationMessage, meta sessiondb.Disp
 	snapshot.ExecutionID = meta.ExecutionID
 }
 
-func applyCanonicalToolOperands(snapshot *ttypes.ConversationMessage, rawArgs string) {
+func applyCanonicalToolOperands(snapshot *conversation.Message, rawArgs string) {
 	if snapshot == nil || rawArgs == "" {
 		return
 	}

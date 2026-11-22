@@ -24,7 +24,7 @@ import (
 
 	"crude/agent/mcpclient"
 	"crude/agent/skills"
-	"crude/network"
+	"crude/internal/network"
 	captypes "crude/types/capability"
 )
 
@@ -102,7 +102,7 @@ func repositoryIdentity(source captypes.SourceConfig) (string, string, string, e
 	return parts[0], parts[1], revision, nil
 }
 
-func (service *Service) discoverRemote(ctx context.Context, source captypes.SourceConfig, query string, kind captypes.Kind, limit int) ([]captypes.Entry, error) {
+func (s *Service) discoverRemote(ctx context.Context, source captypes.SourceConfig, query string, kind captypes.Kind, limit int) ([]captypes.Entry, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
@@ -151,7 +151,7 @@ func (service *Service) discoverRemote(ctx context.Context, source captypes.Sour
 		var err error
 		candidates, err = discoverMCPRegistry(ctx, source, query, limit)
 		if err != nil {
-			return service.cacheDiscoveredCandidates(source, kind, candidates, limit), err
+			return s.cacheDiscoveredCandidates(source, kind, candidates, limit), err
 		}
 	case "skill-registry":
 		if kind == captypes.KindMCP {
@@ -165,15 +165,15 @@ func (service *Service) discoverRemote(ctx context.Context, source captypes.Sour
 	default:
 		return nil, fmt.Errorf("unsupported capability source kind %q", source.Kind)
 	}
-	return service.cacheDiscoveredCandidates(source, kind, candidates, limit), nil
+	return s.cacheDiscoveredCandidates(source, kind, candidates, limit), nil
 }
 
-func (service *Service) cacheDiscoveredCandidates(source captypes.SourceConfig, kind captypes.Kind, candidates []Candidate, limit int) []captypes.Entry {
+func (s *Service) cacheDiscoveredCandidates(source captypes.SourceConfig, kind captypes.Kind, candidates []Candidate, limit int) []captypes.Entry {
 	entries := make([]captypes.Entry, 0, min(limit, len(candidates)))
-	service.mu.Lock()
-	defer service.mu.Unlock()
-	if service.candidates == nil {
-		service.candidates = make(map[string]Candidate)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.candidates == nil {
+		s.candidates = make(map[string]Candidate)
 	}
 	for _, candidate := range candidates {
 		if len(entries) >= limit {
@@ -183,17 +183,18 @@ func (service *Service) cacheDiscoveredCandidates(source captypes.SourceConfig, 
 		if candidate.Entry.ID == "" || kind != "" && candidate.Entry.Kind != kind {
 			continue
 		}
-		service.candidates[candidate.Entry.ID] = candidate
+		s.candidates[candidate.Entry.ID] = candidate
 		entries = append(entries, candidate.Entry)
 	}
 	return entries
 }
 
-func (service *Service) Acquire(ctx context.Context, id string, scope captypes.Scope) (captypes.Settings, error) {
-	service.mu.RLock()
-	candidate, exists := service.candidates[id]
-	settings := captypes.Clone(service.settings)
-	service.mu.RUnlock()
+// Acquire installs a candidate as an MCP connection or a managed skill artifact.
+func (s *Service) Acquire(ctx context.Context, id string, scope captypes.Scope) (captypes.Settings, error) {
+	s.mu.RLock()
+	candidate, exists := s.candidates[id]
+	settings := captypes.Clone(s.settings)
+	s.mu.RUnlock()
 	if !exists {
 		return settings, errors.New("candidate is unavailable; run discovery and inspect the exact revision")
 	}
@@ -215,7 +216,7 @@ func (service *Service) Acquire(ctx context.Context, id string, scope captypes.S
 		settings.Connections[connection.ID] = connection
 		return settings, nil
 	}
-	path, digest, err := service.acquireArtifact(ctx, candidate, settings.Acquisition)
+	path, digest, err := s.acquireArtifact(ctx, candidate, settings.Acquisition)
 	if err != nil {
 		return settings, err
 	}
@@ -227,8 +228,8 @@ func (service *Service) Acquire(ctx context.Context, id string, scope captypes.S
 	return settings, nil
 }
 
-func (service *Service) acquireArtifact(ctx context.Context, candidate Candidate, settings captypes.AcquisitionSettings) (string, string, error) {
-	keyDigest := sha256.Sum256([]byte(service.cache + "\n" + candidate.Entry.ID + "\n" + candidate.Entry.Version + "\n" + candidate.Entry.Digest + "\n" + candidate.ArchiveURL))
+func (s *Service) acquireArtifact(ctx context.Context, candidate Candidate, settings captypes.AcquisitionSettings) (string, string, error) {
+	keyDigest := sha256.Sum256([]byte(s.cache + "\n" + candidate.Entry.ID + "\n" + candidate.Entry.Version + "\n" + candidate.Entry.Digest + "\n" + candidate.ArchiveURL))
 	key := hex.EncodeToString(keyDigest[:])
 	acquisitions.Lock()
 	job := acquisitions.jobs[key]
@@ -238,7 +239,7 @@ func (service *Service) acquireArtifact(ctx context.Context, candidate Candidate
 		go func() {
 			bounded, cancel := context.WithTimeout(context.Background(), time.Duration(settings.TimeoutSeconds)*time.Second)
 			defer cancel()
-			job.path, job.digest, job.err = service.installArtifact(bounded, key, candidate, settings.MaxDownloadBytes)
+			job.path, job.digest, job.err = s.installArtifact(bounded, key, candidate, settings.MaxDownloadBytes)
 			close(job.done)
 			acquisitions.Lock()
 			delete(acquisitions.jobs, key)
@@ -254,11 +255,11 @@ func (service *Service) acquireArtifact(ctx context.Context, candidate Candidate
 	}
 }
 
-func (service *Service) installArtifact(ctx context.Context, key string, candidate Candidate, limit int64) (string, string, error) {
-	if err := os.MkdirAll(service.cache, 0700); err != nil {
+func (s *Service) installArtifact(ctx context.Context, key string, candidate Candidate, limit int64) (string, string, error) {
+	if err := os.MkdirAll(s.cache, 0700); err != nil {
 		return "", "", err
 	}
-	lock := flock.New(filepath.Join(service.cache, key+".lock"))
+	lock := flock.New(filepath.Join(s.cache, key+".lock"))
 	locked, err := lock.TryLockContext(ctx, 30*time.Millisecond)
 	if err != nil || !locked {
 		return "", "", fmt.Errorf("artifact lock: %w", err)
@@ -268,7 +269,7 @@ func (service *Service) installArtifact(ctx context.Context, key string, candida
 	if candidate.SkillID != "" {
 		directoryName = candidate.SkillID
 	}
-	destination := filepath.Join(service.cache, key, directoryName)
+	destination := filepath.Join(s.cache, key, directoryName)
 	if directoryName == "" || !filepath.IsLocal(directoryName) || strings.ContainsAny(directoryName, "/\\") {
 		return "", "", errors.New("artifact name is not a contained directory identity")
 	}
@@ -305,7 +306,7 @@ func (service *Service) installArtifact(ctx context.Context, key string, candida
 			return "", "", errors.New("download integrity differs from the inspected digest")
 		}
 	}
-	staging, err := os.MkdirTemp(service.cache, ".acquire-")
+	staging, err := os.MkdirTemp(s.cache, ".acquire-")
 	if err != nil {
 		return "", "", err
 	}
@@ -322,7 +323,7 @@ func (service *Service) installArtifact(ctx context.Context, key string, candida
 		!strings.EqualFold(skill.Name, candidate.Entry.Name) {
 		return "", "", errors.New("acquired skill identity differs from the reviewed directory result")
 	}
-	if err := os.Rename(staging, filepath.Join(service.cache, key)); err != nil {
+	if err := os.Rename(staging, filepath.Join(s.cache, key)); err != nil {
 		return "", "", err
 	}
 	return destination, skill.Digest, nil

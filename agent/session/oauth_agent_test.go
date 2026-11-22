@@ -16,7 +16,7 @@ func TestProviderForCategoryBindsOAuthAccount(t *testing.T) {
 	agents.Profiles[agents.ActiveProfile] = profile
 	cfg := &Config{Accounts: map[string]provider.Account{"work": {ID: "work", ProviderID: "chatgpt", OAuth: &provider.OAuthCredentials{AccessToken: "AT-oauth", AccountID: "acct_1"}, Connection: provider.DefaultTemplates()["chatgpt"]}},
 		Agents: agents}
-	p, err := cfg.providerForCategory(cfg.GetActiveDefaultCategory())
+	p, err := cfg.providerForCategory(cfg.ActiveDefaultCategory())
 	if err != nil {
 		t.Fatal(err)
 	}

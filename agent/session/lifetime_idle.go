@@ -7,7 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"crude/types"
+	"crude/types/conversation"
 )
 
 // idleAdmission covers autonomous operations which can run without a turn.
@@ -42,7 +42,7 @@ func (s *Session) BeginIdleLease(ctx context.Context) (func(), error) {
 	}
 	if s.idle.active != 0 {
 		s.idle.mu.Unlock()
-		return nil, types.IdleSettling("autonomous collaboration, control or child admission is in progress")
+		return nil, conversation.IdleSettling("autonomous collaboration, control or child admission is in progress")
 	}
 	s.idle.fenced = true
 	s.idle.mu.Unlock()
@@ -71,7 +71,7 @@ func (s *Session) BeginIdleLease(ctx context.Context) (func(), error) {
 	}
 	releases = append(releases, history)
 	if !s.turnGate.TryLock() {
-		return failed(types.IdleSettling("turn or compaction is still finishing"))
+		return failed(conversation.IdleSettling("turn or compaction is still finishing"))
 	}
 	releases = append(releases, s.turnGate.Unlock)
 	// Recheck the exact unexpired permit under final turn/history exclusion.

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"crude/types"
+	"crude/types/insight"
 )
 
 func TestRegionIsWholeLinesAroundTheCaret(t *testing.T) {
@@ -38,7 +38,7 @@ func TestRegionIsWholeLinesAroundTheCaret(t *testing.T) {
 func TestBudgetDropsOptionalContextFirst(t *testing.T) {
 	text := []byte(strings.Repeat("filler line of code\n", 600) + "func target() {\n\t\n}\n")
 	caret := len(text) - len("\n}\n")
-	edits := []types.RecentEdit{{Path: "a.go", Line: 1, Inserted: strings.Repeat("x", 500), Author: "you"}}
+	edits := []insight.RecentEdit{{Path: "a.go", Line: 1, Inserted: strings.Repeat("x", 500), Author: "you"}}
 	snippets := []Snippet{{Path: "b.go", Line: 1, Text: strings.Repeat("y", 1000)}}
 	full, err := Build(Input{Path: "a.go", Text: text, Caret: caret, RecentEdits: edits, Snippets: snippets}, 100000)
 	if err != nil || len(full.Snippets) != 1 || len(full.Edits) != 1 {
@@ -63,7 +63,7 @@ func TestBudgetDropsOptionalContextFirst(t *testing.T) {
 func TestDiagnosticsNearTheRegionAndUTF8Bounds(t *testing.T) {
 	text := []byte("a\nb\nسلام\nd\n")
 	caret := strings.Index(string(text), "لام")
-	c, err := Build(Input{Path: "a.go", Text: text, Caret: caret, Diagnostics: []types.LSPDiagnostic{
+	c, err := Build(Input{Path: "a.go", Text: text, Caret: caret, Diagnostics: []insight.LSPDiagnostic{
 		{Line: 2, Message: "near\nsecond line"}, {Line: 400, Message: "far"},
 	}, Completions: []string{" first ", "", "second\nline"}}, 1000)
 	if err != nil {
@@ -96,8 +96,8 @@ func BenchmarkBuildDense(b *testing.B) {
 	text := []byte(src.String())
 	in := Input{Path: "pkg/dense.go", Language: "go", Text: text, Caret: len(text) / 2}
 	for i := range 64 {
-		in.RecentEdits = append(in.RecentEdits, types.RecentEdit{Path: "pkg/dense.go", Line: 100 + i, Removed: "serve(request)", Inserted: "serve(request, options)", Author: types.RecentEditYou})
-		in.Diagnostics = append(in.Diagnostics, types.LSPDiagnostic{Line: 9000 + i, Message: "undefined: options", Severity: 1})
+		in.RecentEdits = append(in.RecentEdits, insight.RecentEdit{Path: "pkg/dense.go", Line: 100 + i, Removed: "serve(request)", Inserted: "serve(request, options)", Author: insight.RecentEditYou})
+		in.Diagnostics = append(in.Diagnostics, insight.LSPDiagnostic{Line: 9000 + i, Message: "undefined: options", Severity: 1})
 		in.Completions = append(in.Completions, "handlerOption"+strings.Repeat("s", i%8))
 	}
 	for i := range 4 {

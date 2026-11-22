@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/terminalvt"
+	"crude/internal/terminalvt"
 	"crude/tui/cell"
 	"crude/tui/compositor"
 	"crude/tui/surface"

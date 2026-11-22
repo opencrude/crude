@@ -10,7 +10,7 @@ import (
 
 	"crude/agent/collaboration"
 	"crude/agent/provider"
-	ttypes "crude/types"
+	"crude/types/setting"
 )
 
 func TestWorkspaceSwitchLauncherStartsAndResumesSessions(t *testing.T) {
@@ -27,12 +27,12 @@ func TestWorkspaceSwitchLauncherStartsAndResumesSessions(t *testing.T) {
 
 	rootA, rootB := t.TempDir(), t.TempDir()
 	cfg := historyE2EConfig(server.URL)
-	ws := NewWorkspace(rootA, "history-model", "tester", ttypes.Settings{}, &testLogger{})
+	ws := NewWorkspace(rootA, "history-model", "tester", setting.Settings{}, &testLogger{})
 	t.Cleanup(ws.Close)
 	ws.SetBackendConfig(cfg, home)
-	ws.SetAppDefaults(ttypes.AppSettings{
+	ws.SetAppDefaults(setting.App{
 		Accounts:     ws.AllAccounts(),
-		LocalHistory: ttypes.LocalHistorySettings{Enabled: "off"},
+		LocalHistory: setting.LocalHistory{Enabled: "off"},
 	})
 	sender := &historyE2ESender{events: make(chan historyE2EEvent, 1024)}
 	ws.SetEventSender(sender)

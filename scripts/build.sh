@@ -7,5 +7,5 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 # shellcheck source=libghostty_env.sh
 . scripts/libghostty_env.sh
-go run ./internal/wiregen -check
+go run ./tools/wiregen -check
 exec go build "$@" .

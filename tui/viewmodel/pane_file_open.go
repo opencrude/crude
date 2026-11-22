@@ -10,13 +10,13 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/clientstate"
-	"crude/core/port"
-	"crude/text/indent"
+	"crude/core/shellport"
+	"crude/internal/clientstate"
+	"crude/text/indentation"
 	"crude/tui/editor"
 	"crude/tui/imagepreview"
 	"crude/tui/window"
-	"crude/types"
+	"crude/types/insight"
 	"crude/workspace/document"
 	"crude/workspace/fileio"
 )
@@ -49,10 +49,10 @@ type paneFilesOpenedMsg struct {
 	files            []paneFilePrepared
 	landing          *fileio.ProjectSearchMatch
 	refs             *liveDocumentRefs
-	diagnosticFacts  *types.InsightDiagnostics
-	position         *editor.LSPDiagnostic // raw UTF-16 range, including point locations
-	filePosition     *editor.Position      // model-authored one-based source reference, converted to zero-based
-	restore          *navLocation          // Go Back/Forward place of a reopened file
+	diagnosticFacts  *insight.Diagnostics
+	position         *insight.LSPDiagnostic // raw UTF-16 range, including point locations
+	filePosition     *editor.Position       // model-authored one-based source reference, converted to zero-based
+	restore          *navLocation           // Go Back/Forward place of a reopened file
 	navigation       *paneNavigation
 	// window = landed tab in its own window (Open in window).
 	window bool
@@ -450,7 +450,7 @@ func releasePaneDocuments(msg paneFilesOpenedMsg) tea.Cmd {
 
 // queueLiveNavigation captures the destination and position together. Never
 // position the old active editor before the asynchronous open is installed.
-func (m *App) queueLiveNavigation(path string, position editor.LSPDiagnostic) bool {
+func (m *App) queueLiveNavigation(path string, position insight.LSPDiagnostic) bool {
 	if _, ok := m.ws.(shellport.LiveDocuments); !ok {
 		return false
 	}

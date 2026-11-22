@@ -8,9 +8,9 @@ import (
 	"os"
 	"sync/atomic"
 
-	"crude/agent"
 	"crude/agent/collaboration"
 	"crude/agent/sessiondb"
+	"crude/agent/turnloop"
 	"crude/types/recovery"
 )
 
@@ -55,16 +55,16 @@ type terminalSettlementIntent struct {
 	Generation uint64
 	TurnState  string
 	Run        collaboration.FinishRunRequest
-	Child      *agent.SubAgentResult
+	Child      *turnloop.SubAgentResult
 	Stopped    bool
 }
 
-func (run *recoveryRunState) captureTerminalSettlement(intent terminalSettlementIntent) error {
-	run.mu.Lock()
-	defer run.mu.Unlock()
-	if len(run.terminalSettlement) != 0 {
+func (s *recoveryRunState) captureTerminalSettlement(intent terminalSettlementIntent) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.terminalSettlement) != 0 {
 		var prior terminalSettlementIntent
-		if err := json.Unmarshal(run.terminalSettlement, &prior); err != nil {
+		if err := json.Unmarshal(s.terminalSettlement, &prior); err != nil {
 			return err
 		}
 		if prior.AgentID != intent.AgentID || prior.Generation != intent.Generation {
@@ -78,7 +78,7 @@ func (run *recoveryRunState) captureTerminalSettlement(intent terminalSettlement
 	}
 	encoded, err := json.Marshal(intent)
 	if err == nil {
-		run.terminalSettlement = encoded
+		s.terminalSettlement = encoded
 	}
 	return err
 }
@@ -138,7 +138,7 @@ func (s *Session) retryTerminalSettlement(checkpoint sessiondb.RecoveryCheckpoin
 	if category == "" {
 		category = CategoryDefault
 	}
-	var handle *agent.SubAgentHandle
+	var handle *turnloop.SubAgentHandle
 	if intent.Child != nil {
 		var owner childRecoveryOwner
 		if err = json.Unmarshal(checkpoint.OwnerData, &owner); err != nil {
@@ -152,7 +152,7 @@ func (s *Session) retryTerminalSettlement(checkpoint sessiondb.RecoveryCheckpoin
 				return false
 			}
 			name, parentID, category = owner.Spec.Name, string(owner.Spec.ParentID), owner.Spec.Category
-			handle = &agent.SubAgentHandle{Spec: owner.Spec, Agent: &agent.Agent{TurnGeneration: intent.Generation}, DB: db, SessionID: intent.SessionID, RuntimeEpoch: intent.Run.RuntimeEpoch, ResultCh: make(chan agent.SubAgentResult, 1), StartedAt: checkpoint.Status.StartedAt}
+			handle = &turnloop.SubAgentHandle{Spec: owner.Spec, Agent: &turnloop.Agent{TurnGeneration: intent.Generation}, DB: db, SessionID: intent.SessionID, RuntimeEpoch: intent.Run.RuntimeEpoch, ResultCh: make(chan turnloop.SubAgentResult, 1), StartedAt: checkpoint.Status.StartedAt}
 			handle.SetRunIdentity(intent.Run.RunID, intent.Run.ExpectedVersion)
 		}
 	}
@@ -266,8 +266,8 @@ func (s *Session) retryTerminalSettlement(checkpoint sessiondb.RecoveryCheckpoin
 				}
 				return
 			}
-			if !supervisor.Await(ctx, agent.AttentionRecovery(agent.RecoveryFailureStorage, err)) {
-				status := supervisor.Park(agent.AttentionRecovery(agent.RecoveryFailureStorage, fmt.Errorf("terminal publication: %w", err)))
+			if !supervisor.Await(ctx, turnloop.AttentionRecovery(turnloop.RecoveryFailureStorage, err)) {
+				status := supervisor.Park(turnloop.AttentionRecovery(turnloop.RecoveryFailureStorage, fmt.Errorf("terminal publication: %w", err)))
 				pending := run.checkpoint(status)
 				if intent.Child != nil {
 					pending.ContextOwnerID = ""

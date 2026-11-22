@@ -10,31 +10,31 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 // Every goal change the user should see becomes one transcript row in every
 // shell; accounting-only updates do not.
 func TestGoalTransitionRows(t *testing.T) {
-	active := types.Goal{ID: "g", Objective: "Ship it", Status: types.GoalActive, TokenBudget: 100}
-	with := func(change func(*types.Goal)) *types.Goal {
+	active := conversation.Goal{ID: "g", Objective: "Ship it", Status: conversation.GoalActive, TokenBudget: 100}
+	with := func(change func(*conversation.Goal)) *conversation.Goal {
 		goal := active
 		change(&goal)
 		return &goal
 	}
 	for _, test := range []struct {
 		name          string
-		before, after *types.Goal
+		before, after *conversation.Goal
 		want          string
 	}{
 		{"set", nil, &active, "Goal set: Ship it"},
 		{"cleared", &active, nil, "Goal cleared."},
-		{"accounting", &active, with(func(g *types.Goal) { g.TokensUsed = 40 }), ""},
-		{"paused", &active, with(func(g *types.Goal) { g.Status, g.Reason = types.GoalPaused, "Stopped." }), "Goal paused. Stopped."},
-		{"budget", &active, with(func(g *types.Goal) {
-			g.Status, g.Reason = types.GoalBudgetLimited, "The goal used its token budget of 100 tokens."
+		{"accounting", &active, with(func(g *conversation.Goal) { g.TokensUsed = 40 }), ""},
+		{"paused", &active, with(func(g *conversation.Goal) { g.Status, g.Reason = conversation.GoalPaused, "Stopped." }), "Goal paused. Stopped."},
+		{"budget", &active, with(func(g *conversation.Goal) {
+			g.Status, g.Reason = conversation.GoalBudgetLimited, "The goal used its token budget of 100 tokens."
 		}), "Goal stopped: The goal used its token budget of 100 tokens. Set a new goal with /goal or clear it."},
-		{"complete", &active, with(func(g *types.Goal) { g.Status, g.Reason = types.GoalComplete, "Verified." }), "Goal complete. Verified."},
+		{"complete", &active, with(func(g *conversation.Goal) { g.Status, g.Reason = conversation.GoalComplete, "Verified." }), "Goal complete. Verified."},
 	} {
 		if got := strings.TrimSpace(goalTransitionRow(test.before, test.after)); got != test.want {
 			t.Errorf("%s: row %q, want %q", test.name, got, test.want)

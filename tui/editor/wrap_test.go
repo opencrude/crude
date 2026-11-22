@@ -12,11 +12,12 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 )
 
-func wrapSettings(width int) types.EditorSettings {
-	return types.EditorSettings{TabSize: width, WordWrap: true, LineNumbers: true}
+func wrapSettings(width int) setting.Editor {
+	return setting.Editor{TabSize: width, WordWrap: true, LineNumbers: true}
 }
 
 // Expectations use literal source and cell positions. The gutter + scrollbar
@@ -83,7 +84,7 @@ func TestWrapWideClustersTabsInlaysAndResizingStayLiteral(t *testing.T) {
 	}
 	e = newInlayTestEditor(t, "\tfoo bar")
 	e.SetPresentation(wrapSettings(4))
-	installTestInlays(t, e, types.LSPInlayHint{Index: 0, SourceByte: 1, Position: types.LSPInlayPosition{Character: 1}, Label: "HINT", PaddingRight: true})
+	installTestInlays(t, e, insight.LSPInlayHint{Index: 0, SourceByte: 1, Position: insight.LSPInlayPosition{Character: 1}, Label: "HINT", PaddingRight: true})
 	b = paintWrappedInlays(t, e, e.GutterWidth()+9, 10, false)
 	x = e.GutterWidth()
 	if b.Get(x+2, 1).Char != 'f' {
@@ -121,7 +122,7 @@ func TestWrapLinkedViewsKeepIndependentRowsAndToggleAnchors(t *testing.T) {
 		t.Fatal("linked panes shared wrapping width", e.cursor, peer.cursor)
 	}
 	before := e.captureViewState().Cursor
-	e.SetPresentation(types.EditorSettings{TabSize: 4, LineNumbers: true, WordWrap: false})
+	e.SetPresentation(setting.Editor{TabSize: 4, LineNumbers: true, WordWrap: false})
 	paintWrapped(t, e, e.GutterWidth()+11, 8)
 	if e.captureViewState().Cursor != before || e.Value() != source || e.Modified() || !e.hScrollbarVisible {
 		t.Fatal("turning wrap off moved source or kept wrapped chrome")

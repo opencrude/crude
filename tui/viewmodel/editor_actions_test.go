@@ -4,8 +4,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"crude/tui/editor"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/types/control"
+	"crude/types/insight"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -138,7 +138,7 @@ func TestEditorStructuralActionsUseSharedNativePublication(t *testing.T) {
 	remoteJourneyUntil(t, shells, func() bool {
 		for _, shell := range shells {
 			state, _ := shell.app.EditorState.Editor.InsightStatus()
-			if state != types.InsightCurrent {
+			if state != insight.Current {
 				return false
 			}
 		}

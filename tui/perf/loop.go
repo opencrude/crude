@@ -8,7 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/metrics"
+	"crude/internal/metrics"
 )
 
 // Shell event-loop series. The UI goroutine runs Update, View and the frame

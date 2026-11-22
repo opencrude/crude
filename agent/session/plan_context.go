@@ -38,10 +38,10 @@ func formatActivePlanContext(current plan.Plan) (string, error) {
 	}
 	// Revisions are host-owned; the model updates by plan ID only.
 	view := struct {
-		ID        string          `json:"id"`
-		Status    plan.PlanStatus `json:"status"`
-		Objective string          `json:"objective"`
-		Steps     []stepView      `json:"steps"`
+		ID        string      `json:"id"`
+		Status    plan.Status `json:"status"`
+		Objective string      `json:"objective"`
+		Steps     []stepView  `json:"steps"`
 	}{ID: current.ID, Status: current.Status, Objective: current.Objective}
 	for _, step := range current.Steps {
 		view.Steps = append(view.Steps, stepView{

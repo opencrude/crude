@@ -6,10 +6,10 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/port"
-	settingsui "crude/tui/settings"
+	"crude/core/shellport"
+	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -19,7 +19,7 @@ type onboardingState struct {
 	sequence   uint64
 	loaded     bool
 	shown      bool // shell lifetime, deliberately not reset on workspace switches
-	settings   types.AppSettings
+	settings   setting.App
 	owner      shellport.Workspace
 	generation uint64
 	prompt     *aiSetupReminder
@@ -40,7 +40,7 @@ type onboardingLoadedMsg struct {
 	owner      shellport.Workspace
 	generation uint64
 	sequence   uint64
-	settings   types.AppSettings
+	settings   setting.App
 	err        error
 	explicit   bool
 	verified   bool
@@ -61,10 +61,10 @@ func (m *App) onboardingCmd() tea.Cmd {
 	m.onboarding.loaded = false
 	owner, generation, sequence := m.ws, m.workspaceSwitchGen.Load(), m.onboarding.sequence
 	return func() tea.Msg {
-		var settings types.AppSettings
+		var settings setting.App
 		var err error
 		if reader, ok := owner.(interface {
-			RefreshOnboarding(context.Context) (types.AppSettings, error)
+			RefreshOnboarding(context.Context) (setting.App, error)
 		}); ok {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
@@ -87,7 +87,7 @@ func (m *App) handleOnboardingMessage(msg tea.Msg) (bool, tea.Cmd) {
 				m.Feedback.NotifyError("AI setup state could not be read: " + msg.err.Error())
 			}
 			if msg.err == nil {
-				if installer, ok := m.ws.(interface{ ApplyOnboarding(types.AppSettings) }); ok {
+				if installer, ok := m.ws.(interface{ ApplyOnboarding(setting.App) }); ok {
 					installer.ApplyOnboarding(msg.settings)
 				}
 				if msg.explicit {
@@ -118,10 +118,10 @@ func (m *App) handleOnboardingMessage(msg tea.Msg) (bool, tea.Cmd) {
 		m.ws.ApplyPreferencesSave(msg.result)
 		m.overlayHost.Close(aiSetupReminderOverlay)
 		return true, nil
-	case types.TickMsg:
+	case TickMsg:
 		if m.canShowAISetupReminder() && !m.onboarding.checking {
 			if reader, ok := m.ws.(interface {
-				RefreshOnboarding(context.Context) (types.AppSettings, error)
+				RefreshOnboarding(context.Context) (setting.App, error)
 			}); ok {
 				m.onboarding.checking = true
 				m.onboarding.sequence++
@@ -223,7 +223,7 @@ func (m *App) activateAISetupReminder(choice int) tea.Cmd {
 	}
 	prompt.busy, prompt.err = true, ""
 	m.refreshAISetupReminder()
-	run := m.ws.PreparePreferencesSave(types.SettingsScopeApplication, []types.SettingEdit{{
+	run := m.ws.PreparePreferencesSave(setting.ScopeApplication, []setting.Edit{{
 		Path: []string{"onboarding", "ai_setup_reminder_hidden"}, After: []byte("true"),
 	}})
 	return func() tea.Msg { return onboardingSavedMsg{prompt: prompt, result: run()} }
@@ -240,7 +240,7 @@ func (m *App) openAISetup() tea.Cmd {
 	}
 	m.onboarding.shown = true
 	if reader, ok := m.ws.(interface {
-		RefreshOnboarding(context.Context) (types.AppSettings, error)
+		RefreshOnboarding(context.Context) (setting.App, error)
 	}); ok {
 		m.onboarding.sequence++
 		owner, generation, sequence := m.ws, m.workspaceSwitchGen.Load(), m.onboarding.sequence
@@ -254,7 +254,7 @@ func (m *App) openAISetup() tea.Cmd {
 	return m.showAISetup(m.ws.AppDefaults())
 }
 
-func (m *App) showAISetup(settings types.AppSettings) tea.Cmd {
+func (m *App) showAISetup(settings setting.App) tea.Cmd {
 	if m.overlayHost.IsOpen(ui.OverlayWorkspaceSettings) {
 		return nil
 	}

@@ -15,7 +15,7 @@ func TestLauncherNativeGolden(t *testing.T) {
 	if os.Getenv("CRUDE_POLISH_CAPTURE") != "1" {
 		t.Skip("native capture only")
 	}
-	_, host, _ := testScreen(t, 110, 16, []workspace.WorkspaceInfo{{ID: "alpha", ProjectName: "alpha", ProjectDir: "/projects/alpha", SessionCount: 2}})
+	_, host, _ := testScreen(t, 110, 16, []workspace.Info{{ID: "alpha", ProjectName: "alpha", ProjectDir: "/projects/alpha", SessionCount: 2}})
 	m := &nativeLauncher{host: host, paint: compositor.NewCompositor(110, 16)}
 	if _, err := tea.NewProgram(m).Run(); err != nil {
 		t.Fatal(err)

@@ -1,23 +1,24 @@
 package fileio
 
 import (
+	"crude/types/command"
 	"strconv"
 	"strings"
 	"time"
 )
 
 type AsyncCommandContext struct {
-	Handle          string      `json:"handle"`
-	Command         string      `json:"command"`
-	CWD             string      `json:"cwd"`
-	PID             int         `json:"pid"`
-	StartedAt       time.Time   `json:"started_at"`
-	Status          AsyncStatus `json:"status"`
-	ExitCode        *int        `json:"exit_code,omitempty"`
-	Error           string      `json:"error,omitempty"`
-	NativeSessionID int         `json:"native_session_id,omitempty"`
-	ReadCursor      *int        `json:"read_cursor_byte,omitempty"`
-	OutputBytes     int         `json:"output_bytes"`
+	Handle          string         `json:"handle"`
+	Command         string         `json:"command"`
+	CWD             string         `json:"cwd"`
+	PID             int            `json:"pid"`
+	StartedAt       time.Time      `json:"started_at"`
+	Status          command.Status `json:"status"`
+	ExitCode        *int           `json:"exit_code,omitempty"`
+	Error           string         `json:"error,omitempty"`
+	NativeSessionID int            `json:"native_session_id,omitempty"`
+	ReadCursor      *int           `json:"read_cursor_byte,omitempty"`
+	OutputBytes     int            `json:"output_bytes"`
 }
 
 // ContextSnapshot observes the existing command owner without reading output,

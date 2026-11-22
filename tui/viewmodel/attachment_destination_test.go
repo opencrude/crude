@@ -16,12 +16,12 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/agent/prompthistory"
 	"crude/agent/sessiondb"
-	"crude/history"
 	"crude/tui/input"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/types/attachment"
+	"crude/types/conversation"
 	"crude/workspace"
 )
 
@@ -121,12 +121,12 @@ func TestAttachmentDestinationAllEntryPoints(t *testing.T) {
 					if entry == "sqlite" {
 						app.hydrateActiveMessages(ChatMessagesFromViews(retainedAttachmentRows(t, ref, "Inspect "+ref.Label)))
 					} else {
-						app.appendActiveMessage(types.ChatMessage{InternalID: "posted", Role: types.RoleUser, Content: ref.Label, Attachments: attachment.Locate(ref.Label, []attachment.Target{{ReferenceID: ref.ID, Label: ref.Label}})})
+						app.appendActiveMessage(conversation.ChatMessage{InternalID: "posted", Role: conversation.RoleUser, Content: ref.Label, Attachments: attachment.Locate(ref.Label, []attachment.Target{{ReferenceID: ref.ID, Label: ref.Label}})})
 					}
 					clickTranscriptAttachment(t, app, ref.Label)
 				case "prompt-history":
-					app.SetPromptHistory(history.New())
-					app.Prompts.Record(ref.Label, time.Now(), history.Attachment{Start: 0, End: len(ref.Label), Reference: ref})
+					app.SetPromptHistory(prompthistory.New())
+					app.Prompts.Record(ref.Label, time.Now(), prompthistory.Attachment{Start: 0, End: len(ref.Label), Reference: ref})
 					app.renderPromptHistory()
 					runAppCommand(t, app, app.openHistoricalAttachment(app.Prompts.Entries()[0].ID+":0"))
 				}

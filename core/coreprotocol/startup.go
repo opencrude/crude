@@ -1,0 +1,71 @@
+package coreprotocol
+
+import (
+	"crude/types/setting"
+	"crude/types/statuscenter"
+	"crude/workspace"
+)
+
+// Startup methods require a connected core, not an attached workspace.
+const (
+	StartupInspect      = "startup.inspect"
+	StartupBrowse       = "startup.browse"
+	StartupCatalog      = "startup.catalog"
+	StartupCreateFolder = "startup.create_folder"
+	StartupSave         = "startup.save"
+	StartupOnboarding   = "startup.onboarding"
+)
+
+type StartupInspectRequest struct {
+	Root string `json:"root"`
+}
+
+// StartupSnapshot contains detached metadata only. An empty error-free FolderKind
+// identifies a project candidate; no project services have been constructed.
+type StartupSnapshot struct {
+	Root             string                        `json:"root"`
+	FolderKind       string                        `json:"folder_kind,omitempty"`
+	PathError        string                        `json:"path_error,omitempty"`
+	ShowIntroduction bool                          `json:"show_introduction"`
+	Onboarding       setting.Onboarding            `json:"onboarding"`
+	Theme            setting.Theme                 `json:"theme"`
+	Workspaces       []workspace.Info              `json:"workspaces,omitempty"`
+	WorkspacesError  string                        `json:"workspaces_error,omitempty"`
+	Issues           []statuscenter.OperationIssue `json:"issues,omitempty"`
+}
+
+type StartupBrowseRequest struct {
+	Path   string `json:"path"`
+	Offset int    `json:"offset,omitempty"`
+}
+
+type StartupBrowseResult struct {
+	Path       string                 `json:"path"`
+	Entries    []ClientDirectoryEntry `json:"entries"`
+	NextOffset int                    `json:"next_offset"`
+	Truncated  bool                   `json:"truncated"`
+}
+
+type StartupCatalogRequest struct {
+	Root          string `json:"root"`
+	IncludeHidden bool   `json:"include_hidden"`
+}
+
+// StartupCreateFolderRequest names one new child of an existing browsed folder.
+type StartupCreateFolderRequest struct {
+	Parent string `json:"parent"`
+	Name   string `json:"name"`
+}
+
+type StartupCreateFolderResult struct {
+	Path string `json:"path"`
+}
+
+type StartupSaveRequest struct {
+	Edits []setting.Edit `json:"edits"`
+}
+
+type OnboardingResult struct {
+	Application setting.App            `json:"application"`
+	Accounts    map[string]AccountView `json:"accounts"`
+}

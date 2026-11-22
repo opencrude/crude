@@ -12,7 +12,7 @@ import (
 	"crude/agent/session"
 	"crude/agent/sessiondb"
 	"crude/agent/worktree"
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
 	"crude/types/control"
 )
 

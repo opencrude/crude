@@ -1,3 +1,5 @@
+// Command crude starts the Crude IDE: it parses the command line, prepares the
+// console and hands control to the app package.
 package main
 
 import (
@@ -8,7 +10,7 @@ import (
 	"os"
 
 	"crude/app"
-	"crude/tui/platform"
+	"crude/internal/console"
 )
 
 func main() {
@@ -26,7 +28,7 @@ func main() {
 	// Protocol/core routes may share a Windows console with their caller. Do
 	// not change that console's code pages for a noninteractive subprocess.
 	if app.NeedsInteractiveConsole(os.Args[1:]) {
-		platform.InitConsole()
+		console.Init()
 	}
 	os.Exit(app.Main())
 }

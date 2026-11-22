@@ -12,7 +12,8 @@ import (
 	"crude/agent/toolstore"
 	"crude/insight/governor"
 	"crude/internal/fileuri"
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 )
 
 func TestProjectToolEvaluationPinsExactExecutableUntilJoinedStop(t *testing.T) {
@@ -48,7 +49,7 @@ func TestProjectToolEvaluationPinsExactExecutableUntilJoinedStop(t *testing.T) {
 			}
 			done := make(chan outcome, 1)
 			go func() {
-				status, retained, err := evaluateProjectTool(ctx, store, r, types.LSPServerSpec{Command: tool.Executable},
+				status, retained, err := evaluateProjectTool(ctx, store, r, setting.LSPServerSpec{Command: tool.Executable},
 					g, governor.Owner{Workspace: "evaluation", Generation: "generation", Producer: "fixture"}, 2,
 					func(ctx context.Context) error {
 						if revoked.Load() {
@@ -148,7 +149,7 @@ func TestProjectToolSetupOperationalFailureNeverPublishesOrActivates(t *testing.
 			w.LSPMgr.SetRuntime(NewLSPRuntime())
 			trace := filepath.Join(t.TempDir(), "initialize.txt")
 			settings := w.LSPMgr.Settings()
-			settings.Languages["a"] = types.LSPLanguageSettings{Enabled: true,
+			settings.Languages["a"] = setting.LSPLanguage{Enabled: true,
 				Environment: map[string]string{"CRUDE_FIXTURE_MODE": mode, "CRUDE_FIXTURE_TRACE": trace}}
 			w.LSPMgr.SetSettings(settings)
 			serveSetupCatalogArtifact(t)
@@ -171,7 +172,7 @@ func TestProjectToolSetupOperationalFailureNeverPublishesOrActivates(t *testing.
 			ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
 			defer cancel()
 			type outcome struct {
-				result types.ProjectToolSetupResult
+				result insight.ProjectToolSetupResult
 				err    error
 			}
 			done := make(chan outcome, 1)
@@ -254,11 +255,11 @@ func TestProjectToolSetupOperationalFailureNeverPublishesOrActivates(t *testing.
 			w.LSPMgr.SetToolStore(reopened)
 			writeTree(t, filepath.Join(w.RootPath, "main.setup-a"), "ERROR\n")
 			w.LSPMgr.RefreshAssembly()
-			plan := awaitAssembly(t, w.LSPMgr, func(p types.AssemblyPlan) bool {
+			plan := awaitAssembly(t, w.LSPMgr, func(p insight.AssemblyPlan) bool {
 				language, ok := assemblyLanguage(p, "a")
-				return p.State == types.AssemblyReady && ok && language.Status == types.ToolMissing
+				return p.State == insight.AssemblyReady && ok && language.Status == insight.ToolMissing
 			})
-			if language, _ := assemblyLanguage(plan, "a"); language.Source == types.ToolSourceStore {
+			if language, _ := assemblyLanguage(plan, "a"); language.Source == insight.ToolSourceStore {
 				t.Fatalf("failed operational check became an activation candidate: %+v", language)
 			}
 			if health := w.LSPMgr.ServerHealthSnapshots(); len(health) != 0 {

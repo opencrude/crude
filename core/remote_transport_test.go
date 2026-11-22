@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
-	"crude/buildinfo"
-	"crude/core/client"
-	"crude/core/protocol"
-	"crude/core/wire"
-	"crude/types"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
+	"crude/core/corewire"
+	"crude/internal/buildinfo"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -34,7 +34,7 @@ func remoteJourneyFixture(t *testing.T) *remoteJourney {
 	f.clock.Store(time.Now().UnixNano())
 	r, err := New(func(root string) (*workspace.Workspace, error) {
 		f.created.Add(1)
-		return workspace.NewWorkspace(root, "", "remote-test", types.Settings{}, coreTestLogger{}), nil
+		return workspace.NewWorkspace(root, "", "remote-test", setting.Settings{}, coreTestLogger{}), nil
 	}, filepath.Join(t.TempDir(), "receipts.db"))
 	if err != nil {
 		t.Fatal(err)

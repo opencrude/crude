@@ -13,7 +13,7 @@ import (
 	"crude/agent/sessiondb"
 	"crude/tui/rendering"
 	"crude/tui/screens/activitybar"
-	ttypes "crude/types"
+	"crude/types/conversation"
 	"crude/workspace"
 )
 
@@ -181,8 +181,8 @@ func TestAgentView_LongChatDoesNotOverflowInputOrStatus(t *testing.T) {
 	// Build a chat long enough to overflow the viewport.
 	longBody := strings.Repeat("line of the long message body that wraps across the chat width over and over again. ", 8)
 	for i := 0; i < 12; i++ {
-		app.appendActiveMessage(ttypes.ChatMessage{
-			Role:    ttypes.RoleAssistant,
+		app.appendActiveMessage(conversation.ChatMessage{
+			Role:    conversation.RoleAssistant,
 			Content: longBody + " message-" + string(rune('A'+i)),
 			Time:    time.Now(),
 		})
@@ -258,7 +258,7 @@ func TestAgentView_ResumeContextOnlyMessagesDoNotCreateBlankTail(t *testing.T) {
 					}
 					messages = append(messages, provider.NewTextMessage(role, text))
 					metas = append(metas, sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion,
-						Snapshots: []workspace.Message{{InternalID: fmt.Sprintf("turn-%d-%s", turn, role), Role: role, Content: text,
+						Snapshots: []conversation.Message{{InternalID: fmt.Sprintf("turn-%d-%s", turn, role), Role: role, Content: text,
 							Time: time.Unix(1000+int64(turn), 0)}}})
 				}
 			}
@@ -272,7 +272,7 @@ func TestAgentView_ResumeContextOnlyMessagesDoNotCreateBlankTail(t *testing.T) {
 			views := workspace.ConvertMessagesForDisplay(stored)
 			// Resume merges display snapshots by their display timestamps, while
 			// unprojected envelopes carry the later DB commit timestamp.
-			slices.SortStableFunc(views, func(a, b workspace.ChatMessageView) int { return a.Time.Compare(b.Time) })
+			slices.SortStableFunc(views, func(a, b conversation.Message) int { return a.Time.Compare(b.Time) })
 			app.hydrateActiveMessages(ChatMessagesFromViews(views))
 			for _, width := range []int{120, 80} {
 				_, _ = app.Update(tea.WindowSizeMsg{Width: width, Height: 40})

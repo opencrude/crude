@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"crude/clientstate"
+	"crude/internal/clientstate"
 )
 
 func TestShellClientProfileAuthorityAndReopen(t *testing.T) {

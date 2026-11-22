@@ -13,12 +13,12 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/core/port"
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
+	"crude/core/shellport"
 	"crude/tui/editor"
 	"crude/tui/input"
-	"crude/types"
 	"crude/types/control"
+	"crude/types/conversation"
 	"crude/types/handover"
 )
 
@@ -76,12 +76,12 @@ func (p *restartTestPort) ControlIdentity() control.Target                      
 func (*restartTestPort) StartShellControl()                                      {}
 func (*restartTestPort) StopShellControl()                                       {}
 func (*restartTestPort) ReplyShellControl(context.Context, control.Result) error { return nil }
-func (*restartTestPort) GoalForAgent(string) (types.Goal, bool) {
-	return types.Goal{ID: "exact-goal", Objective: "Retain the exact goal", Status: types.GoalPaused}, true
+func (*restartTestPort) GoalForAgent(string) (conversation.Goal, bool) {
+	return conversation.Goal{ID: "exact-goal", Objective: "Retain the exact goal", Status: conversation.GoalPaused}, true
 }
-func (p *restartTestPort) GoalAction(string, string, string) (types.Goal, bool, error) {
+func (p *restartTestPort) GoalAction(string, string, string) (conversation.Goal, bool, error) {
 	p.broadResumes++
-	return types.Goal{}, false, errors.New("broad goal action is not permitted by this fixture")
+	return conversation.Goal{}, false, errors.New("broad goal action is not permitted by this fixture")
 }
 
 func restartTestApp(t *testing.T) (*App, *restartTestHost, *restartTestPort, string) {

@@ -7,15 +7,15 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/syntax"
+	"crude/insight/syntax"
 	"crude/tui/theme"
-	"crude/types"
+	"crude/types/insight"
 	"crude/workspace/document"
 )
 
-func semanticFixtureSet(e *Editor) types.LSPSemanticSet {
+func semanticFixtureSet(e *Editor) insight.LSPSemanticSet {
 	source, _ := e.CurrentInsightSource()
-	return types.LSPSemanticSet{Boundary: types.InsightBoundary{Source: source}, ViewID: "one", Sequence: 1, Types: []string{"function", "unknown"}, Spans: []types.LSPSemanticSpan{{Start: 0, End: 4, Type: 0}, {Start: 5, End: 10, Type: 1}}}
+	return insight.LSPSemanticSet{Boundary: insight.Boundary{Source: source}, ViewID: "one", Sequence: 1, Types: []string{"function", "unknown"}, Spans: []insight.LSPSemanticSpan{{Start: 0, End: 4, Type: 0}, {Start: 5, End: 10, Type: 1}}}
 }
 func TestSemanticPaintUsesExactSourceAndThemeWithoutEditing(t *testing.T) {
 	e := newInlayTestEditor(t, "call value\n")
@@ -128,11 +128,11 @@ func BenchmarkSemanticEditingDense(b *testing.B) {
 			b.Run(fmt.Sprintf("semantic%t/%s", enabled, stage), func(b *testing.B) {
 				e := newInlayTestEditor(b, strings.Repeat(line, lines))
 				defer closeSyntax(e)
-				spans := make([]types.LSPSemanticSpan, lines)
+				spans := make([]insight.LSPSemanticSpan, lines)
 				for i := range spans {
-					spans[i] = types.LSPSemanticSpan{Start: i * len(line), End: i*len(line) + 5, Type: 0}
+					spans[i] = insight.LSPSemanticSpan{Start: i * len(line), End: i*len(line) + 5, Type: 0}
 				}
-				set := types.LSPSemanticSet{ViewID: "dense", Sequence: 1, Types: []string{"function"}, Spans: spans}
+				set := insight.LSPSemanticSet{ViewID: "dense", Sequence: 1, Types: []string{"function"}, Spans: spans}
 				key := tea.KeyPressMsg{Code: 'X', Text: "X"}
 				back := tea.KeyPressMsg{Code: tea.KeyBackspace}
 				accept := func(id string) {

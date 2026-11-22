@@ -5,7 +5,7 @@ import (
 
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 func TestRendererDerivesNarrowWidthsFromActualBounds(t *testing.T) {
@@ -28,7 +28,7 @@ func TestRendererDerivesNarrowWidthsFromActualBounds(t *testing.T) {
 				width, contentW, innerW, wantContent, wantInner,
 			)
 		}
-		if innerW < minimumMarkdownBodyWidth && r.buildRenderContext(&types.ChatMessage{Role: types.RoleAssistant}, false).mdRenderer != nil {
+		if innerW < minimumMarkdownBodyWidth && r.buildRenderContext(&conversation.ChatMessage{Role: conversation.RoleAssistant}, false).mdRenderer != nil {
 			t.Fatalf("width=%d content=%d unexpectedly enabled minimum-20 markdown renderer", width, contentW)
 		}
 	}
@@ -50,8 +50,8 @@ func TestSubPaneCallbackReceivesNoSyntheticNarrowWidth(t *testing.T) {
 		gotWidth = width
 		return []SubPaneLine{{Text: "pane"}}
 	})
-	r.AppendMessage(types.ChatMessage{
-		Role:      types.RoleAssistant,
+	r.AppendMessage(conversation.ChatMessage{
+		Role:      conversation.RoleAssistant,
 		SubPaneID: "pane-1",
 	})
 

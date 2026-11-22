@@ -7,10 +7,11 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/editor"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/statuscenter"
 )
 
 const signatureHelpID = ui.OverlaySignatureHelp
@@ -21,7 +22,7 @@ type signatureHelpState struct {
 	editor               *editor.Editor
 	path                 string
 	revision, generation uint64
-	source               types.InsightSource
+	source               insight.Source
 	line, col            int
 	deadline             time.Time
 	cancel               context.CancelFunc
@@ -31,12 +32,12 @@ type signatureHelpState struct {
 	status               shellport.StatusService
 	notice               string
 	preferredWidth       int
-	trigger              types.LSPSignatureContext
+	trigger              insight.LSPSignatureContext
 }
 
 type signatureHelpResultMsg struct {
 	owner *signatureHelpState
-	help  types.LSPSignatureHelp
+	help  insight.LSPSignatureHelp
 	text  string
 	err   error
 }
@@ -61,10 +62,10 @@ func (s *signatureHelpState) finishPendingNotice() {
 }
 
 func (m *App) requestSignatureHelpCmd() tea.Cmd {
-	return m.requestSignatureHelp(false, types.LSPSignatureContext{})
+	return m.requestSignatureHelp(false, insight.LSPSignatureContext{})
 }
 
-func (m *App) requestSignatureHelp(automatic bool, trigger types.LSPSignatureContext) tea.Cmd {
+func (m *App) requestSignatureHelp(automatic bool, trigger insight.LSPSignatureContext) tea.Cmd {
 	m.closeSignatureHelp()
 	ed := m.EditorState.Editor
 	service := m.ws.LSPMgr()
@@ -89,9 +90,9 @@ func (m *App) requestSignatureHelp(automatic bool, trigger types.LSPSignatureCon
 	m.signatureHelp = state
 	state.status = m.ws.Status()
 	if state.status != nil && !automatic {
-		state.notice = state.status.Notify(types.NotificationRecord{
-			Owner:  types.ResourceRef{Kind: types.ResourceEditor, ID: state.path},
-			Source: "parameter-information", Severity: types.SeverityInfo,
+		state.notice = state.status.Notify(statuscenter.NotificationRecord{
+			Owner:  statuscenter.ResourceRef{Kind: statuscenter.ResourceEditor, ID: state.path},
+			Source: "parameter-information", Severity: statuscenter.SeverityInfo,
 			Summary: "Requesting parameter information", Read: true, Transient: true,
 		})
 	}
@@ -102,7 +103,7 @@ func (m *App) requestSignatureHelp(automatic bool, trigger types.LSPSignatureCon
 	}
 }
 
-func signatureHelpText(help types.LSPSignatureHelp) string {
+func signatureHelpText(help insight.LSPSignatureHelp) string {
 	if len(help.Signatures) == 0 || help.ActiveSignature < 0 || help.ActiveSignature >= len(help.Signatures) {
 		return ""
 	}

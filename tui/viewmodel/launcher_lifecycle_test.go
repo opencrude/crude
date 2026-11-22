@@ -27,7 +27,7 @@ func TestLauncherShellPreservesSharedPaintedEdges(t *testing.T) {
 				}
 				app.Tree.Visible = sidebar
 				app.sidebarScreen.SetModel(app.Tree.Model)
-				app.launcherScreen.SetData("/projects/current", []workspace.WorkspaceInfo{{ProjectName: "alpha", ProjectDir: "/projects/alpha"}})
+				app.launcherScreen.SetData("/projects/current", []workspace.Info{{ProjectName: "alpha", ProjectDir: "/projects/alpha"}})
 				app.launcherScreen.SetCapabilities(captypes.Snapshot{})
 				app.paintShellFrame()
 				rect := func(id ui.ComponentID) ui.Rect {
@@ -146,7 +146,7 @@ func TestLauncherRefreshKeepsFocusOutsideLauncher(t *testing.T) {
 	app.FocusStack.Push(FocusTree)
 	app.syncRootFocus()
 	focus := app.rootHost.Focused()
-	app.Update(launcherWorkspacesMsg{Screen: app.launcherScreen, Cwd: app.ws.RootPath(), Gen: app.launcherLoadGen.Load(), Infos: []workspace.WorkspaceInfo{{ID: "other", ProjectDir: "/projects/other"}}})
+	app.Update(launcherWorkspacesMsg{Screen: app.launcherScreen, Cwd: app.ws.RootPath(), Gen: app.launcherLoadGen.Load(), Infos: []workspace.Info{{ID: "other", ProjectDir: "/projects/other"}}})
 	if app.rootHost.Focused() != focus {
 		t.Fatal("workspace completion stole sidebar focus")
 	}

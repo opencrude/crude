@@ -11,8 +11,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"crude/core/protocol"
-	"crude/core/wire"
+	"crude/core/coreprotocol"
+	"crude/core/corewire"
 	"crude/workspace"
 	"crude/workspace/fileio"
 )
@@ -290,7 +290,7 @@ func readBulkReference(store workspace.SessionReferences, method string, in core
 	if store == nil || in.Offset != 0 || in.Digest != "" {
 		return out, errors.New("invalid reference transfer")
 	}
-	ref, ok := store.GetReference(in.ID)
+	ref, ok := store.Reference(in.ID)
 	if !ok || !ref.Active() || ref.SessionID != in.SessionID || in.Revision != "" && in.Revision != entityRevision(ref) {
 		return out, errors.New("reference is missing or changed")
 	}

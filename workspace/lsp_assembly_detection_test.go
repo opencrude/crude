@@ -8,8 +8,9 @@ import (
 	"testing"
 
 	"crude/insight/catalog"
-	"crude/third_party/pathwalk"
-	model "crude/types"
+	"crude/third_party/fastwalk"
+	"crude/types/insight"
+	"crude/types/setting"
 )
 
 func TestAssemblyDiscoveryIgnoreScope(t *testing.T) {
@@ -29,7 +30,7 @@ func TestAssemblyDiscoveryIgnoreScope(t *testing.T) {
 	} {
 		writeTree(t, filepath.Join(root, filepath.FromSlash(path)), text)
 	}
-	found := discoverProjectLanguages(context.Background(), root, model.DefaultLSPSettings())
+	found := discoverProjectLanguages(context.Background(), root, setting.DefaultLSP())
 	if found.err != nil || found.limited {
 		t.Fatalf("discovery failed or limited: %+v", found)
 	}
@@ -59,7 +60,7 @@ func TestAssemblyDiscoveryDoesNotFollowIgnoreSymlink(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(root, ".gitignore")); err != nil {
 		t.Skipf("native symlinks unavailable: %v", err)
 	}
-	found := discoverProjectLanguages(context.Background(), root, model.DefaultLSPSettings())
+	found := discoverProjectLanguages(context.Background(), root, setting.DefaultLSP())
 	if found.err != nil || found.languages["php"] == nil {
 		t.Fatalf("external ignore link changed project evidence: %+v", found)
 	}
@@ -71,7 +72,7 @@ func TestAssemblyDiscoveryDoesNotFollowDirectorySymlink(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(root, "linked")); err != nil {
 		t.Skipf("native symlinks unavailable: %v", err)
 	}
-	found := discoverProjectLanguages(context.Background(), root, model.DefaultLSPSettings())
+	found := discoverProjectLanguages(context.Background(), root, setting.DefaultLSP())
 	if found.err != nil || len(found.languages) != 0 {
 		t.Fatalf("external source link became project evidence: %+v", found)
 	}
@@ -81,13 +82,13 @@ func TestAssemblyDiscoveryIgnoreBoundsAndCancellation(t *testing.T) {
 	root := t.TempDir()
 	writeTree(t, filepath.Join(root, "main.go"), "package main")
 	writeTree(t, filepath.Join(root, ".gitignore"), strings.Repeat("#", assemblyIgnoreBytes+1))
-	found := discoverProjectLanguages(context.Background(), root, model.DefaultLSPSettings())
+	found := discoverProjectLanguages(context.Background(), root, setting.DefaultLSP())
 	if found.err == nil {
 		t.Fatal("oversized ignore input claimed complete discovery")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	found = discoverProjectLanguages(ctx, root, model.DefaultLSPSettings())
+	found = discoverProjectLanguages(ctx, root, setting.DefaultLSP())
 	if found.err == nil {
 		t.Fatal("cancelled discovery claimed complete observation")
 	}
@@ -95,15 +96,15 @@ func TestAssemblyDiscoveryIgnoreBoundsAndCancellation(t *testing.T) {
 
 func TestAssemblyDiscoveryListingErrorsAreNotComplete(t *testing.T) {
 	ctx := context.Background()
-	if err := assemblyListingError(ctx, pathwalk.Catalog{Skipped: 12}, nil); err != nil {
+	if err := assemblyListingError(ctx, fastwalk.Catalog{Skipped: 12}, nil); err != nil {
 		t.Fatalf("intentional exclusions became failures: %v", err)
 	}
-	found := &assemblyDiscovery{err: assemblyListingError(ctx, pathwalk.Catalog{Errors: 1}, nil)}
-	plan := resolveAssembly(t.TempDir(), model.DefaultLSPSettings(), found, func(model.LSPServerSpec, *catalog.Download) (string, string, error) {
+	found := &assemblyDiscovery{err: assemblyListingError(ctx, fastwalk.Catalog{Errors: 1}, nil)}
+	plan := resolveAssembly(t.TempDir(), setting.DefaultLSP(), found, func(setting.LSPServerSpec, *catalog.Download) (string, string, error) {
 		t.Fatal("partial observation proceeded to resolve tools")
 		return "", "", nil
 	})
-	if plan.State != model.AssemblyFailed || !strings.Contains(plan.Message, "could not list") {
+	if plan.State != insight.AssemblyFailed || !strings.Contains(plan.Message, "could not list") {
 		t.Fatalf("failed traversal claimed complete assembly: %+v", plan)
 	}
 }
@@ -113,11 +114,11 @@ func TestAssemblyDiscoveryReportsTruncatedListing(t *testing.T) {
 	for _, name := range []string{"a.go", "b.go", "c.go"} {
 		writeTree(t, filepath.Join(root, name), "package main")
 	}
-	found := discoverProjectLanguagesBounded(context.Background(), root, model.DefaultLSPSettings(), 1)
+	found := discoverProjectLanguagesBounded(context.Background(), root, setting.DefaultLSP(), 1)
 	if found.err != nil || !found.limited {
 		t.Fatalf("truncated scan not reported: %+v", found)
 	}
-	plan := resolveAssembly(root, model.DefaultLSPSettings(), found, func(model.LSPServerSpec, *catalog.Download) (string, string, error) {
+	plan := resolveAssembly(root, setting.DefaultLSP(), found, func(setting.LSPServerSpec, *catalog.Download) (string, string, error) {
 		return "", "", nil
 	})
 	if !plan.Limited || !strings.Contains(plan.Message, "only part") {

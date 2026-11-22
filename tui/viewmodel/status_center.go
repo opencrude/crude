@@ -3,15 +3,15 @@ package viewmodel
 import (
 	"reflect"
 
-	settingsui "crude/tui/settings"
+	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/ui"
-	ttypes "crude/types"
+	"crude/types/statuscenter"
 	"crude/workspace"
 )
 
 type statusHydrateErrMsg struct{ Err error }
 
-func (m *App) syncAgentStatusEvent(evt ttypes.AgentEventMsg) {
+func (m *App) syncAgentStatusEvent(evt AgentEventMsg) {
 	if m.ws == nil {
 		return
 	}
@@ -20,14 +20,14 @@ func (m *App) syncAgentStatusEvent(evt ttypes.AgentEventMsg) {
 	})
 }
 
-func (m *App) notifyStatus(severity ttypes.StatusSeverity, source, summary, detail string, owner ttypes.ResourceRef) string {
+func (m *App) notifyStatus(severity statuscenter.Severity, source, summary, detail string, owner statuscenter.ResourceRef) string {
 	if m.ws == nil || m.ws.Status() == nil {
 		return ""
 	}
-	return m.ws.Status().Notify(ttypes.NotificationRecord{
+	return m.ws.Status().Notify(statuscenter.NotificationRecord{
 		DedupKey: source + ":" + owner.ID + ":" + summary,
 		Owner:    owner, Severity: severity, Source: source, Summary: summary, Detail: detail,
-		Transient: severity == ttypes.SeverityInfo,
+		Transient: severity == statuscenter.SeverityInfo,
 	})
 }
 
@@ -47,7 +47,7 @@ func (m *App) syncAgentStatusInventory() {
 
 // syncSettingsLanguageServers gives an open Settings window the latest
 // language-server runtime snapshot, only when it changed.
-func (m *App) syncSettingsLanguageServers(snapshots []ttypes.LSPServerHealth) {
+func (m *App) syncSettingsLanguageServers(snapshots []statuscenter.LSPServerHealth) {
 	if m.overlayHost == nil {
 		return
 	}

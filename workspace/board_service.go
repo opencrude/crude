@@ -18,25 +18,26 @@ type BoardSnapshot struct {
 	Unread       int
 }
 
-func (workspace *Workspace) BoardSnapshot(
+// BoardSnapshot returns one page of workspace communication.
+func (w *Workspace) BoardSnapshot(
 	ctx context.Context,
 	query, thread string,
 	since, snapshot int64,
 ) (BoardSnapshot, error) {
-	if err := workspace.ensureWorkspacePersistence(); err != nil {
+	if err := w.ensureWorkspacePersistence(); err != nil {
 		return BoardSnapshot{}, err
 	}
-	if workspace.Collaboration == nil {
+	if w.Collaboration == nil {
 		return BoardSnapshot{}, errors.New("workspace collaboration runtime is unavailable")
 	}
-	page, err := workspace.Collaboration.Page(ctx, collaboration.PageQuery{
+	page, err := w.Collaboration.Page(ctx, collaboration.PageQuery{
 		Since: since, Snapshot: snapshot, ThreadID: thread, Search: query,
 		Limit: collaboration.DefaultPageLimit,
 	})
 	if err != nil {
 		return BoardSnapshot{}, err
 	}
-	agents, err := workspace.Collaboration.ListAgents(ctx, collaboration.AgentQuery{
+	agents, err := w.Collaboration.ListAgents(ctx, collaboration.AgentQuery{
 		IncludeClosed: true, Limit: collaboration.MaxAgentLimit,
 	})
 	if err != nil {
@@ -46,25 +47,26 @@ func (workspace *Workspace) BoardSnapshot(
 	for _, agent := range agents {
 		participants = append(participants, BoardParticipant{Agent: agent})
 	}
-	unread, err := workspace.Collaboration.HumanUnread(ctx)
+	unread, err := w.Collaboration.HumanUnread(ctx)
 	if err != nil {
 		return BoardSnapshot{}, err
 	}
 	return BoardSnapshot{
-		WorkspaceID: workspace.Collaboration.WorkspaceID(),
+		WorkspaceID: w.Collaboration.WorkspaceID(),
 		Page:        page, Participants: participants, Unread: unread,
 	}, nil
 }
 
-func (workspace *Workspace) MarkBoardRead(ctx context.Context, through int64) error {
-	if err := workspace.ensureWorkspacePersistence(); err != nil {
+// MarkBoardRead records that a human read the board up to a snapshot.
+func (w *Workspace) MarkBoardRead(ctx context.Context, through int64) error {
+	if err := w.ensureWorkspacePersistence(); err != nil {
 		return err
 	}
-	if workspace.Collaboration == nil {
+	if w.Collaboration == nil {
 		return errors.New("workspace collaboration runtime is unavailable")
 	}
 	if through <= 0 {
 		return errors.New("only a stable inspected snapshot can be marked read")
 	}
-	return workspace.Collaboration.MarkHumanRead(ctx, through)
+	return w.Collaboration.MarkHumanRead(ctx, through)
 }

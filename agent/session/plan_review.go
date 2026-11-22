@@ -16,7 +16,7 @@ import (
 	"crude/agent/sessiondb"
 	"crude/text/anchor"
 	"crude/text/unidiff"
-	"crude/types"
+	"crude/types/conversation"
 	"crude/workspace/fileio"
 )
 
@@ -29,8 +29,8 @@ type planReviewRecord struct {
 }
 
 type planRevisionRecord struct {
-	types.PlanRevision        // Path is relative in storage.
-	Proposal           string `json:"proposal"`
+	conversation.PlanRevision        // Path is relative in storage.
+	Proposal                  string `json:"proposal"`
 	// Approval in a new session closes only this proposal's originating
 	// planning cycle, never an independently resumed or forked investigation.
 	InvestigationCycle   string `json:"investigation_cycle,omitempty"`
@@ -87,12 +87,12 @@ func (s *Session) loadPlanReview() error {
 }
 
 // PlanReview reads a detached view without taking the file-operation lock.
-func (s *Session) PlanReview() (types.PlanReview, bool) {
+func (s *Session) PlanReview() (conversation.PlanReview, bool) {
 	record := s.planReview.Load()
 	if record == nil || len(record.Revisions) == 0 {
-		return types.PlanReview{}, false
+		return conversation.PlanReview{}, false
 	}
-	out := types.PlanReview{Revisions: make([]types.PlanRevision, len(record.Revisions))}
+	out := conversation.PlanReview{Revisions: make([]conversation.PlanRevision, len(record.Revisions))}
 	for i, stored := range record.Revisions {
 		revision := stored.PlanRevision
 		revision.Path = record.path(stored)
@@ -141,8 +141,8 @@ func planRevisionPath(title string, number int) string {
 
 // recordProposedPlan is called only by a completed Plan mode root turn.
 func (s *Session) recordProposedPlan(generation uint64, reply, investigationCycle, sourceID string) error {
-	proposal, ok := types.ProposedPlan(reply)
-	if !ok || len(proposal) > types.PlanReviewMaxPlanText {
+	proposal, ok := conversation.ProposedPlan(reply)
+	if !ok || len(proposal) > conversation.PlanReviewMaxPlanText {
 		return nil
 	}
 	s.planReviewMu.Lock()
@@ -168,7 +168,7 @@ func (s *Session) recordProposedPlan(generation uint64, reply, investigationCycl
 	}
 	for i := range next.Revisions {
 		if next.Revisions[i].Open() {
-			next.Revisions[i].Outcome = types.PlanOutcomeReplaced
+			next.Revisions[i].Outcome = conversation.PlanOutcomeReplaced
 		}
 	}
 	ctx := context.Background()
@@ -180,9 +180,9 @@ func (s *Session) recordProposedPlan(generation uint64, reply, investigationCycl
 	if err != nil {
 		return err
 	}
-	title := types.PlanTitle(proposal)
+	title := conversation.PlanTitle(proposal)
 	revision := planRevisionRecord{
-		PlanRevision: types.PlanRevision{
+		PlanRevision: conversation.PlanRevision{
 			Number: number, Generation: generation, Title: title,
 			Path: planRevisionPath(title, number), CreatedAt: time.Now().UTC(), Evidence: evidence, EvidenceOmitted: omitted,
 		},
@@ -197,7 +197,7 @@ func (s *Session) recordProposedPlan(generation uint64, reply, investigationCycl
 		return fmt.Errorf("save plan file: %w", err)
 	}
 	next.Revisions = append(next.Revisions, revision)
-	dropped := next.Revisions[:max(0, len(next.Revisions)-types.PlanRevisionMaxCount)]
+	dropped := next.Revisions[:max(0, len(next.Revisions)-conversation.PlanRevisionMaxCount)]
 	next.Revisions = slices.Clone(next.Revisions[len(dropped):])
 	var retired []string
 	for _, old := range dropped {
@@ -321,7 +321,7 @@ func (s *Session) savePlanReviewState(ctx context.Context, next *planReviewRecor
 }
 
 // EditPlanComment changes one unsent comment on an open revision.
-func (s *Session) EditPlanComment(edit types.PlanCommentEdit) error {
+func (s *Session) EditPlanComment(edit conversation.PlanCommentEdit) error {
 	finish, err := s.beginPlanReviewOperation()
 	if err != nil {
 		return err
@@ -341,17 +341,17 @@ func (s *Session) EditPlanComment(edit types.PlanCommentEdit) error {
 	revision := &next.Revisions[i]
 	comment := edit.Comment
 	comment.Body = strings.TrimSpace(comment.Body)
-	if edit.Op == types.PlanCommentAdd || edit.Op == types.PlanCommentUpdate {
+	if edit.Op == conversation.PlanCommentAdd || edit.Op == conversation.PlanCommentUpdate {
 		if comment.Body == "" {
 			return PlanReviewError("Enter a comment first.")
 		}
-		if len(comment.Body) > types.PlanCommentMaxBody {
+		if len(comment.Body) > conversation.PlanCommentMaxBody {
 			return PlanReviewError("This comment is too long. Shorten it and try again.")
 		}
 	}
-	j := slices.IndexFunc(revision.Comments, func(c types.PlanComment) bool { return c.ID == comment.ID })
+	j := slices.IndexFunc(revision.Comments, func(c conversation.PlanComment) bool { return c.ID == comment.ID })
 	switch edit.Op {
-	case types.PlanCommentAdd:
+	case conversation.PlanCommentAdd:
 		if strings.TrimSpace(comment.ID) == "" || len(comment.ID) > 64 {
 			return PlanReviewError("Could not add the comment. Add it again.")
 		}
@@ -361,29 +361,29 @@ func (s *Session) EditPlanComment(edit types.PlanCommentEdit) error {
 			}
 			return PlanReviewError("This comment already exists. Edit it instead.")
 		}
-		if len(comment.Anchor.Exact) > types.PlanCommentMaxQuote {
+		if len(comment.Anchor.Exact) > conversation.PlanCommentMaxQuote {
 			return PlanReviewError("The selected text is too long. Select less text.")
 		}
 		// Accept position-only anchors, but do not store unbounded
 		// selector context or reversed offsets.
 		a := comment.Anchor
 		if a.Start < 0 || a.End < a.Start ||
-			len(a.Prefix) > types.PlanCommentMaxQuote || len(a.Suffix) > types.PlanCommentMaxQuote {
+			len(a.Prefix) > conversation.PlanCommentMaxQuote || len(a.Suffix) > conversation.PlanCommentMaxQuote {
 			return PlanReviewError("Could not use the selected text. Select it again.")
 		}
-		if len(revision.Comments) >= types.PlanCommentMaxCount {
+		if len(revision.Comments) >= conversation.PlanCommentMaxCount {
 			return PlanReviewError("This revision has too many comments. Delete an unsent comment first.")
 		}
 		comment.CreatedAt, comment.Sent = time.Now().UTC(), false
 		revision.Comments = append(revision.Comments, comment)
-	case types.PlanCommentUpdate, types.PlanCommentDelete:
+	case conversation.PlanCommentUpdate, conversation.PlanCommentDelete:
 		if j < 0 {
 			return PlanReviewError("This comment is not available. Open the latest plan.")
 		}
 		if revision.Comments[j].Sent {
 			return PlanReviewError("This comment was sent. Add a new comment instead.")
 		}
-		if edit.Op == types.PlanCommentDelete {
+		if edit.Op == conversation.PlanCommentDelete {
 			revision.Comments = slices.Delete(revision.Comments, j, j+1)
 		} else {
 			revision.Comments[j].Body = comment.Body
@@ -395,7 +395,7 @@ func (s *Session) EditPlanComment(edit types.PlanCommentEdit) error {
 }
 
 // SettlePlanReview settles a review action that stays in this session.
-func (s *Session) SettlePlanReview(settle types.PlanReviewSettle) (types.PlanReviewSettlement, error) {
+func (s *Session) SettlePlanReview(settle conversation.PlanReviewSettle) (conversation.PlanReviewSettlement, error) {
 	agentID := ""
 	if root := s.liveOrchestrator(); root != nil {
 		agentID = root.ID
@@ -405,10 +405,10 @@ func (s *Session) SettlePlanReview(settle types.PlanReviewSettle) (types.PlanRev
 
 // SettlePlanReviewForAgent also captures the initiating shell's control target
 // and exact request identity. Text comes from its editor or the canonical file.
-func (s *Session) SettlePlanReviewForAgent(ctx context.Context, agentID string, settle types.PlanReviewSettle, input provider.UserInput, destination *Session) (types.PlanReviewSettlement, error) {
-	var out types.PlanReviewSettlement
-	implement := settle.Action == types.PlanReviewImplement
-	newSession := settle.Action == types.PlanReviewNewSession
+func (s *Session) SettlePlanReviewForAgent(ctx context.Context, agentID string, settle conversation.PlanReviewSettle, input provider.UserInput, destination *Session) (conversation.PlanReviewSettlement, error) {
+	var out conversation.PlanReviewSettlement
+	implement := settle.Action == conversation.PlanReviewImplement
+	newSession := settle.Action == conversation.PlanReviewNewSession
 	finish, err := s.beginPlanReviewOperation()
 	if err != nil {
 		return out, err
@@ -430,7 +430,7 @@ func (s *Session) SettlePlanReviewForAgent(ctx context.Context, agentID string, 
 		return out, errPlanHandoffOpen
 	}
 	after := strings.TrimRight(settle.Text, "\n")
-	if !observe && len(after) > types.PlanReviewMaxPlanText {
+	if !observe && len(after) > conversation.PlanReviewMaxPlanText {
 		return out, ErrPlanReviewTooLong
 	}
 	next := record.cloneRevision(i)
@@ -438,7 +438,7 @@ func (s *Session) SettlePlanReviewForAgent(ctx context.Context, agentID string, 
 	pending := revision.PendingComments()
 	before := strings.TrimRight(revision.Proposal, "\n")
 	edited := before != after
-	if settle.Action == types.PlanReviewFeedback && pending == 0 && !edited {
+	if settle.Action == conversation.PlanReviewFeedback && pending == 0 && !edited {
 		return out, PlanReviewError("Add a comment or edit the plan first.")
 	}
 	if (implement || newSession) && pending > 0 {
@@ -471,10 +471,10 @@ func (s *Session) SettlePlanReviewForAgent(ctx context.Context, agentID string, 
 		if after != "" {
 			after += "\n"
 		}
-		edits, added, removed = diff.GenerateDiff(before+"\n", after, "plan.md")
+		edits, added, removed = unidiff.GenerateDiff(before+"\n", after, "plan.md")
 	}
 	switch settle.Action {
-	case types.PlanReviewFeedback:
+	case conversation.PlanReviewFeedback:
 		comments := make([]prompt.PlanFeedbackComment, 0, pending)
 		for j, c := range revision.Comments {
 			if c.Sent {
@@ -489,14 +489,14 @@ func (s *Session) SettlePlanReviewForAgent(ctx context.Context, agentID string, 
 		}
 		out.Text = prompt.PlanReviewFeedback(revision.Number, settle.Text, edits, comments)
 		out.Display = planFeedbackDisplay(revision.Number, comments, edited, added, removed)
-	case types.PlanReviewImplement:
+	case conversation.PlanReviewImplement:
 		out.Text = prompt.PlanImplementationRequest
 		if edited {
 			out.Text = prompt.PlanImplementationEdited(settle.Text, edits)
 			out.Display = fmt.Sprintf("Implement the plan (revision %d, with my edits).", revision.Number)
 		}
-		revision.Outcome = types.PlanOutcomeImplemented
-	case types.PlanReviewNewSession:
+		revision.Outcome = conversation.PlanOutcomeImplemented
+	case conversation.PlanReviewNewSession:
 		out.Text = prompt.PlanImplementationFreshContext(settle.Text)
 	default:
 		return out, PlanReviewError("Choose how to use this plan.")
@@ -505,7 +505,7 @@ func (s *Session) SettlePlanReviewForAgent(ctx context.Context, agentID string, 
 		if implement {
 			out.Text, err = s.implementationEvidence(ctx, next.dir, revision, out.Text)
 			if err != nil {
-				return types.PlanReviewSettlement{}, err
+				return conversation.PlanReviewSettlement{}, err
 			}
 		}
 		if out.Display == "" {
@@ -526,7 +526,7 @@ func (s *Session) SettlePlanReviewForAgent(ctx context.Context, agentID string, 
 		err = s.submitPlanReview(ctx, agentID, input, next, implement)
 	}
 	if err != nil {
-		return types.PlanReviewSettlement{}, err
+		return conversation.PlanReviewSettlement{}, err
 	}
 	return out, nil
 }
@@ -662,7 +662,7 @@ func (s *Session) submitFreshPlanReview(ctx context.Context, agentID string, pri
 		next = next.cloneRevision(i) // the open handoff record is now published
 		revision = &next.Revisions[i]
 	}
-	revision.Outcome = types.PlanOutcomeNewSession
+	revision.Outcome = conversation.PlanOutcomeNewSession
 	revision.HandoffSource, revision.HandoffAgent, revision.HandoffInput = "", "", ""
 	revision.HandoffEpoch = 0
 	if err := s.savePlanReviewState(ctx, next, updates); err != nil {

@@ -14,7 +14,8 @@ import (
 	"time"
 
 	"crude/insight/catalog"
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace/fileio"
 )
 
@@ -25,11 +26,11 @@ type ProjectToolDecisionResult struct {
 }
 
 type projectToolDecision struct {
-	ReceiptID string                  `json:"receipt_id"`
-	At        time.Time               `json:"at"`
-	Review    types.ProjectToolReview `json:"review"`
-	Selected  []string                `json:"selected"`
-	Rejected  []string                `json:"rejected"`
+	ReceiptID string                    `json:"receipt_id"`
+	At        time.Time                 `json:"at"`
+	Review    insight.ProjectToolReview `json:"review"`
+	Selected  []string                  `json:"selected"`
+	Rejected  []string                  `json:"rejected"`
 	// Records are evidence of a choice, never a reusable effect grant. This
 	// remains false even when the commit succeeded but revalidation failed.
 	EffectAuthority bool `json:"effect_authority"`
@@ -43,11 +44,11 @@ type projectToolDecision struct {
 // cancellable worker. It does not install, retry, or authorize installation.
 // decisionHistory is the exact stored history retained by the native preview,
 // including absence; save compares it atomically before appending a new choice.
-func (w *Workspace) PrepareProjectToolDecision(review types.ProjectToolReview, selectedIDs []string, receiptID, decisionHistory string) (func(context.Context) (ProjectToolDecisionResult, error), error) {
+func (w *Workspace) PrepareProjectToolDecision(review insight.ProjectToolReview, selectedIDs []string, receiptID, decisionHistory string) (func(context.Context) (ProjectToolDecisionResult, error), error) {
 	if w == nil || strings.TrimSpace(receiptID) == "" {
 		return nil, errors.New("project decision owner is unavailable")
 	}
-	review = types.CloneProjectToolReview(review)
+	review = insight.CloneProjectToolReview(review)
 	selected := append([]string{}, selectedIDs...)
 	sort.Strings(selected)
 	rejected, err := decisionSelection(review, selected)
@@ -71,13 +72,13 @@ func (w *Workspace) PrepareProjectToolDecision(review types.ProjectToolReview, s
 	}, nil
 }
 
-func decisionSelection(review types.ProjectToolReview, selected []string) ([]string, error) {
-	preimage := types.CloneProjectToolReview(review)
+func decisionSelection(review insight.ProjectToolReview, selected []string) ([]string, error) {
+	preimage := insight.CloneProjectToolReview(review)
 	preimage.Token = ""
 	if review.Token == "" || reviewHash(preimage) != review.Token {
 		return nil, errors.New("the tool review changed; review it again")
 	}
-	items := make(map[string]types.ProjectToolCandidate, len(review.Items))
+	items := make(map[string]insight.ProjectToolCandidate, len(review.Items))
 	for _, item := range review.Items {
 		id := item.ID
 		item.ID = ""
@@ -127,7 +128,7 @@ func lockDecisionMutex(ctx context.Context, mu *sync.Mutex) error {
 
 // currentDecisionReview observes each owner without holding its lock across
 // filesystem, catalog or database I/O. The caller repeats this after commit.
-func currentDecisionReview(ctx context.Context, w *Workspace, db *WorkspaceDB, root string, m *LSPManager, review types.ProjectToolReview) error {
+func currentDecisionReview(ctx context.Context, w *Workspace, db *DB, root string, m *LSPManager, review insight.ProjectToolReview) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -149,7 +150,7 @@ func currentDecisionReview(ctx context.Context, w *Workspace, db *WorkspaceDB, r
 	valid := !m.closed && m.workspaceRoot == root && m.analysisTrustedLocked() &&
 		m.analysisRootIdentity == identity && m.assemblyRequested == review.AssemblyGeneration &&
 		m.assembly.Generation == review.AssemblyGeneration
-	plan := types.CloneAssemblyPlan(m.assembly)
+	plan := insight.CloneAssemblyPlan(m.assembly)
 	m.mu.Unlock()
 	if !valid {
 		return errors.New("the project setup changed; review the tools again")
@@ -173,7 +174,7 @@ func currentDecisionReview(ctx context.Context, w *Workspace, db *WorkspaceDB, r
 // A native preview can omit candidates already decided or installed. It must
 // still describe exact current candidates in the same assembly, not invent a
 // download. The setup owner retains the complete snapshot as its effect fence.
-func currentToolReviewContains(current, offered types.ProjectToolReview) bool {
+func currentToolReviewContains(current, offered insight.ProjectToolReview) bool {
 	if current.Project != offered.Project || current.RootIdentity != offered.RootIdentity ||
 		current.AssemblyGeneration != offered.AssemblyGeneration {
 		return false
@@ -181,7 +182,7 @@ func currentToolReviewContains(current, offered types.ProjectToolReview) bool {
 	if _, err := decisionSelection(offered, nil); err != nil {
 		return false
 	}
-	items := make(map[string]types.ProjectToolCandidate, len(current.Items))
+	items := make(map[string]insight.ProjectToolCandidate, len(current.Items))
 	for _, item := range current.Items {
 		items[item.ID] = item
 	}
@@ -195,7 +196,7 @@ func currentToolReviewContains(current, offered types.ProjectToolReview) bool {
 
 // readProjectToolDecisions reads evidence only. In particular, a selected ID
 // suppresses another automatic question; it never authorizes a new install.
-func readProjectToolDecisions(ctx context.Context, db *WorkspaceDB) ([]projectToolDecision, string, error) {
+func readProjectToolDecisions(ctx context.Context, db *DB) ([]projectToolDecision, string, error) {
 	var raw string
 	if err := db.DB.QueryRowContext(ctx, `SELECT value FROM workspace_metadata WHERE key=?`, workspaceSettingsKey).Scan(&raw); err != nil {
 		return nil, "", err
@@ -236,7 +237,7 @@ func decodeProjectToolDecisions(data []byte) ([]projectToolDecision, error) {
 	return records, nil
 }
 
-func saveProjectToolDecision(ctx context.Context, w *Workspace, db *WorkspaceDB, root string, m *LSPManager, defaults types.AppSettings, review types.ProjectToolReview, selected, rejected []string, receipt, decisionHistory string) (ProjectToolDecisionResult, error) {
+func saveProjectToolDecision(ctx context.Context, w *Workspace, db *DB, root string, m *LSPManager, defaults setting.App, review insight.ProjectToolReview, selected, rejected []string, receipt, decisionHistory string) (ProjectToolDecisionResult, error) {
 	if err := currentDecisionReview(ctx, w, db, root, m, review); err != nil {
 		return ProjectToolDecisionResult{}, err
 	}
@@ -260,7 +261,7 @@ func saveProjectToolDecision(ctx context.Context, w *Workspace, db *WorkspaceDB,
 		return ProjectToolDecisionResult{}, fmt.Errorf("invalid stored workspace settings: %w", err)
 	}
 	var fields map[string]json.RawMessage
-	var overrides types.WorkspaceOverrides
+	var overrides setting.WorkspaceOverrides
 	if err := json.Unmarshal([]byte(raw), &fields); err != nil || fields == nil {
 		return ProjectToolDecisionResult{}, errors.New("invalid stored workspace settings")
 	}

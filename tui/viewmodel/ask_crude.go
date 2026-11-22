@@ -14,7 +14,7 @@ import (
 	"crude/tui/editor"
 	"crude/tui/ui"
 	"crude/tui/window"
-	"crude/types"
+	"crude/types/insight"
 	"crude/workspace"
 )
 
@@ -253,7 +253,7 @@ func askText(ed *editor.Editor, start, end int) string {
 }
 
 // askProblem describes the most severe diagnostic for a prepared Fix prompt.
-func askProblem(diags []types.LSPDiagnostic) string {
+func askProblem(diags []insight.LSPDiagnostic) string {
 	if len(diags) == 0 {
 		return ""
 	}

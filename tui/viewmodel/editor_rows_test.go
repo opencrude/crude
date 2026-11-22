@@ -8,10 +8,11 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/clientstate"
+	"crude/internal/clientstate"
 	"crude/tui/editor"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -54,7 +55,7 @@ func TestEditorRowsConnectedPrivateFoldsResumePeerEditAndUndo(t *testing.T) {
 			shell.app.View()
 			runAppCommand(t, shell.app, shell.app.drainEditorSyntaxCommands())
 			state, _ := shell.app.EditorState.Editor.InsightStatus()
-			if state != types.InsightCurrent || shell.app.EditorState.Editor.RowsDone() != nil {
+			if state != insight.Current || shell.app.EditorState.Editor.RowsDone() != nil {
 				return false
 			}
 		}
@@ -121,7 +122,7 @@ func TestEditorRowsConnectedPrivateFoldsResumePeerEditAndUndo(t *testing.T) {
 		t.Fatal("presentation wrote disk", err)
 	}
 	// Setting Save/Reset changes current and newly inherited views, not source.
-	runAppCommand(t, right.app, right.app.saveSettingsShortcut(types.SettingsScopeWorkspace, []types.SettingEdit{{Path: []string{"editor", "word_wrap"}, After: json.RawMessage(`false`)}}, "Word wrap saved.", nil, 0))
+	runAppCommand(t, right.app, right.app.saveSettingsShortcut(setting.ScopeWorkspace, []setting.Edit{{Path: []string{"editor", "word_wrap"}, After: json.RawMessage(`false`)}}, "Word wrap saved.", nil, 0))
 	remoteJourneyUntil(t, shells, func() bool { return !back.app.editorSettings.WordWrap })
 	right.app.View()
 	if other.ScrollModel().Content() != other.LineCount() {

@@ -5,7 +5,7 @@ import (
 	"slices"
 	"sort"
 
-	"crude/types"
+	"crude/types/insight"
 	"crude/workspace/document"
 	"github.com/alecthomas/chroma/v2"
 )
@@ -121,7 +121,7 @@ func (s *semanticStore) setPartial(start, end int, tokens []semanticToken) {
 // private view. The core validated every span off Update; the shell resolves
 // it into its own store and never mutates the result. A range result merges
 // with colors outside its range. No source, caret, diagnostics or history changes.
-func (e *Editor) SetSemanticTokens(set *types.LSPSemanticSet) error {
+func (e *Editor) SetSemanticTokens(set *insight.LSPSemanticSet) error {
 	if set == nil || set.ViewID == "" || set.Sequence == 0 || !e.MatchesInsightSource(set.Boundary.Source) {
 		return errors.New("semantic colors do not match current source")
 	}
@@ -148,7 +148,7 @@ func (e *Editor) SetSemanticTokens(set *types.LSPSemanticSet) error {
 
 // semanticRangeBytes covers the complete requested lines; Crude requests whole
 // lines, so a partial first line only widens the replaced range.
-func (e *Editor) semanticRangeBytes(r types.LSPSemanticRange) (int, int) {
+func (e *Editor) semanticRangeBytes(r insight.LSPSemanticRange) (int, int) {
 	e.buf.ensureCache()
 	lines := len(e.buf.lineOffsets)
 	first, last := min(max(0, r.Start.Line), lines-1), min(max(0, r.End.Line), lines-1)

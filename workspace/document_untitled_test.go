@@ -2,7 +2,7 @@ package workspace
 
 import (
 	"context"
-	"crude/text/encoding"
+	"crude/text/textencoding"
 	"errors"
 	"os"
 	"path/filepath"

@@ -7,7 +7,7 @@ import (
 
 	"crude/tui/editor"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/setting"
 	"crude/workspace"
 
 	tea "charm.land/bubbletea/v2"
@@ -106,7 +106,7 @@ func TestEditorSaveSnapshotDoesNotClearNewerEdits(t *testing.T) {
 
 func TestByteIdenticalManualEditClosesWithoutSavePrompt(t *testing.T) {
 	app := newAutosaveTestApp(t)
-	app.editorSettings = types.NormalizeEditorSettings(types.EditorSettings{AutoSave: types.AutoSaveAfterDelay, AutoSaveDelay: 60_000})
+	app.editorSettings = setting.NormalizeEditor(setting.Editor{AutoSave: setting.AutoSaveAfterDelay, AutoSaveDelay: 60_000})
 	ed := newSaveTestEditor(t, app, "original bytes\n")
 	path := ed.FilePath()
 	ed.InsertRune('x')
@@ -140,7 +140,7 @@ func TestLateSaveAckAfterUndoClosesWithoutSavePrompt(t *testing.T) {
 
 func TestAutosavePreservesTextWhileManualSaveFormats(t *testing.T) {
 	app := newFullTestApp(t)
-	app.editorSettings = types.NormalizeEditorSettings(types.EditorSettings{AutoSave: types.AutoSaveAfterDelay, FormatOnSave: true})
+	app.editorSettings = setting.NormalizeEditor(setting.Editor{AutoSave: setting.AutoSaveAfterDelay, FormatOnSave: true})
 	ed := newSaveTestEditor(t, app, "package main\nfunc f(){println(1)}\n")
 	ed.InsertRune(' ')
 	exact, revision, cursor := ed.Value(), ed.Revision(), ed.CursorCol()
@@ -222,7 +222,7 @@ func TestDisableCancelsInFlightAutomaticSave(t *testing.T) {
 	ed := newSaveTestEditor(t, app, "base")
 	ed.InsertRune('x')
 	cmd := app.requestEditorSave(ed, workspace.DocumentSaveAfterDelay, false)
-	app.applyEditorSettings(types.EditorSettings{AutoSave: types.AutoSaveOff})
+	app.applyEditorSettings(setting.Editor{AutoSave: setting.AutoSaveOff})
 	finishSaveCommand(t, app, cmd)
 	if !ed.Modified() {
 		t.Fatal("disabled automatic save cleared dirty state")
@@ -296,7 +296,7 @@ func TestTerminalBlurAutosavesDirtyBuffers(t *testing.T) {
 	app := newFullTestApp(t)
 	ed := newSaveTestEditor(t, app, "base")
 	ed.InsertRune('x')
-	app.applyEditorSettings(types.EditorSettings{AutoSave: types.AutoSaveTerminalFocusLoss})
+	app.applyEditorSettings(setting.Editor{AutoSave: setting.AutoSaveTerminalFocusLoss})
 	_, cmd := app.Update(tea.BlurMsg{})
 	if cmd == nil {
 		t.Fatal("terminal blur did not schedule save")

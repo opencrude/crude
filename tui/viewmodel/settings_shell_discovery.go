@@ -2,7 +2,7 @@ package viewmodel
 
 import (
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/setting"
 )
 
 // Opening Settings asks the existing connected topic to observe the host.
@@ -14,7 +14,7 @@ func (m *App) requestSettingsShellInventory() {
 	}
 }
 
-func (m *App) applySettingsShellInventory(effective types.AppSettings) {
+func (m *App) applySettingsShellInventory(effective setting.App) {
 	if m.overlayHost == nil {
 		return
 	}

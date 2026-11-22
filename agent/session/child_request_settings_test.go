@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"crude/agent"
 	"crude/agent/collaboration"
 	"crude/agent/provider"
-	ttypes "crude/types"
+	"crude/agent/turnloop"
+	"crude/types/conversation"
 )
 
 // childWireHarness runs a real root that launches real children against a
@@ -226,7 +226,7 @@ func TestChildRequestsCarryConfiguredThinkingAndSamplingOnEveryPath(t *testing.T
 	found := false
 	for len(h.sender.ch) > 0 {
 		event := <-h.sender.ch
-		if identity, ok := event.data.(ttypes.TurnIdentity); ok && event.typ == "connection_changed" && event.agentID == child && identity.ModelID == "wire-child-2" {
+		if identity, ok := event.data.(conversation.TurnIdentity); ok && event.typ == "connection_changed" && event.agentID == child && identity.ModelID == "wire-child-2" {
 			found = true
 		}
 	}
@@ -235,7 +235,7 @@ func TestChildRequestsCarryConfiguredThinkingAndSamplingOnEveryPath(t *testing.T
 	}
 	h.finish(switched, h.root.ID)
 	completed := h.session.CompletedSubAgentSnapshots()
-	if len(completed) != 1 || completed[0].Result.Status != agent.SubAgentCompleted {
+	if len(completed) != 1 || completed[0].Result.Status != turnloop.SubAgentCompleted {
 		t.Fatalf("child did not complete after the switch: %+v", completed)
 	}
 }
@@ -258,7 +258,7 @@ func TestParkedChildIsActionableOnlyAfterAttemptTeardown(t *testing.T) {
 	// Retain an ordinary write lease to stop deferred claim release. This
 	// exposes the real teardown window deterministically, without a sleep in
 	// production or a test-only runtime callback.
-	release, err := runner.FileOwnership().BeginWrite(agent.AgentID(child), nil)
+	release, err := runner.FileOwnership().BeginWrite(turnloop.AgentID(child), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,7 +268,7 @@ func TestParkedChildIsActionableOnlyAfterAttemptTeardown(t *testing.T) {
 	first.reply <- map[string]any{"status": http.StatusUnauthorized}
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		if _, active := runner.mgr.GetActive(agent.AgentID(child)); !active {
+		if _, active := runner.mgr.Active(turnloop.AgentID(child)); !active {
 			break
 		}
 		if time.Now().After(deadline) {

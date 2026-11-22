@@ -10,7 +10,7 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	ttypes "crude/types"
+	"crude/types/statuscenter"
 )
 
 func testProjection() Projection {
@@ -21,7 +21,7 @@ func testProjection() Projection {
 			{ID: "agent:two", Label: "Two", Summary: "Idle", PrimaryAction: "agent:two", PrimaryLabel: "Switch to Tab", PrimaryEnabled: true},
 		},
 		ViewWorkspace:     {{ID: "workspace", Label: "Workspace", Summary: "Ready", Lines: []DetailLine{{Label: "Path", Value: "/tmp/project", Role: ui.ColorFg}}}},
-		ViewNotifications: {{ID: "notice:n", Label: "Failed", Summary: "Unread", NotificationID: "n", NotificationUnread: true, Owner: ttypes.ResourceRef{Kind: ttypes.ResourceAgent, ID: "one"}, Lines: []DetailLine{{Label: "Source", Value: "Agent", Role: ui.ColorMuted}}}},
+		ViewNotifications: {{ID: "notice:n", Label: "Failed", Summary: "Unread", NotificationID: "n", NotificationUnread: true, Owner: statuscenter.ResourceRef{Kind: statuscenter.ResourceAgent, ID: "one"}, Lines: []DetailLine{{Label: "Source", Value: "Agent", Role: ui.ColorMuted}}}},
 	}}
 }
 

@@ -7,8 +7,8 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
-	types "crude/types"
 	"crude/types/attachment"
+	"crude/types/conversation"
 )
 
 func TestHistoricalAttachmentIdentityRequiresExactOwnedEnvelope(t *testing.T) {
@@ -26,7 +26,7 @@ func TestHistoricalAttachmentIdentityRequiresExactOwnedEnvelope(t *testing.T) {
 			if scenario == "payload-forgery" {
 				label = "[Pasted Text9]"
 			}
-			input := sessiondb.MessageWithMeta{Meta: sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []types.ConversationMessage{{InternalID: "input", Role: types.RoleUser, Content: text, ReferenceLabels: []string{label}}}}}
+			input := sessiondb.MessageWithMeta{Meta: sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []conversation.Message{{InternalID: "input", Role: conversation.RoleUser, Content: text, ReferenceLabels: []string{label}}}}}
 			selection := provider.NewMultiPartMessage("user", []provider.ContentPart{{Type: "text", Text: ref.AgentText()}})
 			selection.InternalID = "input-references"
 			selection.Origin, selection.Visibility = provider.OriginRuntimeContext, provider.VisibilityContextOnly
@@ -57,8 +57,8 @@ func TestHistoricalAttachmentIdentityRequiresExactOwnedEnvelope(t *testing.T) {
 
 func TestCanonicalAttachmentTargetsAreDetached(t *testing.T) {
 	span := attachment.Target{Start: 0, End: 14, ReferenceID: "exact", Label: "[Pasted Text1]"}
-	canonical := types.ConversationMessage{InternalID: "input", Role: types.RoleUser, Content: span.Label, Attachments: []attachment.Target{span}}
-	got := ConvertMessagesForDisplay([]sessiondb.MessageWithMeta{{Meta: sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []types.ConversationMessage{canonical}}}})
+	canonical := conversation.Message{InternalID: "input", Role: conversation.RoleUser, Content: span.Label, Attachments: []attachment.Target{span}}
+	got := ConvertMessagesForDisplay([]sessiondb.MessageWithMeta{{Meta: sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []conversation.Message{canonical}}}})
 	got[0].Attachments[0].ReferenceID = "changed"
 	if canonical.Attachments[0].ReferenceID != "exact" {
 		t.Fatal("hydration aliases canonical target data")
@@ -66,7 +66,7 @@ func TestCanonicalAttachmentTargetsAreDetached(t *testing.T) {
 }
 
 func TestConvertMessagesForDisplayUsesCanonicalSnapshotWithoutReconstruction(t *testing.T) {
-	want := types.ConversationMessage{
+	want := conversation.Message{
 		InternalID: "canonical", Role: "tool", Content: "result", Time: time.Now().Round(0),
 		ToolName: "agent_start", ToolArgs: "description: inspect", ToolID: "call",
 		ToolStatus: "success", ToolProgressPhase: "done", ToolProgressLabel: "child",
@@ -74,11 +74,11 @@ func TestConvertMessagesForDisplayUsesCanonicalSnapshotWithoutReconstruction(t *
 		ToolDuration: time.Second, SubPaneID: "child-1", PermTag: "always",
 	}
 	views := ConvertMessagesForDisplay([]sessiondb.MessageWithMeta{{
-		Meta: sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []types.ConversationMessage{want}},
+		Meta: sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []conversation.Message{want}},
 	}})
 	want.ToolArgs = "inspect"
 	want.ToolInput = "description: inspect"
-	if len(views) != 1 || !reflect.DeepEqual(types.ConversationMessage(views[0]), want) {
+	if len(views) != 1 || !reflect.DeepEqual(conversation.Message(views[0]), want) {
 		t.Fatalf("canonical conversion\n got: %#v\nwant: %#v", views, want)
 	}
 }
@@ -118,10 +118,10 @@ func TestConvertMessagesForDisplayKeepsExplicitContextBoundarySnapshots(t *testi
 		t.Run(phase, func(t *testing.T) {
 			message := provider.NewTextMessage("user", "hidden provider context")
 			message.Visibility = provider.VisibilityContextOnly
-			boundary := types.ConversationMessage{InternalID: phase, Role: "status", LifecyclePhase: phase, LifecycleOperationID: "operation", Time: time.Unix(1000, 0)}
+			boundary := conversation.Message{InternalID: phase, Role: "status", LifecyclePhase: phase, LifecycleOperationID: "operation", Time: time.Unix(1000, 0)}
 			views := ConvertMessagesForDisplay([]sessiondb.MessageWithMeta{{Msg: message, Meta: sessiondb.DisplayMeta{
 				ContextOnly: true, DisplayRole: "hidden_wire_context", SnapshotVersion: sessiondb.ConversationSnapshotVersion,
-				Snapshots: []types.ConversationMessage{boundary},
+				Snapshots: []conversation.Message{boundary},
 			}}})
 			if len(views) != 1 || !reflect.DeepEqual(views[0], boundary) {
 				t.Fatalf("explicit context boundary was lost: %+v", views)

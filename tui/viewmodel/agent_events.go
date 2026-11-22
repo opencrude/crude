@@ -8,14 +8,15 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/agent"
 	"crude/agent/provider"
+	"crude/agent/session"
 	"crude/agent/sessiondb"
-	"crude/core/port"
-	"crude/metrics"
+	"crude/agent/turnloop"
+	"crude/core/shellport"
+	"crude/internal/metrics"
 	"crude/tui/ui"
 	"crude/tui/wm"
-	coretypes "crude/types"
+	"crude/types/statuscenter"
 	"crude/workspace"
 )
 
@@ -50,14 +51,14 @@ type inputAdmissionMsg struct {
 	workspace       shellport.Workspace
 	workspaceGen    uint64
 	session         *workspace.Session
-	intent          *workspace.InputAdmissionIntent
+	intent          *session.InputAdmissionIntent
 	agentID         string
 	draftRevision   uint64
 	draftEpoch      uint64
 	input           provider.UserInput
 	referenceLabels []string
 	references      []sessiondb.Reference
-	result          workspace.InputAdmissionResult
+	result          session.InputAdmissionResult
 	composerWindow  *wm.FloatingWindow
 	draftEditor     *ui.TextArea
 	draftState      ui.TextAreaState
@@ -89,13 +90,13 @@ func (m *App) submitPreparedInput(sessionID string, input provider.UserInput, dr
 	var references []sessiondb.Reference
 	if frontend != nil && frontend.RefStore != nil {
 		for _, id := range input.ReferenceIDs {
-			if ref, ok := frontend.RefStore.GetReference(id); ok {
+			if ref, ok := frontend.RefStore.Reference(id); ok {
 				references = append(references, ref)
 			}
 		}
 	}
 	if m.pendingInputAdmissions == nil {
-		m.pendingInputAdmissions = make(map[*workspace.InputAdmissionIntent]struct{})
+		m.pendingInputAdmissions = make(map[*session.InputAdmissionIntent]struct{})
 	}
 	m.pendingInputAdmissions[intent] = struct{}{}
 	workspaceGen := m.workspaceSwitchGen.Load()
@@ -280,7 +281,7 @@ func (m *App) referenceLabels(refIDs []string) []string {
 		if id == "" || seen[id] {
 			continue
 		}
-		ref, ok := store.GetReference(id)
+		ref, ok := store.Reference(id)
 		if !ok || !ref.Active() || ref.DisplayName() == "" {
 			continue
 		}
@@ -290,11 +291,11 @@ func (m *App) referenceLabels(refIDs []string) []string {
 	return labels
 }
 
-func (m *App) handleAgentEvent(evt coretypes.AgentEventMsg) tea.Cmd {
+func (m *App) handleAgentEvent(evt AgentEventMsg) tea.Cmd {
 	return m.handleAgentDomainEvent(workspace.AgentEvent{Type: evt.Type, Data: evt.Data, AgentID: evt.AgentID})
 }
 
-func (m *App) handleAgentEnvelope(evt agent.AgentEvent) tea.Cmd {
+func (m *App) handleAgentEnvelope(evt turnloop.AgentEvent) tea.Cmd {
 	return m.handleAgentDomainEvent(workspace.AgentEvent{Type: evt.Type, Data: evt.Data, AgentID: evt.AgentID, Identity: evt.Identity})
 }
 
@@ -452,10 +453,10 @@ func (m *App) handleAgentResultFeedback(msg agentResultFeedbackMsg) {
 	if label == "" {
 		label = "Main Agent"
 	}
-	severity := coretypes.SeverityInfo
+	severity := statuscenter.SeverityInfo
 	message := "✓ " + label + " completed"
 	if msg.reason != "completed" {
-		severity, message = coretypes.SeverityError, "✕ "+label+" "+msg.reason
+		severity, message = statuscenter.SeverityError, "✕ "+label+" "+msg.reason
 	}
 	m.Feedback.NotifyAgentTransient(msg.agentID, message, severity)
 	if msg.reason == "completed" {
@@ -491,12 +492,12 @@ func (m *App) publishSubAgentTerminalStatus(agentID, name, category, status stri
 	if role := workspace.CategoryDisplayName(category); role != "" {
 		identity += " · " + role
 	}
-	marker, outcome, severity := "✕", "failed", coretypes.SeverityError
+	marker, outcome, severity := "✕", "failed", statuscenter.SeverityError
 	switch status {
 	case "completed":
-		marker, outcome, severity = "✓", "completed", coretypes.SeverityInfo
+		marker, outcome, severity = "✓", "completed", statuscenter.SeverityInfo
 	case "cancelled":
-		marker, outcome, severity = "○", "cancelled", coretypes.SeverityInfo
+		marker, outcome, severity = "○", "cancelled", statuscenter.SeverityInfo
 	case "crashed":
 		outcome = "crashed"
 	case "failed_timeout":

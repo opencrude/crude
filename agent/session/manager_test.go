@@ -1,7 +1,7 @@
 package session
 
 import (
-	"crude/agent"
+	"crude/agent/turnloop"
 	"testing"
 
 	"crude/agent/provider"
@@ -328,7 +328,7 @@ func TestCloseOrchestratorStopsAndRejectsNewWork(t *testing.T) {
 	}
 	orch := NewOrchestrator("orch", sess)
 	sess.orchestrators[orch.ID] = orch
-	sess.runtimeProfile.GetOrCreateOverride(orch.ID)
+	sess.runtimeProfile.EnsureOverride(orch.ID)
 
 	sess.CloseOrchestrator(orch.ID)
 	sess.CloseOrchestrator(orch.ID)
@@ -344,6 +344,6 @@ func TestCloseOrchestratorStopsAndRejectsNewWork(t *testing.T) {
 	}
 }
 
-func (m *mockEventSender) SendAgentEventEnvelope(event agent.AgentEvent) {
+func (m *mockEventSender) SendAgentEventEnvelope(event turnloop.AgentEvent) {
 	m.SendAgentEventWithID(event.Type, event.Data, event.AgentID)
 }

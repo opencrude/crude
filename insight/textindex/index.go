@@ -28,7 +28,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"crude/third_party/pathwalk"
+	"crude/third_party/fastwalk"
 	"crude/workspace/fileio"
 
 	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
@@ -304,8 +304,8 @@ func (x *Index) build(ctx context.Context) (*corpus, error) {
 	var mu sync.Mutex
 	var paths []found
 	var ignores []ignoreFile
-	conf := &pathwalk.Config{NumWorkers: min(8, pathwalk.DefaultNumWorkers())}
-	err := pathwalk.WalkContext(ctx, conf, x.root, func(path string, entry fs.DirEntry, err error) error {
+	conf := &fastwalk.Config{NumWorkers: min(8, fastwalk.DefaultNumWorkers())}
+	err := fastwalk.WalkContext(ctx, conf, x.root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}

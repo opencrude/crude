@@ -5,7 +5,8 @@ import (
 	"strings"
 
 	"crude/tui/rendering"
-	"crude/types"
+	"crude/types/conversation"
+	"crude/types/setting"
 )
 
 // Shared FieldState constructors. Every form-bearing screen (settings, session
@@ -186,13 +187,13 @@ func ModelFieldState(id, label, value string, options []FormOption, description 
 // ThinkingFieldState builds a thinking-level cycle field over types.ThinkingLevels
 // with the standard "Provider default" placeholder.
 func ThinkingFieldState(id, current, description string) *FieldState {
-	f := CycleFieldState(id, "Thinking level", types.ThinkingLevels, current, description)
+	f := CycleFieldState(id, "Thinking level", conversation.ThinkingLevels, current, description)
 	f.Placeholder = "Provider default"
 	return f
 }
 
 // ProviderOptions converts provider presets into select options.
-func ProviderOptions(presets []types.ProviderPreset) []FormOption {
+func ProviderOptions(presets []setting.ProviderPreset) []FormOption {
 	options := make([]FormOption, 0, len(presets))
 	for _, preset := range presets {
 		options = append(options, FormOption{ID: preset.ID, Label: preset.Name, Detail: preset.HelpText})
@@ -202,7 +203,7 @@ func ProviderOptions(presets []types.ProviderPreset) []FormOption {
 
 // ModelOptions converts fetched model entries into select options, showing the
 // context window as the option detail when known.
-func ModelOptions(models []types.ModelEntry) []FormOption {
+func ModelOptions(models []setting.ModelEntry) []FormOption {
 	options := make([]FormOption, 0, len(models))
 	for _, model := range models {
 		label := model.Name

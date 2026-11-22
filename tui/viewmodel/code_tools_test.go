@@ -7,32 +7,32 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/core/port"
-	settingsui "crude/tui/settings"
+	"crude/core/shellport"
+	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
 	"github.com/charmbracelet/x/ansi"
 )
 
 type integrationCodeToolsHost struct {
 	shellport.Workspace
 	reads, previews, removes int
-	tool                     types.CodeTool
+	tool                     insight.CodeTool
 }
 
-func (h *integrationCodeToolsHost) ReadCodeToolInventory(context.Context, int, int) (types.CodeToolInventory, error) {
+func (h *integrationCodeToolsHost) ReadCodeToolInventory(context.Context, int, int) (insight.CodeToolInventory, error) {
 	h.reads++
-	out := types.CodeToolInventory{TotalBytes: 120}
+	out := insight.CodeToolInventory{TotalBytes: 120}
 	if h.removes == 0 {
-		out.Tools = []types.CodeTool{h.tool}
+		out.Tools = []insight.CodeTool{h.tool}
 	}
 	return out, nil
 }
-func (h *integrationCodeToolsHost) PreviewCodeToolRemoval(context.Context, []string, bool) (types.CodeToolRemovalPreview, error) {
+func (h *integrationCodeToolsHost) PreviewCodeToolRemoval(context.Context, []string, bool) (insight.CodeToolRemovalPreview, error) {
 	h.previews++
-	return types.CodeToolRemovalPreview{Tools: []types.CodeTool{h.tool}, Paths: []string{h.tool.Dir}, Bytes: 128, Token: "one-native-preview"}, nil
+	return insight.CodeToolRemovalPreview{Tools: []insight.CodeTool{h.tool}, Paths: []string{h.tool.Dir}, Bytes: 128, Token: "one-native-preview"}, nil
 }
-func (h *integrationCodeToolsHost) RemoveCodeTools(context.Context, types.CodeToolRemovalPreview) error {
+func (h *integrationCodeToolsHost) RemoveCodeTools(context.Context, insight.CodeToolRemovalPreview) error {
 	h.removes++
 	return nil
 }
@@ -59,7 +59,7 @@ func TestCodeToolsMountedSettingsJourneyAndSafeConfirmation(t *testing.T) {
 		t.Run(fmt.Sprint(size), func(t *testing.T) {
 			app := newFullTestApp(t)
 			wsOf(app).Logger = stubLogger{}
-			host := &integrationCodeToolsHost{Workspace: app.ws, tool: types.CodeTool{ID: "fixture", Package: "fixture", Version: "v1", Dir: "C:/managed/fixture", Size: 120, Source: "fixture registry", FileEntries: []types.CodeToolFile{{Path: "files/server", Size: 120, Kind: "file"}}}}
+			host := &integrationCodeToolsHost{Workspace: app.ws, tool: insight.CodeTool{ID: "fixture", Package: "fixture", Version: "v1", Dir: "C:/managed/fixture", Size: 120, Source: "fixture registry", FileEntries: []insight.CodeToolFile{{Path: "files/server", Size: 120, Kind: "file"}}}}
 			app.ws = host
 			app.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 			app.openApplicationSettings()

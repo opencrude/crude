@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"crude/agent/toolstore"
-	"crude/types"
+	"crude/types/insight"
 )
 
 func TestCodeToolInventoryReportsHistoryAndUnmanaged(t *testing.T) {
@@ -27,12 +27,12 @@ func TestCodeToolInventoryReportsHistoryAndUnmanaged(t *testing.T) {
 	if err := os.WriteFile(external, []byte("external"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	plan := types.AssemblyPlan{Languages: []types.AssemblyLanguage{
-		{ServerID: "server", Command: "server", Executable: external, Source: types.ToolSourcePath},
-		{ServerID: "server", Command: "server", Executable: external, Source: types.ToolSourcePath},
-		{Executable: "/managed", Source: types.ToolSourceStore},
+	plan := insight.AssemblyPlan{Languages: []insight.AssemblyLanguage{
+		{ServerID: "server", Command: "server", Executable: external, Source: insight.ToolSourcePath},
+		{ServerID: "server", Command: "server", Executable: external, Source: insight.ToolSourcePath},
+		{Executable: "/managed", Source: insight.ToolSourceStore},
 	}}
-	plan.State = types.AssemblyReady
+	plan.State = insight.AssemblyReady
 	plan.Generation = 42
 	got, err := readCodeToolInventory(t.Context(), store, plan, 1, 1)
 	if err != nil {
@@ -41,7 +41,7 @@ func TestCodeToolInventoryReportsHistoryAndUnmanaged(t *testing.T) {
 	if len(got.Tools) != 0 || got.TotalBytes != 0 || len(got.Unmanaged) != 1 || got.Unmanaged[0].Executable != external {
 		t.Fatalf("inventory = %+v", got)
 	}
-	if got.Project.State != types.AssemblyReady || got.Project.Generation != 42 || len(got.Project.Languages) != 3 {
+	if got.Project.State != insight.AssemblyReady || got.Project.Generation != 42 || len(got.Project.Languages) != 3 {
 		t.Fatalf("inventory lost its project assembly snapshot: %+v", got.Project)
 	}
 	if len(got.Unrecognized) != 1 || got.HistoryTotal != 2 || len(got.History) != 1 || got.History[0].Detail != "download failed" {
@@ -57,13 +57,13 @@ func TestCodeToolInventoryReportsHistoryAndUnmanaged(t *testing.T) {
 func TestCodeToolInventoryDoesNotLabelManagedExecutableExternal(t *testing.T) {
 	store, _, dir := codeToolsStoreFixture(t)
 	executable := filepath.Join(dir, "files", "server")
-	plan := types.AssemblyPlan{Languages: []types.AssemblyLanguage{
-		{Command: executable, Executable: executable, Source: types.ToolSourceSettings},
+	plan := insight.AssemblyPlan{Languages: []insight.AssemblyLanguage{
+		{Command: executable, Executable: executable, Source: insight.ToolSourceSettings},
 	}}
 	alias := filepath.Join(t.TempDir(), "alias")
 	if os.Symlink(executable, alias) == nil {
-		plan.Languages = append(plan.Languages, types.AssemblyLanguage{
-			Command: alias, Executable: alias, Source: types.ToolSourcePath,
+		plan.Languages = append(plan.Languages, insight.AssemblyLanguage{
+			Command: alias, Executable: alias, Source: insight.ToolSourcePath,
 		})
 	}
 	got, err := readCodeToolInventory(t.Context(), store, plan, 0, 50)

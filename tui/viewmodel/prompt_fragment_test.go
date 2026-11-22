@@ -8,7 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/agent/sessiondb"
-	"crude/clipboard"
+	"crude/internal/clipboard"
 	"crude/workspace"
 )
 
@@ -84,7 +84,7 @@ func TestCopiedPromptPartPastesWithItsAttachments(t *testing.T) {
 			if len(ids) != 1 {
 				t.Fatalf("pasted text has %d attachments, want 1: %q", len(ids), app.Input.Value())
 			}
-			pasted, ok := app.RefStore().GetReference(ids[0])
+			pasted, ok := app.RefStore().Reference(ids[0])
 			if !ok || pasted.Content != content {
 				t.Fatal("pasted attachment lost its content")
 			}

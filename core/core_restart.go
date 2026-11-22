@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"crude/agent/collaboration"
-	"crude/buildinfo"
-	"crude/core/protocol"
-	"crude/retry"
+	"crude/core/coreprotocol"
+	"crude/internal/buildinfo"
+	"crude/internal/retry"
 	"crude/types/control"
 	"crude/types/handover"
 )

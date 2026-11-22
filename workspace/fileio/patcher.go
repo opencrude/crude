@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"crude/logger"
+	"crude/internal/logger"
 )
 
 type SearchReplace struct {

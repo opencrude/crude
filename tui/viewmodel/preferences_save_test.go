@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	settingsui "crude/tui/settings"
+	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/setting"
 )
 
 func TestPreferencesSaveIsOffUIAndPreservesDraftOnFailure(t *testing.T) {
@@ -16,16 +16,16 @@ func TestPreferencesSaveIsOffUIAndPreservesDraftOnFailure(t *testing.T) {
 	before := model.AppSettings()
 	entered, release := make(chan struct{}), make(chan struct{})
 	defer close(release)
-	wsOf(app).OnAppPreferencesCommit = func([]types.SettingEdit) (types.AppSettings, error) {
+	wsOf(app).OnAppPreferencesCommit = func([]setting.Edit) (setting.App, error) {
 		close(entered)
 		<-release
-		return types.AppSettings{}, errors.New("client certificate cannot be read")
+		return setting.App{}, errors.New("client certificate cannot be read")
 	}
 	if !model.BeginSave() {
 		t.Fatal("could not arm preference save")
 	}
 	started := time.Now()
-	command := app.savePreferences(settingsui.SaveMsg{Target: model, Scope: types.SettingsScopeApplication, Edits: model.Edits()})
+	command := app.savePreferences(settingsui.SaveMsg{Target: model, Scope: setting.ScopeApplication, Edits: model.Edits()})
 	if command == nil || time.Since(started) > 100*time.Millisecond {
 		t.Fatal("preference save blocked UI admission")
 	}
@@ -62,7 +62,7 @@ func TestLatePreferenceSaveCannotCloseReplacementSettings(t *testing.T) {
 	if !model.BeginSave() {
 		t.Fatal("could not arm save")
 	}
-	command := app.savePreferences(settingsui.SaveMsg{Target: model, Scope: types.SettingsScopeApplication, Edits: model.Edits()})
+	command := app.savePreferences(settingsui.SaveMsg{Target: model, Scope: setting.ScopeApplication, Edits: model.Edits()})
 	result := command().(preferencesSavedMsg)
 	app.openApplicationSettings()
 	replacement := app.overlayHost.Window(ui.OverlayWorkspaceSettings)

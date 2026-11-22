@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"crude/tui/theme"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 func largeGoPatch(name string, lines int) string {
@@ -82,7 +82,7 @@ func TestSmallDiffStaysSynchronous(t *testing.T) {
 // A pending edit row repaints like an animating row until its colors arrive,
 // and the projection keeps frames coming meanwhile.
 func TestPendingDiffRowRepaintsWhenColorsArrive(t *testing.T) {
-	msg := types.ChatMessage{Role: types.RoleTool, ToolName: "apply_patch", ToolArgs: "pending.go", ToolStatus: "success", ToolPreviewPhase: "done",
+	msg := conversation.ChatMessage{Role: conversation.RoleTool, ToolName: "apply_patch", ToolArgs: "pending.go", ToolStatus: "success", ToolPreviewPhase: "done",
 		Content: "Success. Updated the following files:\nM pending.go\n" + largeGoPatch("Pending", 140)}
 	render := func() messageLines {
 		return renderToolMessageLines(msg, theme.DefaultDark(), 100, 104, 104, 0, 40, msg.ToolPreviewPhase, DisclosureExpanded)

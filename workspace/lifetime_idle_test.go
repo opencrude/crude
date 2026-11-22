@@ -11,9 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"crude/internal/terminalvt"
 	"crude/internal/testterminal"
-	"crude/terminalvt"
-	"crude/types"
+	"crude/types/conversation"
+	"crude/types/setting"
 	"crude/workspace/document"
 )
 
@@ -37,7 +38,7 @@ func TestIdleDocumentLeaseRefusesViewsAndRestoresOpen(t *testing.T) {
 		deadline := time.Now().Add(time.Second)
 		for {
 			release, err := s.beginIdleLease()
-			if !errors.Is(err, types.ErrIdleSettling) {
+			if !errors.Is(err, conversation.ErrIdleSettling) {
 				return release, err
 			}
 			if time.Now().After(deadline) {
@@ -142,7 +143,7 @@ func TestExplicitStopClosesIdleShellButNotRunningProgram(t *testing.T) {
 		t.Skip("bash is required for job control")
 	}
 	s, _ := testTerminalService(t)
-	s.manager.SetSettings(types.TerminalSettings{Shell: types.TerminalShellCustom, Command: bash, Args: []string{"--norc", "--noprofile", "-i"}})
+	s.manager.SetSettings(setting.Terminal{Shell: setting.TerminalShellCustom, Command: bash, Args: []string{"--norc", "--noprofile", "-i"}})
 	info, err := s.Create(TerminalCreateOpts{Cols: 80, Rows: 24})
 	if err != nil {
 		t.Fatal(err)
@@ -191,7 +192,7 @@ func TestExplicitStopProtectsBackgroundShellWork(t *testing.T) {
 		t.Skip("bash is required for job control")
 	}
 	s, _ := testTerminalService(t)
-	s.manager.SetSettings(types.TerminalSettings{Shell: types.TerminalShellCustom, Command: bash, Args: []string{"--norc", "--noprofile", "-i"}})
+	s.manager.SetSettings(setting.Terminal{Shell: setting.TerminalShellCustom, Command: bash, Args: []string{"--norc", "--noprofile", "-i"}})
 	info, err := s.Create(TerminalCreateOpts{Cols: 100, Rows: 12})
 	if err != nil {
 		t.Fatal(err)

@@ -23,7 +23,7 @@ func TestSidebarControlsVisualAcceptance(t *testing.T) {
 	app := newEditorPaintApp(t, root)
 	wsOf(app).RootPath = root
 	app.launcherScreen = nil
-	app.workspaceInfos = []workspace.WorkspaceInfo{
+	app.workspaceInfos = []workspace.Info{
 		{ProjectDir: root, ProjectName: "ox"},
 		{ProjectDir: filepath.Join(filepath.Dir(root), "crude"), ProjectName: "crude"},
 	}

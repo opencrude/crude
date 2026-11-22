@@ -2,9 +2,9 @@ package app
 
 import (
 	"context"
-	"crude/buildinfo"
-	"crude/crashlog"
 	"crude/insight/catalog"
+	"crude/internal/buildinfo"
+	"crude/internal/crashlog"
 	"encoding/json"
 	"flag"
 	"fmt"

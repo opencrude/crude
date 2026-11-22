@@ -16,7 +16,7 @@ import (
 	"unicode/utf8"
 
 	"crude/agent/provider"
-	"crude/types"
+	"crude/types/insight"
 )
 
 const (
@@ -57,8 +57,8 @@ type Input struct {
 	Language    string
 	Text        []byte
 	Caret       int // UTF-8 byte offset
-	Diagnostics []types.LSPDiagnostic
-	RecentEdits []types.RecentEdit // newest last
+	Diagnostics []insight.LSPDiagnostic
+	RecentEdits []insight.RecentEdit // newest last
 	Snippets    []Snippet
 	Completions []string
 }
@@ -75,7 +75,7 @@ type Context struct {
 	Before, After string
 	// Prefix and Suffix are the fill-in-the-middle windows at the caret.
 	Prefix, Suffix string
-	Edits          []types.RecentEdit
+	Edits          []insight.RecentEdit
 	Snippets       []Snippet
 	Diagnostics    []string
 	Completions    []string

@@ -206,7 +206,7 @@ a race-only one.
 - Native parser changes additionally run the ownership regressions in
   `third_party/go-tree-sitter/`; it is a replacement module and is not included
   by the root package glob. `make test-syntax` runs both that suite and the
-  `syntax/` corpus. Use native sanitizers and the registered fuzz target for
+  `insight/syntax/` corpus. Use native sanitizers and the registered fuzz target for
   C-boundary work, and keep C heap/RSS evidence distinct from Go allocations.
 - Language-server ownership changes also run `make test-lsp`. The replaced
   Powernap module is excluded from the root package glob. Its native tests
@@ -223,9 +223,9 @@ a race-only one.
 
 ### Protocol generation and v2 acceptance
 
-After production-source edits, explicitly run `go run ./internal/wiregen` in the
+After production-source edits, explicitly run `go run ./tools/wiregen` in the
 canonical native cgo environment, inspect its generated diff, then run
-`go run ./internal/wiregen -check`. The check is nonmutating; it does not regenerate
+`go run ./tools/wiregen -check`. The check is nonmutating; it does not regenerate
 codecs or repair stale output. Make build/test/benchmark targets,
 `scripts/build.sh` and `scripts/release.py` check freshness. An arbitrary direct
 `go build` does not invoke generation or the check.
@@ -317,6 +317,14 @@ Its text captures do not replace sequential native visual captures.
 Use the [network lab startup lane](remote-network-lab.md#startup-lane) for
 the cold SSH, warm reopen, core restart and native trust-prompt checks.
 Native Windows and distinct-host SSH measurements remain separate.
+
+Earlier native captures of the introduction and the workspace chooser, at
+desktop size and at 80x24, are kept as history, not as current acceptance
+evidence:
+[introduction](images/startup/introduction-desktop.png),
+[introduction at 80x24](images/startup/introduction-80x24.png),
+[workspace chooser](images/startup/workspace-chooser-desktop.png),
+[workspace chooser at 80x24](images/startup/workspace-chooser-80x24.png).
 
 Never regenerate goldens, raise allocation ceilings or loosen a gate to land a
 regression. Update golden output only for an intentional, visually verified
@@ -526,7 +534,7 @@ also checks that idle, hovered and focused labels stay underlined.
 `TestConnectedConnectionDetailsUsesServerImage` separately checks propagation
 from a real core handshake through the remote port into the painted reader.
 
-`go test ./crashlog -count=1` runs genuine subprocess fatal/recovered crashes
+`go test ./internal/crashlog -count=1` runs genuine subprocess fatal/recovered crashes
 and checks report contents, private permissions and normal-exit cleanup.
 `TestCoreFatalCrashReportAtCLIEntry` also sends a fatal signal to one exact
 disposable core launched through the production CLI. It never uses the user's

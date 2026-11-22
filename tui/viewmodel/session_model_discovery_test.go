@@ -8,7 +8,7 @@ import (
 	"crude/agent/provider"
 	"crude/agent/session"
 	"crude/tui/screens/sessionsettings"
-	"crude/types"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -24,7 +24,7 @@ func TestSessionModelsUseAccountEndpointAndOriginatingDeck(t *testing.T) {
 		Connection: provider.Template{Name: "Custom", ProviderURL: server.URL, APIStandard: "openai", AuthType: provider.AuthBearer},
 	}}
 	wsOf(app).SetBackendConfig(&session.Config{Accounts: accounts}, t.TempDir())
-	settings := types.Settings{AccountID: "work", ProviderID: "custom"}
+	settings := setting.Settings{AccountID: "work", ProviderID: "custom"}
 	app.ActiveSession = &workspace.Session{SessionID: "first", Settings: workspace.NewSessionSettingsState(settings, settings, nil)}
 	app.openSessionSettings()
 	screen := app.sessionSettings()

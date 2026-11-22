@@ -10,15 +10,15 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"crude/lsp/edit"
-	"crude/types"
+	"crude/lsp/lspedit"
+	"crude/types/insight"
 	"crude/workspace/document"
 )
 
 // PrepareLSPRename is the one native/connected rename preparation route. The
 // actor supplies owner; expected identifies the invoking acknowledged source.
 // Provider JSON is normalized here, never decoded and rebuilt by the shell.
-func (w *Workspace) PrepareLSPRename(ctx context.Context, owner document.Owner, expected types.InsightSource, line, col int, name string) (ReviewedEditPreview, error) {
+func (w *Workspace) PrepareLSPRename(ctx context.Context, owner document.Owner, expected insight.Source, line, col int, name string) (ReviewedEditPreview, error) {
 	if w == nil || w.LiveDocuments == nil || w.LSPMgr == nil || w.LocalHistory == nil {
 		return ReviewedEditPreview{}, errors.New("rename requires canonical source, language service and recoverable Local History")
 	}
@@ -65,13 +65,13 @@ func (w *Workspace) PrepareLSPRename(ctx context.Context, owner document.Owner, 
 type reviewedLSPSource struct {
 	path     string
 	document *lspDocument
-	boundary types.InsightBoundary
+	boundary insight.Boundary
 	wire     int
 }
 
 // Captures only memory identities. Callers may use the returned fence while
 // holding DocumentService.mu; it never acquires documents or performs I/O.
-func (m *LSPManager) reviewedEditFence(boundary types.InsightBoundary, wireVersion int, targets []lspedit.DocumentEdit) (func() error, error) {
+func (m *LSPManager) reviewedEditFence(boundary insight.Boundary, wireVersion int, targets []lspedit.DocumentEdit) (func() error, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	main := m.documents[filepath.Clean(boundary.Source.Path)]

@@ -8,11 +8,11 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/text/snippet"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/types/control"
+	"crude/types/insight"
 	"crude/workspace"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -69,7 +69,7 @@ func TestConnectedSnippetSparseMirrorsPrivateNavigationAuthorUndoAndResume(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := a.ApplyCompletion(types.CompletionItem{Label: "pair", InsertText: text, Snippet: plan}); err != nil {
+	if err := a.ApplyCompletion(insight.CompletionItem{Label: "pair", InsertText: text, Snippet: plan}); err != nil {
 		t.Fatal(err)
 	}
 	one.app.adoptEditorSnippet(a)
@@ -150,7 +150,7 @@ func TestConnectedSnippetChoiceNativeOverflowAndExactSemanticOwner(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := a.ApplyCompletion(types.CompletionItem{Label: "choices", InsertText: text, Snippet: plan}); err != nil {
+	if err := a.ApplyCompletion(insight.CompletionItem{Label: "choices", InsertText: text, Snippet: plan}); err != nil {
 		t.Fatal(err)
 	}
 	one.app.adoptEditorSnippet(a)

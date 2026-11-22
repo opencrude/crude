@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/types"
+	"crude/types/conversation"
 	"crude/types/recovery"
 )
 
@@ -31,7 +31,7 @@ func TestRecoveredCompletionAcknowledgesAcceptedResponse(t *testing.T) {
 					t.Fatalf("rejected %s", kind)
 				}
 			}
-			emit("turn_started", types.TurnIdentity{Generation: 1, ModelID: "model"})
+			emit("turn_started", conversation.TurnIdentity{Generation: 1, ModelID: "model"})
 			emit("phase", map[string]any{"name": "preparing", "request_id": "interrupted"})
 			emit("stream_token", "Accepted original fragment.\n\n")
 			status := recovery.Status{ID: "incident", AgentID: owner, Generation: 1, State: recovery.Recovering,
@@ -52,7 +52,7 @@ func TestRecoveredCompletionAcknowledgesAcceptedResponse(t *testing.T) {
 				t.Fatal("fixture did not cross the recovery presentation transition")
 			}
 			emit("done", map[string]any{"content": answer, "reason": "completed"})
-			var responses []Message
+			var responses []conversation.Message
 			for _, message := range state.Messages.Messages() {
 				if message.Role == MessageRoleAssistant && strings.Contains(message.Content, "What changed") {
 					responses = append(responses, message)
@@ -71,7 +71,7 @@ func TestRecoveredCompletionAcknowledgesAcceptedResponse(t *testing.T) {
 func TestResponseCompletionKeepsNonstreamedAndLaterRequestText(t *testing.T) {
 	state := NewAgentState("owner", nil, nil)
 	emit := func(kind string, data any) { state.ApplyEvent(AgentEvent{Type: kind, Data: data}) }
-	emit("turn_started", types.TurnIdentity{Generation: 1, ModelID: "model"})
+	emit("turn_started", conversation.TurnIdentity{Generation: 1, ModelID: "model"})
 	emit("phase", map[string]any{"name": "preparing", "request_id": "first"})
 	emit("stream_token", "Original response")
 	// A distinct request in the same turn has no streamed assistant output. Its
@@ -82,7 +82,7 @@ func TestResponseCompletionKeepsNonstreamedAndLaterRequestText(t *testing.T) {
 		t.Fatalf("a prior request swallowed a distinct completion: %+v", rows)
 	}
 	// Repeating prose in a later human turn is legitimate, not a duplicate event.
-	emit("turn_started", types.TurnIdentity{Generation: 2, ModelID: "model"})
+	emit("turn_started", conversation.TurnIdentity{Generation: 2, ModelID: "model"})
 	emit("done", map[string]any{"content": "Done-only response", "reason": "completed"})
 	if rows := state.Messages.Messages(); len(rows) != 3 || rows[2].Content != "Done-only response" {
 		t.Fatalf("text-based deduplication swallowed legitimate output: %+v", rows)
@@ -92,7 +92,7 @@ func TestResponseCompletionKeepsNonstreamedAndLaterRequestText(t *testing.T) {
 func TestRecoveredCompletionDoesNotRepeatContinuationSuffix(t *testing.T) {
 	state := NewAgentState("owner", nil, nil)
 	emit := func(kind string, data any) { state.ApplyEvent(AgentEvent{Type: kind, Data: data}) }
-	emit("turn_started", types.TurnIdentity{Generation: 1, ModelID: "model"})
+	emit("turn_started", conversation.TurnIdentity{Generation: 1, ModelID: "model"})
 	emit("phase", map[string]any{"name": "preparing", "request_id": "partial"})
 	emit("stream_token", "Original response. ")
 	emit("phase", map[string]any{"name": "preparing", "request_id": "continuation"})
@@ -155,7 +155,7 @@ func TestRecoveryTransitionsRetainOneCanonicalRowAndUnfinishedOwnership(t *testi
 
 func TestStaleRecoveryCannotReplaceANewerTurn(t *testing.T) {
 	state := NewAgentState("owner", NewConversation(), nil)
-	state.TurnIdentity = types.TurnIdentity{Generation: 3, ModelID: "model"}
+	state.TurnIdentity = conversation.TurnIdentity{Generation: 3, ModelID: "model"}
 	state.Running = true
 	state.ApplyEvent(AgentEvent{Type: "recovery", Data: recovery.Status{ID: "old", AgentID: "owner", Generation: 2, State: recovery.NeedsAttention}})
 	if state.Recovery.ID != "" || len(state.Messages.Messages()) != 0 || !state.IsActive() {

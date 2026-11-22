@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/terminalvt"
+	"crude/internal/terminalvt"
 	"crude/tui/cell"
 	"crude/tui/surface"
 	"crude/tui/theme"

@@ -10,7 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/types"
+	"crude/types/conversation"
 	"crude/workspace"
 )
 
@@ -59,7 +59,7 @@ func TestFileChangesVisualAcceptance(t *testing.T) {
 		app = newEditorPaintApp(t, root)
 		app.AddOrchestrator("file-changes")
 		state := app.ws.AgentMgr().Get("file-changes").State
-		state.Messages.AppendMessage(workspace.Message{Role: types.RoleUser, Content: "Show the plan and file changes."})
+		state.Messages.AppendMessage(conversation.Message{Role: conversation.RoleUser, Content: "Show the plan and file changes."})
 		for _, item := range []struct{ id, name, args, result string }{
 			{"plan", "update_plan", `{}`, `{"id":"plan-1","revision":1,"objective":"Make file changes visible","status":"active","steps":[{"id":"one","description":"Show the full plan","status":"completed"},{"id":"two","description":"Show each file diff","status":"in_progress"}]}`},
 			{"write", "write_file", `{"path":"new.go","content":"package demo\n"}`, "```diff\n--- /dev/null\n+++ b/new.go\n@@ -0,0 +1 @@\n+package demo\n```"},
@@ -122,7 +122,7 @@ func (m *fileChangesVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				requireMissing(m.t, m.target)
 				assertTreeContainsPath(m.t, m.Tree.Model, m.target, false)
 			} else {
-				rows, _, _ := m.subPaneProjections.GetExisting("file-changes").renderer.ExportMessageRows(m.width)
+				rows, _, _ := m.subPaneProjections.Existing("file-changes").renderer.ExportMessageRows(m.width)
 				var text strings.Builder
 				for _, row := range rows {
 					text.WriteString(strings.Join(row.Lines, "\n"))

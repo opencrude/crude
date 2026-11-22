@@ -7,14 +7,14 @@ import (
 
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/setting"
 )
 
 // TestMemoryAgentRoleInInheritanceList verifies the /settings deck lists a
 // Memory Agent row alongside the other agents and that opening it yields a
 // provider/model/thinking role form.
 func TestMemoryAgentRoleInInheritanceList(t *testing.T) {
-	base := types.Settings{ProviderID: "openrouter", Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+	base := setting.Settings{ProviderID: "openrouter", Agents: setting.Agents{Categories: map[string]setting.Category{
 		"default": {Provider: "openrouter", Model: "workspace-main"},
 	}}}
 	screen := New(theme.DefaultDark(), cloneSettings(base), base, nil)
@@ -33,7 +33,7 @@ func TestMemoryAgentRoleInInheritanceList(t *testing.T) {
 // TestMemoryAgentRoleOpensRoleForm verifies entering the Memory Agent role
 // opens a provider/model/thinking role page (no protocol field).
 func TestMemoryAgentRoleOpensRoleForm(t *testing.T) {
-	base := types.Settings{ProviderID: "openrouter", Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+	base := setting.Settings{ProviderID: "openrouter", Agents: setting.Agents{Categories: map[string]setting.Category{
 		"default": {Provider: "openrouter", Model: "workspace-main"},
 	}}}
 	screen := New(theme.DefaultDark(), cloneSettings(base), base, nil)

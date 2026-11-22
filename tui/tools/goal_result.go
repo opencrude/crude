@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"crude/types"
+	"crude/types/conversation"
 )
 
 // IsGoalTool identifies the session goal tools. Their results are JSON for
@@ -21,15 +21,15 @@ func IsGoalTool(name string) bool {
 
 // GoalStatusLabel is the user-facing goal state shared by the header, /goal
 // and goal tool rows.
-func GoalStatusLabel(goal types.Goal) string {
+func GoalStatusLabel(goal conversation.Goal) string {
 	switch {
-	case goal.Status == types.GoalActive && goal.Verifying:
+	case goal.Status == conversation.GoalActive && goal.Verifying:
 		return "checking"
-	case goal.Status == types.GoalActive && goal.Waiting:
+	case goal.Status == conversation.GoalActive && goal.Waiting:
 		return "waiting"
-	case goal.Status == types.GoalComplete:
+	case goal.Status == conversation.GoalComplete:
 		return "complete"
-	case goal.Status == types.GoalBudgetLimited:
+	case goal.Status == conversation.GoalBudgetLimited:
 		return "limited by budget"
 	}
 	return string(goal.Status)
@@ -62,11 +62,11 @@ func FormatGoalTokens(n int64) string {
 
 func buildGoalResult(content string) StructuredResult {
 	var payload struct {
-		Goal            *types.Goal `json:"goal"`
-		RemainingTokens *int64      `json:"remaining_tokens"`
-		Status          string      `json:"status"`
-		VerifierID      string      `json:"verifier_id"`
-		Next            string      `json:"next"`
+		Goal            *conversation.Goal `json:"goal"`
+		RemainingTokens *int64             `json:"remaining_tokens"`
+		Status          string             `json:"status"`
+		VerifierID      string             `json:"verifier_id"`
+		Next            string             `json:"next"`
 	}
 	decoder := json.NewDecoder(strings.NewReader(content))
 	if decoder.Decode(&payload) != nil {

@@ -7,11 +7,11 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/agent/provider"
-	settingsui "crude/tui/settings"
+	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/surface"
 	"crude/tui/ui"
 	"crude/tui/wm"
-	"crude/types"
+	"crude/types/setting"
 )
 
 func newSettingsPromptApp(t *testing.T) (*App, *wm.FloatingWindow, *settingsui.WorkspaceSettingsSurface) {
@@ -20,7 +20,7 @@ func newSettingsPromptApp(t *testing.T) (*App, *wm.FloatingWindow, *settingsui.W
 	wsOf(app).Logger = noopLogger{}
 	app.width, app.height = 160, 40
 	app.registerOverlayHandlers()
-	wsOf(app).SetAppDefaults(types.AppSettings{
+	wsOf(app).SetAppDefaults(setting.App{
 
 		Accounts: map[string]provider.Account{
 			"work": {ID: "work", ProviderID: "openrouter", Label: "Work", Connection: provider.DefaultTemplates()["openrouter"]},

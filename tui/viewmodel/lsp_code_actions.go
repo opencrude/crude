@@ -7,11 +7,11 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/editor"
 	"crude/tui/screens/codeactions"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
 	"crude/workspace"
 	"crude/workspace/fileio"
 )
@@ -25,7 +25,7 @@ type codeActionState struct {
 	editor               *editor.Editor
 	path                 string
 	revision, generation uint64
-	source               types.InsightSource
+	source               insight.Source
 	selection            codeActionSelection
 	start, end           int
 	port                 shellport.CodeActions

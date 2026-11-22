@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/buildinfo"
-	"crude/core/port"
+	"crude/core/shellport"
+	"crude/internal/buildinfo"
 	"crude/tui/cell"
 	"crude/tui/screens/statusoverview"
 	"crude/tui/screens/termdock"

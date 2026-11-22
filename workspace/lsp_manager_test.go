@@ -3,12 +3,12 @@ package workspace
 import (
 	"context"
 	"crude/internal/fileuri"
+	"crude/types/insight"
+	"crude/types/setting"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
-
-	model "crude/types"
 )
 
 // Logger
@@ -51,7 +51,7 @@ func TestLSPManager_New(t *testing.T) {
 	if conn {
 		t.Error("new manager should not be connected")
 	}
-	if status != model.LSPIdle {
+	if status != insight.LSPIdle {
 		t.Errorf("new manager status = %d, want LSPIdle", status)
 	}
 	if errMsg != "" {
@@ -68,7 +68,7 @@ func TestLSPManager_StartForWorkspace_NotFound(t *testing.T) {
 	if conn {
 		t.Error("should not be connected without a valid server in PATH")
 	}
-	if status == model.LSPConnected {
+	if status == insight.LSPConnected {
 		t.Error("status should not be LSPConnected for a temp dir")
 	}
 	_ = errMsg
@@ -82,14 +82,14 @@ func TestLSPManager_FeatureGates(t *testing.T) {
 		t.Fatal("default LSP settings should show diagnostics in editor, tree, and status")
 	}
 
-	off := model.DefaultLSPSettings()
+	off := setting.DefaultLSP()
 	off.Enabled = false
 	m.SetSettings(off)
 	if m.ShowDiagnosticsInEditor() || m.ShowDiagnosticsInTree() || m.ShowDiagnosticsInStatus() {
 		t.Fatal("master switch must hide every diagnostic surface")
 	}
 
-	s := model.DefaultLSPSettings()
+	s := setting.DefaultLSP()
 	s.DiagInEditor = false
 	m.SetSettings(s)
 	if m.ShowDiagnosticsInEditor() {
@@ -99,8 +99,8 @@ func TestLSPManager_FeatureGates(t *testing.T) {
 		t.Fatal("tree diagnostics should stay on when only editor display is off")
 	}
 
-	s = model.DefaultLSPSettings()
-	s.Languages["go"] = model.LSPLanguageSettings{Enabled: false, Command: "gopls"}
+	s = setting.DefaultLSP()
+	s.Languages["go"] = setting.LSPLanguage{Enabled: false, Command: "gopls"}
 	m.SetSettings(s)
 	if m.Settings().LanguageEnabled(".go") {
 		t.Fatal("disabled go language must not start")
@@ -170,19 +170,19 @@ func TestLSPManager_AggregateConnectedServerIgnoresBackgroundFailure(t *testing.
 	m.states["go"] = &lspClientState{
 		rootURI: "file:///project",
 		cmd:     "gopls",
-		status:  model.LSPConnected,
+		status:  insight.LSPConnected,
 	}
 	m.states["json"] = &lspClientState{
 		rootURI: "file:///project",
 		cmd:     "vscode-json-language-server",
-		status:  model.LSPFailed,
+		status:  insight.LSPFailed,
 		err:     "vscode-json-language-server not found in PATH",
 	}
 	m.recomputeActiveStatusLocked()
 	m.mu.Unlock()
 
 	connected, status, errMsg := m.Status()
-	if !connected || status != model.LSPConnected || errMsg != "" {
+	if !connected || status != insight.LSPConnected || errMsg != "" {
 		t.Fatalf("aggregate status connected=%v status=%v error=%q", connected, status, errMsg)
 	}
 }
@@ -202,19 +202,19 @@ func TestLSPManager_AggregateActiveFileFailureTakesPrecedence(t *testing.T) {
 	m.states["go"] = &lspClientState{
 		rootURI: rootURI,
 		cmd:     "gopls",
-		status:  model.LSPConnected,
+		status:  insight.LSPConnected,
 	}
 	m.states["json"] = &lspClientState{
 		rootURI: rootURI,
 		cmd:     "vscode-json-language-server",
-		status:  model.LSPFailed,
+		status:  insight.LSPFailed,
 		err:     "vscode-json-language-server not found in PATH",
 	}
 	m.recomputeActiveStatusLocked()
 	m.mu.Unlock()
 
 	connected, status, errMsg := m.Status()
-	if connected || status != model.LSPFailed || errMsg == "" {
+	if connected || status != insight.LSPFailed || errMsg == "" {
 		t.Fatalf("active JSON status connected=%v status=%v error=%q", connected, status, errMsg)
 	}
 }
@@ -258,20 +258,20 @@ func TestCloseFile_WrongClient(t *testing.T) {
 
 func TestLSPServerHealthCountsCurrentFactsIncludingCleanFiles(t *testing.T) {
 	m, r, root, producer := projectFixture(t)
-	m.SetProjectProducers([]model.LSPProjectProducer{producer})
+	m.SetProjectProducers([]insight.LSPProjectProducer{producer})
 	client := startedProject(t, m, r)
 	problem := filepath.Join(root, "util.go")
 	clean := filepath.Join(root, "main.go")
 	warning := filepath.Join(root, "warning.go")
-	client.emitUnopened(problem, LSPDiagnostic{Message: "problem", Severity: model.DiagError}, LSPDiagnostic{Message: "info", Severity: model.DiagInfo}, LSPDiagnostic{Message: "hint", Severity: model.DiagHint})
+	client.emitUnopened(problem, insight.LSPDiagnostic{Message: "problem", Severity: insight.DiagError}, insight.LSPDiagnostic{Message: "info", Severity: insight.DiagInfo}, insight.LSPDiagnostic{Message: "hint", Severity: insight.DiagHint})
 	client.emitUnopened(clean)
-	client.emitUnopened(warning, LSPDiagnostic{Message: "warning", Severity: model.DiagWarning})
+	client.emitUnopened(warning, insight.LSPDiagnostic{Message: "warning", Severity: insight.DiagWarning})
 	health := m.ServerHealthSnapshots()[0]
 	if health.FilesTracked != 3 || health.FilesAffected != 1 || health.Errors != 1 || health.Warnings != 1 || health.Information != 1 || health.Hints != 1 || health.LastDiagnostics.IsZero() {
 		t.Fatalf("server counters omit current files: %+v", health)
 	}
 	m.mu.Lock()
-	m.sources.Insight.diagnostics.InvalidateMatching(func(b model.InsightBoundary) bool { return b.Source.Path == problem }, "File changed.")
+	m.sources.Insight.diagnostics.InvalidateMatching(func(b insight.Boundary) bool { return b.Source.Path == problem }, "File changed.")
 	m.mu.Unlock()
 	health = m.ServerHealthSnapshots()[0]
 	if health.FilesTracked != 2 || health.FilesAffected != 0 || health.Errors != 0 || health.Warnings != 1 {

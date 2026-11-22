@@ -15,7 +15,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"crude/agent/provider"
-	"crude/types"
+	"crude/types/statuscenter"
 )
 
 // Dedicated scripts/tuishot.sh acceptance. Every backend, project and shell is
@@ -61,7 +61,7 @@ func TestCompactionVisualAcceptance(t *testing.T) {
 		Text:        "Retain the complete source. " + strings.Repeat("accepted source evidence ", 3_000),
 		DisplayText: "Review the saved source evidence without deleting prior work.",
 	}, shell.app.Input.DraftRevision()))
-	remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool { return shell.app.ws.AgentActivity(id).Status.Phase == types.AgentCompleted })
+	remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool { return shell.app.ws.AgentActivity(id).Status.Phase == statuscenter.AgentCompleted })
 	model := &compactionVisualModel{App: shell.app, t: t, id: id, normal: &normal, extraction: &extraction, release: func() { once.Do(func() { close(release) }) }}
 	program := tea.NewProgram(model, tea.WithWidthMethod(ansi.GraphemeWidth))
 	shell.app.SetProgram(program)

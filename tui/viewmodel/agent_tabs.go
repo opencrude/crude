@@ -5,7 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/chatprojection"
 	"crude/tui/ui"
 	"crude/tui/window"
@@ -39,7 +39,7 @@ func (m *App) addOrchestrator(orchID string, activate bool) {
 			if childID == orchID {
 				continue
 			}
-			if node := m.ws.AgentMgr().Get(childID); node != nil && node.State != nil && node.State.Completed && m.subPaneProjections.GetExisting(childID) == nil && !m.AgentView.Chosen(childID) {
+			if node := m.ws.AgentMgr().Get(childID); node != nil && node.State != nil && node.State.Completed && m.subPaneProjections.Existing(childID) == nil && !m.AgentView.Chosen(childID) {
 				m.MinimizeAgent(childID)
 			}
 			m.ensureAgentProjection(childID)
@@ -65,7 +65,7 @@ func (m *App) addOrchestrator(orchID string, activate bool) {
 			continue
 		}
 		node := m.ws.AgentMgr().Get(childID)
-		if node != nil && node.State != nil && node.State.Completed && m.subPaneProjections.GetExisting(childID) == nil && !m.AgentView.Chosen(childID) {
+		if node != nil && node.State != nil && node.State.Completed && m.subPaneProjections.Existing(childID) == nil && !m.AgentView.Chosen(childID) {
 			m.MinimizeAgent(childID)
 		}
 		m.ensureAgentProjection(childID)
@@ -88,7 +88,7 @@ func (m *App) ensureAgentProjection(id string) {
 	if node == nil || node.State == nil || m.subPaneProjections == nil {
 		return
 	}
-	projection := m.subPaneProjections.GetExisting(id)
+	projection := m.subPaneProjections.Existing(id)
 	if projection == nil {
 		projection = m.subPaneProjections.Get(id, workspace.PaneAgent)
 		projection.renderer.SetSubPaneContentFn(m.renderSubPaneContentForApp)
@@ -240,7 +240,7 @@ func (m *App) activeMsgList() *chatprojection.Renderer {
 	if n == nil {
 		return nil
 	}
-	if p := m.subPaneProjections.GetExisting(n.ID); p != nil {
+	if p := m.subPaneProjections.Existing(n.ID); p != nil {
 		return p.renderer
 	}
 	return nil
@@ -300,7 +300,7 @@ func (m *App) anyAgentAnimating() bool {
 	return false
 }
 
-func (m *App) setMode(newMode Mode) {
+func (m *App) setMode(newMode workspace.Mode) {
 	oldMode := m.OverlayState.Current()
 	if m.ws.Logger() != nil {
 		m.ws.Logger().Debug("UI", "mode_switch", "from", modeName(oldMode), "to", modeName(newMode))
@@ -328,7 +328,7 @@ func (m *App) activeMessageList() *chatprojection.Renderer {
 	}
 	// Fallback: use any available agent's projection MessageList
 	for _, n := range m.ws.AgentMgr().AllNodes() {
-		if p := m.subPaneProjections.GetExisting(n.ID); p != nil {
+		if p := m.subPaneProjections.Existing(n.ID); p != nil {
 			return p.renderer
 		}
 	}

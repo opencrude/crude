@@ -1,12 +1,12 @@
 package viewmodel
 
 import (
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/screens/panelchrome"
 	"crude/tui/theme"
 	"crude/tui/ui"
 	"crude/tui/wm"
-	ttypes "crude/types"
+	"crude/types/setting"
 )
 
 // themeConsumerID names a theme sink that ApplyThemePreset must update.
@@ -72,12 +72,12 @@ func (m *App) applyThemeFrame(th *theme.Theme) {
 	applyThemePreferences(th, m.ws.LoadAppSettings())
 }
 
-func applyThemePreferences(th *theme.Theme, settings ttypes.AppSettings) {
+func applyThemePreferences(th *theme.Theme, settings setting.App) {
 	if th == nil {
 		return
 	}
 	cfg := settings.Theme
-	th.Spacing.Frame = ui.Insets{
+	th.Spacing.Frame = theme.Insets{
 		Top:    clampFramePad(cfg.PadTopOrDefault()),
 		Right:  clampFramePad(cfg.PadRightOrDefault()),
 		Bottom: clampFramePad(cfg.PadBottomOrDefault()),
@@ -468,7 +468,7 @@ func applyThemeToFloatingContent(fw *wm.FloatingWindow, th *theme.Theme) {
 }
 
 // themePresetFromSettings resolves the active theme preset from app settings.
-func themePresetFromSettings(s ttypes.AppSettings) string {
+func themePresetFromSettings(s setting.App) string {
 	if s.Theme.Preset != "" {
 		return s.Theme.Preset
 	}

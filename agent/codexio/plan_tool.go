@@ -1,6 +1,7 @@
 // Copyright 2025 OpenAI
 // SPDX-License-Identifier: Apache-2.0
 // Copied from Codex plan_spec.rs at aa380897f67b; represented in Go for Crude.
+
 package codexio
 
 import "encoding/json"

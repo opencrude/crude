@@ -9,7 +9,7 @@ import (
 	"math/rand/v2"
 	"sync"
 
-	"crude/clientstate"
+	"crude/internal/clientstate"
 )
 
 // composerDraftClient is this shell's private client profile bound to one

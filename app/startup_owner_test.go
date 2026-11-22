@@ -10,8 +10,9 @@ import (
 	"sync"
 	"testing"
 
-	"crude/network"
-	"crude/types"
+	"crude/internal/network"
+	"crude/types/setting"
+	"crude/types/statuscenter"
 )
 
 func startupOwnerHome(t *testing.T) string {
@@ -45,8 +46,8 @@ func newStartupOwner(t *testing.T, home string) *App {
 	return a
 }
 
-func startupChoice(field, value string) types.SettingEdit {
-	return types.SettingEdit{Path: []string{"onboarding", field}, After: json.RawMessage(value)}
+func startupChoice(field, value string) setting.Edit {
+	return setting.Edit{Path: []string{"onboarding", field}, After: json.RawMessage(value)}
 }
 
 func readStartupJSON(t *testing.T) map[string]any {
@@ -106,7 +107,7 @@ func TestStartupOwnerProfileEligibility(t *testing.T) {
 func TestStartupOwnerSaveSparseChoicesSurviveRestart(t *testing.T) {
 	home := startupOwnerHome(t)
 	a := newStartupOwner(t, home)
-	if _, err := a.SaveStartup(t.Context(), []types.SettingEdit{startupChoice("introduction_completed", "true")}); err != nil {
+	if _, err := a.SaveStartup(t.Context(), []setting.Edit{startupChoice("introduction_completed", "true")}); err != nil {
 		t.Fatal(err)
 	}
 	want := map[string]any{"onboarding": map[string]any{"introduction_completed": true}}
@@ -114,7 +115,7 @@ func TestStartupOwnerSaveSparseChoicesSurviveRestart(t *testing.T) {
 		t.Fatalf("first write materialized unrelated defaults: %#v", got)
 	}
 	a = newStartupOwner(t, home)
-	if _, err := a.SaveStartup(t.Context(), []types.SettingEdit{startupChoice("ai_setup_reminder_hidden", "true")}); err != nil {
+	if _, err := a.SaveStartup(t.Context(), []setting.Edit{startupChoice("ai_setup_reminder_hidden", "true")}); err != nil {
 		t.Fatal(err)
 	}
 	out, err := newStartupOwner(t, home).StartupSnapshot(t.Context())
@@ -122,7 +123,7 @@ func TestStartupOwnerSaveSparseChoicesSurviveRestart(t *testing.T) {
 		t.Fatalf("restart lost committed choices: %+v, err=%v", out, err)
 	}
 	// Explicit false is a stored choice, not an instruction to materialize defaults.
-	if _, err := a.SaveStartup(t.Context(), []types.SettingEdit{startupChoice("ai_setup_reminder_hidden", "false")}); err != nil {
+	if _, err := a.SaveStartup(t.Context(), []setting.Edit{startupChoice("ai_setup_reminder_hidden", "false")}); err != nil {
 		t.Fatal(err)
 	}
 	want["onboarding"].(map[string]any)["ai_setup_reminder_hidden"] = false
@@ -147,7 +148,7 @@ func TestStartupOwnerConcurrentEditsPreserveCurrentFile(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			_, err := a.SaveStartup(context.Background(), []types.SettingEdit{startupChoice(field, "true")})
+			_, err := a.SaveStartup(context.Background(), []setting.Edit{startupChoice(field, "true")})
 			errs <- err
 		}()
 	}
@@ -205,11 +206,11 @@ func TestStartupOwnerRepairAndWriteErrorsAreVisible(t *testing.T) {
 			}
 			if scenario != "read only parent" {
 				out, err := a.StartupSnapshot(t.Context())
-				if err != nil || out.ShowIntroduction || len(out.Issues) == 0 || out.Issues[0].Target != types.RepairConfigFile || out.Issues[0].Path != ConfigPath() {
+				if err != nil || out.ShowIntroduction || len(out.Issues) == 0 || out.Issues[0].Target != statuscenter.RepairConfigFile || out.Issues[0].Path != ConfigPath() {
 					t.Fatalf("repair mistaken for first use: %+v, %v", out, err)
 				}
 			}
-			if _, err := a.SaveStartup(t.Context(), []types.SettingEdit{startupChoice("introduction_completed", "true")}); err == nil {
+			if _, err := a.SaveStartup(t.Context(), []setting.Edit{startupChoice("introduction_completed", "true")}); err == nil {
 				t.Fatal("failed configuration save reported success")
 			}
 			if a.committedDefaults().Onboarding.IntroductionCompleted {
@@ -227,18 +228,18 @@ func TestStartupOwnerRepairAndWriteErrorsAreVisible(t *testing.T) {
 func TestStartupOwnerRejectsInvalidAndCancelledEdits(t *testing.T) {
 	home := startupOwnerHome(t)
 	a := newStartupOwner(t, home)
-	for _, edit := range []types.SettingEdit{
+	for _, edit := range []setting.Edit{
 		{Path: []string{"editor", "tab_size"}, After: json.RawMessage(`8`)},
 		{Path: []string{"onboarding", "unknown"}, After: json.RawMessage(`true`)},
 		startupChoice("introduction_completed", `"true"`),
 	} {
-		if _, err := a.SaveStartup(t.Context(), []types.SettingEdit{edit}); err == nil {
+		if _, err := a.SaveStartup(t.Context(), []setting.Edit{edit}); err == nil {
 			t.Fatalf("accepted invalid startup edit: %+v", edit)
 		}
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := a.SaveStartup(ctx, []types.SettingEdit{startupChoice("introduction_completed", "true")}); err == nil {
+	if _, err := a.SaveStartup(ctx, []setting.Edit{startupChoice("introduction_completed", "true")}); err == nil {
 		t.Fatal("cancelled save succeeded")
 	}
 	if _, err := os.Stat(ConfigPath()); !os.IsNotExist(err) {

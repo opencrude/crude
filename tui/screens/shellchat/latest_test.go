@@ -6,7 +6,7 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/statuscenter"
 	"fmt"
 	"strings"
 	"testing"
@@ -50,7 +50,7 @@ func latestFixture(th *theme.Theme, id string, w, h, n int) (*Screen, PaintParam
 	rows := []chatprojection.MessageRow{{ID: id + "message", Lines: lines}}
 	paint := PaintParams{Compose: ComposeParams{InnerW: max(0, w-2*th.Spacing.PadLR), PadLR: th.Spacing.PadLR, Theme: th, MainSBVisible: n > h-2}}
 	s.SetMessages(rows, paint)
-	s.SetActivity(types.AgentActivityView{Status: types.AgentStatusSnapshot{Detail: "Ready"}})
+	s.SetActivity(statuscenter.AgentActivityView{Status: statuscenter.AgentStatusSnapshot{Detail: "Ready"}})
 	return s, paint, rows
 }
 func latestPaint(host *ui.Host, w, h int) *surface.CellBuffer {

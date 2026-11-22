@@ -7,7 +7,7 @@
 
 ## Ownership and boundary
 
-`syntax/` is a presentation-neutral library. A Session owns one native parser,
+`insight/syntax/` is a presentation-neutral library. A Session owns one native parser,
 compiled highlight query and accepted tree/source revision. One worker must
 serialize Parse and Close; callers never run native work on Update, Paint or
 a workspace actor. Close is explicit and idempotent. This is analysis state,
@@ -27,7 +27,7 @@ owner and revision before publication and perform grapheme/tab projection.
 Grammar/runtime identity and the composed query digest identify syntax
 provenance, not semantic project context or compiler correctness.
 
-The immutable data identities are defined in `types/syntax`, without a native
+The immutable data identities are defined in `types/syntaxdata`, without a native
 dependency. The engine exposes that same vocabulary; neutral wire clients can
 consume results without linking a parser. `make test-lsp` guards pure-Go
 contract/transport builds as well as the separate nested LSP lifetime suite.
@@ -51,7 +51,7 @@ reclaims source analysis; shutdown cancels waiting work and joins the worker.
 
 Publication checks document identity, exact source revision/path, open-view
 entry token, cancellation and service lifetime under the canonical lock.
-`types.DocumentInsight` has an independent version plus random service
+`insight.DocumentInsight` has an independent version plus random service
 generation so core restart cannot make old and new versions comparable.
 Pending, current, unsupported, failed and limited are explicit; a nil result
 never means no compiler errors. No native tree crosses the boundary.
@@ -59,7 +59,7 @@ never means no compiler errors. No native tree crosses the boundary.
 `coreprotocol.TopicInsight` is independent from the acknowledged document
 journal. A slow insight subscriber cannot hold up source edits, receipts or
 other clients. Reconnect sends a complete latest derived snapshot, never a
-text mutation. `core/port/remote` shares the exact open/attachment/workspace
+text mutation. `core/shellport/remote` shares the exact open/attachment/workspace
 token with its document subscription. Update rejects stale tokens and caches
 only the newest pre-mount result; source may overtake syntax or vice versa.
 
@@ -108,7 +108,7 @@ Only explicit grammar/scanner modules are linked:
 | JavaScript/JSX | tree-sitter-javascript v0.23.1 |
 | TypeScript/TSX | tree-sitter-typescript commit 75b3874edb2dc714fb1fd77a32013d0f8699989f |
 
-Highlight query data in `syntax/queries/` derives from those MIT sources.
+Highlight query data in `insight/syntax/queries/` derives from those MIT sources.
 TypeScript/TSX compose the JavaScript and TypeScript queries. The Go generic
 identifier pattern precedes specific function patterns so later-pattern
 precedence does not erase function roles. Nested captures override enclosing
@@ -167,7 +167,7 @@ sources and fuzz seeds. Allocation benchmarks are gated separately from typing
 and native RSS. See [performance baselines](performance-baselines.md).
 
 Release archives must include the embedded query notice from
-`syntax/queries/NOTICE` as well as the dependency licenses. Those query assets
+`insight/syntax/queries/NOTICE` as well as the dependency licenses. Those query assets
 are part of the original module and would be excluded by go-licenses'
 original-module ignore rule. Archive tests verify exact notice bytes and reject
 missing notices on both package formats.

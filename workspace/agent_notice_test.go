@@ -6,7 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/types"
+	"crude/types/conversation"
+	"crude/types/statuscenter"
 	"crude/workspace/fileio"
 )
 
@@ -36,7 +37,7 @@ func TestAgentCommandNoticeRepeatsPreserveOutcomeAndUserState(t *testing.T) {
 	notice.Commands[0].Error = ""
 	ws.ApplyAgentNotice(notice)
 	operations := center.Operations()
-	if len(operations) != 1 || operations[0].State != types.OperationRunning || !operations[0].Cancellable ||
+	if len(operations) != 1 || operations[0].State != statuscenter.OperationRunning || !operations[0].Cancellable ||
 		len(center.Notifications(true)) != 0 {
 		t.Fatalf("running command was not recorded quietly: %+v", operations)
 	}
@@ -46,11 +47,11 @@ func TestAgentCommandNoticeRepeatsPreserveOutcomeAndUserState(t *testing.T) {
 	ws.ApplyAgentNotice(notice)
 	n := center.Notifications(true)
 	if len(n) != 1 || n[0].Occurrences != 1 || n[0].Source != "background-command" ||
-		n[0].Owner != (types.ResourceRef{Kind: types.ResourceAgent, ID: "agent", SessionID: "session"}) ||
+		n[0].Owner != (statuscenter.ResourceRef{Kind: statuscenter.ResourceAgent, ID: "agent", SessionID: "session"}) ||
 		len(n[0].Actions) != 1 || n[0].Actions[0].Label != "Inspect agent" {
 		t.Fatalf("failure lost source, ownership or inspection: %+v", n)
 	}
-	if ops := center.Operations(); len(ops) != 1 || ops[0].ID != operations[0].ID || ops[0].State != types.OperationFailed ||
+	if ops := center.Operations(); len(ops) != 1 || ops[0].ID != operations[0].ID || ops[0].State != statuscenter.OperationFailed ||
 		ops[0].Cancellable || ops[0].OutputRef != "reused" || ops[0].Error != "exit status 1" {
 		t.Fatalf("command did not settle its exact operation: %+v", ops)
 	}
@@ -82,7 +83,7 @@ func TestAgentCommandNoticeRepeatsPreserveOutcomeAndUserState(t *testing.T) {
 	notice.Commands[0].Status = fileio.AsyncRunning
 	version := center.Version()
 	ws.ApplyAgentNotice(notice)
-	if center.Version() != version || center.Operations()[0].State != types.OperationFailed {
+	if center.Version() != version || center.Operations()[0].State != statuscenter.OperationFailed {
 		t.Fatal("an observed settled command returned to running")
 	}
 }
@@ -164,10 +165,10 @@ func TestAgentCommandNoticePruningCannotReplayRetainedJobs(t *testing.T) {
 	id := center.Notifications(true)[0].ID
 	opID := center.Operations()[0].ID
 	for i := range statusNotificationLimit {
-		center.Notify(types.NotificationRecord{Summary: fmt.Sprintf("different failure %d", i), Severity: types.SeverityError})
+		center.Notify(statuscenter.NotificationRecord{Summary: fmt.Sprintf("different failure %d", i), Severity: statuscenter.SeverityError})
 	}
 	for i := range statusOperationLimit {
-		center.SetOperation(types.OperationSnapshot{ID: fmt.Sprintf("other-operation-%d", i), State: types.OperationSucceeded})
+		center.SetOperation(statuscenter.OperationSnapshot{ID: fmt.Sprintf("other-operation-%d", i), State: statuscenter.OperationSucceeded})
 	}
 	for _, n := range center.Notifications(true) {
 		if n.ID == id {
@@ -236,7 +237,7 @@ func TestAgentServiceNoticeExactEventsPreserveUserState(t *testing.T) {
 			center := NewStatusCenter(nil, nil)
 			defer center.Close()
 			ws := commandNoticeWorkspace(center)
-			identity := types.RuntimeEventIdentity{EventID: "source-event", OwnerID: "session", AgentID: "agent", RuntimeEpoch: 1, Generation: 1, Sequence: 1}
+			identity := conversation.RuntimeEventIdentity{EventID: "source-event", OwnerID: "session", AgentID: "agent", RuntimeEpoch: 1, Generation: 1, Sequence: 1}
 			notice, ok := NoticeFromEvent(AgentEvent{Type: test.kind, AgentID: "agent", Data: test.data, Identity: identity})
 			if !ok || notice.Identity != identity {
 				t.Fatal("typed notice lost exact event identity")
@@ -279,7 +280,7 @@ func TestAgentServiceBareNoticesRecordEachCanonicalEvent(t *testing.T) {
 	}
 	ws.ApplyAgentNotice(notice)
 	got := center.Notifications(true)
-	if len(got) != 1 || got[0].Owner != (types.ResourceRef{Kind: types.ResourceWorkspace, ID: "project"}) ||
+	if len(got) != 1 || got[0].Owner != (statuscenter.ResourceRef{Kind: statuscenter.ResourceWorkspace, ID: "project"}) ||
 		got[0].Summary != "Memory: saved 1 from this session" || !got[0].Read || !got[0].Transient {
 		t.Fatalf("bare feedback lost its actual owner: %+v", got)
 	}
@@ -293,7 +294,7 @@ func TestAgentServiceBareNoticesRecordEachCanonicalEvent(t *testing.T) {
 	ws.ApplyAgentNotice(notice)
 	notice.Count = 1
 	notice.AgentID = "agent"
-	notice.Identity = types.RuntimeEventIdentity{EventID: "wrong-owner", OwnerID: "other-session", AgentID: "agent", RuntimeEpoch: 1, Generation: 1, Sequence: 1}
+	notice.Identity = conversation.RuntimeEventIdentity{EventID: "wrong-owner", OwnerID: "other-session", AgentID: "agent", RuntimeEpoch: 1, Generation: 1, Sequence: 1}
 	ws.ApplyAgentNotice(notice)
 	if center.Version() != version {
 		t.Fatal("empty memory result or wrong source owner published feedback")
@@ -310,17 +311,17 @@ func TestAgentCommandNoticeLifetimeOutlivesAgentTurn(t *testing.T) {
 			notice.Commands[0].Status, notice.Commands[0].EndedAt, notice.Commands[0].Error = fileio.AsyncRunning, time.Time{}, ""
 			ws.ApplyAgentNotice(notice)
 			commandID := center.Operations()[0].ID
-			center.SetOperation(types.OperationSnapshot{ID: "request", Owner: types.ResourceRef{Kind: types.ResourceAgent, ID: "agent"},
-				Kind: "agent-request", State: types.OperationRunning})
+			center.SetOperation(statuscenter.OperationSnapshot{ID: "request", Owner: statuscenter.ResourceRef{Kind: statuscenter.ResourceAgent, ID: "agent"},
+				Kind: "agent-request", State: statuscenter.OperationRunning})
 			ws.ApplyAgentStatusEvent(AgentEvent{Type: event, AgentID: "agent", Data: map[string]any{"reason": "completed"}})
-			requestState := types.OperationSucceeded
+			requestState := statuscenter.OperationSucceeded
 			if event == "error" {
-				requestState = types.OperationFailed
+				requestState = statuscenter.OperationFailed
 			}
 			for _, op := range center.Operations() {
 				switch op.ID {
 				case commandID:
-					if op.State != types.OperationRunning || !op.Cancellable {
+					if op.State != statuscenter.OperationRunning || !op.Cancellable {
 						t.Fatalf("agent turn ended a command still owned by its manager: %+v", op)
 					}
 				case "request":

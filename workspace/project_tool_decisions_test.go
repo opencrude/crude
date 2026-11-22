@@ -10,11 +10,12 @@ import (
 	"testing"
 	"time"
 
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace/fileio"
 )
 
-func decisionFixture(t *testing.T) (*Workspace, types.ProjectToolReview) {
+func decisionFixture(t *testing.T) (*Workspace, insight.ProjectToolReview) {
 	t.Helper()
 	parent, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -29,7 +30,7 @@ func decisionFixture(t *testing.T) (*Workspace, types.ProjectToolReview) {
 		t.Fatal(err)
 	}
 	db := openTestWorkspaceDB(t)
-	settings, _ := json.Marshal(types.WorkspaceOverrides{
+	settings, _ := json.Marshal(setting.WorkspaceOverrides{
 		Analysis: json.RawMessage(`{"trust":"trusted"}`), AnalysisRootIdentity: identity,
 		Capabilities: json.RawMessage(`{"unknown":{"keep":[1,2,3]}}`),
 	})
@@ -41,13 +42,13 @@ func decisionFixture(t *testing.T) (*Workspace, types.ProjectToolReview) {
 	m.mu.Lock()
 	m.workspaceRoot = root
 	m.analysisRootIdentity = identity
-	m.analysisSettings = types.WorkspaceAnalysisSettings{Trust: types.AnalysisTrusted}
+	m.analysisSettings = setting.WorkspaceAnalysis{Trust: setting.AnalysisTrusted}
 	m.assemblyRequested = 3
-	m.assembly = types.AssemblyPlan{State: types.AssemblyReady, Generation: 3, Languages: []types.AssemblyLanguage{
-		{ID: "fixture", ServerID: "fixture", Status: types.ToolMissing, Package: "amber-lsp", Command: "amber-lsp"},
-		{ID: "unknown", ServerID: "unknown", Status: types.ToolMissing, Package: "not-in-catalog", Command: "unknown"},
+	m.assembly = insight.AssemblyPlan{State: insight.AssemblyReady, Generation: 3, Languages: []insight.AssemblyLanguage{
+		{ID: "fixture", ServerID: "fixture", Status: insight.ToolMissing, Package: "amber-lsp", Command: "amber-lsp"},
+		{ID: "unknown", ServerID: "unknown", Status: insight.ToolMissing, Package: "not-in-catalog", Command: "unknown"},
 	}}
-	plan := types.CloneAssemblyPlan(m.assembly)
+	plan := insight.CloneAssemblyPlan(m.assembly)
 	m.mu.Unlock()
 	w := &Workspace{RootPath: root, WorkspaceDB: db, LSPMgr: m, Logger: testLogger{}}
 	review, err := BuildProjectToolReview(root, identity, plan)
@@ -57,7 +58,7 @@ func decisionFixture(t *testing.T) (*Workspace, types.ProjectToolReview) {
 	return w, review
 }
 
-func decisionsFromDB(t *testing.T, db *WorkspaceDB) []projectToolDecision {
+func decisionsFromDB(t *testing.T, db *DB) []projectToolDecision {
 	t.Helper()
 	var raw string
 	if err := db.DB.QueryRow(`SELECT value FROM workspace_metadata WHERE key=?`, workspaceSettingsKey).Scan(&raw); err != nil {
@@ -171,7 +172,7 @@ func TestProjectToolDecisionMalformedAuthorityFailsClosed(t *testing.T) {
 		if _, err := work(context.Background()); err == nil {
 			t.Fatal("accepted malformed authority")
 		}
-		if got := w.WorkspaceDB.GetSetting(workspaceSettingsKey); got != corrupt {
+		if got := w.WorkspaceDB.Setting(workspaceSettingsKey); got != corrupt {
 			t.Fatal("corrupt authority was erased")
 		}
 	}
@@ -223,7 +224,7 @@ func TestProjectToolDecisionRejectsRootAndTrustChange(t *testing.T) {
 				t.Fatal(err)
 			}
 			if mode == "trust" {
-				w.LSPMgr.SetAnalysisPolicy(types.DefaultWorkspaceAnalysisSettings(), "")
+				w.LSPMgr.SetAnalysisPolicy(setting.DefaultWorkspaceAnalysis(), "")
 			} else {
 				if err := os.Rename(w.RootPath, w.RootPath+"-old"); err != nil {
 					t.Fatal(err)
@@ -250,7 +251,7 @@ func TestProjectToolDecisionConcurrentPreference(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := saveWorkspacePreferences(w.WorkspaceDB, w.AppDefaults(), []types.SettingEdit{
+		_, err := saveWorkspacePreferences(w.WorkspaceDB, w.AppDefaults(), []setting.Edit{
 			{Path: []string{"editor", "tab_size"}, After: json.RawMessage("7")},
 		}, "", predictionPreferenceBinding{})
 		done <- err

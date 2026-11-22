@@ -8,8 +8,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/port"
-	textencoding "crude/text/encoding"
+	"crude/core/shellport"
+	"crude/text/textencoding"
 	"crude/tui/screens/findinfiles"
 	"crude/workspace/fileio"
 )

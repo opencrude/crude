@@ -8,52 +8,52 @@ import (
 	"strings"
 	"testing"
 
-	"crude/types"
+	"crude/types/insight"
 )
 
-func occurrence(stop, start, end, parent int, choices ...string) types.CompletionOccurrence {
-	return types.CompletionOccurrence{Stop: stop, StartByte: start, EndByte: end, Parent: parent, Choices: choices}
+func occurrence(stop, start, end, parent int, choices ...string) insight.CompletionOccurrence {
+	return insight.CompletionOccurrence{Stop: stop, StartByte: start, EndByte: end, Parent: parent, Choices: choices}
 }
 
 func TestNumericSnippetLiteralExpectedTextAndOccurrences(t *testing.T) {
 	cases := []struct {
 		name, source, text string
-		occurrences        []types.CompletionOccurrence
+		occurrences        []insight.CompletionOccurrence
 	}{
-		{"empty", "", "", []types.CompletionOccurrence{occurrence(0, 0, 0, -1)}},
-		{"plain", "hello", "hello", []types.CompletionOccurrence{occurrence(0, 5, 5, -1)}},
+		{"empty", "", "", []insight.CompletionOccurrence{occurrence(0, 0, 0, -1)}},
+		{"plain", "hello", "hello", []insight.CompletionOccurrence{occurrence(0, 5, 5, -1)}},
 		{"linked defaults", "call(${1:name}, $1, ${2:count})$0", "call(name, name, count)",
-			[]types.CompletionOccurrence{occurrence(1, 5, 9, -1), occurrence(1, 11, 15, -1), occurrence(2, 17, 22, -1), occurrence(0, 23, 23, -1)}},
+			[]insight.CompletionOccurrence{occurrence(1, 5, 9, -1), occurrence(1, 11, 15, -1), occurrence(2, 17, 22, -1), occurrence(0, 23, 23, -1)}},
 		{"forward default", "$1 ${1:word}", "word word",
-			[]types.CompletionOccurrence{occurrence(1, 0, 4, -1), occurrence(1, 5, 9, -1), occurrence(0, 9, 9, -1)}},
+			[]insight.CompletionOccurrence{occurrence(1, 0, 4, -1), occurrence(1, 5, 9, -1), occurrence(0, 9, 9, -1)}},
 		{"nested linked", "${1:outer ${2:inner}} / $1 / $2$0", "outer inner / outer inner / inner",
-			[]types.CompletionOccurrence{occurrence(1, 0, 11, -1), occurrence(2, 6, 11, 0),
+			[]insight.CompletionOccurrence{occurrence(1, 0, 11, -1), occurrence(2, 6, 11, 0),
 				occurrence(1, 14, 25, -1), occurrence(2, 20, 25, 2), occurrence(2, 28, 33, -1), occurrence(0, 33, 33, -1)}},
 		{"unicode normalized number", "é😀${02:x}$2$0", "é😀xx",
-			[]types.CompletionOccurrence{occurrence(2, 6, 7, -1), occurrence(2, 7, 8, -1), occurrence(0, 8, 8, -1)}},
+			[]insight.CompletionOccurrence{occurrence(2, 6, 7, -1), occurrence(2, 7, 8, -1), occurrence(0, 8, 8, -1)}},
 		{"explicit early final sparse stops", "pre$0post${10:a}${2:b}", "prepostab",
-			[]types.CompletionOccurrence{occurrence(0, 3, 3, -1), occurrence(10, 7, 8, -1), occurrence(2, 8, 9, -1)}},
+			[]insight.CompletionOccurrence{occurrence(0, 3, 3, -1), occurrence(10, 7, 8, -1), occurrence(2, 8, 9, -1)}},
 		{"all escaped choices", `${1|red,bl\,ue,green\|ish,\\|}:$1`, "red:red",
-			[]types.CompletionOccurrence{occurrence(1, 0, 3, -1, "red", "bl,ue", "green|ish", `\`),
+			[]insight.CompletionOccurrence{occurrence(1, 0, 3, -1, "red", "bl,ue", "green|ish", `\`),
 				occurrence(1, 4, 7, -1, "red", "bl,ue", "green|ish", `\`), occurrence(0, 7, 7, -1)}},
 		{"crlf empty stops", "${1:α\r\n\t中}${2:}$2", "α\r\n\t中",
-			[]types.CompletionOccurrence{occurrence(1, 0, 8, -1), occurrence(2, 8, 8, -1), occurrence(2, 8, 8, -1), occurrence(0, 8, 8, -1)}},
+			[]insight.CompletionOccurrence{occurrence(1, 0, 8, -1), occurrence(2, 8, 8, -1), occurrence(2, 8, 8, -1), occurrence(0, 8, 8, -1)}},
 		{"equal definitions", "${1:thing} ${01:thing}", "thing thing",
-			[]types.CompletionOccurrence{occurrence(1, 0, 5, -1), occurrence(1, 6, 11, -1), occurrence(0, 11, 11, -1)}},
-		{"literal escapes", `\\\$1\}`, `\$1}`, []types.CompletionOccurrence{occurrence(0, 4, 4, -1)}},
+			[]insight.CompletionOccurrence{occurrence(1, 0, 5, -1), occurrence(1, 6, 11, -1), occurrence(0, 11, 11, -1)}},
+		{"literal escapes", `\\\$1\}`, `\$1}`, []insight.CompletionOccurrence{occurrence(0, 4, 4, -1)}},
 		{"nested empty", "${1:${2:}}$2", "",
-			[]types.CompletionOccurrence{occurrence(1, 0, 0, -1), occurrence(2, 0, 0, 0), occurrence(2, 0, 0, -1), occurrence(0, 0, 0, -1)}},
+			[]insight.CompletionOccurrence{occurrence(1, 0, 0, -1), occurrence(2, 0, 0, 0), occurrence(2, 0, 0, -1), occurrence(0, 0, 0, -1)}},
 		{"empty choice", "${1|,value|}$0", "",
-			[]types.CompletionOccurrence{occurrence(1, 0, 0, -1, "", "value"), occurrence(0, 0, 0, -1)}},
+			[]insight.CompletionOccurrence{occurrence(1, 0, 0, -1, "", "value"), occurrence(0, 0, 0, -1)}},
 		{"repeated zero", "$0$0", "",
-			[]types.CompletionOccurrence{occurrence(0, 0, 0, -1), occurrence(0, 0, 0, -1)}},
-		{"final default", "${0:x}", "x", []types.CompletionOccurrence{occurrence(0, 0, 1, -1)}},
+			[]insight.CompletionOccurrence{occurrence(0, 0, 0, -1), occurrence(0, 0, 0, -1)}},
+		{"final default", "${0:x}", "x", []insight.CompletionOccurrence{occurrence(0, 0, 1, -1)}},
 		{"nested copied zero", "${1:a$0b}$1", "abab",
-			[]types.CompletionOccurrence{occurrence(1, 0, 2, -1), occurrence(0, 1, 1, 0), occurrence(1, 2, 4, -1), occurrence(0, 3, 3, 2)}},
+			[]insight.CompletionOccurrence{occurrence(1, 0, 2, -1), occurrence(0, 1, 1, 0), occurrence(1, 2, 4, -1), occurrence(0, 3, 3, 2)}},
 		{"positive inside final", "${0:${1:x}}", "x",
-			[]types.CompletionOccurrence{occurrence(0, 0, 1, -1), occurrence(1, 0, 1, 0)}},
+			[]insight.CompletionOccurrence{occurrence(0, 0, 1, -1), occurrence(1, 0, 1, 0)}},
 		{"choice dollar and brace are literal", "${1|$TM,},a|}", "$TM",
-			[]types.CompletionOccurrence{occurrence(1, 0, 3, -1, "$TM", "}", "a"), occurrence(0, 3, 3, -1)}},
+			[]insight.CompletionOccurrence{occurrence(1, 0, 3, -1, "$TM", "}", "a"), occurrence(0, 3, 3, -1)}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -122,24 +122,24 @@ func TestNumericSnippetBoundsBeforeExpansion(t *testing.T) {
 func TestNumericSnippetPlansRejectIndependentMalformedEvidence(t *testing.T) {
 	cases := []struct {
 		name, text  string
-		occurrences []types.CompletionOccurrence
+		occurrences []insight.CompletionOccurrence
 	}{
-		{"split UTF8", "😀", []types.CompletionOccurrence{occurrence(1, 1, 4, -1), occurrence(0, 4, 4, -1)}},
-		{"overlapping roots", "abc", []types.CompletionOccurrence{occurrence(1, 0, 2, -1), occurrence(2, 1, 3, -1), occurrence(0, 3, 3, -1)}},
-		{"child escapes", "abc", []types.CompletionOccurrence{occurrence(1, 0, 2, -1), occurrence(2, 1, 3, 0), occurrence(0, 3, 3, -1)}},
-		{"self parent", "abc", []types.CompletionOccurrence{occurrence(1, 0, 3, 0), occurrence(0, 3, 3, -1)}},
-		{"reentered closed parent", "ab", []types.CompletionOccurrence{occurrence(1, 0, 1, -1), occurrence(2, 1, 2, -1), occurrence(3, 0, 1, 0), occurrence(0, 2, 2, -1)}},
-		{"different mirror values", "ab:cd", []types.CompletionOccurrence{occurrence(1, 0, 2, -1), occurrence(1, 3, 5, -1), occurrence(0, 5, 5, -1)}},
-		{"choice mismatches text", "red", []types.CompletionOccurrence{occurrence(1, 0, 3, -1, "blue", "red"), occurrence(0, 3, 3, -1)}},
-		{"choice with child", "a", []types.CompletionOccurrence{occurrence(1, 0, 1, -1, "a", "bb"), occurrence(2, 0, 1, 0), occurrence(0, 1, 1, -1)}},
-		{"missing copied subtree", "ab ab", []types.CompletionOccurrence{occurrence(1, 0, 2, -1), occurrence(2, 0, 1, 0), occurrence(1, 3, 5, -1), occurrence(0, 5, 5, -1)}},
-		{"recursive stop", "", []types.CompletionOccurrence{occurrence(1, 0, 0, -1), occurrence(1, 0, 0, 0), occurrence(0, 0, 0, -1)}},
-		{"no final", "", []types.CompletionOccurrence{occurrence(1, 0, 0, -1)}},
+		{"split UTF8", "😀", []insight.CompletionOccurrence{occurrence(1, 1, 4, -1), occurrence(0, 4, 4, -1)}},
+		{"overlapping roots", "abc", []insight.CompletionOccurrence{occurrence(1, 0, 2, -1), occurrence(2, 1, 3, -1), occurrence(0, 3, 3, -1)}},
+		{"child escapes", "abc", []insight.CompletionOccurrence{occurrence(1, 0, 2, -1), occurrence(2, 1, 3, 0), occurrence(0, 3, 3, -1)}},
+		{"self parent", "abc", []insight.CompletionOccurrence{occurrence(1, 0, 3, 0), occurrence(0, 3, 3, -1)}},
+		{"reentered closed parent", "ab", []insight.CompletionOccurrence{occurrence(1, 0, 1, -1), occurrence(2, 1, 2, -1), occurrence(3, 0, 1, 0), occurrence(0, 2, 2, -1)}},
+		{"different mirror values", "ab:cd", []insight.CompletionOccurrence{occurrence(1, 0, 2, -1), occurrence(1, 3, 5, -1), occurrence(0, 5, 5, -1)}},
+		{"choice mismatches text", "red", []insight.CompletionOccurrence{occurrence(1, 0, 3, -1, "blue", "red"), occurrence(0, 3, 3, -1)}},
+		{"choice with child", "a", []insight.CompletionOccurrence{occurrence(1, 0, 1, -1, "a", "bb"), occurrence(2, 0, 1, 0), occurrence(0, 1, 1, -1)}},
+		{"missing copied subtree", "ab ab", []insight.CompletionOccurrence{occurrence(1, 0, 2, -1), occurrence(2, 0, 1, 0), occurrence(1, 3, 5, -1), occurrence(0, 5, 5, -1)}},
+		{"recursive stop", "", []insight.CompletionOccurrence{occurrence(1, 0, 0, -1), occurrence(1, 0, 0, 0), occurrence(0, 0, 0, -1)}},
+		{"no final", "", []insight.CompletionOccurrence{occurrence(1, 0, 0, -1)}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			sum := sha256.Sum256([]byte(tc.text))
-			if err := Validate(tc.text, &types.CompletionSnippet{TextSHA256: fmt.Sprintf("%x", sum), Occurrences: tc.occurrences}); err == nil {
+			if err := Validate(tc.text, &insight.CompletionSnippet{TextSHA256: fmt.Sprintf("%x", sum), Occurrences: tc.occurrences}); err == nil {
 				t.Fatal("independently malformed snippet plan admitted")
 			}
 		})

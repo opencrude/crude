@@ -338,7 +338,7 @@ Responses delta uploads and inline-image replay recovery are specified in
 
 ## When to compact: adaptive policy and background preparation
 
-`agent/precompaction.go` owns the decision; there is no fixed fullness default.
+`agent/turnloop/precompaction.go` owns the decision; there is no fixed fullness default.
 
 - **Physical.** The next request must fit the window with the model's full
   output allowance and safety reserve (the hard limit). Reaching it, or a

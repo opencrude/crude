@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	"crude/insight/catalog"
-	"crude/syntax"
 	"crude/tui/rendering"
+	"crude/types/syntaxdata"
 	"github.com/alecthomas/chroma/v2"
 	"github.com/dlclark/regexp2"
 )
@@ -90,7 +90,7 @@ func (m *indentMatcher) optional(re *regexp2.Regexp, text string) bool {
 // indentContext reads only current native/lexical spans. Provisional paint and
 // stale worker results are never authority for source rewrites.
 type indentContext struct {
-	native   *syntax.Result
+	native   *syntaxdata.Result
 	lexical  *syntaxDocument
 	plain    bool
 	brackets [][2]string

@@ -4,9 +4,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"crude/logger"
-	"crude/types"
+	"crude/internal/logger"
 	"crude/types/command"
+	"crude/types/setting"
 )
 
 type CommandRule struct {
@@ -33,7 +33,8 @@ func DefaultCommandPolicy() CommandPolicy {
 	}
 }
 
-func CommandPolicyFromSettings(settings types.SafetySettings) CommandPolicy {
+// CommandPolicyFromSettings builds the command policy from saved safety settings over the defaults.
+func CommandPolicyFromSettings(settings setting.Safety) CommandPolicy {
 	policy := DefaultCommandPolicy()
 	if risk, ok := ParseCommandRisk(settings.ConfirmAt); ok {
 		policy.ConfirmAt = risk

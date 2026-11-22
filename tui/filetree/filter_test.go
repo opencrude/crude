@@ -10,7 +10,7 @@ import (
 
 // filterFixture builds root/{alpha.go, README.md, deep/nested/target_file.go}
 // without expanding any directory beyond the root.
-func filterFixture(t *testing.T) (*FileTreeModel, map[string]string) {
+func filterFixture(t *testing.T) (*Model, map[string]string) {
 	t.Helper()
 	dir := t.TempDir()
 	nested := filepath.Join(dir, "deep", "nested")
@@ -33,7 +33,7 @@ func filterFixture(t *testing.T) (*FileTreeModel, map[string]string) {
 	return NewFileTreeModel(dir), paths
 }
 
-func visiblePaths(m *FileTreeModel) map[string]bool {
+func visiblePaths(m *Model) map[string]bool {
 	out := make(map[string]bool)
 	for _, n := range m.VisibleNodes() {
 		out[n.Path] = true

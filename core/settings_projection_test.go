@@ -11,8 +11,8 @@ import (
 
 	"crude/agent/hostshell"
 	"crude/agent/provider"
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -23,7 +23,7 @@ func TestSettingsCaptureAndPreparationBypassHeldSQL(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	ws := &workspace.Workspace{WorkspaceDB: db, Logger: coreTestLogger{}}
-	ws.SetAppDefaults(types.AppSettings{Accounts: map[string]provider.Account{
+	ws.SetAppDefaults(setting.App{Accounts: map[string]provider.Account{
 		"account": {ID: "account", APIKey: "private", Connection: provider.Template{ProviderURL: "https://user:private@example.test/api?token=private"}},
 	}})
 	if err := db.SetSetting("workspace_settings", `{"editor":{"tab_size":8},"capabilities":{"connections":{"custom":{"url":"https://example.test?token=private","headers":{"Authorization":"private"},"disabled":false}}}}`); err != nil {

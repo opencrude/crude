@@ -11,7 +11,7 @@ import (
 	"crude/tui/theme"
 	"crude/tui/tools"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 	"crude/types/reasoning"
 )
 
@@ -61,7 +61,7 @@ func sourceTextEnd(pl PaintLine) int {
 }
 
 type renderContext struct {
-	sourceMessage *types.ChatMessage // Canonical source; Content below is a paint-safe projection.
+	sourceMessage *conversation.ChatMessage // Canonical source; Content below is a paint-safe projection.
 	th            *theme.Theme
 	tokens        *ui.TokenSet
 	contentWidth  int
@@ -91,14 +91,14 @@ type renderContext struct {
 	markdownReflow *markdownReflowCache
 }
 
-func (c renderContext) markdownContent(message types.ChatMessage) string {
+func (c renderContext) markdownContent(message conversation.ChatMessage) string {
 	if c.sourceMessage != nil {
 		return c.sourceMessage.Content
 	}
 	return message.Content
 }
 
-func renderUserMessage(msg types.ChatMessage, ctx renderContext, suppressHeader bool) messageLines {
+func renderUserMessage(msg conversation.ChatMessage, ctx renderContext, suppressHeader bool) messageLines {
 	var ml messageLines
 	referenceLabels := userReferenceLabels(msg.Content, msg.ReferenceLabels)
 	header := buildUserHeader(ctx.username, rendering.FormatTimeLabel(msg.Time), ctx.innerW, suppressHeader)
@@ -152,7 +152,7 @@ func renderUserMessage(msg types.ChatMessage, ctx renderContext, suppressHeader 
 
 const collaborationRail = "│ "
 
-func renderCollaborationMessage(msg types.ChatMessage, ctx renderContext) messageLines {
+func renderCollaborationMessage(msg conversation.ChatMessage, ctx renderContext) messageLines {
 	if isCommandOutcome(&msg) {
 		return renderCommandOutcome(msg, ctx)
 	}
@@ -228,7 +228,7 @@ func collaborationMessageLabel(kind string) string {
 	}
 }
 
-func renderAssignmentMessage(msg types.ChatMessage, ctx renderContext, suppressHeader bool) messageLines {
+func renderAssignmentMessage(msg conversation.ChatMessage, ctx renderContext, suppressHeader bool) messageLines {
 	var ml messageLines
 	header := buildAssistantHeader("Main Agent Assignment", false, rendering.FormatTimeLabel(msg.Time), ctx.innerW, suppressHeader)
 	if !header.IsZero() {
@@ -250,7 +250,7 @@ func renderAssignmentMessage(msg types.ChatMessage, ctx renderContext, suppressH
 	return ml
 }
 
-func renderAssistantMessage(msg types.ChatMessage, ctx renderContext, suppressHeader bool) messageLines {
+func renderAssistantMessage(msg conversation.ChatMessage, ctx renderContext, suppressHeader bool) messageLines {
 	var ml messageLines
 	timeLabel := rendering.FormatTimeLabel(msg.Time)
 	header := buildAssistantHeader(msg.ModelID, msg.Incomplete, timeLabel, ctx.innerW, suppressHeader)
@@ -374,7 +374,7 @@ func ThinkingOverflowWidth(innerW int) int {
 // which left the live caret on a blank row below the last thought.
 func thinkingBody(content string) string { return strings.TrimRight(content, "\r\n") }
 
-func renderThinkingMessage(msg types.ChatMessage, ctx renderContext, suppressHeader bool) messageLines {
+func renderThinkingMessage(msg conversation.ChatMessage, ctx renderContext, suppressHeader bool) messageLines {
 	if msg.ThinkingDisplay.Kind.HasCompactPreview() {
 		return renderThinkingSummary(msg, ctx)
 	}
@@ -463,7 +463,7 @@ func renderThinkingMessage(msg types.ChatMessage, ctx renderContext, suppressHea
 	return ml
 }
 
-func renderThinkingSummary(msg types.ChatMessage, ctx renderContext) messageLines {
+func renderThinkingSummary(msg conversation.ChatMessage, ctx renderContext) messageLines {
 	label, chevron := "Thought", " ▸ "
 	if msg.ThinkingActive {
 		label = "Thinking"
@@ -565,13 +565,13 @@ func thinkingPreviewBody(content string, display reasoning.Display) string {
 	return content
 }
 
-func renderErrorMessage(msg types.ChatMessage, ctx renderContext) messageLines {
+func renderErrorMessage(msg conversation.ChatMessage, ctx renderContext) messageLines {
 	if ctx.innerW <= 0 {
 		return messageLines{}
 	}
 	reason, details, _ := strings.Cut(strings.TrimSpace(msg.Content), "\n")
 	title := tools.ToolTitle{Action: "Turn failed", Metadata: tools.CollapseLine(reason), Failed: true}
-	header := paintToolTitle(title, types.ToolStatusError, false, true, ctx.spinFrame, "")
+	header := paintToolTitle(title, conversation.ToolStatusError, false, true, ctx.spinFrame, "")
 	var suffix []RowSpan
 	if msg.Content != "" {
 		glyph := " ▸"
@@ -596,7 +596,7 @@ func renderErrorMessage(msg types.ChatMessage, ctx renderContext) messageLines {
 	return out
 }
 
-func renderNoticeMessage(msg types.ChatMessage, ctx renderContext, title string, role ui.SemanticColor) messageLines {
+func renderNoticeMessage(msg conversation.ChatMessage, ctx renderContext, title string, role ui.SemanticColor) messageLines {
 	if ctx.innerW <= 0 {
 		return messageLines{}
 	}
@@ -617,7 +617,7 @@ func renderNoticeMessage(msg types.ChatMessage, ctx renderContext, title string,
 	return ml
 }
 
-func renderLifecycleMessage(msg types.ChatMessage, ctx renderContext) messageLines {
+func renderLifecycleMessage(msg conversation.ChatMessage, ctx renderContext) messageLines {
 	if msg.Recovery != nil {
 		return renderRecoveryMessage(msg, ctx)
 	}
@@ -714,7 +714,7 @@ func renderLifecycleMessage(msg types.ChatMessage, ctx renderContext) messageLin
 	return out
 }
 
-func renderHistoryRestoreMessage(msg types.ChatMessage, ctx renderContext) messageLines {
+func renderHistoryRestoreMessage(msg conversation.ChatMessage, ctx renderContext) messageLines {
 	header := buildAssistantHeader("Local History", false, rendering.FormatTimeLabel(msg.Time), ctx.innerW, false)
 	count := msg.HistoryPathCount
 	files := fmt.Sprintf("%d files restored", count)
@@ -748,7 +748,7 @@ func shortHistoryID(value string) string {
 	return value
 }
 
-func lifecycleMessageFrameSensitive(msg types.ChatMessage) bool {
+func lifecycleMessageFrameSensitive(msg conversation.ChatMessage) bool {
 	switch msg.LifecyclePhase {
 	case "preparing", "waiting_provider", "cancelling",
 		"compaction_preparing", "compaction_extracting", "compaction_retrying", "compaction_committing", "compaction_cancelling":
@@ -764,14 +764,14 @@ func lifecycleMessageFrameSensitive(msg types.ChatMessage) bool {
 // are maintenance the agent does on its own: each paints as one ordinary tool
 // row. Live events and resumed records carry the same trigger, so both paths
 // paint the same form.
-func renderCompactionMessage(msg types.ChatMessage, ctx renderContext) messageLines {
+func renderCompactionMessage(msg conversation.ChatMessage, ctx renderContext) messageLines {
 	if !isManualCompaction(msg) || settledCompaction(msg) {
 		return renderAutomaticCompactionMessage(msg, ctx)
 	}
 	return renderManualCompactionMessage(msg, ctx)
 }
 
-func settledCompaction(msg types.ChatMessage) bool {
+func settledCompaction(msg conversation.ChatMessage) bool {
 	switch msg.LifecyclePhase {
 	case "compaction_completed", "compaction_cancelled", "compaction_interrupted", "compaction_failed":
 		return true
@@ -779,19 +779,19 @@ func settledCompaction(msg types.ChatMessage) bool {
 	return false
 }
 
-func isManualCompaction(msg types.ChatMessage) bool {
+func isManualCompaction(msg conversation.ChatMessage) bool {
 	return strings.HasPrefix(msg.LifecyclePhase, "compaction_") && msg.LifecycleTrigger == "manual"
 }
 
 // renderAutomaticCompactionMessage paints an automatic compaction through the
 // shared tool title, so it reads like any other tool call: verb, token result
 // as the operand, and the stage, retry or reason as metadata.
-func renderAutomaticCompactionMessage(msg types.ChatMessage, ctx renderContext) messageLines {
+func renderAutomaticCompactionMessage(msg conversation.ChatMessage, ctx renderContext) messageLines {
 	title := tools.ToolTitle{Action: "Compacting context"}
-	status, active, detail := types.ToolStatusStreaming, true, ""
+	status, active, detail := conversation.ToolStatusStreaming, true, ""
 	switch msg.LifecyclePhase {
 	case "compaction_completed":
-		title.Action, status, active = "Compacted context", types.ToolStatusSuccess, false
+		title.Action, status, active = "Compacted context", conversation.ToolStatusSuccess, false
 		title.Operand = compactionTokenSummary(msg)
 		switch msg.LifecycleTrigger {
 		case "background":
@@ -805,13 +805,13 @@ func renderAutomaticCompactionMessage(msg types.ChatMessage, ctx renderContext) 
 		}
 	case "compaction_cancelled":
 		title.Action, detail = "Compaction cancelled", "original context kept"
-		status, active = types.ToolStatusCancelled, false
+		status, active = conversation.ToolStatusCancelled, false
 	case "compaction_interrupted":
 		title.Action, detail = "Compaction interrupted", "original context kept"
 		status, active = "interrupted", false
 	case "compaction_failed":
 		title.Action, title.Failed = "Compaction failed", true
-		status, active = types.ToolStatusError, false
+		status, active = conversation.ToolStatusError, false
 		detail, _, _ = strings.Cut(strings.TrimSpace(msg.Content), "\n")
 		if detail == "" {
 			detail = "original context kept"
@@ -874,7 +874,7 @@ func renderAutomaticCompactionMessage(msg types.ChatMessage, ctx renderContext) 
 
 // compactionTokenSummary renders the token result of a completed compaction, or
 // "" when the source size is unknown.
-func compactionTokenSummary(msg types.ChatMessage) string {
+func compactionTokenSummary(msg conversation.ChatMessage) string {
 	if msg.LifecycleBeforeTokens <= 0 {
 		return ""
 	}
@@ -886,7 +886,7 @@ func compactionTokenSummary(msg types.ChatMessage) string {
 }
 
 // renderManualCompactionMessage is the /compact operation table.
-func renderManualCompactionMessage(msg types.ChatMessage, ctx renderContext) messageLines {
+func renderManualCompactionMessage(msg conversation.ChatMessage, ctx renderContext) messageLines {
 	active := true
 	state, marker, stateRole := "Compaction", ui.ActivityDot(ctx.spinFrame), ui.ColorAccent2
 	stateMeta := "active"
@@ -1041,29 +1041,29 @@ func compactionProgressBar(completed, total int, current bool) string {
 	return strings.Join(parts, " ")
 }
 
-func renderMessageContent(msg types.ChatMessage, ctx renderContext, suppressHeader bool) messageLines {
+func renderMessageContent(msg conversation.ChatMessage, ctx renderContext, suppressHeader bool) messageLines {
 	var ml messageLines
 	switch msg.Role {
-	case types.RoleUser:
+	case conversation.RoleUser:
 		if msg.Collaboration != nil {
 			ml = renderCollaborationMessage(msg, ctx)
 		} else {
 			ml = renderUserMessage(msg, ctx, suppressHeader)
 		}
-	case types.RoleAssistant:
+	case conversation.RoleAssistant:
 		ml = renderAssistantMessage(msg, ctx, suppressHeader)
-	case types.RoleThinking:
+	case conversation.RoleThinking:
 		ml = renderThinkingMessage(msg, ctx, suppressHeader)
-	case types.RoleTool:
+	case conversation.RoleTool:
 		if ctx.planSuperseded && ctx.disclosure != DisclosureExpanded {
 			msg.Content = ""
 		}
 		ml = renderProjectToolMessageLines(msg, ctx.th, ctx.contentWidth, ctx.innerW, ctx.width, ctx.spinFrame, ctx.chatHeight, ctx.phase, ctx.disclosure, ctx.projectPaths)
-	case types.RoleError:
+	case conversation.RoleError:
 		ml = renderErrorMessage(msg, ctx)
-	case types.RoleStatus:
+	case conversation.RoleStatus:
 		ml = renderLifecycleMessage(msg, ctx)
-	case types.RoleAssignment:
+	case conversation.RoleAssignment:
 		ml = renderAssignmentMessage(msg, ctx, suppressHeader)
 	default:
 		ml = messageLines{lines: []string{""}, native: []PaintLine{buildPlainBodyLine("")}}
@@ -1076,7 +1076,7 @@ func renderMessageContent(msg types.ChatMessage, ctx renderContext, suppressHead
 	return ml
 }
 
-func messageHasPaneBackground(msg *types.ChatMessage) bool {
-	return msg.Role == types.RoleThinking || msg.Collaboration != nil && !isCommandOutcome(msg) ||
-		msg.Role == types.RoleTool && tools.IsCollaborationTool(msg.ToolName)
+func messageHasPaneBackground(msg *conversation.ChatMessage) bool {
+	return msg.Role == conversation.RoleThinking || msg.Collaboration != nil && !isCommandOutcome(msg) ||
+		msg.Role == conversation.RoleTool && tools.IsCollaborationTool(msg.ToolName)
 }

@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	ttypes "crude/types"
+	"crude/types/statuscenter"
 )
 
 const (
@@ -31,7 +31,7 @@ const (
 
 type statusPersistRequest struct {
 	kind   statusPersistKind
-	notice ttypes.NotificationRecord
+	notice statuscenter.NotificationRecord
 	id     string
 }
 
@@ -42,10 +42,10 @@ type StatusCenter struct {
 	mu            sync.RWMutex
 	db            *sql.DB
 	logger        Logger
-	agents        map[string]ttypes.AgentStatusSnapshot
-	operations    map[string]ttypes.OperationSnapshot
-	issues        map[string]ttypes.IssueSnapshot
-	notifications []ttypes.NotificationRecord
+	agents        map[string]statuscenter.AgentStatusSnapshot
+	operations    map[string]statuscenter.OperationSnapshot
+	issues        map[string]statuscenter.IssueSnapshot
+	notifications []statuscenter.NotificationRecord
 	byNoticeID    map[string]int
 	nextID        uint64
 	version       uint64
@@ -66,15 +66,15 @@ type StatusCenter struct {
 	// jobs, not notification/operation history. Display pruning must not turn
 	// the next snapshot of a settled job into a new outcome.
 	commandMu          sync.Mutex
-	backgroundCommands map[string]map[string]ttypes.OperationSnapshot
+	backgroundCommands map[string]map[string]statuscenter.OperationSnapshot
 }
 
 func NewStatusCenter(db *sql.DB, logger Logger) *StatusCenter {
 	c := &StatusCenter{
 		db: db, logger: logger,
-		agents:       make(map[string]ttypes.AgentStatusSnapshot),
-		operations:   make(map[string]ttypes.OperationSnapshot),
-		issues:       make(map[string]ttypes.IssueSnapshot),
+		agents:       make(map[string]statuscenter.AgentStatusSnapshot),
+		operations:   make(map[string]statuscenter.OperationSnapshot),
+		issues:       make(map[string]statuscenter.IssueSnapshot),
 		byNoticeID:   make(map[string]int),
 		persistQueue: make(map[string]statusPersistRequest),
 		persistWake:  make(chan struct{}, 1), persistStop: make(chan struct{}), persistDone: make(chan struct{}),
@@ -105,9 +105,9 @@ func (c *StatusCenter) Hydrate() error {
 		return fmt.Errorf("load workspace notifications: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	loaded := make([]ttypes.NotificationRecord, 0, statusNotificationLimit)
+	loaded := make([]statuscenter.NotificationRecord, 0, statusNotificationLimit)
 	for rows.Next() {
-		var n ttypes.NotificationRecord
+		var n statuscenter.NotificationRecord
 		var kind string
 		var created, updated, resolved int64
 		var actions string
@@ -117,7 +117,7 @@ func (c *StatusCenter) Hydrate() error {
 			&n.Transient, &actions); err != nil {
 			return fmt.Errorf("scan workspace notification: %w", err)
 		}
-		n.Owner.Kind = ttypes.ResourceKind(kind)
+		n.Owner.Kind = statuscenter.ResourceKind(kind)
 		n.CreatedAt, n.UpdatedAt = time.Unix(0, created), time.Unix(0, updated)
 		if resolved > 0 {
 			n.ResolvedAt = time.Unix(0, resolved)
@@ -161,7 +161,8 @@ func (c *StatusCenter) Close() {
 	})
 }
 
-func (c *StatusCenter) SetAgent(snapshot ttypes.AgentStatusSnapshot) {
+// SetAgent records the current status of one agent.
+func (c *StatusCenter) SetAgent(snapshot statuscenter.AgentStatusSnapshot) {
 	if c == nil || snapshot.Ref.ID == "" {
 		return
 	}
@@ -210,9 +211,10 @@ func (c *StatusCenter) RemoveAgent(id string) {
 	c.mu.Unlock()
 }
 
-func (c *StatusCenter) Agent(id string) (ttypes.AgentStatusSnapshot, bool) {
+// Agent returns the stored status of one agent.
+func (c *StatusCenter) Agent(id string) (statuscenter.AgentStatusSnapshot, bool) {
 	if c == nil {
-		return ttypes.AgentStatusSnapshot{}, false
+		return statuscenter.AgentStatusSnapshot{}, false
 	}
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -220,12 +222,13 @@ func (c *StatusCenter) Agent(id string) (ttypes.AgentStatusSnapshot, bool) {
 	return v, ok
 }
 
-func (c *StatusCenter) Agents() []ttypes.AgentStatusSnapshot {
+// Agents returns the agent statuses, oldest start first.
+func (c *StatusCenter) Agents() []statuscenter.AgentStatusSnapshot {
 	if c == nil {
 		return nil
 	}
 	c.mu.RLock()
-	out := make([]ttypes.AgentStatusSnapshot, 0, len(c.agents))
+	out := make([]statuscenter.AgentStatusSnapshot, 0, len(c.agents))
 	for _, v := range c.agents {
 		out = append(out, v)
 	}
@@ -234,7 +237,8 @@ func (c *StatusCenter) Agents() []ttypes.AgentStatusSnapshot {
 	return out
 }
 
-func (c *StatusCenter) SetOperation(op ttypes.OperationSnapshot) {
+// SetOperation records the current state of one operation.
+func (c *StatusCenter) SetOperation(op statuscenter.OperationSnapshot) {
 	if c == nil || op.ID == "" {
 		return
 	}
@@ -293,7 +297,7 @@ func (c *StatusCenter) pruneOperationsLocked(now time.Time) {
 	}
 }
 
-func operationEquivalent(a, b ttypes.OperationSnapshot) bool {
+func operationEquivalent(a, b statuscenter.OperationSnapshot) bool {
 	return a.ID == b.ID && a.Owner == b.Owner && a.Kind == b.Kind && a.Label == b.Label &&
 		a.Detail == b.Detail && a.State == b.State && a.Progress == b.Progress &&
 		a.Total == b.Total && a.Unit == b.Unit && a.StartedAt.Equal(b.StartedAt) &&
@@ -301,12 +305,13 @@ func operationEquivalent(a, b ttypes.OperationSnapshot) bool {
 		a.OutputRef == b.OutputRef && a.Error == b.Error
 }
 
-func (c *StatusCenter) Operations() []ttypes.OperationSnapshot {
+// Operations returns the operations, the active ones first.
+func (c *StatusCenter) Operations() []statuscenter.OperationSnapshot {
 	if c == nil {
 		return nil
 	}
 	c.mu.RLock()
-	out := make([]ttypes.OperationSnapshot, 0, len(c.operations))
+	out := make([]statuscenter.OperationSnapshot, 0, len(c.operations))
 	for _, op := range c.operations {
 		out = append(out, op)
 	}
@@ -321,7 +326,8 @@ func (c *StatusCenter) Operations() []ttypes.OperationSnapshot {
 	return out
 }
 
-func (c *StatusCenter) FinishOperations(ownerID string, state ttypes.OperationState, errText string) {
+// FinishOperations settles every open operation that belongs to one owner.
+func (c *StatusCenter) FinishOperations(ownerID string, state statuscenter.OperationState, errText string) {
 	if c == nil || ownerID == "" {
 		return
 	}
@@ -340,7 +346,8 @@ func (c *StatusCenter) FinishOperations(ownerID string, state ttypes.OperationSt
 	c.mu.Unlock()
 }
 
-func (c *StatusCenter) FinishOperation(id string, state ttypes.OperationState, errText string) {
+// FinishOperation settles one open operation.
+func (c *StatusCenter) FinishOperation(id string, state statuscenter.OperationState, errText string) {
 	if c == nil || id == "" {
 		return
 	}
@@ -355,11 +362,12 @@ func (c *StatusCenter) FinishOperation(id string, state ttypes.OperationState, e
 	c.mu.Unlock()
 }
 
-func operationTerminal(state ttypes.OperationState) bool {
-	return state == ttypes.OperationSucceeded || state == ttypes.OperationFailed || state == ttypes.OperationCancelled
+func operationTerminal(state statuscenter.OperationState) bool {
+	return state == statuscenter.OperationSucceeded || state == statuscenter.OperationFailed || state == statuscenter.OperationCancelled
 }
 
-func (c *StatusCenter) SetIssue(issue ttypes.IssueSnapshot) {
+// SetIssue records an issue unless the same report is already open.
+func (c *StatusCenter) SetIssue(issue statuscenter.IssueSnapshot) {
 	if c == nil || issue.ID == "" {
 		return
 	}
@@ -389,12 +397,13 @@ func (c *StatusCenter) ResolveIssue(id string) {
 	c.mu.Unlock()
 }
 
-func (c *StatusCenter) Issues() []ttypes.IssueSnapshot {
+// Issues returns the issues, the open ones first.
+func (c *StatusCenter) Issues() []statuscenter.IssueSnapshot {
 	if c == nil {
 		return nil
 	}
 	c.mu.RLock()
-	out := make([]ttypes.IssueSnapshot, 0, len(c.issues))
+	out := make([]statuscenter.IssueSnapshot, 0, len(c.issues))
 	for _, issue := range c.issues {
 		out = append(out, issue)
 	}
@@ -412,20 +421,21 @@ func (c *StatusCenter) Issues() []ttypes.IssueSnapshot {
 	return out
 }
 
-func (c *StatusCenter) Notify(n ttypes.NotificationRecord) string {
+// Notify records a notification and returns its id.
+func (c *StatusCenter) Notify(n statuscenter.NotificationRecord) string {
 	return c.notify(n, false)
 }
 
 // notifyOnce records immutable evidence with an exact, source-owned ID. Unlike
 // Notify's repeated occurrences, a replay cannot reset its user-managed state.
-func (c *StatusCenter) notifyOnce(n ttypes.NotificationRecord) string {
+func (c *StatusCenter) notifyOnce(n statuscenter.NotificationRecord) string {
 	if n.ID == "" {
 		return ""
 	}
 	return c.notify(n, true)
 }
 
-func (c *StatusCenter) notify(n ttypes.NotificationRecord, once bool) string {
+func (c *StatusCenter) notify(n statuscenter.NotificationRecord, once bool) string {
 	if c == nil || strings.TrimSpace(n.Summary) == "" {
 		return ""
 	}
@@ -444,7 +454,7 @@ func (c *StatusCenter) notify(n ttypes.NotificationRecord, once bool) string {
 				old.Summary, old.Detail, old.Severity = n.Summary, n.Detail, n.Severity
 				old.UpdatedAt, old.Read = now, false
 				old.Occurrences++
-				old.Actions = append([]ttypes.StatusAction(nil), n.Actions...)
+				old.Actions = append([]statuscenter.Action(nil), n.Actions...)
 				updated := *old
 				c.bumpVersionLocked()
 				c.mu.Unlock()
@@ -470,12 +480,13 @@ func (c *StatusCenter) notify(n ttypes.NotificationRecord, once bool) string {
 	return n.ID
 }
 
-func (c *StatusCenter) Notifications(includeDismissed bool) []ttypes.NotificationRecord {
+// Notifications returns the notifications, newest first.
+func (c *StatusCenter) Notifications(includeDismissed bool) []statuscenter.NotificationRecord {
 	if c == nil {
 		return nil
 	}
 	c.mu.RLock()
-	out := make([]ttypes.NotificationRecord, 0, len(c.notifications))
+	out := make([]statuscenter.NotificationRecord, 0, len(c.notifications))
 	for i := len(c.notifications) - 1; i >= 0; i-- {
 		n := c.notifications[i]
 		if includeDismissed || !n.Dismissed {
@@ -502,18 +513,20 @@ func (c *StatusCenter) UnreadCount() int {
 	return count
 }
 
-func (c *StatusCenter) LatestUnread(minSeverity ttypes.StatusSeverity) (ttypes.NotificationRecord, bool) {
+// LatestUnread returns the newest unread notification at or above a severity.
+func (c *StatusCenter) LatestUnread(minSeverity statuscenter.Severity) (statuscenter.NotificationRecord, bool) {
 	for _, n := range c.Notifications(false) {
 		if !n.Read && !n.Transient && n.Severity >= minSeverity {
 			return n, true
 		}
 	}
-	return ttypes.NotificationRecord{}, false
+	return statuscenter.NotificationRecord{}, false
 }
 
-func (c *StatusCenter) LatestTransient(now time.Time, maxAge time.Duration) (ttypes.NotificationRecord, bool) {
+// LatestTransient returns the newest transient notification younger than maxAge.
+func (c *StatusCenter) LatestTransient(now time.Time, maxAge time.Duration) (statuscenter.NotificationRecord, bool) {
 	if c == nil {
-		return ttypes.NotificationRecord{}, false
+		return statuscenter.NotificationRecord{}, false
 	}
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -523,26 +536,26 @@ func (c *StatusCenter) LatestTransient(now time.Time, maxAge time.Duration) (tty
 			return *n, true
 		}
 	}
-	return ttypes.NotificationRecord{}, false
+	return statuscenter.NotificationRecord{}, false
 }
 
 func (c *StatusCenter) MarkRead(id string, read bool) bool {
-	return c.updateNotice(id, func(n *ttypes.NotificationRecord) { n.Read = read })
+	return c.updateNotice(id, func(n *statuscenter.NotificationRecord) { n.Read = read })
 }
 
 func (c *StatusCenter) Dismiss(id string) bool {
-	return c.updateNotice(id, func(n *ttypes.NotificationRecord) { n.Dismissed, n.Read = true, true })
+	return c.updateNotice(id, func(n *statuscenter.NotificationRecord) { n.Dismissed, n.Read = true, true })
 }
 
 func (c *StatusCenter) ResolveNotification(id string) bool {
-	return c.updateNotice(id, func(n *ttypes.NotificationRecord) {
+	return c.updateNotice(id, func(n *statuscenter.NotificationRecord) {
 		if n.ResolvedAt.IsZero() {
 			n.ResolvedAt = time.Now()
 		}
 	})
 }
 
-func (c *StatusCenter) updateNotice(id string, fn func(*ttypes.NotificationRecord)) bool {
+func (c *StatusCenter) updateNotice(id string, fn func(*statuscenter.NotificationRecord)) bool {
 	if c == nil {
 		return false
 	}
@@ -602,7 +615,7 @@ func (c *StatusCenter) pruneLocked(now time.Time) {
 	cutoff := now.Add(-statusRetention)
 	kept := c.notifications[:0]
 	for _, n := range c.notifications {
-		live := n.ResolvedAt.IsZero() && n.Severity >= ttypes.SeverityWarning
+		live := n.ResolvedAt.IsZero() && n.Severity >= statuscenter.SeverityWarning
 		if live || n.UpdatedAt.After(cutoff) {
 			kept = append(kept, n)
 		} else {
@@ -616,7 +629,7 @@ func (c *StatusCenter) pruneLocked(now time.Time) {
 	drop := len(c.notifications) - statusNotificationLimit
 	for i := 0; i < len(c.notifications) && drop > 0; i++ {
 		n := c.notifications[i]
-		if n.ResolvedAt.IsZero() && n.Severity >= ttypes.SeverityWarning {
+		if n.ResolvedAt.IsZero() && n.Severity >= statuscenter.SeverityWarning {
 			continue
 		}
 		c.enqueue(statusPersistRequest{kind: persistDeleteNotice, id: n.ID})
@@ -720,7 +733,7 @@ func (c *StatusCenter) drainPersistence() {
 	}
 }
 
-func (c *StatusCenter) persistNotice(n ttypes.NotificationRecord) error {
+func (c *StatusCenter) persistNotice(n statuscenter.NotificationRecord) error {
 	actions, _ := json.Marshal(n.Actions)
 	resolved := int64(0)
 	if !n.ResolvedAt.IsZero() {

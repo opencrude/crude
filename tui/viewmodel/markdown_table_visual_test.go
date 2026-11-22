@@ -12,7 +12,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"crude/tui/rendering"
-	"crude/types"
+	"crude/types/statuscenter"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -49,7 +49,7 @@ func tableVisualShell(t *testing.T) (remoteJourneyShell, string) {
 	id := remoteJourneyCreate(t, shell)
 	shell.app.Tree.Visible = false
 	runAppCommand(t, shell.app, shell.app.submitInput(id, "Show the review.", nil))
-	remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool { return shell.app.ws.AgentActivity(id).Status.Phase == types.AgentCompleted })
+	remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool { return shell.app.ws.AgentActivity(id).Status.Phase == statuscenter.AgentCompleted })
 	shell.app.setFocusInput()
 	return shell, path
 }

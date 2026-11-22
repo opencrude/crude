@@ -8,7 +8,7 @@ import (
 	"crude/tui/chatprojection"
 	"crude/tui/rendering"
 	"crude/tui/theme"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 func streamingRows(t *testing.T, content string, streaming bool) []string {
@@ -18,7 +18,7 @@ func streamingRows(t *testing.T, content string, streaming bool) []string {
 	r.SetChatAreaBounds(0, 40)
 	r.SetStreaming(streaming)
 	r.SetActiveTyping(true)
-	r.AppendMessage(types.ChatMessage{InternalID: "assistant", Role: types.RoleAssistant, Content: content, Time: time.Now()})
+	r.AppendMessage(conversation.ChatMessage{InternalID: "assistant", Role: conversation.RoleAssistant, Content: content, Time: time.Now()})
 	rows, _, _ := r.ExportMessageRows(80)
 	if len(rows) != 1 {
 		t.Fatalf("rows = %d, want one assistant item", len(rows))
@@ -88,7 +88,7 @@ func TestStreamingCaretFollowsTheLastThought(t *testing.T) {
 	r.SetChatAreaBounds(0, 40)
 	r.SetStreaming(true)
 	r.SetActiveTyping(true)
-	r.AppendMessage(types.ChatMessage{InternalID: "thinking", Role: types.RoleThinking, ThinkingActive: true,
+	r.AppendMessage(conversation.ChatMessage{InternalID: "thinking", Role: conversation.RoleThinking, ThinkingActive: true,
 		Content: "Considering the options.\n\nSecond thought ends.\n", Time: time.Now()})
 	rows, _, _ := r.ExportMessageRows(80)
 	var lines []string

@@ -24,7 +24,7 @@ func TestWorkspaceRailAvailableDuringNestedWorkflow(t *testing.T) {
 	app.Win.SplitGroup(app.Win.ActiveGroup(), ui.Horizontal, false)
 	app.Win.OpenResource(window.Resource{Kind: window.ResourceAgent, ID: "child"}, "agent:child", true)
 	app.Win.SplitGroup(app.Win.ActiveGroup(), ui.Vertical, false)
-	app.workspaceInfos = []workspace.WorkspaceInfo{{ProjectDir: "C:/alpha", ProjectName: "alpha"}, {ProjectDir: "D:/beta", ProjectName: "beta"}}
+	app.workspaceInfos = []workspace.Info{{ProjectDir: "C:/alpha", ProjectName: "alpha"}, {ProjectDir: "D:/beta", ProjectName: "beta"}}
 	app.paintShellFrame()
 	r, _ := app.rootHost.ScreenRect(activitybar.ScreenID)
 	app.Update(tea.MouseClickMsg{X: r.X + 3, Y: r.Y + 2*activitybar.RowStride + 1, Button: tea.MouseLeft})
@@ -56,12 +56,12 @@ func TestWorkspaceListingHasOneOwnerAndSurvivesLauncherUnmount(t *testing.T) {
 	app.setActivity(activityWorkspaces, true)
 	app.paintShellFrame()
 	app.launcherScreen = nil
-	app.Update(launcherWorkspacesMsg{Gen: 10, Infos: []workspace.WorkspaceInfo{{ProjectDir: "D:/beta", ProjectName: "beta"}}})
+	app.Update(launcherWorkspacesMsg{Gen: 10, Infos: []workspace.Info{{ProjectDir: "D:/beta", ProjectName: "beta"}}})
 	app.paintShellFrame()
 	if !strings.Contains(bufferPlain(app.mainSurf.Buffer()), "beta") {
 		t.Fatal("launcher unmount discarded workspace catalog")
 	}
-	app.Update(launcherWorkspacesMsg{Gen: 9, Infos: []workspace.WorkspaceInfo{{ProjectDir: "D:/stale"}}})
+	app.Update(launcherWorkspacesMsg{Gen: 9, Infos: []workspace.Info{{ProjectDir: "D:/stale"}}})
 	app.paintShellFrame()
 	if strings.Contains(bufferPlain(app.mainSurf.Buffer()), "stale") {
 		t.Fatal("stale catalog replaced current listing")
@@ -82,7 +82,7 @@ func TestWorkspaceNavigationPreservesIndependentSearchAndDivider(t *testing.T) {
 	app := newFullTestApp(t)
 	wsOf(app).Logger = stubLogger{}
 	app.Update(tea.WindowSizeMsg{Width: 120, Height: 35})
-	app.workspaceInfos = []workspace.WorkspaceInfo{{ProjectDir: "C:/alpha", ProjectName: "alpha"}, {ProjectDir: "D:/beta", ProjectName: "beta"}}
+	app.workspaceInfos = []workspace.Info{{ProjectDir: "C:/alpha", ProjectName: "alpha"}, {ProjectDir: "D:/beta", ProjectName: "beta"}}
 	app.setActivity(activityWorkspaces, true)
 	app.FocusStack.Push(FocusTree)
 	app.paintShellFrame()
@@ -137,7 +137,7 @@ func TestWorkspaceSidebarHasNamePathPairsWithoutGapsAndAuthoritativeCurrentFill(
 	wsOf(app).RootPath = t.TempDir()
 	app.Update(tea.WindowSizeMsg{Width: 120, Height: 35})
 	root, other := app.ws.RootPath(), filepath.Join(t.TempDir(), "ox")
-	app.workspaceInfos = []workspace.WorkspaceInfo{{ProjectDir: root, ProjectName: "crude"}, {ProjectDir: other, ProjectName: "ox"}}
+	app.workspaceInfos = []workspace.Info{{ProjectDir: root, ProjectName: "crude"}, {ProjectDir: other, ProjectName: "ox"}}
 	app.setActivity(activityWorkspaces, true)
 	app.setFocusTree()
 	app.paintShellFrame()
@@ -180,7 +180,7 @@ func TestWorkspaceSidebarHasNamePathPairsWithoutGapsAndAuthoritativeCurrentFill(
 			t.Fatal("inactive workspace retained a false active fill")
 		}
 	}
-	app.applyWorkspaceListing(launcherWorkspacesMsg{Infos: []workspace.WorkspaceInfo{app.workspaceInfos[1], app.workspaceInfos[0]}})
+	app.applyWorkspaceListing(launcherWorkspacesMsg{Infos: []workspace.Info{app.workspaceInfos[1], app.workspaceInfos[0]}})
 	app.paintShellFrame()
 	if !app.workspaceSidebarItems()[2].Active || app.workspaceSidebarItems()[1].Active || app.ws.RootPath() != root {
 		t.Fatal("recency reorder changed current workspace authority")
@@ -193,7 +193,7 @@ func TestWorkspaceSidebarContextMenuSharesResourceDeleteAndFencesLifetime(t *tes
 	wsOf(app).RootPath = t.TempDir()
 	app.Update(tea.WindowSizeMsg{Width: 120, Height: 35})
 	root, other := app.ws.RootPath(), filepath.Join(t.TempDir(), "other")
-	app.workspaceInfos = []workspace.WorkspaceInfo{{ID: workspace.WorkspaceID(root), ProjectDir: root, ProjectName: "current"}, {ID: workspace.WorkspaceID(other), ProjectDir: other, ProjectName: "other"}}
+	app.workspaceInfos = []workspace.Info{{ID: workspace.ID(root), ProjectDir: root, ProjectName: "current"}, {ID: workspace.ID(other), ProjectDir: other, ProjectName: "other"}}
 	app.setActivity(activityWorkspaces, true)
 	app.paintShellFrame()
 	r, _ := app.rootHost.ScreenRect(activitylist.ListID)
@@ -232,7 +232,7 @@ func TestWorkspaceSidebarRefreshAnimatesWithoutLoadingTextOrLauncher(t *testing.
 	wsOf(app).Logger = stubLogger{}
 	app.Update(tea.WindowSizeMsg{Width: 120, Height: 35})
 	app.launcherScreen = nil
-	app.workspaceInfos = []workspace.WorkspaceInfo{{ProjectDir: app.ws.RootPath(), ProjectName: "ox"}, {ProjectDir: "D:/crude", ProjectName: "crude"}}
+	app.workspaceInfos = []workspace.Info{{ProjectDir: app.ws.RootPath(), ProjectName: "ox"}, {ProjectDir: "D:/crude", ProjectName: "crude"}}
 	app.setActivity(activityWorkspaces, true)
 	app.setFocusTree()
 	app.paintShellFrame()

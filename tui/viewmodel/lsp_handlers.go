@@ -7,9 +7,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/editor"
-	"crude/types"
+	"crude/types/insight"
 	"crude/workspace"
 )
 
@@ -48,14 +48,14 @@ func (m *App) handleLSPDiagnosticsUpdate(msg workspace.LSPDiagnosticsMsg) {
 }
 
 // applyLSPDiagnostics consumes one authority-validated changed projection.
-func (m *App) applyLSPDiagnostics(path string, facts types.InsightDiagnostics) {
+func (m *App) applyLSPDiagnostics(path string, facts insight.Diagnostics) {
 	if m.lspFacts == nil {
-		m.lspFacts = make(map[string]types.InsightDiagnostics)
+		m.lspFacts = make(map[string]insight.Diagnostics)
 	}
 	if facts.ID == "" {
 		delete(m.lspFacts, path)
 	} else {
-		m.lspFacts[path] = types.CloneInsightDiagnostics(facts)
+		m.lspFacts[path] = insight.CloneDiagnostics(facts)
 	}
 	m.projectTreeDiagnostic(path, facts)
 	install := func(ed *editor.Editor) {

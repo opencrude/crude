@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 VERSION = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?")
 TARGETS = {"linux": "tar.gz", "windows": "zip"}
 EMBEDDED_NOTICES = {
-    "SYNTAX-QUERIES-NOTICE": "syntax/queries/NOTICE",
+    "SYNTAX-QUERIES-NOTICE": "insight/syntax/queries/NOTICE",
     "CODEX-NOTICE": "agent/codexio/NOTICE",
 }
 
@@ -98,7 +98,7 @@ def build(args):
         )
     # A clean commit can still contain stale generated protocol identities.
     # Check source bytes without changing the release checkout on either host.
-    run("go", "run", "./internal/wiregen", "-check")
+    run("go", "run", "./tools/wiregen", "-check")
     goos, goarch, cgo = run("go", "env", "GOOS", "GOARCH", "CGO_ENABLED").splitlines()
     if (goos, goarch, cgo) != (target, "amd64", "1"):
         raise ValueError("source scripts/libghostty_env for this native platform; CGO_ENABLED must be 1")
@@ -117,7 +117,7 @@ def build(args):
     with tempfile.TemporaryDirectory(prefix="crude-release-", dir=os.environ.get("CRUDE_TEMP_DIR")) as temp:
         stage = Path(temp)
         executable = stage / ("crude.exe" if target == "windows" else "crude")
-        ldflags = f"-s -w -X crude/buildinfo.Version={version} -X crude/buildinfo.Commit={commit} -X crude/buildinfo.Date={date}"
+        ldflags = f"-s -w -X crude/internal/buildinfo.Version={version} -X crude/internal/buildinfo.Commit={commit} -X crude/internal/buildinfo.Date={date}"
         subprocess.run(["go", "build", "-trimpath", "-buildvcs=true", "-ldflags", ldflags, "-o", str(executable), "."], cwd=ROOT, check=True)
         expected = f"crude {version} ({commit}; {date}; {target}/amd64)"
         actual = run(str(executable), "--version")
@@ -143,8 +143,8 @@ def build(args):
         shutil.copyfile(ROOT / "third_party/libghostty-vt/GHOSTTY-LICENSE", stage / "licenses/ghostty/LICENSE")
         shutil.copyfile(ROOT / "third_party/libghostty-vt/NATIVE-NOTICES", stage / "licenses/NATIVE-NOTICES")
         shutil.copyfile(ROOT / "NOTICE", stage / "licenses/CRUDE-NOTICE")
-        shutil.copyfile(ROOT / "third_party/pathwalk/LICENSE", stage / "licenses/PATHWALK-LICENSE")
-        shutil.copyfile(ROOT / "third_party/pathwalk/GO-LICENSE", stage / "licenses/PATHWALK-GO-LICENSE")
+        shutil.copyfile(ROOT / "third_party/fastwalk/LICENSE", stage / "licenses/FASTWALK-LICENSE")
+        shutil.copyfile(ROOT / "third_party/fastwalk/GO-LICENSE", stage / "licenses/FASTWALK-GO-LICENSE")
         shutil.copyfile(Path(run("go", "env", "GOROOT")) / "LICENSE", stage / "licenses/GO-LICENSE")
         (stage / "licenses/BUILD.txt").write_text(f"Crude {version}\nCommit {commit}\nDate {date}\n{run('go', 'version')}\nGhostty {pin}\n", encoding="utf-8")
         destination = package(stage, output, version, target)

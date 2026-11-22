@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	"crude/internal/fileuri"
+	"crude/types/conversation"
 	"database/sql"
 	"os"
 	"testing"
@@ -40,11 +41,11 @@ func TestRealSessionColorPersistenceReplay(t *testing.T) {
 	app.AddOrchestrator("replay")
 	node := app.ws.AgentMgr().Get("replay")
 	for _, view := range views {
-		node.State.Messages.AppendMessage(workspace.Message(view))
+		node.State.Messages.AppendMessage(conversation.Message(view))
 	}
 	app.syncAgentMessages("replay", false)
 	app.paintShellFrame()
-	projection := app.subPaneProjections.GetExisting("replay")
+	projection := app.subPaneProjections.Existing("replay")
 	if projection == nil || projection.renderer == nil {
 		t.Fatal("missing replay renderer")
 	}

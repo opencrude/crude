@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"crude/agent"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
+	"crude/agent/turnloop"
 )
 
 const liveOllamaSubAgentModel = "glm-5.3-flash:cloud"
@@ -105,7 +105,7 @@ func TestLiveOllamaAgentStartPublishesTerminalResult(t *testing.T) {
 	defer cancel()
 	result, err := runner.StartAgent(ctx, map[string]any{
 		"name":          "live-wait",
-		"category":      agent.CatResearcher,
+		"category":      turnloop.CatResearcher,
 		"description":   "Verify the synchronous child lifecycle without reading or changing files.",
 		"instructions":  `Immediately call publish_report with kind "final", summary "live wait lifecycle ok", body "live wait lifecycle ok", and recipient_ids containing the exact parent_id from your assignment. Do not call any other tool.`,
 		"allowed_tools": []string{"publish_report"},
@@ -118,7 +118,7 @@ func TestLiveOllamaAgentStartPublishesTerminalResult(t *testing.T) {
 	}
 	runner.Wait()
 	completed := runner.Manager().CompletedResults()
-	if len(completed) != 1 || completed[0].Status != agent.SubAgentCompleted {
+	if len(completed) != 1 || completed[0].Status != turnloop.SubAgentCompleted {
 		t.Fatalf("completed results = %+v", completed)
 	}
 	snapshots := s.CompletedSubAgentSnapshots()
@@ -147,7 +147,7 @@ func TestLiveOllamaAsyncSubAgentSurvivesParentContextEnd(t *testing.T) {
 	parentCtx, cancelParent := context.WithCancel(t.Context())
 	result, err := runner.StartAgent(parentCtx, map[string]any{
 		"name":          "live-async",
-		"category":      agent.CatResearcher,
+		"category":      turnloop.CatResearcher,
 		"description":   "Verify the asynchronous child lifecycle without reading or changing files.",
 		"instructions":  `Immediately call publish_report with kind "final", summary "live async lifecycle ok", body "live async lifecycle ok", and recipient_ids containing the exact parent_id from your assignment. Do not call any other tool.`,
 		"allowed_tools": []string{"publish_report"},
@@ -161,11 +161,11 @@ func TestLiveOllamaAsyncSubAgentSurvivesParentContextEnd(t *testing.T) {
 	cancelParent()
 	runner.Wait()
 	completed := runner.Manager().CompletedResults()
-	if len(completed) != 1 || completed[0].Status != agent.SubAgentCompleted {
+	if len(completed) != 1 || completed[0].Status != turnloop.SubAgentCompleted {
 		t.Fatalf("child inherited parent turn cancellation: %+v", completed)
 	}
 }
 
-func (s *liveSubAgentSender) SendAgentEventEnvelope(event agent.AgentEvent) {
+func (s *liveSubAgentSender) SendAgentEventEnvelope(event turnloop.AgentEvent) {
 	s.SendAgentEventWithID(event.Type, event.Data, event.AgentID)
 }

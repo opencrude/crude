@@ -11,16 +11,16 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
 	"crude/workspace/document"
 	"github.com/stretchr/testify/require"
 )
 
-func numericCompletion(t testing.TB, source string) types.CompletionItem {
+func numericCompletion(t testing.TB, source string) insight.CompletionItem {
 	t.Helper()
 	text, plan, err := snippet.Parse(source)
 	require.NoError(t, err)
-	return types.CompletionItem{Label: "fixture", InsertText: text, Snippet: plan}
+	return insight.CompletionItem{Label: "fixture", InsertText: text, Snippet: plan}
 }
 
 // These are actual source mutation and editor-render stages, not just passive
@@ -266,7 +266,7 @@ func TestSnippetEmptyNoopEscAndRawObserverRetirement(t *testing.T) {
 			}
 			e := opsEditor(t, "source.go", initial)
 			item := numericCompletion(t, source)
-			item.TextEdit = &types.LSPTextEdit{EndCol: len(initial), NewText: item.InsertText}
+			item.TextEdit = &insight.LSPTextEdit{EndCol: len(initial), NewText: item.InsertText}
 			require.NoError(t, e.ApplyCompletion(item))
 			require.True(t, e.SnippetActive(), "byte-identical insertions still navigate")
 			require.Empty(t, e.buf.changes)
@@ -288,8 +288,8 @@ func TestSnippetEmptyNoopEscAndRawObserverRetirement(t *testing.T) {
 func TestSnippetAdditionalEditsPreserveSparseCanonicalOffsetsAndUndo(t *testing.T) {
 	e := opsEditor(t, "source.go", "package main\n\npr\nsuffix")
 	item := numericCompletion(t, "print(${1:α😀}, $1)$0")
-	item.TextEdit = &types.LSPTextEdit{Line: 2, EndLine: 2, EndCol: 2, NewText: item.InsertText}
-	item.AdditionalTextEdits = []types.LSPTextEdit{{Line: 1, EndLine: 1, NewText: "import \"fmt\"\n"}}
+	item.TextEdit = &insight.LSPTextEdit{Line: 2, EndLine: 2, EndCol: 2, NewText: item.InsertText}
+	item.AdditionalTextEdits = []insight.LSPTextEdit{{Line: 1, EndLine: 1, NewText: "import \"fmt\"\n"}}
 	require.NoError(t, e.ApplyCompletion(item))
 	require.Equal(t, "package main\nimport \"fmt\"\n\nprint(α😀, α😀)\nsuffix", e.Value())
 	require.Equal(t, "α😀", e.SelectedText())
@@ -301,8 +301,8 @@ func TestSnippetAdditionalEditsPreserveSparseCanonicalOffsetsAndUndo(t *testing.
 }
 
 func TestSnippetRejectsMisboundPlansAndJoinedGraphemeEndpointsAtomically(t *testing.T) {
-	for _, item := range []types.CompletionItem{
-		func() types.CompletionItem {
+	for _, item := range []insight.CompletionItem{
+		func() insight.CompletionItem {
 			v := numericCompletion(t, "${1:x}$0")
 			v.InsertText = "${1:x}$0"
 			return v

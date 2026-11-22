@@ -10,8 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	ctypes "crude/types"
-	"crude/workspace"
+	"crude/types/conversation"
 )
 
 // Opt-in fixture for scripts/tuishot.sh with the compiled viewmodel test binary:
@@ -47,7 +46,7 @@ func TestChatFindVisualAcceptance(t *testing.T) {
 	app.ApplyThemePreset("dark")
 	app.AddOrchestrator("find-audit")
 	state := app.ws.AgentMgr().Get("find-audit").State
-	state.Messages.AppendMessage(workspace.Message{Role: ctypes.RoleUser, Content: "Why does the chat jump when I scroll a long history?"})
+	state.Messages.AppendMessage(conversation.Message{Role: conversation.RoleUser, Content: "Why does the chat jump when I scroll a long history?"})
 	for i := 0; i < 120; i++ {
 		body := fmt.Sprintf("Reply %d keeps **the transcript** steady while the history grows.\n\n- item with `inline code` number %d\n- the scroll model owns the offset", i, i)
 		if i == 17 {
@@ -56,7 +55,7 @@ func TestChatFindVisualAcceptance(t *testing.T) {
 		if i == 64 {
 			body = "Only rows inside the viewport are drawn; rows above it keep an estimated height until the renderer settles them."
 		}
-		state.Messages.AppendMessage(workspace.Message{Role: ctypes.RoleAssistant, Content: body})
+		state.Messages.AppendMessage(conversation.Message{Role: conversation.RoleAssistant, Content: body})
 	}
 	app.syncAgentMessages(state.ID, false)
 	model := &chatFindVisualModel{App: app, owner: state.ID, buffer: buffer}
@@ -87,7 +86,7 @@ func (m *chatFindVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyF2:
 			m.n++
 			state := m.ws.AgentMgr().Get(m.owner).State
-			state.Messages.AppendMessage(workspace.Message{Role: ctypes.RoleAssistant, Content: strings.Repeat("streamed viewport ", m.n)})
+			state.Messages.AppendMessage(conversation.Message{Role: conversation.RoleAssistant, Content: strings.Repeat("streamed viewport ", m.n)})
 			m.syncAgentMessages(m.owner, false)
 			return m, nil
 		case tea.KeyF3:

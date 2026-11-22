@@ -10,7 +10,7 @@ import (
 	"crude/tui/cell"
 	"crude/tui/surface"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
 	"crude/workspace/document"
 )
 
@@ -75,8 +75,8 @@ func TestEditorGhostNativeTabIsLiteralAndDoesNotCommitUntilAccepted(t *testing.T
 func TestEditorGhostUnicodeInlayPaintHitAndBeforeAffinityShareOneProjection(t *testing.T) {
 	e := newInlayTestEditor(t, "a\t中😀Z")
 	e.SetCursorPosition(0, 6)
-	installTestInlays(t, e, types.LSPInlayHint{
-		Index: 0, SourceByte: 5, Position: types.LSPInlayPosition{Character: 3}, Label: ":T", PaddingRight: true,
+	installTestInlays(t, e, insight.LSPInlayHint{
+		Index: 0, SourceByte: 5, Position: insight.LSPInlayPosition{Character: 3}, Label: ":T", PaddingRight: true,
 	})
 	api := ghostEntry(t, e, 5, "e\u0301👩‍💻")
 	e.cursorBlink.ResetAt(0)
@@ -222,7 +222,7 @@ func TestEditorGhostUnsafeOrStaleOutputIsRefusedWithoutChangingTheEditor(t *test
 
 func TestEditorGhostSearchAndDiagnosticDecorationsRemainSourceOnly(t *testing.T) {
 	e := newInlayTestEditor(t, "foo bar")
-	e.SetDiagnostics(testDiagnosticFacts(e, []LSPDiagnostic{{Line: 0, Col: 0, EndCol: 3, Severity: DiagError, Message: "source only"}}))
+	e.SetDiagnostics(testDiagnosticFacts(e, []insight.LSPDiagnostic{{Line: 0, Col: 0, EndCol: 3, Severity: DiagError, Message: "source only"}}))
 	if count := e.SetQuery("foo"); count != 1 {
 		t.Fatal("source search fixture", count)
 	}

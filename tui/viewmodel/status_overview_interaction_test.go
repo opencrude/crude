@@ -5,7 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	statusoverview "crude/tui/screens/statusoverview"
+	"crude/tui/screens/statusoverview"
 	"crude/tui/screens/termdock"
 )
 

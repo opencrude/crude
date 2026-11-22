@@ -6,14 +6,14 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"crude/agent/prompthistory"
 	"crude/agent/sessiondb"
-	"crude/core/protocol"
-	"crude/history"
+	"crude/core/coreprotocol"
 	"crude/workspace"
 )
 
 func TestCoreHistoryImmutableCrossSession(t *testing.T) {
-	h := history.New()
+	h := prompthistory.New()
 	path := filepath.Join(t.TempDir(), "history.json")
 	a := workspace.NewReferenceStore("a", t.TempDir(), nil)
 	b := workspace.NewReferenceStore("b", t.TempDir(), nil)
@@ -68,7 +68,7 @@ func TestCoreHistoryImmutableCrossSession(t *testing.T) {
 }
 
 func TestCoreHistoryImportsOnlyExactSelectedSnapshot(t *testing.T) {
-	h := history.New()
+	h := prompthistory.New()
 	path := filepath.Join(t.TempDir(), "history.json")
 	source := workspace.NewReferenceStore("source", t.TempDir(), nil)
 	destination := workspace.NewReferenceStore("destination", t.TempDir(), nil)

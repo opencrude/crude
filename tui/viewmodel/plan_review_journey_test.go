@@ -15,7 +15,7 @@ import (
 
 	"crude/tui/screens/decision"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 // planReviewServer answers each model request with the next scripted reply
@@ -186,7 +186,7 @@ func TestPlanReviewConnectedJourney(t *testing.T) {
 		return ok && latest.Number == 2
 	})
 	review, _ := app.ws.PlanReviewForAgent(id)
-	if old, _ := review.Revision(1); old.Outcome != types.PlanOutcomeReplaced || !old.Comments[0].Sent {
+	if old, _ := review.Revision(1); old.Outcome != conversation.PlanOutcomeReplaced || !old.Comments[0].Sent {
 		t.Fatalf("revision 1 after the revision = %+v", old)
 	}
 	if !app.ws.PlanModeForAgent(id) {
@@ -210,7 +210,7 @@ func TestPlanReviewConnectedJourney(t *testing.T) {
 	}
 	until(func() bool {
 		latest, _ := app.latestPlanRevision(id)
-		return latest.Outcome == types.PlanOutcomeImplemented
+		return latest.Outcome == conversation.PlanOutcomeImplemented
 	})
 }
 
@@ -232,7 +232,7 @@ func TestPlanFilePathAcceptsOnlySessionPlanFiles(t *testing.T) {
 }
 
 func TestPlanDecisionAsksToSendPendingComments(t *testing.T) {
-	revision := types.PlanRevision{Number: 3, Title: "Cache", Comments: []types.PlanComment{{ID: "a"}, {ID: "b", Sent: true}}}
+	revision := conversation.PlanRevision{Number: 3, Title: "Cache", Comments: []conversation.PlanComment{{ID: "a"}, {ID: "b", Sent: true}}}
 	spec, data := planDecisionSpec(revision)
 	if data != "3:send:1" || spec.Confirm.Label != "Send comments" || len(spec.Alternates) != 1 || spec.Alternates[0].ID != planChoiceReview || !spec.Alternates[0].Stay {
 		t.Fatalf("pending comments decision = %+v %q", spec, data)
@@ -284,7 +284,7 @@ func TestPlanNewSessionConnectedJourney(t *testing.T) {
 	}
 	until(func() bool {
 		latest, _ := app.latestPlanRevision(id)
-		return latest.Outcome == types.PlanOutcomeNewSession
+		return latest.Outcome == conversation.PlanOutcomeNewSession
 	})
 	latest, _ := app.latestPlanRevision(id)
 	if session := app.ws.SessionsByAgent()[destination]; session == nil || latest.NewSessionID != session.SessionID {

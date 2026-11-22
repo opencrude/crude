@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"crude/agent/collaboration"
-	ttypes "crude/types"
+	"crude/types/setting"
 	"crude/workspace/fileio"
 )
 
@@ -21,7 +21,7 @@ func (switchPreflightLogger) Error(string, string, ...any) {}
 type switchPreflightSnapshot struct {
 	root          string
 	workspaceDir  string
-	workspaceDB   *WorkspaceDB
+	workspaceDB   *DB
 	collaboration *collaboration.Store
 	agentMgr      *AgentManager
 	paneMgr       *PaneManager
@@ -38,7 +38,7 @@ func newSwitchPreflightWorkspace(t *testing.T) (*Workspace, switchPreflightSnaps
 	t.Helper()
 	setTestHome(t)
 	root := t.TempDir()
-	ws := NewWorkspace(root, "model", "user", ttypes.Settings{}, switchPreflightLogger{})
+	ws := NewWorkspace(root, "model", "user", setting.Settings{}, switchPreflightLogger{})
 	t.Cleanup(ws.Close)
 
 	frontendSession := NewSession("old-session", "", nil, switchPreflightLogger{})
@@ -170,7 +170,7 @@ func TestSwitchProjectPersistenceFailureLeavesOldWorkspaceIntact(t *testing.T) {
 func TestSwitchProjectCollaborationFailureLeavesOldWorkspaceIntact(t *testing.T) {
 	ws, before := newSwitchPreflightWorkspace(t)
 	target := t.TempDir()
-	targetWorkspace := NewWorkspace(target, "model", "user", ttypes.Settings{}, switchPreflightLogger{})
+	targetWorkspace := NewWorkspace(target, "model", "user", setting.Settings{}, switchPreflightLogger{})
 	if targetWorkspace.Collaboration == nil {
 		targetWorkspace.Close()
 		t.Fatal("target collaboration runtime did not initialize")

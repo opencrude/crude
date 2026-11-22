@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"crude/text/textdiff"
 	"crude/tui/editor"
 	"crude/tui/screens/editorchanges"
 	"crude/tui/screens/shelleditor"
@@ -18,7 +19,7 @@ type editorChangesView struct {
 	revision uint64
 	index    int
 	screen   *editorchanges.Screen
-	hunks    []editor.GitHunk
+	hunks    []textdiff.Hunk
 }
 
 func (m *App) inspectEditorChange(ed *editor.Editor, line int) {
@@ -35,11 +36,11 @@ func (m *App) inspectEditorChange(ed *editor.Editor, line int) {
 	m.openEditorChanges(ed, ed.GitHunks(), index, "HEAD")
 }
 
-func (m *App) openEditorChanges(ed *editor.Editor, hunks []editor.GitHunk, index int, baseline string) {
+func (m *App) openEditorChanges(ed *editor.Editor, hunks []textdiff.Hunk, index int, baseline string) {
 	hunk := hunks[index]
 	m.overlayHost.Close(editorChangesOverlay)
 	screen := editorchanges.New(m.Theme, hunk, baseline)
-	m.editorChanges = &editorChangesView{source: ed, revision: ed.Revision(), index: index, screen: screen, hunks: append([]editor.GitHunk(nil), hunks...)}
+	m.editorChanges = &editorChangesView{source: ed, revision: ed.Revision(), index: index, screen: screen, hunks: append([]textdiff.Hunk(nil), hunks...)}
 	w, h := fitFloatingSize(m.width, m.height, 100, min(24, max(9, len(hunk.OldLines)+len(hunk.NewLines)+5)), 40, 9)
 	title := fmt.Sprintf("Changes vs %s: %s", baseline, filepath.Base(ed.FilePath()))
 	frame := ui.NewWindowFrameWidget(m.Theme, "editor-changes/frame", ui.FrameWindow, title, screen, nil, true, w, h)

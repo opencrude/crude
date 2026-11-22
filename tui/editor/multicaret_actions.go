@@ -58,7 +58,7 @@ func (e *Editor) nativeCaretPlan(id ui.ActionID, s SourceSelection) caretEdit {
 		if left.Line != right.Line || end.Line != right.Line {
 			return p
 		}
-		p = replacement(e.buf.positionToOffset(left), e.buf.positionToOffset(end), e.buf.GetText(right, end)+e.buf.GetText(left, right))
+		p = replacement(e.buf.positionToOffset(left), e.buf.positionToOffset(end), e.buf.Text(right, end)+e.buf.Text(left, right))
 	}
 	return p
 }

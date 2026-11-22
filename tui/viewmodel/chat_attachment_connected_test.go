@@ -21,10 +21,10 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
-	"crude/core/client"
-	settingsui "crude/tui/settings"
+	"crude/core/coreclient"
+	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -42,7 +42,7 @@ func TestConnectedPostedAttachmentsSurviveViewerReattach(t *testing.T) {
 	provider.SetModelCap("test-model", true, true)
 	runtime := remoteJourneyRuntime(t, server.URL, func(ws *workspace.Workspace) {
 		app := ws.AppDefaults()
-		app.UI.AttachmentOpen = types.AttachmentOpenCrude
+		app.UI.AttachmentOpen = setting.AttachmentOpenCrude
 		ws.SetAppDefaults(app)
 	})
 	root := t.TempDir()
@@ -87,7 +87,7 @@ func TestConnectedPostedAttachmentsSurviveViewerReattach(t *testing.T) {
 	if screen := second.app.sessionTextOverlay(); !screen.ReadOnly() || screen.Value() != content || screen.RefID() != text.ID {
 		t.Fatalf("reattached transcript preview: id=%q want=%q readonly=%v content=%q", screen.RefID(), text.ID, screen.ReadOnly(), screen.Value())
 	}
-	if retained, ok := second.app.RefStore().GetReference(text.ID); !ok || retained.Content != content {
+	if retained, ok := second.app.RefStore().Reference(text.ID); !ok || retained.Content != content {
 		t.Fatal("reading a transfer projection replaced the canonical reference")
 	}
 	_, command = second.app.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
@@ -103,7 +103,7 @@ func TestConnectedPostedAttachmentsSurviveViewerReattach(t *testing.T) {
 	// fixtures do not). Drive that real lifecycle, then inspect its presented
 	// body rather than the initial collapsed animation frame.
 	remoteJourneyUntil(t, []remoteJourneyShell{first, second}, func() bool {
-		_, _ = second.app.Update(types.TickMsg(time.Now()))
+		_, _ = second.app.Update(TickMsg(time.Now()))
 		return strings.Contains(second.app.View().RenderContent(), "▀")
 	})
 	second.app.probeTerminalImages()
@@ -131,7 +131,7 @@ func TestConnectedPostedAttachmentsSurviveViewerReattach(t *testing.T) {
 	for index, category := range model.Categories() {
 		if category.Form != nil && category.Form.Field("attachment-open") != nil {
 			model.SelectCategory(index)
-			model.SetValueForTest(index, "attachment-open", types.AttachmentOpenSystem)
+			model.SetValueForTest(index, "attachment-open", setting.AttachmentOpenSystem)
 		}
 	}
 	save := body.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.save"})
@@ -144,7 +144,7 @@ func TestConnectedPostedAttachmentsSurviveViewerReattach(t *testing.T) {
 	}
 	runAppCommand(t, second.app, func() tea.Msg { return saveMsg })
 	remoteJourneyUntil(t, []remoteJourneyShell{first, second}, func() bool {
-		return first.app.ws.LoadAppSettings().UI.AttachmentOpen == types.AttachmentOpenSystem && !body.Model().Saving()
+		return first.app.ws.LoadAppSettings().UI.AttachmentOpen == setting.AttachmentOpenSystem && !body.Model().Saving()
 	})
 	second.app.overlayHost.Close(ui.OverlayWorkspaceSettings)
 	clickTranscriptAttachment(t, second.app, media.DisplayName())
@@ -159,7 +159,7 @@ func TestConnectedPostedAttachmentsSurviveViewerReattach(t *testing.T) {
 		// Registry selection and settings are independent of transcript
 		// hydration. A human cannot click the reattached link until it paints.
 		return third.app.AgentView.ActiveID() == agentID &&
-			third.app.ws.LoadAppSettings().UI.AttachmentOpen == types.AttachmentOpenSystem &&
+			third.app.ws.LoadAppSettings().UI.AttachmentOpen == setting.AttachmentOpenSystem &&
 			strings.Contains(third.app.View().RenderContent(), media.DisplayName())
 	})
 	clickTranscriptAttachment(t, third.app, media.DisplayName())

@@ -3,7 +3,7 @@ package editor
 import (
 	"slices"
 
-	"crude/types"
+	"crude/types/insight"
 )
 
 // A later batch may already be stale when its independent publication reaches
@@ -11,12 +11,12 @@ import (
 // and mapped through actual edits; changed or empty answers retire the old ink.
 // Never project the later batch's ranges onto different source. Its new ID still
 // retires diagnostic interaction until RefreshDiagnostics can match it exactly.
-func (e *Editor) retainMappedDiagnosticPaint(previous, next types.InsightDiagnostics) bool {
+func (e *Editor) retainMappedDiagnosticPaint(previous, next insight.Diagnostics) bool {
 	if e.diagnosticProjectedID == "" || next.ID == "" || e.MatchesDiagnosticSource(next) ||
 		!slices.Equal(previous.Diagnostics, next.Diagnostics) ||
 		next.Binding != "exact-version" || next.ReportedVersion == nil ||
 		*next.ReportedVersion != next.WireVersion || next.WireVersion <= 0 || next.Limited ||
-		(next.State != types.InsightStale && !next.HasExactSource()) ||
+		(next.State != insight.Stale && !next.HasExactSource()) ||
 		previous.Boundary.Producer.InstanceID == "" || previous.Boundary.Producer != next.Boundary.Producer {
 		return false
 	}

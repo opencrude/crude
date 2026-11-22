@@ -1,7 +1,7 @@
 package viewmodel
 
 import (
-	"crude/agent"
+	"crude/agent/turnloop"
 	"testing"
 	"time"
 
@@ -9,7 +9,7 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/session"
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/cell"
 	"crude/tui/compositor"
 	"crude/tui/editor"
@@ -141,7 +141,7 @@ func openTestAgentPrompt(t testing.TB, app *App, projection *sessionProjection, 
 
 func (noopEventSender) SendAgentEvent(typ string, data any)                  {}
 func (noopEventSender) SendAgentEventWithID(typ string, data any, id string) {}
-func (noopEventSender) SendAgentEventEnvelope(agent.AgentEvent)              {}
+func (noopEventSender) SendAgentEventEnvelope(turnloop.AgentEvent)           {}
 
 // sessionFactSender delivers session facts (status rows, the goal) to the
 // workspace as the core does, and drops turn events like noopEventSender.
@@ -155,7 +155,7 @@ func (s sessionFactSender) SendAgentEventWithID(typ string, data any, id string)
 		s.ws.ApplyAgentEvent(workspace.AgentEvent{Type: typ, Data: data, AgentID: id})
 	}
 }
-func (sessionFactSender) SendAgentEventEnvelope(agent.AgentEvent) {}
+func (sessionFactSender) SendAgentEventEnvelope(turnloop.AgentEvent) {}
 
 // newTestApp builds an App with the full shell tree mounted (all shell
 // screens under one rootHost painted into mainSurf) plus the workspace

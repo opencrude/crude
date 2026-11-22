@@ -12,10 +12,9 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/core/client"
-	"crude/core/port"
-	"crude/core/protocol"
-	"crude/tui/editor"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
+	"crude/core/shellport"
 	"crude/tui/screens/boardbrowser"
 	"crude/tui/screens/codeactions"
 	"crude/tui/screens/gitpanel"
@@ -24,11 +23,12 @@ import (
 	"crude/tui/screens/navigation"
 	"crude/tui/screens/question"
 	"crude/tui/screens/sessionsettings"
+	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/screens/termdock"
-	settingsui "crude/tui/settings"
 	"crude/tui/ui"
 	"crude/tui/window"
 	"crude/types/control"
+	"crude/types/insight"
 )
 
 // ShellCommandDescriptor is the semantic effect owner contract used by gateway
@@ -475,7 +475,7 @@ func (m *App) handleShellControl(msg shellport.ControlRequestMsg) tea.Cmd {
 		}
 		return m.awaitShellControl(msg, cmd, func(completion tea.Msg) tea.Msg {
 			p := completion.(paneFilesOpenedMsg)
-			p.position = &editor.LSPDiagnostic{Line: in.Line, Col: in.Column, EndLine: in.Line, EndCol: in.Column}
+			p.position = &insight.LSPDiagnostic{Line: in.Line, Col: in.Column, EndLine: in.Line, EndCol: in.Column}
 			return p
 		})
 	case "editor.navigate", "editor.select":

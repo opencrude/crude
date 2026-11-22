@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"crude/tui/ui"
-	ttypes "crude/types"
 	"crude/workspace"
 )
 
@@ -181,7 +180,7 @@ func TestTabSyncWhileEditingDoesNotStealEditor(t *testing.T) {
 
 	for i := 0; i < 3; i++ {
 		app.syncAgentWindowTabs()
-		_, _ = app.handleTick(ttypes.TickMsg(time.Now()))
+		_, _ = app.handleTick(TickMsg(time.Now()))
 	}
 	if !agentTabPresent(app, "orch-1") {
 		t.Fatal("tick must keep the agent tab")
@@ -217,7 +216,7 @@ func TestTabSyncWhileEditingCreatesMissingAgentTab(t *testing.T) {
 func TestBackgroundSubAgentTabCreationDoesNotStealRootSelection(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator("root")
-	pane := app.ws.PaneMgr().GetOrCreate("child", workspace.PaneAgent, "child")
+	pane := app.ws.PaneMgr().Ensure("child", workspace.PaneAgent, "child")
 	app.ws.AgentMgr().AddSubAgent("child", "root", "child", "model", "researcher",
 		workspace.NewAgentState("child", pane.Messages, app.ws.Logger()))
 	app.syncAgentWindowTabs()
@@ -234,7 +233,7 @@ func TestAgentTabSyncPreservesUserOrderWithoutMovingEditorOrSelection(t *testing
 	app.AddOrchestrator("root")
 	firstEditor := openEditorTabs(t, app, "first.go")[0]
 	for _, id := range []string{"older", "newer"} {
-		pane := app.ws.PaneMgr().GetOrCreate(id, workspace.PaneAgent, id)
+		pane := app.ws.PaneMgr().Ensure(id, workspace.PaneAgent, id)
 		app.ws.AgentMgr().AddSubAgent(id, "root", id, "model", "researcher",
 			workspace.NewAgentState(id, pane.Messages, app.ws.Logger()))
 		app.AgentView.SetHidden(id, false) // opened by the user
@@ -289,7 +288,7 @@ func TestAgentTabSyncGroupsMultipleRootsWithoutStealingSelection(t *testing.T) {
 func TestTabSyncRepairsStaleManagerSelectionFromVisibleWindow(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator("root")
-	pane := app.ws.PaneMgr().GetOrCreate("child", workspace.PaneAgent, "child")
+	pane := app.ws.PaneMgr().Ensure("child", workspace.PaneAgent, "child")
 	app.ws.AgentMgr().AddSubAgent("child", "root", "child", "model", "researcher",
 		workspace.NewAgentState("child", pane.Messages, app.ws.Logger()))
 	app.AgentView.SetHidden("child", false)
@@ -333,7 +332,7 @@ func TestSubAgentTabCreatedWhileEditingDoesNotStealEditor(t *testing.T) {
 
 	paths := openEditorTabs(t, app, "main.go")
 
-	childPane := app.ws.PaneMgr().GetOrCreate("child", workspace.PaneAgent, "child")
+	childPane := app.ws.PaneMgr().Ensure("child", workspace.PaneAgent, "child")
 	if app.ws.AgentMgr().AddSubAgent(
 		"child", "root", "Researcher", "child-model", "researcher",
 		workspace.NewAgentState("child", childPane.Messages, nil),

@@ -11,9 +11,9 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/editor"
-	"crude/types"
+	"crude/types/insight"
 	"crude/workspace"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -222,7 +222,7 @@ func (m *rowsVisualModel) observeRows(phase int) error {
 		}
 		state := ed.DocumentState()
 		syntax, _ := ed.InsightStatus()
-		if ed.RowsDone() != nil || syntax != types.InsightCurrent || state.InFlight || state.PendingEdits != 0 || state.UndoPending || state.HistoryQueued {
+		if ed.RowsDone() != nil || syntax != insight.Current || state.InFlight || state.PendingEdits != 0 || state.UndoPending || state.HistoryQueued {
 			return fmt.Errorf("source/rows not settled")
 		}
 		expected := editorRowsSource()

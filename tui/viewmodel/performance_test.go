@@ -8,6 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/internal/perfdata"
 	"crude/tui/rendering"
 	"crude/tui/screens/perfdash"
 	"crude/tui/screens/termdock"
@@ -32,7 +33,7 @@ func TestPerformanceSlashCommandIsRemoved(t *testing.T) {
 func TestPerformanceFooterKeepsIdleAndAttentionEntry(t *testing.T) {
 	app := newFullTestApp(t)
 	for _, test := range []struct {
-		severity perfdash.Severity
+		severity perfdata.Severity
 		text     string
 		role     ui.SemanticColor
 	}{

@@ -75,7 +75,7 @@ func TestClickLauncherSearchClearsStaleTreeFocus(t *testing.T) {
 	app.Tree = NewTreeState(model, 28)
 	app.Tree.Visible = true
 	app.sidebarScreen.SetModel(model)
-	app.launcherScreen.SetData(dir, []workspace.WorkspaceInfo{{
+	app.launcherScreen.SetData(dir, []workspace.Info{{
 		ID: "other", ProjectDir: filepath.Join(t.TempDir(), "other"),
 	}})
 	app.paintShellFrame()

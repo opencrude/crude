@@ -60,12 +60,12 @@ type nativeControlCollection interface {
 	controlActivateAction() string
 }
 
-func (c *List) controlItemCount() int { return len(c.items) }
-func (c *List) controlItemAt(i int) controlItem {
-	it := c.items[i]
-	return controlItem{ID: it.ID, Name: it.Label, Enabled: it.Selectable(), Selected: c.sel.Index() == i, Height: 1}
+func (l *List) controlItemCount() int { return len(l.items) }
+func (l *List) controlItemAt(i int) controlItem {
+	it := l.items[i]
+	return controlItem{ID: it.ID, Name: it.Label, Enabled: it.Selectable(), Selected: l.sel.Index() == i, Height: 1}
 }
-func (c *List) controlActivateAction() string { return c.activate }
+func (l *List) controlActivateAction() string { return l.activate }
 
 func controlItemCount(c Component) int {
 	switch c := c.(type) {
@@ -348,102 +348,138 @@ func collectionControl(c Component, op ControlOperation, activate string) (Event
 	}
 	return controlResult("", nil), nil
 }
-func isControlTabs(c Component) bool                 { _, ok := c.(*Tabs); return ok }
-func (c *List) ControlActions() []control.Descriptor { return collectionActions(c, c.activate) }
-func (c *List) HandleControl(_ EventContext, op ControlOperation) (EventResult, error) {
-	return collectionControl(c, op, c.activate)
+func isControlTabs(c Component) bool { _, ok := c.(*Tabs); return ok }
+
+// ControlActions lists the operations that a list offers to the control API.
+func (l *List) ControlActions() []control.Descriptor { return collectionActions(l, l.activate) }
+
+// HandleControl runs a select, activate or scroll operation on the list.
+func (l *List) HandleControl(_ EventContext, op ControlOperation) (EventResult, error) {
+	return collectionControl(l, op, l.activate)
 }
-func (c *Menu) ControlActions() []control.Descriptor { return collectionActions(c, c.activate) }
-func (c *Menu) HandleControl(_ EventContext, op ControlOperation) (EventResult, error) {
-	return collectionControl(c, op, c.activate)
+
+// ControlActions lists the operations that a menu offers to the control API.
+func (m *Menu) ControlActions() []control.Descriptor { return collectionActions(m, m.activate) }
+
+// HandleControl runs a select or activate operation on the menu.
+func (m *Menu) HandleControl(_ EventContext, op ControlOperation) (EventResult, error) {
+	return collectionControl(m, op, m.activate)
 }
-func (c *Table) ControlActions() []control.Descriptor { return collectionActions(c, c.activate) }
-func (c *Table) HandleControl(_ EventContext, op ControlOperation) (EventResult, error) {
-	return collectionControl(c, op, c.activate)
+
+// ControlActions lists the operations that a table offers to the control API.
+func (t *Table) ControlActions() []control.Descriptor { return collectionActions(t, t.activate) }
+
+// HandleControl runs a select, activate or scroll operation on the table.
+func (t *Table) HandleControl(_ EventContext, op ControlOperation) (EventResult, error) {
+	return collectionControl(t, op, t.activate)
 }
-func (c *Tree) ControlActions() []control.Descriptor {
-	return append(collectionActions(c, c.activate), controlActions(true, c.toggle)...)
+
+// ControlActions lists the operations that a tree offers, expand and collapse included.
+func (t *Tree) ControlActions() []control.Descriptor {
+	return append(collectionActions(t, t.activate), controlActions(true, t.toggle)...)
 }
-func (c *Tree) HandleControl(_ EventContext, op ControlOperation) (EventResult, error) {
-	return collectionControl(c, op, c.activate)
+
+// HandleControl runs a select, activate or toggle operation on the tree.
+func (t *Tree) HandleControl(_ EventContext, op ControlOperation) (EventResult, error) {
+	return collectionControl(t, op, t.activate)
 }
-func (c *Tabs) ControlActions() []control.Descriptor {
+
+// ControlActions lists the operations that a tab bar offers.
+func (t *Tabs) ControlActions() []control.Descriptor {
 	return controlActions(true, "tabs.activate", "tabs.close", "select", "set_offset", "scroll")
 }
-func (c *Tabs) HandleControl(_ EventContext, op ControlOperation) (EventResult, error) {
+
+// HandleControl activates, closes, selects or scrolls the tab bar.
+func (t *Tabs) HandleControl(_ EventContext, op ControlOperation) (EventResult, error) {
 	if op.Verb == "scroll" {
-		c.ScrollBy(op.Offset)
+		t.ScrollBy(op.Offset)
 		return controlResult("", nil), nil
 	}
 	if op.Verb == "set_offset" {
-		c.SetScroll(op.Offset)
+		t.SetScroll(op.Offset)
 		return controlResult("", nil), nil
 	}
-	return collectionControl(c, op, "tabs.activate")
+	return collectionControl(t, op, "tabs.activate")
 }
-func (c *VirtualList) ControlActions() []control.Descriptor {
-	if c.pointerPolicy == PointerPolicyPassthrough {
+
+// ControlActions lists virtual list operations, or nothing when it passes pointers through.
+func (v *VirtualList) ControlActions() []control.Descriptor {
+	if v.pointerPolicy == PointerPolicyPassthrough {
 		return nil
 	}
-	return collectionActions(c, c.activate)
+	return collectionActions(v, v.activate)
 }
-func (c *VirtualList) HandleControl(_ EventContext, op ControlOperation) (EventResult, error) {
-	if c.pointerPolicy == PointerPolicyPassthrough {
+
+// HandleControl runs a list operation unless the list passes pointers through.
+func (v *VirtualList) HandleControl(_ EventContext, op ControlOperation) (EventResult, error) {
+	if v.pointerPolicy == PointerPolicyPassthrough {
 		return unsupportedControl()
 	}
-	return collectionControl(c, op, c.activate)
+	return collectionControl(v, op, v.activate)
 }
-func (c *ScrollbarControl) ControlActions() []control.Descriptor {
-	return controlActions(c.scroll != nil, "set_offset", "scroll")
+
+// ControlActions lists the scroll operations when a scroll owner is bound.
+func (s *ScrollbarControl) ControlActions() []control.Descriptor {
+	return controlActions(s.scroll != nil, "set_offset", "scroll")
 }
-func (c *ScrollbarControl) HandleControl(_ EventContext, op ControlOperation) (EventResult, error) {
-	if c.scroll == nil {
+
+// HandleControl scrolls or sets the offset of the bound scroll owner.
+func (s *ScrollbarControl) HandleControl(_ EventContext, op ControlOperation) (EventResult, error) {
+	if s.scroll == nil {
 		return unsupportedControl()
 	}
-	old := c.scroll.Offset()
+	old := s.scroll.Offset()
 	switch op.Verb {
 	case "scroll":
-		c.scroll.ScrollBy(op.Offset)
+		s.scroll.ScrollBy(op.Offset)
 	case "set_offset":
-		c.scroll.ScrollTo(op.Offset)
+		s.scroll.ScrollTo(op.Offset)
 	default:
 		return unsupportedControl()
 	}
-	return EventResult{Handled: true, Invalidate: c.scrollInvalidation(old)}, nil
+	return EventResult{Handled: true, Invalidate: s.scrollInvalidation(old)}, nil
 }
-func (c *Viewport) ControlActions() []control.Descriptor {
+
+// ControlActions lists the operations that a viewport offers.
+func (v *Viewport) ControlActions() []control.Descriptor {
 	return controlActions(true, "set_offset", "scroll")
 }
-func (c *Viewport) HandleControl(_ EventContext, op ControlOperation) (EventResult, error) {
+
+// HandleControl scrolls or sets the two-axis offset of the viewport.
+func (v *Viewport) HandleControl(_ EventContext, op ControlOperation) (EventResult, error) {
 	x, y := op.SecondaryOffset, op.Offset
 	if op.Verb == "scroll" {
-		x += c.scrollX
-		y += c.scrollY
+		x += v.scrollX
+		y += v.scrollY
 	} else if op.Verb != "set_offset" {
 		return unsupportedControl()
 	}
-	c.SetScrollOffset(min(max(0, x), max(0, c.resolvedW-c.Bounds().W)), min(max(0, y), max(0, c.resolvedH-c.Bounds().H)))
+	v.SetScrollOffset(min(max(0, x), max(0, v.resolvedW-v.Bounds().W)), min(max(0, y), max(0, v.resolvedH-v.Bounds().H)))
 	return controlResult("", nil), nil
 }
-func (c *SplitDivider) ControlActions() []control.Descriptor {
-	return controlActions(c.model != nil, ActionSplitResize)
+
+// ControlActions lists the resize operation when a split model is bound.
+func (d *SplitDivider) ControlActions() []control.Descriptor {
+	return controlActions(d.model != nil, ActionSplitResize)
 }
-func (c *SplitDivider) HandleControl(_ EventContext, op ControlOperation) (EventResult, error) {
-	if c.model == nil || op.Verb != "resize" {
+
+// HandleControl resizes the split by a fraction or by a size.
+func (d *SplitDivider) HandleControl(_ EventContext, op ControlOperation) (EventResult, error) {
+	if d.model == nil || op.Verb != "resize" {
 		return unsupportedControl()
 	}
 	if op.Fraction != nil {
 		if math.IsNaN(*op.Fraction) || math.IsInf(*op.Fraction, 0) || *op.Fraction < 0 || *op.Fraction > 1 {
 			return EventResult{}, controlError(control.Invalid, "invalid split fraction")
 		}
-		c.model.SetFraction(*op.Fraction)
-		first, _, _ := c.model.Resolve(op.SecondaryOffset)
-		c.currentFirst = first
-		return controlResult(ActionSplitResize, SplitResize{ID: c.ID(), First: first}), nil
+		d.model.SetFraction(*op.Fraction)
+		first, _, _ := d.model.Resolve(op.SecondaryOffset)
+		d.currentFirst = first
+		return controlResult(ActionSplitResize, SplitResize{ID: d.ID(), First: first}), nil
 	}
 	if op.Offset < 0 {
 		return EventResult{}, controlError(control.Invalid, "negative split size")
 	}
-	c.model.SetFirstSize(op.Offset)
-	return c.resizeResult(), nil
+	d.model.SetFirstSize(op.Offset)
+	return d.resizeResult(), nil
 }

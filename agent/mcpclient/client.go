@@ -25,7 +25,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"crude/network"
+	"crude/internal/network"
 	captypes "crude/types/capability"
 )
 

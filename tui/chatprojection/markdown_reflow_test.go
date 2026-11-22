@@ -8,7 +8,7 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 func TestMarkdownParagraphReflowKeepsPaintAndSource(t *testing.T) {
@@ -16,7 +16,7 @@ func TestMarkdownParagraphReflowKeepsPaintAndSource(t *testing.T) {
 		"Soft break with 界 and café.\n\nRepeat repeat repeat and [Docs](https://example.org/guide)."
 	th := theme.DefaultDark()
 	r := NewRenderer(th)
-	r.AppendMessage(types.ChatMessage{InternalID: "paragraph", Role: types.RoleAssistant, Content: body})
+	r.AppendMessage(conversation.ChatMessage{InternalID: "paragraph", Role: conversation.RoleAssistant, Content: body})
 	msg := r.sync.MsgByID["paragraph"]
 	if msg == nil {
 		t.Fatal("assistant message was not retained")
@@ -84,11 +84,11 @@ func TestMarkdownParagraphReflowUpdatesOnSourceChange(t *testing.T) {
 	th := theme.DefaultDark()
 	r := NewRenderer(th)
 	r.SetSize(44, 40)
-	msg := types.ChatMessage{InternalID: "m", Role: types.RoleAssistant, Content: "Original **paragraph**"}
-	r.SyncMessages([]types.ChatMessage{msg}, 1, 1)
+	msg := conversation.ChatMessage{InternalID: "m", Role: conversation.RoleAssistant, Content: "Original **paragraph**"}
+	r.SyncMessages([]conversation.ChatMessage{msg}, 1, 1)
 	old, _ := r.renderSingleMessage(r.sync.MsgByID["m"])
 	msg.Content = "Updated **paragraph**"
-	if !r.SyncChanges([]types.ChatMessage{msg}, nil, nil, 2, 1) {
+	if !r.SyncChanges([]conversation.ChatMessage{msg}, nil, nil, 2, 1) {
 		t.Fatal("same-message source update was rejected")
 	}
 	newLines, _ := r.renderSingleMessage(r.sync.MsgByID["m"])
@@ -103,9 +103,9 @@ func TestMarkdownParagraphReflowWorkingSet(t *testing.T) {
 	r := NewRenderer(theme.DefaultDark())
 	r.SetSize(44, 40)
 	const body = "Identical **styled** paragraph"
-	messages := make([]types.ChatMessage, markdownReflowEntries+1)
+	messages := make([]conversation.ChatMessage, markdownReflowEntries+1)
 	for i := range messages {
-		messages[i] = types.ChatMessage{InternalID: fmt.Sprint(i), Role: types.RoleAssistant, Content: body}
+		messages[i] = conversation.ChatMessage{InternalID: fmt.Sprint(i), Role: conversation.RoleAssistant, Content: body}
 	}
 	r.SyncMessages(messages, 1, 1)
 	render := func(i int) *rendering.CopyText {

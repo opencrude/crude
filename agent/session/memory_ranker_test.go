@@ -14,7 +14,7 @@ import (
 
 	"crude/agent/memory"
 	"crude/agent/provider"
-	"crude/types"
+	"crude/types/setting"
 )
 
 // Exercise real session admission, two tool rounds, both account transports,
@@ -110,7 +110,7 @@ func testRankingJourney(t *testing.T, unavailable bool) {
 	acc.APIKey = "rank-only"
 	acc.Connection.ProviderURL = decision.URL
 	cfg.Accounts[acc.ID] = acc
-	cfg.Memory = types.MemorySettings{AutoExtract: "off", Consolidation: "off", Ranker: types.MemoryRankerSettings{Enabled: "on", AccountID: acc.ID, Model: "ranker", ModelType: types.ModelTypeDecision, EveryActions: 2, TopK: 1}}
+	cfg.Memory = setting.Memory{AutoExtract: "off", Consolidation: "off", Ranker: setting.MemoryRanker{Enabled: "on", AccountID: acc.ID, Model: "ranker", ModelType: setting.ModelTypeDecision, EveryActions: 2, TopK: 1}}
 	home, dir, root := t.TempDir(), t.TempDir(), t.TempDir()
 	for _, name := range []string{"ordinary.txt", "spindle.txt"} {
 		if err := os.WriteFile(filepath.Join(root, name), []byte("password=private-pass"), 0600); err != nil {
@@ -201,7 +201,7 @@ func TestRankedMemoryAbstentionDisableAndRevisionFence(t *testing.T) {
 			}))
 			defer srv.Close()
 			cfg := modelAttributionConfig(srv.URL, "rank")
-			cfg.Memory.Ranker = types.MemoryRankerSettings{Enabled: "on", AccountID: "account", Model: "rank", ModelType: types.ModelTypeDecision, EveryActions: 1}
+			cfg.Memory.Ranker = setting.MemoryRanker{Enabled: "on", AccountID: "account", Model: "rank", ModelType: setting.ModelTypeDecision, EveryActions: 1}
 			s := &Session{cfg: cfg, memoryStore: store}
 			active := []provider.ChatMessage{provider.NewTextMessage("user", "spindle")}
 			batch := []provider.ChatMessage{{Role: "assistant", ToolCalls: []provider.ToolCall{{ID: "1", Function: provider.FunctionCall{Name: "read_file", Arguments: `{"path":"spindle"}`}}}}, {Role: "tool", ToolCallID: "1", Content: "spindle"}}

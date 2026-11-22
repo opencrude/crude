@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/network"
+	"crude/internal/network"
 )
 
 // A blackholed HTTP/2 connection remains locally established. Cancelling its

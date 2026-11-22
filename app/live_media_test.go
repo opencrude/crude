@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"crude/agent"
 	"crude/agent/provider"
-	"crude/logger"
+	"crude/agent/turnloop"
+	"crude/internal/logger"
 )
 
 func TestLiveCommandCodeToolResultImageSemantics(t *testing.T) {
@@ -61,7 +61,7 @@ func TestLiveCommandCodeToolResultImageSemantics(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = lg.Close() }()
-	a := agent.NewAgent(p, model, lg)
+	a := turnloop.NewAgent(p, model, lg)
 	a.MaxRetries = 1
 
 	imageURL := liveMediaImageURL(t)
@@ -86,7 +86,7 @@ func TestLiveCommandCodeToolResultImageSemantics(t *testing.T) {
 	defer cancel()
 	result := a.Run(ctx, messages,
 		"Analyze the supplied image directly. It has four solid quadrants. Name the top-left, top-right, bottom-left, and bottom-right colors. Do not call tools.",
-		func(agent.AgentEvent) {}, nil, "", nil)
+		func(turnloop.AgentEvent) {}, nil, "", nil)
 	if ctx.Err() != nil {
 		t.Fatalf("live media request timed out: %v", ctx.Err())
 	}

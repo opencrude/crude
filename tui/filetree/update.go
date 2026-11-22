@@ -1,8 +1,7 @@
-// Package filetree provides the file tree sidebar widget.
-//
 // This file implements the event handling system: TreeMsg types, keyboard
 // and mouse event handlers, page scrolling, expand/collapse actions,
 // filter commands, and refresh operations.
+
 package filetree
 
 import (
@@ -35,7 +34,7 @@ type EnterFilterModeMsg struct{}
 // from disk.
 type TreeRefreshDoneMsg struct {
 	RootPath string
-	Model    *FileTreeModel
+	Model    *Model
 	Err      error
 }
 
@@ -74,7 +73,7 @@ func (TreeWatcherMsg) treeMsg() {}
 // model that requested it. Model identity and generation reject retired or
 // superseded results after a workspace switch or coalesced refresh.
 type TreeGitRefreshMsg struct {
-	Model      *FileTreeModel
+	Model      *Model
 	Generation uint64
 	Statuses   map[string]GitStatus
 	Err        error
@@ -85,7 +84,7 @@ func (TreeGitRefreshMsg) treeMsg() {}
 // TreeGitChangedMsg is emitted by the repository-metadata watcher. The app
 // verifies Model ownership before scheduling filesystem I/O as a tea.Cmd.
 type TreeGitChangedMsg struct {
-	Model *FileTreeModel
+	Model *Model
 }
 
 // TreeWidthMsg signals a sidebar width change.
@@ -117,7 +116,7 @@ func (TreeFilterMsg) treeMsg() {}
 // effects (async operations, signals to the parent app, etc.).
 //
 // This is the entry point for all events targeted at the file tree.
-func (m *FileTreeModel) Update(msg TreeMsg) tea.Cmd {
+func (m *Model) Update(msg TreeMsg) tea.Cmd {
 	switch msg := msg.(type) {
 	case TreeKeyPressMsg:
 		return m.handleKey(msg.Key)
@@ -155,7 +154,7 @@ func (m *FileTreeModel) Update(msg TreeMsg) tea.Cmd {
 // handleKey processes a key-press and dispatches it to the appropriate
 // tree action. Returns a tea.Cmd for side effects (file open, filter
 // request, refresh, etc.).
-func (m *FileTreeModel) handleKey(key tea.KeyPressMsg) tea.Cmd {
+func (m *Model) handleKey(key tea.KeyPressMsg) tea.Cmd {
 	if m.filterActive {
 		switch key.Code {
 		case tea.KeyUp, tea.KeyDown, tea.KeyHome, tea.KeyEnd, tea.KeyPgUp, tea.KeyPgDown,
@@ -244,7 +243,7 @@ func (m *FileTreeModel) handleKey(key tea.KeyPressMsg) tea.Cmd {
 	}
 }
 
-func (m *FileTreeModel) handleFilterInputKey(key tea.KeyPressMsg) {
+func (m *Model) handleFilterInputKey(key tea.KeyPressMsg) {
 	if m.filterEd == nil {
 		m.filterEd = ui.NewTextEdit()
 	}
@@ -271,7 +270,7 @@ func (m *FileTreeModel) handleFilterInputKey(key tea.KeyPressMsg) {
 // its role as the explicit filter-mode key with an empty pattern. The old
 // bare-letter actions moved to modifier chords (refresh r→Ctrl+R, hidden
 // toggle .→Ctrl+.) so they cannot collide with filter typing.
-func (m *FileTreeModel) handleKeyString(key tea.KeyPressMsg) tea.Cmd {
+func (m *Model) handleKeyString(key tea.KeyPressMsg) tea.Cmd {
 	switch key.String() {
 	case "/":
 		return m.EnterFilterMode()
@@ -305,7 +304,7 @@ func (m *FileTreeModel) handleKeyString(key tea.KeyPressMsg) tea.Cmd {
 //
 //	mouseY   →  index in visible nodes (after applying scroll offset)
 //	index    =  mouseY + scrollOffset
-func (m *FileTreeModel) handleMouse(msg tea.Msg) tea.Cmd {
+func (m *Model) handleMouse(msg tea.Msg) tea.Cmd {
 	switch mm := msg.(type) {
 	case tea.MouseClickMsg:
 		return m.handleMouseClick(mm)
@@ -330,7 +329,7 @@ func (m *FileTreeModel) handleMouse(msg tea.Msg) tea.Cmd {
 // Indices outside the visible range map to -1 (no hover), which is
 // the same convention as every other hover-capable widget; see
 // ui.Hover for the rationale.
-func (m *FileTreeModel) handleMouseMotion(msg tea.MouseMotionMsg) bool {
+func (m *Model) handleMouseMotion(msg tea.MouseMotionMsg) bool {
 	m.mu.RLock()
 	so := m.scrollOffset
 	visH := m.visibleHeight
@@ -345,7 +344,7 @@ func (m *FileTreeModel) handleMouseMotion(msg tea.MouseMotionMsg) bool {
 }
 
 // handleMouseClick processes a mouse click event.
-func (m *FileTreeModel) handleMouseClick(msg tea.MouseClickMsg) tea.Cmd {
+func (m *Model) handleMouseClick(msg tea.MouseClickMsg) tea.Cmd {
 	if msg.Button != tea.MouseLeft {
 		return nil
 	}
@@ -383,7 +382,7 @@ func (m *FileTreeModel) handleMouseClick(msg tea.MouseClickMsg) tea.Cmd {
 }
 
 // handleMouseWheel processes a mouse wheel / scroll event.
-func (m *FileTreeModel) handleMouseWheel(msg tea.MouseWheelMsg) tea.Cmd {
+func (m *Model) handleMouseWheel(msg tea.MouseWheelMsg) tea.Cmd {
 	scrollLines := 3
 	switch msg.Button {
 	case tea.MouseWheelUp:
@@ -426,7 +425,7 @@ func (m *FileTreeModel) handleMouseWheel(msg tea.MouseWheelMsg) tea.Cmd {
 // ---------------------------------------------------------------------------
 
 // MovePageUp moves the cursor up by one page (visibleHeight rows).
-func (m *FileTreeModel) MovePageUp() {
+func (m *Model) MovePageUp() {
 	pageSize := m.pageSize()
 	if pageSize < 1 {
 		pageSize = 1
@@ -437,7 +436,7 @@ func (m *FileTreeModel) MovePageUp() {
 }
 
 // MovePageDown moves the cursor down by one page (visibleHeight rows).
-func (m *FileTreeModel) MovePageDown() {
+func (m *Model) MovePageDown() {
 	pageSize := m.pageSize()
 	if pageSize < 1 {
 		pageSize = 1
@@ -448,7 +447,7 @@ func (m *FileTreeModel) MovePageDown() {
 }
 
 // GoToTop sets the cursor to the first visible node.
-func (m *FileTreeModel) GoToTop() {
+func (m *Model) GoToTop() {
 	m.SetCursorIndex(0)
 	m.mu.Lock()
 	m.scrollOffset = 0
@@ -456,7 +455,7 @@ func (m *FileTreeModel) GoToTop() {
 }
 
 // GoToBottom sets the cursor to the last visible node.
-func (m *FileTreeModel) GoToBottom() {
+func (m *Model) GoToBottom() {
 	nodes := m.VisibleNodes()
 	m.SetCursorIndex(len(nodes) - 1)
 	m.updateScrollOffset()
@@ -464,7 +463,7 @@ func (m *FileTreeModel) GoToBottom() {
 
 // pageSize returns the number of rows per page, defaulting to visibleHeight
 // or a sensible fallback when the height has not been set.
-func (m *FileTreeModel) pageSize() int {
+func (m *Model) pageSize() int {
 	if m.visibleHeight > 0 {
 		return m.visibleHeight
 	}
@@ -476,7 +475,7 @@ func (m *FileTreeModel) pageSize() int {
 // within the visible area.  Only scrolls when the cursor is strictly outside
 // the viewport: scroll up by 1 when above the top, scroll down by 1 when
 // below the bottom.  Page-sized movements set scrollOffset directly.
-func (m *FileTreeModel) updateScrollOffset() {
+func (m *Model) updateScrollOffset() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.updateScrollOffsetLocked()
@@ -484,7 +483,7 @@ func (m *FileTreeModel) updateScrollOffset() {
 
 // updateScrollOffsetLocked is updateScrollOffset for callers that already
 // hold m.mu.
-func (m *FileTreeModel) updateScrollOffsetLocked() {
+func (m *Model) updateScrollOffsetLocked() {
 	m.clampViewportLocked()
 }
 
@@ -495,7 +494,7 @@ func (m *FileTreeModel) updateScrollOffsetLocked() {
 // ToggleExpandOrSelect performs the "activate" action on the current node:
 // - Directory: toggles its expanded state.
 // - File: returns a FileSelectedMsg command for the parent app.
-func (m *FileTreeModel) ToggleExpandOrSelect() tea.Cmd {
+func (m *Model) ToggleExpandOrSelect() tea.Cmd {
 	node := m.SelectedNode()
 	if node == nil {
 		return nil
@@ -523,7 +522,7 @@ func (m *FileTreeModel) ToggleExpandOrSelect() tea.Cmd {
 // - Collapsed directory or file: moves cursor to the parent directory.
 //
 // This matches VSCode's Left arrow behaviour.
-func (m *FileTreeModel) CollapseOrParent() tea.Cmd {
+func (m *Model) CollapseOrParent() tea.Cmd {
 	node := m.SelectedNode()
 	if node == nil {
 		return nil
@@ -545,7 +544,7 @@ func (m *FileTreeModel) CollapseOrParent() tea.Cmd {
 // - Expanded directory: moves into the first child (if any).
 // - Collapsed directory: expands it.
 // - File: no-op (select already on file).
-func (m *FileTreeModel) expandOrMoveIn() tea.Cmd {
+func (m *Model) expandOrMoveIn() tea.Cmd {
 	node := m.SelectedNode()
 	if node == nil {
 		return nil
@@ -575,7 +574,7 @@ func (m *FileTreeModel) expandOrMoveIn() tea.Cmd {
 
 // ExpandAllNested expands the directory at the cursor and all of its
 // descendants recursively.
-func (m *FileTreeModel) ExpandAllNested() {
+func (m *Model) ExpandAllNested() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -590,7 +589,7 @@ func (m *FileTreeModel) ExpandAllNested() {
 
 // CollapseAllNested collapses the directory at the cursor and all of its
 // descendants recursively.
-func (m *FileTreeModel) CollapseAllNested() {
+func (m *Model) CollapseAllNested() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -609,7 +608,7 @@ func (m *FileTreeModel) CollapseAllNested() {
 
 // EnterFilterMode returns a command that signals the parent app to enter
 // filter-input mode.
-func (m *FileTreeModel) EnterFilterMode() tea.Cmd {
+func (m *Model) EnterFilterMode() tea.Cmd {
 	m.filterActive = true
 	return func() tea.Msg {
 		return EnterFilterModeMsg{}
@@ -617,18 +616,18 @@ func (m *FileTreeModel) EnterFilterMode() tea.Cmd {
 }
 
 // ApplyFilter sets the filter pattern on the tree.
-func (m *FileTreeModel) ApplyFilter(pattern string) {
+func (m *Model) ApplyFilter(pattern string) {
 	m.SetFilter(pattern)
 }
 
 // ClearFilter removes the active filter and exits filter mode.
-func (m *FileTreeModel) ClearFilter() {
+func (m *Model) ClearFilter() {
 	m.filterActive = false
 	m.SetFilter("")
 }
 
 // FilterActive returns whether the tree is in filter-input mode.
-func (m *FileTreeModel) FilterActive() bool {
+func (m *Model) FilterActive() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.filterActive
@@ -645,7 +644,7 @@ func (m *FileTreeModel) FilterActive() bool {
 //
 // This is an async operation executed in a background goroutine to avoid
 // blocking the event loop on potentially large directory scans.
-func (m *FileTreeModel) RefreshFromDisk() tea.Cmd {
+func (m *Model) RefreshFromDisk() tea.Cmd {
 	rootPath := m.RootPath()
 	if m.noLocalIO {
 		return m.RequestRemoteDirectory(rootPath)
@@ -663,7 +662,7 @@ func (m *FileTreeModel) RefreshFromDisk() tea.Cmd {
 }
 
 // refreshTreeFromDisk performs the actual disk re-scan.
-func (m *FileTreeModel) refreshTreeFromDisk() error {
+func (m *Model) refreshTreeFromDisk() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -691,7 +690,7 @@ func (m *FileTreeModel) refreshTreeFromDisk() error {
 // reloadAllLoadedDirectories recursively reloads children for every
 // directory that has already been loaded (Children != nil).
 // Must be called with m.mu held.
-func (m *FileTreeModel) reloadAllLoadedDirectories(node *TreeNode) {
+func (m *Model) reloadAllLoadedDirectories(node *TreeNode) {
 	if node == nil || !node.IsDir {
 		return
 	}
@@ -710,7 +709,7 @@ func (m *FileTreeModel) reloadAllLoadedDirectories(node *TreeNode) {
 // RefreshGitStatus starts one asynchronous status scan. Requests received
 // while a scan is active are coalesced into exactly one trailing scan so a
 // burst of file/index/ref events cannot lose the final repository state.
-func (m *FileTreeModel) RefreshGitStatus() tea.Cmd {
+func (m *Model) RefreshGitStatus() tea.Cmd {
 	m.mu.Lock()
 	resolver := m.gitResolver
 	if resolver == nil || !resolver.Available() {
@@ -733,7 +732,7 @@ func (m *FileTreeModel) RefreshGitStatus() tea.Cmd {
 	}
 }
 
-func (m *FileTreeModel) applyGitRefresh(msg TreeGitRefreshMsg) tea.Cmd {
+func (m *Model) applyGitRefresh(msg TreeGitRefreshMsg) tea.Cmd {
 	m.mu.Lock()
 	if msg.Model != m || msg.Generation == 0 || msg.Generation != m.gitRefreshGen {
 		m.mu.Unlock()
@@ -757,7 +756,7 @@ func (m *FileTreeModel) applyGitRefresh(msg TreeGitRefreshMsg) tea.Cmd {
 // syncNodeGitStatusesLocked applies the resolver snapshot to every loaded row,
 // including GitNone. Updating only aggregates leaves old M/D/U letters stuck
 // on file nodes after commits. The caller must hold m.mu.
-func (m *FileTreeModel) syncNodeGitStatusesLocked() {
+func (m *Model) syncNodeGitStatusesLocked() {
 	if m.gitResolver == nil {
 		return
 	}
@@ -774,21 +773,21 @@ func (m *FileTreeModel) syncNodeGitStatusesLocked() {
 // ---------------------------------------------------------------------------
 
 // ScrollOffset returns the current scroll offset (rows scrolled off top).
-func (m *FileTreeModel) ScrollOffset() int {
+func (m *Model) ScrollOffset() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.scrollOffset
 }
 
 // VisibleHeight returns the viewport row count last set by TreeHeightMsg.
-func (m *FileTreeModel) VisibleHeight() int {
+func (m *Model) VisibleHeight() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.visibleHeight
 }
 
 // SetScrollOffset sets the scroll offset, clamped to valid range.
-func (m *FileTreeModel) SetScrollOffset(offset int) {
+func (m *Model) SetScrollOffset(offset int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.scrollOffset = offset
@@ -796,7 +795,7 @@ func (m *FileTreeModel) SetScrollOffset(offset int) {
 }
 
 // HScrollOffset returns the horizontal scroll offset.
-func (m *FileTreeModel) HScrollOffset() int {
+func (m *Model) HScrollOffset() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.hscrollOffset
@@ -804,7 +803,7 @@ func (m *FileTreeModel) HScrollOffset() int {
 
 // SetHScrollOffset sets the horizontal scroll offset, clamped to a reasonable
 // maximum (currently 128 columns). Returns the new offset.
-func (m *FileTreeModel) SetHScrollOffset(off int) int {
+func (m *Model) SetHScrollOffset(off int) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if off < 0 {

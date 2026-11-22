@@ -1,7 +1,7 @@
 package viewmodel
 
 import (
-	statusoverview "crude/tui/screens/statusoverview"
+	"crude/tui/screens/statusoverview"
 	"crude/tui/ui"
 	"crude/tui/wm"
 )

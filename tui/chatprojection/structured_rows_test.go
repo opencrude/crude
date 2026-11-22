@@ -6,12 +6,12 @@ import (
 
 	"crude/tui/rendering"
 	"crude/tui/theme"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 func TestStructuredResultsStayClosedAndFullDisclosureRetainsLongUnicodeText(t *testing.T) {
 	body := strings.Repeat("Retained evidence 👩‍💻 中文 é with complete findings. ", 40) + "final-evidence-token"
-	msg := types.ChatMessage{Role: types.RoleTool, ToolName: "recall_memory", ToolStatus: "success", ToolPreviewPhase: "done",
+	msg := conversation.ChatMessage{Role: conversation.RoleTool, ToolName: "recall_memory", ToolStatus: "success", ToolPreviewPhase: "done",
 		Content: `{"results":[{"id":"m1","revision":7,"title":"Evidence","content":"` + body + `"}]}`}
 	for _, width := range []int{12, 32, 80, 160} {
 		compact := renderToolMessageLines(msg, theme.DefaultDark(), width, width, width, 0, 24, "done", DisclosureCollapsed)
@@ -35,13 +35,13 @@ func TestStructuredResultsStayClosedAndFullDisclosureRetainsLongUnicodeText(t *t
 
 func TestStructuredCancelledAndMalformedEvidenceIsReadableWithoutSuccess(t *testing.T) {
 	for _, name := range []string{"agent_send", "board_read", "remember", "capability_search", "mcp__docs__write"} {
-		msg := types.ChatMessage{Role: types.RoleTool, ToolName: name, ToolStatus: types.ToolStatusCancelled, Content: `{"message":"Interrupted before receiving exact result"}`}
+		msg := conversation.ChatMessage{Role: conversation.RoleTool, ToolName: name, ToolStatus: conversation.ToolStatusCancelled, Content: `{"message":"Interrupted before receiving exact result"}`}
 		full := renderToolMessageLines(msg, theme.DefaultDark(), 80, 80, 80, 0, 20, "done", DisclosureExpanded)
 		text := strings.Join(full.lines, "\n")
 		if !strings.Contains(text, "Interrupted before") || strings.Contains(text, `{"`) || strings.Contains(text, "●") {
 			t.Fatalf("stopped result lost honest evidence: %s", text)
 		}
-		msg.ToolStatus, msg.Content = types.ToolStatusError, `{"private":"unfinished`
+		msg.ToolStatus, msg.Content = conversation.ToolStatusError, `{"private":"unfinished`
 		full = renderToolMessageLines(msg, theme.DefaultDark(), 80, 80, 80, 0, 20, "error", DisclosureExpanded)
 		text = strings.Join(full.lines, "\n")
 		if strings.Contains(text, "private") || !strings.Contains(text, "invalid JSON") {

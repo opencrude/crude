@@ -10,7 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace/document"
 )
 
@@ -157,12 +158,12 @@ type sourceAnswerClient struct {
 	release chan struct{}
 }
 
-func (c *sourceAnswerClient) AwaitDiagnostics(ctx context.Context, path string) (types.InsightDiagnosticPublication, bool) {
-	p := c.publication(path, []LSPDiagnostic{{Message: "finding from the original source", Severity: types.DiagError}})
+func (c *sourceAnswerClient) AwaitDiagnostics(ctx context.Context, path string) (insight.DiagnosticPublication, bool) {
+	p := c.publication(path, []insight.LSPDiagnostic{{Message: "finding from the original source", Severity: insight.DiagError}})
 	close(c.entered)
 	select {
 	case <-ctx.Done():
-		return types.InsightDiagnosticPublication{}, false
+		return insight.DiagnosticPublication{}, false
 	case <-c.release:
 		return p, true
 	}
@@ -170,7 +171,7 @@ func (c *sourceAnswerClient) AwaitDiagnostics(ctx context.Context, path string) 
 
 type sourceAnswerRuntime struct{ client *sourceAnswerClient }
 
-func (r sourceAnswerRuntime) NewClient(types.LSPServerSpec, string, func() error) LSPClient {
+func (r sourceAnswerRuntime) NewClient(setting.LSPServerSpec, string, func() error) LSPClient {
 	return r.client
 }
 
@@ -201,7 +202,7 @@ func TestInsightProbeNeverReturnsPayloadForReplacedSource(t *testing.T) {
 			release := func() { once.Do(func() { close(client.release) }) }
 			t.Cleanup(release)
 			type result struct {
-				diagnostics types.InsightDiagnostics
+				diagnostics insight.Diagnostics
 				settled     bool
 				err         error
 			}

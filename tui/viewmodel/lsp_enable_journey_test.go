@@ -10,11 +10,12 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
+	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/screens/termdock"
-	settingsui "crude/tui/settings"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/types/control"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -36,18 +37,18 @@ func TestConnectedLSPEnableSaveStartsProjectCheckAndOpenSource(t *testing.T) {
 			if err := os.WriteFile(path, []byte("package main\nvar _ = missingEnableIdentifier\n"), 0600); err != nil {
 				t.Fatal(err)
 			}
-			server := &immediateTreeDiagRuntime{filePath: path, diags: []workspace.LSPDiagnostic{{Severity: workspace.DiagError, Message: "undefined: missingEnableIdentifier"}}}
+			server := &immediateTreeDiagRuntime{filePath: path, diags: []insight.LSPDiagnostic{{Severity: workspace.DiagError, Message: "undefined: missingEnableIdentifier"}}}
 			saved := filepath.Join(t.TempDir(), "application.json")
 			runtime := remoteJourneyRuntime(t, "http://unused.invalid", func(w *workspace.Workspace) {
 				w.LSPMgr.SetRuntime(server)
 				s := w.AppDefaults()
 				s.LSP.Enabled = false
-				s.LSP.Languages["go"] = types.LSPLanguageSettings{Enabled: true, Command: executable}
+				s.LSP.Languages["go"] = setting.LSPLanguage{Enabled: true, Command: executable}
 				w.SetAppDefaults(s)
 				grantSemanticFixture(t, w)
-				w.OnAppPreferencesCommit = func(edits []types.SettingEdit) (types.AppSettings, error) {
+				w.OnAppPreferencesCommit = func(edits []setting.Edit) (setting.App, error) {
 					after := w.AppDefaults()
-					if err := types.ApplySettingsEdits(&after, edits); err != nil {
+					if err := setting.ApplyEdits(&after, edits); err != nil {
 						return after, err
 					}
 					raw, err := json.Marshal(after)
@@ -129,7 +130,7 @@ func TestConnectedLSPEnableSaveStartsProjectCheckAndOpenSource(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			var persisted types.AppSettings
+			var persisted setting.App
 			if err := json.Unmarshal(raw, &persisted); err != nil || !persisted.LSP.Enabled {
 				t.Fatalf("Save did not persist LSP enable: enabled=%t error=%v", persisted.LSP.Enabled, err)
 			}

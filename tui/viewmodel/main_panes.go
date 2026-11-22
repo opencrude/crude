@@ -147,7 +147,7 @@ func (p *mainPaneLayout) agentView(agentID string) *mainPaneView {
 	}
 	base := ui.ComponentID("main-panes/agent-" + agentID)
 	v := &mainPaneView{embedded: p.app.subPaneProjections.ForOwner(agentID)}
-	if proj := p.app.subPaneProjections.GetExisting(agentID); proj != nil {
+	if proj := p.app.subPaneProjections.Existing(agentID); proj != nil {
 		proj.renderer.SetSubPaneContentFn(p.app.subPaneContentForRegistry(v.embedded))
 	}
 	first := !p.initialChatUsed

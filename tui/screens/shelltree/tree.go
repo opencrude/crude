@@ -29,8 +29,8 @@ type Screen struct {
 	ui.Base
 	th                *theme.Theme
 	tokens            *ui.TokenSet
-	model             *filetree.FileTreeModel
-	searchModel       *filetree.FileTreeModel
+	model             *filetree.Model
+	searchModel       *filetree.Model
 	searchActive      bool
 	searchQuery       string
 	pathSearchHandler func(string) tea.Cmd
@@ -67,7 +67,7 @@ func newFileTreeView(owner *Screen, tree *ui.Tree) *fileTreeView {
 	return &fileTreeView{Base: ui.NewBase(TreeID), owner: owner, tree: tree}
 }
 
-func (s *Screen) displayModel() *filetree.FileTreeModel {
+func (s *Screen) displayModel() *filetree.Model {
 	if s != nil && s.searchActive && s.searchModel != nil {
 		return s.searchModel
 	}
@@ -230,7 +230,7 @@ func translateMouseY(evt ui.Event, y int) tea.Msg {
 }
 
 // New creates a shell tree screen bound to model.
-func New(th *theme.Theme, model *filetree.FileTreeModel) *Screen {
+func New(th *theme.Theme, model *filetree.Model) *Screen {
 	if th == nil {
 		th = theme.DefaultDark()
 	}
@@ -380,7 +380,7 @@ func (s *Screen) rebuildTree() {
 }
 
 // SetModel rebinds the file tree model.
-func (s *Screen) SetModel(model *filetree.FileTreeModel) {
+func (s *Screen) SetModel(model *filetree.Model) {
 	s.model = model
 	s.searchModel = nil
 	s.searchActive = false

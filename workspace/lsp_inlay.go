@@ -12,9 +12,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"crude/lsp/edit"
-	"crude/lsp/inlay"
-	"crude/types"
+	"crude/lsp/lspedit"
+	"crude/lsp/lspinlay"
+	"crude/types/insight"
 	"crude/workspace/document"
 )
 
@@ -38,12 +38,12 @@ type inlayViewKey struct {
 // cannot make an older request current again. This is ephemeral read evidence,
 // not a second document, persistence or mutation authority.
 type inlayView struct {
-	source   types.InsightSource
+	source   insight.Source
 	sequence uint64
 	expires  time.Time
 	ctx      context.Context
 	cancel   context.CancelFunc
-	view     types.LSPInlaySet
+	view     insight.LSPInlaySet
 	items    []lspinlay.Hint
 	rawBytes int
 	check    func() error
@@ -51,7 +51,7 @@ type inlayView struct {
 
 func (v *inlayView) retire() {
 	v.cancel()
-	v.view = types.LSPInlaySet{}
+	v.view = insight.LSPInlaySet{}
 	v.items, v.check, v.rawBytes = nil, nil, 0
 }
 
@@ -97,15 +97,15 @@ func (s *DocumentService) closeInlayViewsLocked(owner document.Owner, documentID
 // RequestLSPInlayHints is a read-only visible-range query over acknowledged
 // canonical text, including unsaved text. A private view sequence invalidates
 // its older work before dispatch, not just when the result eventually arrives.
-func (w *Workspace) RequestLSPInlayHints(ctx context.Context, owner document.Owner, source types.InsightSource, viewID string, sequence uint64, span types.LSPInlayRange) (types.LSPInlaySet, error) {
+func (w *Workspace) RequestLSPInlayHints(ctx context.Context, owner document.Owner, source insight.Source, viewID string, sequence uint64, span insight.LSPInlayRange) (insight.LSPInlaySet, error) {
 	if w == nil || w.LiveDocuments == nil || w.LSPMgr == nil {
-		return types.LSPInlaySet{}, errors.New("inlay hints require canonical source and a language service")
+		return insight.LSPInlaySet{}, errors.New("inlay hints require canonical source and a language service")
 	}
 	if !validLSPView(viewID, sequence) {
-		return types.LSPInlaySet{}, errors.New("invalid inlay view or sequence")
+		return insight.LSPInlaySet{}, errors.New("invalid inlay view or sequence")
 	}
 	if err := ctx.Err(); err != nil {
-		return types.LSPInlaySet{}, err
+		return insight.LSPInlaySet{}, err
 	}
 	s := w.LiveDocuments
 	key := inlayViewKey{owner, viewID}
@@ -138,7 +138,7 @@ func (w *Workspace) RequestLSPInlayHints(ctx context.Context, owner document.Own
 	}
 	if err != nil {
 		s.mu.Unlock()
-		return types.LSPInlaySet{}, err
+		return insight.LSPInlaySet{}, err
 	}
 	text = bytes.Clone(text)
 	lifetime, retire := context.WithTimeout(context.Background(), inlayLifetime)
@@ -168,18 +168,18 @@ func (w *Workspace) RequestLSPInlayHints(ctx context.Context, owner document.Own
 	}()
 	response, err := w.LSPMgr.RequestInlayHints(requestCtx, source.Path, span)
 	if err != nil {
-		return types.LSPInlaySet{}, err
+		return insight.LSPInlaySet{}, err
 	}
 	if response.Boundary.Source != source {
-		return types.LSPInlaySet{}, document.ErrRevision
+		return insight.LSPInlaySet{}, document.ErrRevision
 	}
 	items, result, retainedBytes, err := normalizeInlayHints(string(text), span, response)
 	if err != nil {
-		return types.LSPInlaySet{}, err
+		return insight.LSPInlaySet{}, err
 	}
 	check, err := w.LSPMgr.inlayFence(response.Boundary, response.WireVersion)
 	if err != nil {
-		return types.LSPInlaySet{}, err
+		return insight.LSPInlaySet{}, err
 	}
 	result.ID, result.ViewID, result.Sequence = "inlay-"+rand.Text(), viewID, sequence
 	result.ExpiresAt = entry.expires
@@ -187,15 +187,15 @@ func (w *Workspace) RequestLSPInlayHints(ctx context.Context, owner document.Own
 		Owner         document.Owner
 		ID, View, Raw string
 		Sequence      uint64
-		Boundary      types.InsightBoundary
+		Boundary      insight.Boundary
 		Wire          int
-		Range         types.LSPInlayRange
+		Range         insight.LSPInlayRange
 		Answer        string
 		Resolve       bool
 	}{owner, result.ID, viewID, reviewedHash(string(response.JSON)), sequence, result.Boundary,
 		result.WireVersion, span, result.Answer, result.ResolveSupported})
 	if err != nil {
-		return types.LSPInlaySet{}, err
+		return insight.LSPInlaySet{}, err
 	}
 	result.Digest = reviewedHash(string(identity))
 	s.mu.Lock()
@@ -203,19 +203,19 @@ func (w *Workspace) RequestLSPInlayHints(ctx context.Context, owner document.Own
 	// The retained view is the authority, not its asynchronous provider
 	// cancellation relay. A released invocation cannot publish again.
 	if err := entry.ctx.Err(); err != nil {
-		return types.LSPInlaySet{}, err
+		return insight.LSPInlaySet{}, err
 	}
 	if err := requestCtx.Err(); err != nil {
-		return types.LSPInlaySet{}, err
+		return insight.LSPInlaySet{}, err
 	}
 	if s.inlayViews[key] != entry {
-		return types.LSPInlaySet{}, errors.New("inlay view was replaced during its request")
+		return insight.LSPInlaySet{}, errors.New("inlay view was replaced during its request")
 	}
 	if _, err := s.readOnlyLSPSourceLocked(owner, source); err != nil {
-		return types.LSPInlaySet{}, err
+		return insight.LSPInlaySet{}, err
 	}
 	if err := check(); err != nil {
-		return types.LSPInlaySet{}, err
+		return insight.LSPInlaySet{}, err
 	}
 	for _, other := range s.inlayViews {
 		if other != entry {
@@ -223,7 +223,7 @@ func (w *Workspace) RequestLSPInlayHints(ctx context.Context, owner document.Own
 		}
 	}
 	if retainedBytes > inlayMaxRetainedBytes {
-		return types.LSPInlaySet{}, errors.New("retained inlay evidence exceeds its 16 MiB raw-object bound")
+		return insight.LSPInlaySet{}, errors.New("retained inlay evidence exceeds its 16 MiB raw-object bound")
 	}
 	entry.view, entry.items, entry.check = result, items, check
 	for _, item := range items {
@@ -232,11 +232,11 @@ func (w *Workspace) RequestLSPInlayHints(ctx context.Context, owner document.Own
 	return cloneInlaySet(result), nil
 }
 
-func inlayRangeOffsets(text string, span types.LSPInlayRange) (int, int, error) {
+func inlayRangeOffsets(text string, span insight.LSPInlayRange) (int, int, error) {
 	if len(text) > 2<<20 {
 		return 0, 0, errors.New("inlay source exceeds its 2 MiB consumer bound")
 	}
-	for _, p := range []types.LSPInlayPosition{span.Start, span.End} {
+	for _, p := range []insight.LSPInlayPosition{span.Start, span.End} {
 		if p.Line < 0 || p.Character < 0 || p.Line > math.MaxInt32 || p.Character > math.MaxInt32 {
 			return 0, 0, errors.New("invalid inlay range position")
 		}
@@ -255,37 +255,37 @@ func inlayRangeOffsets(text string, span types.LSPInlayRange) (int, int, error) 
 	return start, end, nil
 }
 
-func normalizeInlayHints(text string, span types.LSPInlayRange, response types.LSPInlayResponse) ([]lspinlay.Hint, types.LSPInlaySet, int, error) {
+func normalizeInlayHints(text string, span insight.LSPInlayRange, response insight.LSPInlayResponse) ([]lspinlay.Hint, insight.LSPInlaySet, int, error) {
 	start, end, err := inlayRangeOffsets(text, span)
 	if err != nil {
-		return nil, types.LSPInlaySet{}, 0, err
+		return nil, insight.LSPInlaySet{}, 0, err
 	}
-	out := types.LSPInlaySet{Boundary: response.Boundary, WireVersion: response.WireVersion, Range: span,
+	out := insight.LSPInlaySet{Boundary: response.Boundary, WireVersion: response.WireVersion, Range: span,
 		ResolveSupported: response.ResolveSupported,
 		Detail:           "Read-only range evidence. Standard hints are unversioned; locations, commands and text edits are metadata only."}
 	out.Boundary.Context.UnknownInputs = slices.Clone(response.Boundary.Context.UnknownInputs)
 	if response.Unsupported {
 		if len(response.JSON) != 0 || response.ResolveSupported {
-			return nil, types.LSPInlaySet{}, 0, errors.New("unsupported inlay response invented result or resolve evidence")
+			return nil, insight.LSPInlaySet{}, 0, errors.New("unsupported inlay response invented result or resolve evidence")
 		}
-		out.Answer, out.Detail = types.LSPInlayUnsupported, "This synchronized provider does not advertise inlay hints."
+		out.Answer, out.Detail = insight.LSPInlayUnsupported, "This synchronized provider does not advertise inlay hints."
 		return nil, out, 0, nil
 	}
 	parsed, err := lspinlay.Parse(response.JSON)
 	if err != nil {
-		return nil, types.LSPInlaySet{}, 0, err
+		return nil, insight.LSPInlaySet{}, 0, err
 	}
 	out.Answer = parsed.Answer
 	retained := 0
 	for index, hint := range parsed.Hints {
 		row, err := inlayHintSummary(text, index, hint)
 		if err != nil {
-			return nil, types.LSPInlaySet{}, 0, err
+			return nil, insight.LSPInlaySet{}, 0, err
 		}
 		// Hints are anchors, not selected source spans. Include the end anchor
 		// so zero-length/EOF requests and hints at the final visible EOL work.
 		if row.SourceByte < start || row.SourceByte > end {
-			return nil, types.LSPInlaySet{}, 0, errors.New("inlay hint is outside the requested source anchor range")
+			return nil, insight.LSPInlaySet{}, 0, errors.New("inlay hint is outside the requested source anchor range")
 		}
 		out.Hints = append(out.Hints, row)
 		retained += len(hint.Raw)
@@ -293,33 +293,33 @@ func normalizeInlayHints(text string, span types.LSPInlayRange, response types.L
 	return parsed.Hints, out, retained, nil
 }
 
-func inlayHintSummary(text string, index int, hint lspinlay.Hint) (types.LSPInlayHint, error) {
+func inlayHintSummary(text string, index int, hint lspinlay.Hint) (insight.LSPInlayHint, error) {
 	off, err := lspedit.Offset(text, hint.Position.Line, hint.Position.Character)
 	if err != nil {
-		return types.LSPInlayHint{}, err
+		return insight.LSPInlayHint{}, err
 	}
-	out := types.LSPInlayHint{Index: index, SourceByte: off,
-		Position: types.LSPInlayPosition{Line: hint.Position.Line, Character: hint.Position.Character},
+	out := insight.LSPInlayHint{Index: index, SourceByte: off,
+		Position: insight.LSPInlayPosition{Line: hint.Position.Line, Character: hint.Position.Character},
 		Label:    hint.Label, LabelIsParts: hint.LabelIsParts, Kind: hint.Kind, HasKind: hint.HasKind,
 		PaddingLeft: hint.PaddingLeft, PaddingRight: hint.PaddingRight, Tooltip: inlayMarkup(hint.Tooltip),
 		HasTextEdits: hint.HasTextEdits, HasData: hint.HasData}
 	for _, part := range hint.Parts {
-		row := types.LSPInlayLabelPart{Value: part.Value, Tooltip: inlayMarkup(part.Tooltip), HasCommand: part.HasCommand}
+		row := insight.LSPInlayLabelPart{Value: part.Value, Tooltip: inlayMarkup(part.Tooltip), HasCommand: part.HasCommand}
 		if loc := part.Location; loc != nil {
-			row.Location = &types.LSPInlayLocation{URI: loc.URI, Range: types.LSPInlayRange{
-				Start: types.LSPInlayPosition{Line: loc.Range.Start.Line, Character: loc.Range.Start.Character},
-				End:   types.LSPInlayPosition{Line: loc.Range.End.Line, Character: loc.Range.End.Character}}}
+			row.Location = &insight.LSPInlayLocation{URI: loc.URI, Range: insight.LSPInlayRange{
+				Start: insight.LSPInlayPosition{Line: loc.Range.Start.Line, Character: loc.Range.Start.Character},
+				End:   insight.LSPInlayPosition{Line: loc.Range.End.Line, Character: loc.Range.End.Character}}}
 		}
 		out.Parts = append(out.Parts, row)
 	}
 	return out, nil
 }
 
-func inlayMarkup(m lspinlay.Markup) types.LSPInlayMarkup {
-	return types.LSPInlayMarkup{Present: m.Present, Form: m.Form, Kind: m.Kind, Value: m.Value}
+func inlayMarkup(m lspinlay.Markup) insight.LSPInlayMarkup {
+	return insight.LSPInlayMarkup{Present: m.Present, Form: m.Form, Kind: m.Kind, Value: m.Value}
 }
 
-func cloneInlayHint(h types.LSPInlayHint) types.LSPInlayHint {
+func cloneInlayHint(h insight.LSPInlayHint) insight.LSPInlayHint {
 	h.Parts = slices.Clone(h.Parts)
 	for i := range h.Parts {
 		if loc := h.Parts[i].Location; loc != nil {
@@ -330,7 +330,7 @@ func cloneInlayHint(h types.LSPInlayHint) types.LSPInlayHint {
 	return h
 }
 
-func cloneInlaySet(s types.LSPInlaySet) types.LSPInlaySet {
+func cloneInlaySet(s insight.LSPInlaySet) insight.LSPInlaySet {
 	s.Boundary.Context.UnknownInputs = slices.Clone(s.Boundary.Context.UnknownInputs)
 	s.Hints = slices.Clone(s.Hints)
 	for i := range s.Hints {

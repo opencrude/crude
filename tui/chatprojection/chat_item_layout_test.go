@@ -7,7 +7,7 @@ import (
 
 	"crude/tui/cell"
 	"crude/tui/theme"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 // leadingBlanks counts blank rows at the top of a message's lines.
@@ -43,7 +43,7 @@ func itemGap(rows []MessageRow, a, b int) int {
 	return trailingBlanks(rows[a].Lines) + leadingBlanks(rows[b].Lines)
 }
 
-func exportForLayout(t *testing.T, msgs []types.ChatMessage) []MessageRow {
+func exportForLayout(t *testing.T, msgs []conversation.ChatMessage) []MessageRow {
 	t.Helper()
 	r := NewRenderer(theme.DefaultDark())
 	r.SetSize(120, 40)
@@ -61,14 +61,14 @@ func exportForLayout(t *testing.T, msgs []types.ChatMessage) []MessageRow {
 // chat items regardless of role/header-suppression, matching the IDE contract
 // the user described: one and only one space between elements.
 func TestChatItemSpacingUniform(t *testing.T) {
-	msgs := []types.ChatMessage{
-		{InternalID: "a1", Role: types.RoleAssistant, Content: "first reply"},
-		{InternalID: "t1", Role: types.RoleTool, ToolName: "remember", ToolStatus: "success", ToolArgs: "title= X", Content: `{"title":"X"}`},
-		{InternalID: "a2", Role: types.RoleAssistant, Content: "second reply"},
-		{InternalID: "t2", Role: types.RoleTool, ToolName: "read_file", ToolStatus: "success", ToolArgs: "main.go", Content: "L1\nL2\nL3"},
-		{InternalID: "th1", Role: types.RoleThinking, Content: "thinking text here"},
-		{InternalID: "a3", Role: types.RoleAssistant, Content: "third reply"},
-		{InternalID: "u1", Role: types.RoleUser, Content: "next question"},
+	msgs := []conversation.ChatMessage{
+		{InternalID: "a1", Role: conversation.RoleAssistant, Content: "first reply"},
+		{InternalID: "t1", Role: conversation.RoleTool, ToolName: "remember", ToolStatus: "success", ToolArgs: "title= X", Content: `{"title":"X"}`},
+		{InternalID: "a2", Role: conversation.RoleAssistant, Content: "second reply"},
+		{InternalID: "t2", Role: conversation.RoleTool, ToolName: "read_file", ToolStatus: "success", ToolArgs: "main.go", Content: "L1\nL2\nL3"},
+		{InternalID: "th1", Role: conversation.RoleThinking, Content: "thinking text here"},
+		{InternalID: "a3", Role: conversation.RoleAssistant, Content: "third reply"},
+		{InternalID: "u1", Role: conversation.RoleUser, Content: "next question"},
 	}
 	rows := exportForLayout(t, msgs)
 	for i := 0; i+1 < len(rows); i++ {
@@ -83,11 +83,11 @@ func TestExpandedThoughtToUserKeepsExactlyOneSpacer(t *testing.T) {
 	r := NewRenderer(theme.DefaultDark())
 	r.SetSize(100, 30)
 	r.SetChatAreaBounds(0, 20)
-	r.AppendMessage(types.ChatMessage{
-		InternalID: "thought", Role: types.RoleThinking, Content: "first\nsecond",
+	r.AppendMessage(conversation.ChatMessage{
+		InternalID: "thought", Role: conversation.RoleThinking, Content: "first\nsecond",
 		ThinkingDuration: 2 * time.Second,
 	})
-	r.AppendMessage(types.ChatMessage{InternalID: "user", Role: types.RoleUser, Content: "next", Time: time.Now()})
+	r.AppendMessage(conversation.ChatMessage{InternalID: "user", Role: conversation.RoleUser, Content: "next", Time: time.Now()})
 	r.ToggleDisclosure("thought")
 	rows, _, _ := r.ExportMessageRows(100)
 	if len(rows) != 2 {
@@ -109,8 +109,8 @@ func hasStrike(pl PaintLine) bool {
 }
 
 func TestCancelledAssistantRemainsReadable(t *testing.T) {
-	rows := exportForLayout(t, []types.ChatMessage{
-		{InternalID: "a1", Role: types.RoleAssistant, Content: "I will now edit the file",
+	rows := exportForLayout(t, []conversation.ChatMessage{
+		{InternalID: "a1", Role: conversation.RoleAssistant, Content: "I will now edit the file",
 			Incomplete: true, IncompleteReason: "operation cancelled by user"},
 	})
 	bodyFound := false
@@ -134,8 +134,8 @@ func TestCancelledAssistantRemainsReadable(t *testing.T) {
 }
 
 func TestInterruptedThinkingRemainsReadable(t *testing.T) {
-	rows := exportForLayout(t, []types.ChatMessage{
-		{InternalID: "th1", Role: types.RoleThinking, Content: "I should edit the file now", ThinkingInterrupted: true},
+	rows := exportForLayout(t, []conversation.ChatMessage{
+		{InternalID: "th1", Role: conversation.RoleThinking, Content: "I should edit the file now", ThinkingInterrupted: true},
 	})
 	bodyFound := false
 	for _, line := range rows[0].Native {
@@ -180,7 +180,7 @@ func TestCancelledToolCallHasStoppedLabelWithoutStrike(t *testing.T) {
 func TestSearchHistoryRealBackendShape(t *testing.T) {
 	content := `{"turns":[{"session_id":"s1","turn":3,"when":"3m","user":"fix the stale deny","assistant":"drained the channel","tools":"edit_file execute_command","files":"agent/tool_exec.go"}],"sessions":[{"key_files":"a.go b.go","outcome":"completed","session_id":"s2","summary":"did stuff","title":"Work done","when":"1m ago"}]}`
 	r := newActivityRenderer()
-	r.AppendMessage(types.ChatMessage{InternalID: "t1", Role: types.RoleTool, ToolName: "search_history", ToolStatus: "success", Content: content})
+	r.AppendMessage(conversation.ChatMessage{InternalID: "t1", Role: conversation.RoleTool, ToolName: "search_history", ToolStatus: "success", Content: content})
 	r.ToggleDisclosure("t1")
 	rows, _, _ := r.ExportMessageRows(120)
 	joined := strings.Join(rows[0].Lines, "\n")
@@ -204,7 +204,7 @@ func TestCommandResultKeepsExactPathPrefixes(t *testing.T) {
 	r := NewRenderer(theme.DefaultDark())
 	r.SetSize(120, 40)
 	r.SetChatAreaBounds(0, 30)
-	r.AppendMessage(types.ChatMessage{InternalID: "t1", Role: types.RoleTool, ToolName: "execute_command", ToolStatus: "success", ToolArgs: "grep applyRuleBleed", Content: sb.String()})
+	r.AppendMessage(conversation.ChatMessage{InternalID: "t1", Role: conversation.RoleTool, ToolName: "execute_command", ToolStatus: "success", ToolArgs: "grep applyRuleBleed", Content: sb.String()})
 	r.ToggleDisclosure("t1")
 	rows, _, _ := r.ExportMessageRows(120)
 	if !strings.Contains(strings.Join(rows[0].Lines, "\n"), "/home/u/ocd/crude/tui/ui/panel_0.go") {
@@ -219,7 +219,7 @@ func TestCommandResultPathPrefixOnlyWhenShared(t *testing.T) {
 	r := NewRenderer(theme.DefaultDark())
 	r.SetSize(120, 40)
 	r.SetChatAreaBounds(0, 30)
-	r.AppendMessage(types.ChatMessage{InternalID: "t1", Role: types.RoleTool, ToolName: "execute_command", ToolStatus: "success", Content: content})
+	r.AppendMessage(conversation.ChatMessage{InternalID: "t1", Role: conversation.RoleTool, ToolName: "execute_command", ToolStatus: "success", Content: content})
 	_, _, _ = r.ExportMessageRows(120)
 	r.ToggleDisclosure("t1")
 	rows, _, _ := r.ExportMessageRows(120)
@@ -233,7 +233,7 @@ func TestCommandResultPathPrefixOnlyWhenShared(t *testing.T) {
 // message body (not flushed to the margin) and stay within the render width.
 func TestErrorProjectionAligned(t *testing.T) {
 	r := newActivityRenderer()
-	r.AppendMessage(types.ChatMessage{InternalID: "e1", Role: types.RoleError, Content: "Error: patch failed: op[0]: search text not found (tried exact match, whitespace-normalised match, and substring match) at tui/screens/question/question_test.go\nRetained error evidence from the operation."})
+	r.AppendMessage(conversation.ChatMessage{InternalID: "e1", Role: conversation.RoleError, Content: "Error: patch failed: op[0]: search text not found (tried exact match, whitespace-normalised match, and substring match) at tui/screens/question/question_test.go\nRetained error evidence from the operation."})
 	r.ToggleDisclosure("e1")
 	rows, _, _ := r.ExportMessageRows(120)
 	lines := rows[0].Lines

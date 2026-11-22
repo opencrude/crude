@@ -21,13 +21,13 @@ import (
 	"crude/agent/provider"
 	"crude/agent/session"
 	"crude/agent/sessiondb"
-	"crude/core/client"
-	"crude/core/port/remote"
-	"crude/core/protocol"
-	"crude/metrics"
-	"crude/network"
-	"crude/types"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
+	"crude/core/shellport/remote"
+	"crude/internal/metrics"
+	"crude/internal/network"
 	"crude/types/control"
+	"crude/types/conversation"
 	"crude/types/inspect"
 	"crude/workspace"
 )
@@ -53,7 +53,7 @@ func TestLiveDiagnosticsCoreHelper(t *testing.T) {
 			t.Fatal("cannot read explicitly configured account")
 		}
 		cfg := FileConfigToSession(fc)
-		main := cfg.GetActiveDefaultCategory()
+		main := cfg.ActiveDefaultCategory()
 		if account := os.Getenv("CRUDE_DIAGNOSTICS_ACCOUNT"); account != "" {
 			main.AccountID = account
 		}
@@ -354,7 +354,7 @@ func TestLiveDiagnosticsActualModel(t *testing.T) {
 	done := make(chan string, 32)
 	followLiveAgentCompletions(t, client, attached.WorkspaceID, done)
 	var created workspace.NewSessionResult
-	if err := client.Call(ctx, attached.WorkspaceID, coreprotocol.NewSession, &coreprotocol.InvocationSessionRequest{Selection: coreprotocol.InvocationSelection{Model: liveDiagnosticsModel}}, &created); err != nil || created.Error != "" {
+	if err := client.Call(ctx, attached.WorkspaceID, coreprotocol.NewSession, &coreprotocol.InvocationSessionRequest{Selection: workspace.InvocationSelection{Model: liveDiagnosticsModel}}, &created); err != nil || created.Error != "" {
 		t.Fatal("exact diagnostic model session unavailable", err, created.Error)
 	}
 	var snapshot coreprotocol.WorkspaceSnapshot
@@ -513,7 +513,7 @@ func liveDiagnosticSoak(t *testing.T, ctx context.Context, shell *liveDiagnostic
 	// accepted transcript identity/content remains present byte-for-byte.
 	compactCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	var compact types.CompactResultMsg
+	var compact conversation.CompactResultMsg
 	if err := client.Call(compactCtx, ws, coreprotocol.AgentCompact, &coreprotocol.AgentIDRequest{AgentID: created.OrchID}, &compact); err != nil || compact.Error != "" || compact.Cancelled || compact.OperationID == "" || compact.Before == 0 || compact.After >= compact.Before {
 		t.Fatalf("actual Flash compaction did not settle: %+v %v", compact, err)
 	}
@@ -553,7 +553,7 @@ func diagnosticTurnSettledAfter(a workspace.AgentSnapshot, generation uint64) bo
 }
 
 func TestDiagnosticsHarnessRootTurnSettlement(t *testing.T) {
-	root := workspace.AgentSnapshot{TurnIdentity: types.TurnIdentity{Generation: 5}}
+	root := workspace.AgentSnapshot{TurnIdentity: conversation.TurnIdentity{Generation: 5}}
 	if !diagnosticTurnSettledAfter(root, 4) || root.Completed {
 		t.Fatal("a reusable root's settled turn was confused with agent lifetime completion")
 	}
@@ -615,7 +615,7 @@ func liveDiagnosticMessages(t *testing.T, project, id string) []sessiondb.Messag
 	if os.Getenv("CRUDE_DIAGNOSTICS_REMOTE") != "" {
 		return liveDiagnosticRemoteMessages(t, project, id)
 	}
-	dir, err := workspace.WorkspaceDir(project)
+	dir, err := workspace.Dir(project)
 	if err != nil {
 		t.Fatal(err)
 	}

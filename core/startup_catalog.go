@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"crude/third_party/pathwalk"
+	"crude/third_party/fastwalk"
 	"crude/workspace"
 )
 
@@ -68,7 +68,7 @@ func startupCatalog(ctx context.Context, root string, hidden bool) (workspace.Br
 						out.Truncated = true
 						return nil
 					}
-					out.Entries = append(out.Entries, pathwalk.Entry{Path: path, Relative: rel, Name: name, IsDir: true, Depth: strings.Count(rel, string(filepath.Separator)) + 1})
+					out.Entries = append(out.Entries, fastwalk.Entry{Path: path, Relative: rel, Name: name, IsDir: true, Depth: strings.Count(rel, string(filepath.Separator)) + 1})
 					queue = append(queue, path)
 				}
 				if errors.Is(readErr, io.EOF) {

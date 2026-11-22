@@ -9,7 +9,7 @@ import (
 	"crude/tui/cell"
 	"crude/tui/filetree"
 	"crude/tui/rendering"
-	settingsui "crude/tui/settings"
+	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"

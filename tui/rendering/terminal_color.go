@@ -1,7 +1,7 @@
 package rendering
 
 import (
-	"crude/terminalvt"
+	"crude/internal/terminalvt"
 	"crude/tui/cell"
 )
 

@@ -7,10 +7,10 @@ import (
 	"strings"
 	"unicode"
 
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/editor"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
 )
 
 // A diagnostic reader borrows one exact projected fact publication. It cannot
@@ -83,7 +83,7 @@ func (m *App) openDiagnosticPopover(id ui.OverlayID, ed *editor.Editor, factID s
 	explicit := id == ui.OverlayDiagContext
 	// DiagnosticsAt returns a detached projection; order overlapping messages by
 	// severity without changing the provider's retained result.
-	slices.SortStableFunc(diags, func(a, b editor.LSPDiagnostic) int { return cmp.Compare(a.Severity, b.Severity) })
+	slices.SortStableFunc(diags, func(a, b insight.LSPDiagnostic) int { return cmp.Compare(a.Severity, b.Severity) })
 	text, severity, colors := diagnosticReaderText(diags)
 	tokens := ui.NewTokenSet(m.Theme)
 	reader := ui.NewTextReader(ui.ComponentID(string(id)+"/reader"), tokens)
@@ -131,10 +131,10 @@ func (m *App) openDiagnosticPopover(id ui.OverlayID, ed *editor.Editor, factID s
 
 // The fact store already bounds retained diagnostics. Show the complete message;
 // provider controls are literal escapes, not terminal effects.
-func diagnosticReaderText(diags []editor.LSPDiagnostic) (string, int, map[int]ui.SemanticColor) {
+func diagnosticReaderText(diags []insight.LSPDiagnostic) (string, int, map[int]ui.SemanticColor) {
 	severity := 0
 	for _, d := range diags {
-		severity = types.HighestDiagnosticSeverity(severity, d.Severity)
+		severity = insight.HighestDiagnosticSeverity(severity, d.Severity)
 	}
 	var b strings.Builder
 	colors := make(map[int]ui.SemanticColor, len(diags))

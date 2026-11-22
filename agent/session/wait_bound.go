@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	ttypes "crude/types"
+	"crude/types/setting"
 )
 
 // maxWait is the configured bound on one agent wait (wait, agent_wait). An
@@ -20,7 +20,7 @@ func (s *Session) maxWait() time.Duration {
 		s.mu.Unlock()
 	}
 	if minutes <= 0 {
-		minutes = ttypes.DefaultMaxWaitMinutes
+		minutes = setting.DefaultMaxWaitMinutes
 	}
 	return time.Duration(minutes) * time.Minute
 }

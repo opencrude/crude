@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"crude/agent"
 	"crude/agent/collaboration"
 	"crude/agent/safety"
 	"crude/agent/tools"
+	"crude/agent/turnloop"
 	"crude/workspace/fileio"
 )
 
@@ -44,7 +44,7 @@ func TestNativePatchSessionHistoryAndChildOwnership(t *testing.T) {
 	})
 	r := NewSubAgentRunner(s, 2)
 	r.SetParentToolFn(s.newToolFn(true))
-	spec := agent.SubAgentSpec{ID: "codex-child", Name: "child", Policy: safety.DefaultPolicy()}
+	spec := turnloop.SubAgentSpec{ID: "codex-child", Name: "child", Policy: safety.DefaultPolicy()}
 	tool := r.buildProxiedToolFn(spec, nil, nil)
 	input := "*** Begin Patch\n*** Add File: original\n+old\n*** Update File: original\n*** Move to: nested/renamed\n-old\n+new\n*** End Patch"
 	ctx := withHistoryScope(t.Context(), "session", "message", "root-agent")
@@ -75,7 +75,7 @@ func TestNativePatchSessionHistoryAndChildOwnership(t *testing.T) {
 	if receipts[2].Receipt.Paths[0].After.Kind != fileio.MutationAbsent {
 		t.Fatal("source removal missing")
 	}
-	other := r.buildProxiedToolFn(agent.SubAgentSpec{ID: "other", Name: "other", Policy: safety.DefaultPolicy()}, nil, nil)
+	other := r.buildProxiedToolFn(turnloop.SubAgentSpec{ID: "other", Name: "other", Policy: safety.DefaultPolicy()}, nil, nil)
 	_, err = other(ctx, "apply_patch", map[string]any{"input": "*** Begin Patch\n*** Update File: nested/renamed\n-new\n+bad\n*** End Patch"})
 	if err == nil {
 		t.Fatal("patch bypassed ownership")

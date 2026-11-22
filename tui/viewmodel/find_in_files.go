@@ -6,7 +6,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/editor"
-	findinfiles "crude/tui/screens/findinfiles"
+	"crude/tui/screens/findinfiles"
 	"crude/tui/ui"
 	"crude/tui/window"
 	"crude/tui/wm"

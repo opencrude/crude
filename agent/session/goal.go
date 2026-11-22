@@ -11,13 +11,13 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"crude/agent"
 	rootprompt "crude/agent/prompt"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
 	"crude/agent/tools"
-	"crude/types"
+	"crude/agent/turnloop"
 	"crude/types/control"
+	"crude/types/conversation"
 )
 
 // A session's /goal is one objective its main agent pursues across turns.
@@ -82,7 +82,7 @@ func (s *Session) loadGoal() error {
 	if err != nil || !ok {
 		return err
 	}
-	if record.Goal.Status == types.GoalActive && (!record.Goal.Waiting || record.VerifierID != "") {
+	if record.Goal.Status == conversation.GoalActive && (!record.Goal.Waiting || record.VerifierID != "") {
 		record.Goal.Waiting = true
 		if record.VerifierID != "" {
 			record.VerifierID = ""
@@ -113,15 +113,15 @@ func (s *Session) tokenTotal() int64 {
 }
 
 // Goal returns the session's goal with time and tokens accounted up to now.
-func (s *Session) Goal() (types.Goal, bool) {
+func (s *Session) Goal() (conversation.Goal, bool) {
 	if s == nil {
-		return types.Goal{}, false
+		return conversation.Goal{}, false
 	}
 	total := s.tokenTotal()
 	s.goalMu.Lock()
 	defer s.goalMu.Unlock()
 	if !s.goal.present {
-		return types.Goal{}, false
+		return conversation.Goal{}, false
 	}
 	goal := s.goal.record.Goal
 	if !s.goal.activeSince.IsZero() {
@@ -141,7 +141,7 @@ func (s *Session) goalAccountLocked(total int64) {
 		g.record.Goal.TokensUsed += max(0, total-g.tokenBase)
 		g.activeSince = time.Time{}
 	}
-	if g.present && g.record.Goal.Status == types.GoalActive && !g.record.Goal.Waiting && !s.goalPlanAccounting {
+	if g.present && g.record.Goal.Status == conversation.GoalActive && !g.record.Goal.Waiting && !s.goalPlanAccounting {
 		g.activeSince, g.tokenBase = now, total
 	}
 }
@@ -188,20 +188,20 @@ func (s *Session) syncGoalPlanAccounting(mode *bool) {
 }
 
 // commitGoalLocked persists the record and returns the view to publish.
-func (s *Session) commitGoalLocked(total int64) (types.Goal, error) {
+func (s *Session) commitGoalLocked(total int64) (conversation.Goal, error) {
 	s.goalAccountLocked(total)
 	s.goal.record.Goal.UpdatedAt = time.Now()
 	s.goal.record.Goal.Verifying = s.goal.record.VerifierID != ""
 	if err := s.saveGoalWithHandoverLocked(); err != nil {
-		return types.Goal{}, err
+		return conversation.Goal{}, err
 	}
 	return s.goal.record.Goal, nil
 }
 
 // publishGoal tells the session's shells, and records the change's row;
 // present false means cleared.
-func (s *Session) publishGoal(goal types.Goal, present bool) {
-	var next *types.Goal
+func (s *Session) publishGoal(goal conversation.Goal, present bool) {
+	var next *conversation.Goal
 	if present {
 		next = &goal
 	}
@@ -249,17 +249,17 @@ func validGoalObjective(objective string) (string, error) {
 // SetGoal starts pursuing objective, within tokenBudget tokens when it is
 // positive. An unfinished goal is replaced only when replace is set; a
 // completed one is simply superseded.
-func (s *Session) SetGoal(objective string, tokenBudget int64, replace bool) (types.Goal, error) {
+func (s *Session) SetGoal(objective string, tokenBudget int64, replace bool) (conversation.Goal, error) {
 	objective, err := validGoalObjective(objective)
 	if err != nil {
-		return types.Goal{}, err
+		return conversation.Goal{}, err
 	}
 	if tokenBudget < 0 {
-		return types.Goal{}, errors.New("a token budget must be positive")
+		return conversation.Goal{}, errors.New("a token budget must be positive")
 	}
 	release, ok := s.beginIdleWork()
 	if !ok {
-		return types.Goal{}, errors.New("session lifetime admission is fenced")
+		return conversation.Goal{}, errors.New("session lifetime admission is fenced")
 	}
 	defer release()
 	s.admissionMu.Lock()
@@ -268,20 +268,20 @@ func (s *Session) SetGoal(objective string, tokenBudget int64, replace bool) (ty
 	s.goalMu.Lock()
 	if s.goal.present && s.goal.record.Goal.Unfinished() && !replace {
 		s.goalMu.Unlock()
-		return types.Goal{}, errors.New("an unfinished goal exists; replace it with /goal")
+		return conversation.Goal{}, errors.New("an unfinished goal exists; replace it with /goal")
 	}
 	previousVerifier := ""
 	if s.goal.present {
 		previousVerifier = s.goal.record.VerifierID
 	}
 	now := time.Now()
-	s.goal = goalRuntime{present: true, record: sessiondb.GoalRecord{Goal: types.Goal{
-		ID: newGoalID(), Objective: objective, Status: types.GoalActive, TokenBudget: tokenBudget, CreatedAt: now,
+	s.goal = goalRuntime{present: true, record: sessiondb.GoalRecord{Goal: conversation.Goal{
+		ID: newGoalID(), Objective: objective, Status: conversation.GoalActive, TokenBudget: tokenBudget, CreatedAt: now,
 	}}}
 	goal, err := s.commitGoalLocked(total)
 	s.goalMu.Unlock()
 	if err != nil {
-		return types.Goal{}, err
+		return conversation.Goal{}, err
 	}
 	s.cancelGoalVerifier(previousVerifier)
 	s.publishGoal(goal, true)
@@ -290,14 +290,14 @@ func (s *Session) SetGoal(objective string, tokenBudget int64, replace bool) (ty
 
 // EditGoal changes the objective without restarting the goal; a running
 // turn learns it at its next step.
-func (s *Session) EditGoal(objective string) (types.Goal, error) {
+func (s *Session) EditGoal(objective string) (conversation.Goal, error) {
 	objective, err := validGoalObjective(objective)
 	if err != nil {
-		return types.Goal{}, err
+		return conversation.Goal{}, err
 	}
 	release, ok := s.beginIdleWork()
 	if !ok {
-		return types.Goal{}, errors.New("session lifetime admission is fenced")
+		return conversation.Goal{}, errors.New("session lifetime admission is fenced")
 	}
 	defer release()
 	s.admissionMu.Lock()
@@ -306,7 +306,7 @@ func (s *Session) EditGoal(objective string) (types.Goal, error) {
 	s.goalMu.Lock()
 	if !s.goal.present {
 		s.goalMu.Unlock()
-		return types.Goal{}, errNoGoal
+		return conversation.Goal{}, errNoGoal
 	}
 	s.goal.record.Goal.Objective = objective
 	notice := provider.NewTextMessage("user", rootprompt.GoalObjectiveUpdated(objective))
@@ -316,36 +316,36 @@ func (s *Session) EditGoal(objective string) (types.Goal, error) {
 	goal, err := s.commitGoalLocked(total)
 	s.goalMu.Unlock()
 	if err != nil {
-		return types.Goal{}, err
+		return conversation.Goal{}, err
 	}
 	s.publishGoal(goal, true)
 	return goal, nil
 }
 
 // PauseGoal stops automatic work on an active goal until it is resumed.
-func (s *Session) PauseGoal(reason string) (types.Goal, error) {
+func (s *Session) PauseGoal(reason string) (conversation.Goal, error) {
 	return s.settleGoal(func(g *goalRuntime) error {
-		if g.record.Goal.Status != types.GoalActive {
+		if g.record.Goal.Status != conversation.GoalActive {
 			return errors.New("only an active goal can be paused")
 		}
-		g.record.Goal.Status, g.record.Goal.Reason = types.GoalPaused, reason
+		g.record.Goal.Status, g.record.Goal.Reason = conversation.GoalPaused, reason
 		return nil
 	})
 }
 
 // ResumeGoal makes a paused, blocked or waiting goal active again. Its stop
 // rules start counting afresh, as after a user turn.
-func (s *Session) ResumeGoal() (types.Goal, error) {
+func (s *Session) ResumeGoal() (conversation.Goal, error) {
 	return s.settleGoal(func(g *goalRuntime) error {
 		switch {
-		case g.record.Goal.Status == types.GoalComplete:
+		case g.record.Goal.Status == conversation.GoalComplete:
 			return errors.New("this goal is complete; set a new one with /goal")
-		case g.record.Goal.Status == types.GoalActive && !g.record.Goal.Waiting:
+		case g.record.Goal.Status == conversation.GoalActive && !g.record.Goal.Waiting:
 			return errors.New("this goal is already active")
 		case g.record.Goal.TokenBudget > 0 && g.record.Goal.TokensUsed >= g.record.Goal.TokenBudget:
 			return errors.New("this goal used its token budget; set a new goal with /goal or clear it")
 		}
-		g.record.Goal.Status, g.record.Goal.Waiting, g.record.Goal.Reason = types.GoalActive, false, ""
+		g.record.Goal.Status, g.record.Goal.Waiting, g.record.Goal.Reason = conversation.GoalActive, false, ""
 		g.emptyTurns, g.failingTurns, g.verifierFailures = 0, 0, 0
 		return nil
 	})
@@ -377,15 +377,15 @@ func (s *Session) ClearGoal() error {
 	s.goal = goalRuntime{}
 	s.goalMu.Unlock()
 	s.cancelGoalVerifier(verifier)
-	s.publishGoal(types.Goal{}, false)
+	s.publishGoal(conversation.Goal{}, false)
 	return nil
 }
 
 // settleGoal applies one status change and its stop of any running verifier.
-func (s *Session) settleGoal(change func(*goalRuntime) error) (types.Goal, error) {
+func (s *Session) settleGoal(change func(*goalRuntime) error) (conversation.Goal, error) {
 	release, ok := s.beginIdleWork()
 	if !ok {
-		return types.Goal{}, errors.New("session lifetime admission is fenced")
+		return conversation.Goal{}, errors.New("session lifetime admission is fenced")
 	}
 	defer release()
 	s.admissionMu.Lock()
@@ -394,20 +394,20 @@ func (s *Session) settleGoal(change func(*goalRuntime) error) (types.Goal, error
 	s.goalMu.Lock()
 	if !s.goal.present {
 		s.goalMu.Unlock()
-		return types.Goal{}, errNoGoal
+		return conversation.Goal{}, errNoGoal
 	}
 	if err := change(&s.goal); err != nil {
 		s.goalMu.Unlock()
-		return types.Goal{}, err
+		return conversation.Goal{}, err
 	}
 	verifier := ""
-	if s.goal.record.Goal.Status != types.GoalActive {
+	if s.goal.record.Goal.Status != conversation.GoalActive {
 		verifier, s.goal.record.VerifierID = s.goal.record.VerifierID, ""
 	}
 	goal, err := s.commitGoalLocked(total)
 	s.goalMu.Unlock()
 	if err != nil {
-		return types.Goal{}, err
+		return conversation.Goal{}, err
 	}
 	s.cancelGoalVerifier(verifier)
 	s.publishGoal(goal, true)
@@ -419,7 +419,7 @@ func (s *Session) cancelGoalVerifier(id string) {
 		return
 	}
 	if runner := s.SubAgentRunner(); runner != nil {
-		runner.cancelActive(func(handle *agent.SubAgentHandle) bool { return string(handle.Spec.ID) == id })
+		runner.cancelActive(func(handle *turnloop.SubAgentHandle) bool { return string(handle.Spec.ID) == id })
 	}
 }
 
@@ -438,7 +438,7 @@ func (s *Session) enforceGoalBudget() {
 	total := s.tokenTotal()
 	s.goalMu.Lock()
 	g := &s.goal
-	if !g.present || g.record.Goal.Status != types.GoalActive || g.record.Goal.TokenBudget <= 0 {
+	if !g.present || g.record.Goal.Status != conversation.GoalActive || g.record.Goal.TokenBudget <= 0 {
 		s.goalMu.Unlock()
 		return
 	}
@@ -448,7 +448,7 @@ func (s *Session) enforceGoalBudget() {
 		s.goalMu.Unlock()
 		return
 	}
-	g.record.Goal.Status = types.GoalBudgetLimited
+	g.record.Goal.Status = conversation.GoalBudgetLimited
 	g.record.Goal.Reason = fmt.Sprintf("The goal used its token budget of %d tokens.", goal.TokenBudget)
 	notice := provider.NewTextMessage("user", rootprompt.GoalBudgetLimit(goal.Objective, goal.TokensUsed, goal.TokenBudget, goal.TimeUsed))
 	notice.Origin, notice.Visibility = provider.OriginRuntimeContext, provider.VisibilityContextOnly
@@ -476,11 +476,11 @@ func (s *Session) goalTurnBegin(input provider.UserInput, planMode bool) *goalTu
 	automatic := strings.HasPrefix(input.InternalID, goalContinuationPrefix)
 	total := s.tokenTotal()
 	s.goalMu.Lock()
-	if !s.goal.present || s.goal.record.Goal.Status != types.GoalActive {
+	if !s.goal.present || s.goal.record.Goal.Status != conversation.GoalActive {
 		s.goalMu.Unlock()
 		return nil
 	}
-	var published *types.Goal
+	var published *conversation.Goal
 	if s.goal.record.Goal.Waiting && !automatic {
 		s.goal.record.Goal.Waiting = false
 		if goal, err := s.commitGoalLocked(total); err == nil {
@@ -495,7 +495,7 @@ func (s *Session) goalTurnBegin(input provider.UserInput, planMode bool) *goalTu
 	return turn
 }
 
-func (t *goalTurn) observe(event agent.AgentEvent) {
+func (t *goalTurn) observe(event turnloop.AgentEvent) {
 	if t == nil {
 		return
 	}
@@ -524,15 +524,15 @@ func (s *Session) goalTurnEnd(turn *goalTurn, stopped, failed bool, failure stri
 	g := &s.goal
 	// Notices meant for this turn (a budget stop) are stale once it ends.
 	g.notices = nil
-	if !g.present || g.record.Goal.ID != turn.goalID || g.record.Goal.Status != types.GoalActive {
+	if !g.present || g.record.Goal.ID != turn.goalID || g.record.Goal.Status != conversation.GoalActive {
 		s.goalMu.Unlock()
 		return
 	}
 	switch {
 	case stopped:
-		g.record.Goal.Status, g.record.Goal.Reason = types.GoalPaused, "Paused because the turn was stopped. Resume it with /goal resume."
+		g.record.Goal.Status, g.record.Goal.Reason = conversation.GoalPaused, "Paused because the turn was stopped. Resume it with /goal resume."
 	case failed:
-		g.record.Goal.Status, g.record.Goal.Reason = types.GoalBlocked, "The last turn failed. Fix the cause, then resume with /goal resume."
+		g.record.Goal.Status, g.record.Goal.Reason = conversation.GoalBlocked, "The last turn failed. Fix the cause, then resume with /goal resume."
 		if failure != "" {
 			g.record.Goal.Reason = "The last turn failed: " + failure + ". Fix the cause, then resume with /goal resume."
 		}
@@ -549,15 +549,15 @@ func (s *Session) goalTurnEnd(turn *goalTurn, stopped, failed bool, failure stri
 		}
 		switch {
 		case g.emptyTurns >= goalStrikeLimit:
-			g.record.Goal.Status, g.record.Goal.Reason = types.GoalBlocked, fmt.Sprintf("The agent made no progress in %d consecutive goal turns.", goalStrikeLimit)
+			g.record.Goal.Status, g.record.Goal.Reason = conversation.GoalBlocked, fmt.Sprintf("The agent made no progress in %d consecutive goal turns.", goalStrikeLimit)
 		case g.failingTurns >= goalStrikeLimit:
-			g.record.Goal.Status, g.record.Goal.Reason = types.GoalBlocked, fmt.Sprintf("Every tool call failed in %d consecutive goal turns.", goalStrikeLimit)
+			g.record.Goal.Status, g.record.Goal.Reason = conversation.GoalBlocked, fmt.Sprintf("Every tool call failed in %d consecutive goal turns.", goalStrikeLimit)
 		}
 	default:
 		g.emptyTurns, g.failingTurns = 0, 0
 	}
 	verifier := ""
-	if g.record.Goal.Status != types.GoalActive {
+	if g.record.Goal.Status != conversation.GoalActive {
 		verifier, g.record.VerifierID = g.record.VerifierID, ""
 	}
 	goal, err := s.commitGoalLocked(total)
@@ -583,11 +583,11 @@ func (s *Session) goalContinuation() (provider.UserInput, bool) {
 		return provider.UserInput{}, false
 	}
 	goal, ok := s.Goal()
-	if !ok || goal.Status != types.GoalActive || goal.Waiting || goal.Verifying {
+	if !ok || goal.Status != conversation.GoalActive || goal.Waiting || goal.Verifying {
 		return provider.UserInput{}, false
 	}
 	s.goalMu.Lock()
-	if !s.goal.present || s.goal.record.Goal.Status != types.GoalActive || s.goal.record.Goal.Waiting || s.goal.record.VerifierID != "" {
+	if !s.goal.present || s.goal.record.Goal.Status != conversation.GoalActive || s.goal.record.Goal.Waiting || s.goal.record.VerifierID != "" {
 		s.goalMu.Unlock()
 		return provider.UserInput{}, false
 	}
@@ -616,7 +616,7 @@ func (s *Session) goalContinuation() (provider.UserInput, bool) {
 // claimGoalComplete starts the independent verifier of the worker's claim.
 func (s *Session) claimGoalComplete(ctx context.Context, evidence string) (string, error) {
 	s.goalMu.Lock()
-	if !s.goal.present || s.goal.record.Goal.Status != types.GoalActive {
+	if !s.goal.present || s.goal.record.Goal.Status != conversation.GoalActive {
 		s.goalMu.Unlock()
 		return "", errors.New("there is no active goal to complete")
 	}
@@ -635,7 +635,7 @@ func (s *Session) claimGoalComplete(ctx context.Context, evidence string) (strin
 	}
 	total := s.tokenTotal()
 	s.goalMu.Lock()
-	if !s.goal.present || s.goal.record.Goal.Status != types.GoalActive || s.goal.record.Goal.Objective != objective {
+	if !s.goal.present || s.goal.record.Goal.Status != conversation.GoalActive || s.goal.record.Goal.Objective != objective {
 		s.goalMu.Unlock()
 		s.cancelGoalVerifier(string(id))
 		return "", errors.New("the goal changed while its verifier was starting")
@@ -655,7 +655,7 @@ func (s *Session) claimGoalComplete(ctx context.Context, evidence string) (strin
 // observeGoalVerifier applies a finished child's verdict when it is the
 // goal's verifier. The verdict is the report's goal_verdict metadata; a
 // verifier that ends without one counts as not verified.
-func (s *Session) observeGoalVerifier(childID agent.AgentID, result agent.SubAgentResult) {
+func (s *Session) observeGoalVerifier(childID turnloop.AgentID, result turnloop.SubAgentResult) {
 	s.goalMu.Lock()
 	match := s.goal.present && s.goal.record.VerifierID == string(childID)
 	s.goalMu.Unlock()
@@ -679,7 +679,7 @@ func (s *Session) observeGoalVerifier(childID agent.AgentID, result agent.SubAge
 	g.record.VerifierID = ""
 	switch verdict {
 	case "achieved":
-		g.record.Goal.Status, g.record.Goal.Reason = types.GoalComplete, firstNonEmpty(summary, "The verifier confirmed the objective.")
+		g.record.Goal.Status, g.record.Goal.Reason = conversation.GoalComplete, firstNonEmpty(summary, "The verifier confirmed the objective.")
 		g.verifierFailures = 0
 	case "not_achieved":
 		g.record.Goal.Reason = "Not yet: " + firstNonEmpty(summary, "the verifier found remaining work.")
@@ -689,7 +689,7 @@ func (s *Session) observeGoalVerifier(childID agent.AgentID, result agent.SubAge
 		g.verifierFailures++
 		g.record.Goal.Reason = "The verifier ended without a verdict; completion is unconfirmed."
 		if g.verifierFailures >= goalStrikeLimit {
-			g.record.Goal.Status = types.GoalBlocked
+			g.record.Goal.Status = conversation.GoalBlocked
 			g.record.Goal.Reason = fmt.Sprintf("The verifier ended without a verdict %d times in a row.", goalStrikeLimit)
 		}
 	}
@@ -764,10 +764,10 @@ func (s *Session) executeGoalTool(ctx context.Context, tool string, params map[s
 				return tools.ToolResult{}, errors.New("blocked requires a reason the user can act on")
 			}
 			goal, err := s.settleGoal(func(g *goalRuntime) error {
-				if g.record.Goal.Status != types.GoalActive {
+				if g.record.Goal.Status != conversation.GoalActive {
 					return errors.New("only an active goal can be blocked")
 				}
-				g.record.Goal.Status, g.record.Goal.Reason = types.GoalBlocked, reason
+				g.record.Goal.Status, g.record.Goal.Reason = conversation.GoalBlocked, reason
 				return nil
 			})
 			if err != nil {

@@ -3,6 +3,8 @@ package viewmodel
 import (
 	"context"
 	"crude/internal/fileuri"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -19,9 +21,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/workspace"
 )
 
@@ -79,10 +80,10 @@ type automaticSignatureVisualModel struct {
 	tracePath  string
 	pids       []int
 	transcript strings.Builder
-	initial    types.InsightSource
-	last       types.InsightSource
-	settings   types.LSPSettings
-	trust      types.WorkspaceAnalysisSettings
+	initial    insight.Source
+	last       insight.Source
+	settings   setting.LSP
+	trust      setting.WorkspaceAnalysis
 	reader     *ui.TextArea
 }
 
@@ -126,9 +127,9 @@ func runAutomaticSignatureVisual(t *testing.T, headless bool, width, height int)
 	coreRuntime := remoteJourneyRuntime(t, "http://127.0.0.1:1", func(w *workspace.Workspace) {
 		retained = w
 		settings := w.AppDefaults()
-		settings.LSP = types.DefaultLSPSettings()
+		settings.LSP = setting.DefaultLSP()
 		settings.LSP.AutoDetect, settings.LSP.AutoComplete = false, false
-		settings.LSP.Languages = map[string]types.LSPLanguageSettings{"go": {
+		settings.LSP.Languages = map[string]setting.LSPLanguage{"go": {
 			Enabled: true, Command: executable, Args: []string{"serve", "-rpc.trace", "-logfile=" + tracePath},
 			RootMarkers: []string{"go.mod"},
 			Environment: map[string]string{
@@ -388,7 +389,7 @@ func (m *automaticSignatureVisualModel) setupAutomaticSignature() error {
 			return fmt.Errorf("opening a source file fabricated parameter help")
 		}
 		m.initial, m.last = source, source
-		m.settings = types.CloneLSPSettings(v.ws.LSPMgr().Settings())
+		m.settings = setting.CloneLSP(v.ws.LSPMgr().Settings())
 		m.trust = m.retained.LoadAppSettings().Analysis
 		return featureVisualPaint(v, "var _ = join")
 	}); err != nil {
@@ -422,9 +423,9 @@ func (m *automaticSignatureVisualModel) observeAutomaticSignature(phase int) err
 	case 8, 9, 10:
 		requests = 4
 	}
-	var observed types.InsightSource
+	var observed insight.Source
 	var editorRevision uint64
-	var help types.LSPSignatureHelp
+	var help insight.LSPSignatureHelp
 	var paint string
 	var caretX, caretY, cardX, cardY, cardW, cardH int
 	if err := m.await(func(v *controlVisualModel) error {

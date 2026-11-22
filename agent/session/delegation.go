@@ -7,10 +7,10 @@ import (
 	"slices"
 	"time"
 
-	"crude/agent"
 	rootprompt "crude/agent/prompt"
 	"crude/agent/provider"
 	"crude/agent/tools"
+	"crude/agent/turnloop"
 )
 
 type delegationOwnerKey struct{}
@@ -25,12 +25,12 @@ func withDelegationOwner(ctx context.Context, id string, generation uint64) cont
 
 func orchestratorTools(enabled bool) []tools.ToolDef {
 	_ = enabled
-	return agent.ApplyOrchestratorOverrides(agent.FilterTools(tools.AgentTools, nil, nil, "", false))
+	return turnloop.ApplyOrchestratorOverrides(turnloop.FilterTools(tools.AgentTools, nil, nil, "", false))
 }
 
 func configuredOrchestratorTools(cfg *Config, enabled bool, model string) []tools.ToolDef {
-	category := cfg.GetActiveDefaultCategory()
-	return agent.FilterToolsForModel(append(orchestratorTools(enabled), tools.GoalTools...), category.AllowedTools, category.DeniedTools, "", false, model)
+	category := cfg.ActiveDefaultCategory()
+	return turnloop.FilterToolsForModel(append(orchestratorTools(enabled), tools.GoalTools...), category.AllowedTools, category.DeniedTools, "", false, model)
 }
 
 // childCoordinationTools are a child's channel back to its parent: report the
@@ -42,7 +42,7 @@ var childCoordinationTools = []string{"publish_report", "artifact_read", "agent_
 
 // keepChildCoordinationTools adds the coordination tools to an explicit
 // allow-list unless the parent or profile denied them.
-func keepChildCoordinationTools(spec *agent.SubAgentSpec) {
+func keepChildCoordinationTools(spec *turnloop.SubAgentSpec) {
 	if len(spec.AllowedTools) == 0 {
 		return
 	}
@@ -53,7 +53,7 @@ func keepChildCoordinationTools(spec *agent.SubAgentSpec) {
 	}
 }
 
-func constrainConfiguredTools(spec *agent.SubAgentSpec, allowed, denied []string) {
+func constrainConfiguredTools(spec *turnloop.SubAgentSpec, allowed, denied []string) {
 	spec.DeniedTools = append(spec.DeniedTools, denied...)
 	if len(allowed) > 0 {
 		definitions := append(append([]tools.ToolDef(nil), tools.AgentTools...), tools.CollaborationTools...)
@@ -68,7 +68,7 @@ func constrainConfiguredTools(spec *agent.SubAgentSpec, allowed, denied []string
 	}
 }
 
-func validateChildReportPermission(spec agent.SubAgentSpec) error {
+func validateChildReportPermission(spec turnloop.SubAgentSpec) error {
 	if slices.Contains(spec.DeniedTools, "publish_report") {
 		return fmt.Errorf("child role/profile explicitly denies required publish_report; enable reporting in Agents > Tool Access before launching")
 	}
@@ -93,7 +93,7 @@ func agentProfileCatalog(cfg *Config) string {
 		if p.Enabled != nil && !*p.Enabled {
 			continue
 		}
-		if role := cfg.GetCategoryConfig(p.Category); role.Enabled != nil && !*role.Enabled {
+		if role := cfg.CategoryConfig(p.Category); role.Enabled != nil && !*role.Enabled {
 			continue
 		}
 		profiles = append(profiles, rootprompt.AgentProfile{Name: name, Role: p.Category, Description: p.Description})

@@ -19,7 +19,7 @@ func (stubLogger) Warn(string, string, ...any)  {}
 func (stubLogger) Error(string, string, ...any) {}
 func (stubLogger) Debug(string, string, ...any) {}
 
-func setupTreeRoutingApp(t *testing.T) (*App, *filetree.FileTreeModel, string) {
+func setupTreeRoutingApp(t *testing.T) (*App, *filetree.Model, string) {
 	t.Helper()
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "main.go")

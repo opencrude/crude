@@ -3,8 +3,8 @@ package session
 import (
 	"sync/atomic"
 
-	"crude/agent"
-	ttypes "crude/types"
+	"crude/agent/turnloop"
+	"crude/types/conversation"
 )
 
 type runtimeEventSource struct {
@@ -13,12 +13,12 @@ type runtimeEventSource struct {
 	sequence                 atomic.Uint64
 }
 
-func (s *runtimeEventSource) bind(event agent.AgentEvent) agent.AgentEvent {
+func (s *runtimeEventSource) bind(event turnloop.AgentEvent) turnloop.AgentEvent {
 	if event.AgentID == "" {
 		event.AgentID = s.agentID
 	}
 	if event.Identity.EventID == "" {
-		event.Identity = ttypes.RuntimeEventIdentity{
+		event.Identity = conversation.RuntimeEventIdentity{
 			EventID: newMessageID(), OwnerID: s.ownerID, AgentID: s.agentID, RunID: s.runID,
 			RuntimeEpoch: s.runtimeEpoch, Generation: s.generation, Sequence: s.sequence.Add(1),
 		}
@@ -26,7 +26,7 @@ func (s *runtimeEventSource) bind(event agent.AgentEvent) agent.AgentEvent {
 	return event
 }
 
-func sendRuntimeEvent(sender EventSender, event agent.AgentEvent) {
+func sendRuntimeEvent(sender EventSender, event turnloop.AgentEvent) {
 	if sender == nil {
 		return
 	}

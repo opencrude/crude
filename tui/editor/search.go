@@ -1,7 +1,7 @@
 package editor
 
 import (
-	"crude/text/search"
+	"crude/text/textsearch"
 	"time"
 )
 

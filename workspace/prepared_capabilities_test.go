@@ -2,8 +2,8 @@ package workspace
 
 import (
 	"context"
-	"crude/types"
 	captypes "crude/types/capability"
+	"crude/types/setting"
 	"encoding/json"
 	"strings"
 	"sync"
@@ -11,7 +11,7 @@ import (
 )
 
 func TestProjectToolDecisionConcurrentPreferenceSaves(t *testing.T) {
-	w := NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, nil)
+	w := NewWorkspace(t.TempDir(), "", "tester", setting.Settings{}, nil)
 	defer w.Close()
 	if err := w.ensureWorkspacePersistence(); err != nil {
 		t.Fatal(err)
@@ -21,8 +21,8 @@ func TestProjectToolDecisionConcurrentPreferenceSaves(t *testing.T) {
 		t.Fatal(err)
 	}
 	saves := []func() PreferencesSaveResult{
-		w.PreparePreferencesSave(types.SettingsScopeWorkspace, []types.SettingEdit{{Path: []string{"editor", "tab_size"}, After: json.RawMessage(`6`)}}),
-		w.PreparePreferencesSave(types.SettingsScopeWorkspace, []types.SettingEdit{{Path: []string{"editor", "word_wrap"}, After: json.RawMessage(`true`)}}),
+		w.PreparePreferencesSave(setting.ScopeWorkspace, []setting.Edit{{Path: []string{"editor", "tab_size"}, After: json.RawMessage(`6`)}}),
+		w.PreparePreferencesSave(setting.ScopeWorkspace, []setting.Edit{{Path: []string{"editor", "word_wrap"}, After: json.RawMessage(`true`)}}),
 	}
 	var wg sync.WaitGroup
 	errors := make(chan error, len(saves))
@@ -37,14 +37,14 @@ func TestProjectToolDecisionConcurrentPreferenceSaves(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	row := w.WorkspaceDB.GetSetting(workspaceSettingsKey)
+	row := w.WorkspaceDB.Setting(workspaceSettingsKey)
 	if !strings.Contains(row, `"project_tool_decisions":`+decision) || !strings.Contains(row, `"tab_size":6`) || !strings.Contains(row, `"word_wrap":true`) {
 		t.Fatalf("concurrent saves lost data: %s", row)
 	}
 }
 
 func TestProjectToolDecisionGenericWriters(t *testing.T) {
-	w := NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, nil)
+	w := NewWorkspace(t.TempDir(), "", "tester", setting.Settings{}, nil)
 	defer w.Close()
 	if err := w.ensureWorkspacePersistence(); err != nil {
 		t.Fatal(err)
@@ -55,29 +55,29 @@ func TestProjectToolDecisionGenericWriters(t *testing.T) {
 	}
 	assertStored := func() {
 		t.Helper()
-		if row := w.WorkspaceDB.GetSetting(workspaceSettingsKey); !strings.Contains(row, `"project_tool_decisions":{ "invalid" : [ 1, 2 ] }`) {
+		if row := w.WorkspaceDB.Setting(workspaceSettingsKey); !strings.Contains(row, `"project_tool_decisions":{ "invalid" : [ 1, 2 ] }`) {
 			t.Fatalf("decision changed: %s", row)
 		}
 	}
-	for _, edit := range []types.SettingEdit{
+	for _, edit := range []setting.Edit{
 		{Path: []string{"capabilities"}, After: json.RawMessage(`{"project_tool_decisions":{"grant":true}}`)},
 		{Path: []string{"capabilities", "project_tool_decisions"}},
 		{Path: []string{"capabilities", "project_tool_decisions", "grant"}, After: json.RawMessage(`true`)},
 	} {
-		if result := w.PreparePreferencesSave(types.SettingsScopeWorkspace, []types.SettingEdit{edit})(); result.Err == nil {
+		if result := w.PreparePreferencesSave(setting.ScopeWorkspace, []setting.Edit{edit})(); result.Err == nil {
 			t.Fatalf("accepted authority edit: %v", edit.Path)
 		}
 	}
-	if result := w.PreparePreferencesSave(types.SettingsScopeWorkspace, []types.SettingEdit{{Path: []string{"editor", "tab_size"}, After: json.RawMessage(`6`)}})(); result.Err != nil {
+	if result := w.PreparePreferencesSave(setting.ScopeWorkspace, []setting.Edit{{Path: []string{"editor", "tab_size"}, After: json.RawMessage(`6`)}})(); result.Err != nil {
 		t.Fatal(result.Err)
 	}
 	assertStored()
-	if err := w.SaveWorkspaceSettings(types.WorkspaceOverrides{Capabilities: json.RawMessage(`{"project_tool_decisions":{"forged":true}}`)}); err != nil {
+	if err := w.SaveWorkspaceSettings(setting.WorkspaceOverrides{Capabilities: json.RawMessage(`{"project_tool_decisions":{"forged":true}}`)}); err != nil {
 		t.Fatal(err)
 	}
 	assertStored()
 	before := w.LoadAppSettings()
-	after := types.CloneAppSettings(before)
+	after := setting.CloneApp(before)
 	after.Capabilities.ProjectToolDecisions = json.RawMessage(`{"forged":true}`)
 	if _, err := w.PrepareCapabilityOverlayCommit(captypes.Action{})(context.Background(), before, after, captypes.ScopeWorkspace); err == nil {
 		t.Fatal("capability snapshot accepted decision change")
@@ -86,7 +86,7 @@ func TestProjectToolDecisionGenericWriters(t *testing.T) {
 }
 
 func TestPreparedCapabilitiesDetachesActionAndRejectsUnreviewedAcquisition(t *testing.T) {
-	w := NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, nil)
+	w := NewWorkspace(t.TempDir(), "", "tester", setting.Settings{}, nil)
 	defer w.Close()
 	if err := w.ensureWorkspacePersistence(); err != nil {
 		t.Fatal(err)
@@ -95,9 +95,9 @@ func TestPreparedCapabilitiesDetachesActionAndRejectsUnreviewedAcquisition(t *te
 		t.Fatal(err)
 	}
 	commits := 0
-	prepared, err := w.PrepareCapabilities(func(context.Context, types.AppSettings, types.AppSettings, captypes.Scope) (types.AppSettings, error) {
+	prepared, err := w.PrepareCapabilities(func(context.Context, setting.App, setting.App, captypes.Scope) (setting.App, error) {
 		commits++
-		return types.AppSettings{}, nil
+		return setting.App{}, nil
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -115,14 +115,14 @@ func TestPreparedCapabilitiesDetachesActionAndRejectsUnreviewedAcquisition(t *te
 }
 
 func TestPreparedCapabilityOverlayPreservesNeighborsAndAcceptsRepeatedSet(t *testing.T) {
-	w := NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, nil)
+	w := NewWorkspace(t.TempDir(), "", "tester", setting.Settings{}, nil)
 	defer w.Close()
 	if err := w.ensureWorkspacePersistence(); err != nil {
 		t.Fatal(err)
 	}
 	// Parent-equal and schema-stale neighbors are stored intent/data, not a
 	// reason for a capability edit to rewrite other categories.
-	neighbors := types.WorkspaceOverrides{Editor: json.RawMessage(`{"tab_size":4,"removed_editor_field":"kept"}`), Agents: json.RawMessage(`{"Enabled":false}`)}
+	neighbors := setting.WorkspaceOverrides{Editor: json.RawMessage(`{"tab_size":4,"removed_editor_field":"kept"}`), Agents: json.RawMessage(`{"Enabled":false}`)}
 	if err := w.SaveWorkspaceSettings(neighbors); err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestPreparedCapabilityOverlayPreservesNeighborsAndAcceptsRepeatedSet(t *tes
 }
 
 func TestPreparedOldSnapshotCannotRewindCapabilityService(t *testing.T) {
-	w := NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, nil)
+	w := NewWorkspace(t.TempDir(), "", "tester", setting.Settings{}, nil)
 	defer w.Close()
 	if err := w.ensureWorkspacePersistence(); err != nil {
 		t.Fatal(err)

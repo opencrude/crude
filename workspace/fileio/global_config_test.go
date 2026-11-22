@@ -4,7 +4,7 @@ import (
 	"sync"
 	"testing"
 
-	"crude/logger"
+	"crude/internal/logger"
 )
 
 func TestSafetyLoggerConfiguration(t *testing.T) {

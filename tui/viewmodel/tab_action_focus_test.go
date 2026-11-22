@@ -268,7 +268,7 @@ func TestBackgroundTabChangesPreserveExplicitFocus(t *testing.T) {
 			} else {
 				app.setFocusTabBar()
 			}
-			pane := app.ws.PaneMgr().GetOrCreate("background", workspace.PaneAgent, "Background")
+			pane := app.ws.PaneMgr().Ensure("background", workspace.PaneAgent, "Background")
 			app.ws.AgentMgr().AddSubAgent("background", "alpha", "Background", "model", "researcher",
 				workspace.NewAgentState("background", pane.Messages, app.ws.Logger()))
 			app.syncAgentWindowTabs()

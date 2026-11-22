@@ -19,8 +19,8 @@ type asyncDirectoryLoad struct {
 // navigation never has to reconstruct a tree from disk.
 type pickerSnapshot struct {
 	current      string
-	model        *filetree.FileTreeModel
-	browseModel  *filetree.FileTreeModel
+	model        *filetree.Model
+	browseModel  *filetree.Model
 	entries      []Entry
 	searchActive bool
 	searchQuery  string

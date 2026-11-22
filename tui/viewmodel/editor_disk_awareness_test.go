@@ -11,13 +11,13 @@ import (
 
 	"crude/tui/screens/diffview"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/statuscenter"
 	"crude/workspace"
 )
 
 // diskNotices returns the editor's disk-change notices in the status center.
-func diskNoticesOf(app *App) []types.NotificationRecord {
-	var out []types.NotificationRecord
+func diskNoticesOf(app *App) []statuscenter.NotificationRecord {
+	var out []statuscenter.NotificationRecord
 	for _, n := range app.ws.Status().Notifications(true) {
 		if strings.HasPrefix(n.DedupKey, "disk:") {
 			out = append(out, n)
@@ -58,7 +58,7 @@ func TestOutsideEditMergesIntoUnsavedTextAndSaysSoOnce(t *testing.T) {
 	if len(notices) != 1 || notices[0].Summary != "notes.txt changed on disk. Crude added the changes to your unsaved text." {
 		t.Fatalf("one merge notice expected, got %+v", notices)
 	}
-	if notices[0].Owner.Kind != types.ResourceEditor || notices[0].Owner.ID != path {
+	if notices[0].Owner.Kind != statuscenter.ResourceEditor || notices[0].Owner.ID != path {
 		t.Fatalf("the notice must open the file: %+v", notices[0].Owner)
 	}
 
@@ -154,7 +154,7 @@ func TestConflictInHiddenEditorNotifiesOnce(t *testing.T) {
 	liveTestPump(t, []*App{app}, ed.DiskConflict)
 	liveTestPump(t, []*App{app}, func() bool { return len(diskNoticesOf(app)) > 0 })
 	notices := diskNoticesOf(app)
-	if len(notices) != 1 || !strings.Contains(notices[0].Summary, "hidden.txt changed on disk and conflicts with your unsaved changes") || notices[0].Severity != types.SeverityWarning {
+	if len(notices) != 1 || !strings.Contains(notices[0].Summary, "hidden.txt changed on disk and conflicts with your unsaved changes") || notices[0].Severity != statuscenter.SeverityWarning {
 		t.Fatalf("one conflict notice expected: %+v", notices)
 	}
 	// The file changing again while the conflict waits says nothing new.

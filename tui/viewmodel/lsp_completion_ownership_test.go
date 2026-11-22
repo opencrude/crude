@@ -9,8 +9,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/port"
-	"crude/types"
+	"crude/core/shellport"
+	"crude/types/insight"
 	"crude/workspace/document"
 )
 
@@ -23,7 +23,7 @@ type peerFirstCompletions struct {
 	err  chan error
 }
 
-func (p *peerFirstCompletions) InspectLSPCompletion(ctx context.Context, set, digest, item string, resolve bool) (types.LSPCompletionInspection, error) {
+func (p *peerFirstCompletions) InspectLSPCompletion(ctx context.Context, set, digest, item string, resolve bool) (insight.LSPCompletionInspection, error) {
 	result, err := p.Completions.InspectLSPCompletion(ctx, set, digest, item, resolve)
 	if err == nil && !resolve {
 		p.err <- p.peer()

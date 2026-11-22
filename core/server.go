@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"crude/buildinfo"
-	"crude/core/protocol"
-	"crude/core/wire"
+	"crude/core/coreprotocol"
+	"crude/core/corewire"
+	"crude/internal/buildinfo"
 )
 
 const handshakeTimeout = 10 * time.Second

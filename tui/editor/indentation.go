@@ -1,7 +1,7 @@
 package editor
 
 import (
-	"crude/text/indent"
+	"crude/text/indentation"
 	"crude/workspace/document"
 	"strings"
 )

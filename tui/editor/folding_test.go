@@ -2,7 +2,7 @@ package editor
 
 import (
 	tea "charm.land/bubbletea/v2"
-	"crude/types"
+	"crude/types/setting"
 	"encoding/json"
 	"reflect"
 	"strings"
@@ -52,7 +52,7 @@ func TestFoldGutterAndLinkedEditDoNotShareViewChoices(t *testing.T) {
 	e := loadEditorText(t, "fold.go", foldFixture)
 	peer := e.NewLinkedView()
 	t.Cleanup(peer.Close)
-	e.SetPresentation(types.EditorSettings{TabSize: 4, LineNumbers: false})
+	e.SetPresentation(setting.Editor{TabSize: 4, LineNumbers: false})
 	paintEditor(e, 80, 14)
 	g := e.gutterGeometry()
 	e.HandleEvent(tea.MouseClickMsg{X: g.numberX - 1, Y: 1, Button: tea.MouseLeft})
@@ -124,7 +124,7 @@ func TestFoldAndWrapUseOneScrollbarAndUnicodePointerProjection(t *testing.T) {
 	if e.ScrollModel().Content() != 5 {
 		t.Fatal("fold left wrapped hidden rows in scrollbar", e.ScrollModel().Content())
 	}
-	e.SetPresentation(types.EditorSettings{TabSize: 8, LineNumbers: true, WordWrap: true})
+	e.SetPresentation(setting.Editor{TabSize: 8, LineNumbers: true, WordWrap: true})
 	paintWrapped(t, e, 50, 14)
 	if e.ScrollModel().Content() != 5 {
 		t.Fatal("tab/width change lost folding")

@@ -6,7 +6,7 @@ import (
 	"sync"
 
 	"crude/agent/collaboration"
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
 	"crude/types/control"
 	"crude/workspace"
 	"crude/workspace/localhistory"

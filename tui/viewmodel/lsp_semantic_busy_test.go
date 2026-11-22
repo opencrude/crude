@@ -8,12 +8,12 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"crude/core/client"
-	"crude/core/protocol"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
 	"crude/tui/editor"
 	"crude/tui/rendering"
 	"crude/tui/theme"
-	"crude/types"
+	"crude/types/insight"
 	"crude/workspace/document"
 )
 
@@ -24,11 +24,11 @@ type semanticBusyWorkspace struct {
 	calls atomic.Int32
 }
 
-func (w *semanticBusyWorkspace) RequestLSPSemantic(_ context.Context, source types.InsightSource, view string, sequence uint64, span types.LSPSemanticRange) (types.LSPSemanticSet, error) {
+func (w *semanticBusyWorkspace) RequestLSPSemantic(_ context.Context, source insight.Source, view string, sequence uint64, span insight.LSPSemanticRange) (insight.LSPSemanticSet, error) {
 	if w.calls.Add(1) == 1 {
-		return types.LSPSemanticSet{}, &coreprotocol.Fault{Code: "busy", Message: "capacity occupied"}
+		return insight.LSPSemanticSet{}, &coreprotocol.Fault{Code: "busy", Message: "capacity occupied"}
 	}
-	return types.LSPSemanticSet{Boundary: types.InsightBoundary{Source: source, Context: types.InsightContext{Generation: w.service.cursor}, Producer: types.InsightProducer{InstanceID: "provider"}}, WireVersion: 1, ViewID: view, Sequence: sequence, Range: span, Full: true, Types: []string{"function"}, Spans: []types.LSPSemanticSpan{{Start: 0, End: 3, Type: 0}}}, nil
+	return insight.LSPSemanticSet{Boundary: insight.Boundary{Source: source, Context: insight.Context{Generation: w.service.cursor}, Producer: insight.Producer{InstanceID: "provider"}}, WireVersion: 1, ViewID: view, Sequence: sequence, Range: span, Full: true, Types: []string{"function"}, Spans: []insight.LSPSemanticSpan{{Start: 0, End: 3, Type: 0}}}, nil
 }
 func semanticBusyFixture(t *testing.T) (*App, *editor.Editor, *semanticBusyWorkspace) {
 	t.Helper()
@@ -43,7 +43,7 @@ func semanticBusyFixture(t *testing.T) (*App, *editor.Editor, *semanticBusyWorks
 		t.Fatal(err)
 	}
 	original := app.ws
-	port := &semanticBusyWorkspace{semanticCursorWorkspace: &semanticCursorWorkspace{Workspace: original, service: &semanticCursorService{LSPService: original.LSPMgr(), cursor: 7, producer: types.InsightProducer{InstanceID: "provider"}}}}
+	port := &semanticBusyWorkspace{semanticCursorWorkspace: &semanticCursorWorkspace{Workspace: original, service: &semanticCursorService{LSPService: original.LSPMgr(), cursor: 7, producer: insight.Producer{InstanceID: "provider"}}}}
 	app.ws = port
 	t.Cleanup(func() { app.resetSemanticTokens(); app.ws = original })
 	app.setFocusEditor()

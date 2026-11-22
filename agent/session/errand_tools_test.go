@@ -4,7 +4,7 @@ import (
 	"slices"
 	"testing"
 
-	"crude/types"
+	"crude/types/setting"
 )
 
 // The workspace Errand installs tools, runs their version commands, researches
@@ -15,7 +15,7 @@ import (
 // session tool resolver, not only the role's agent-side default.
 func TestErrandRootSessionKeepsTheMainAgentToolSet(t *testing.T) {
 	stored := ConfigToSettings(&Config{Agents: DefaultAgentsConfig()}).Agents
-	names := func(selected string, settings types.AgentsSettings) []string {
+	names := func(selected string, settings setting.Agents) []string {
 		cfg := &Config{Agents: DefaultAgentsConfig(), SelectedAgent: selected}
 		ApplyWorkspaceAgentDefaults(cfg, settings)
 		var out []string
@@ -24,10 +24,10 @@ func TestErrandRootSessionKeepsTheMainAgentToolSet(t *testing.T) {
 		}
 		return out
 	}
-	for label, settings := range map[string]types.AgentsSettings{
+	for label, settings := range map[string]setting.Agents{
 		"fresh": {},
 		"saved": stored,
-		"reset": {Enabled: true, Categories: types.DefaultAgentRoleCategories()},
+		"reset": {Enabled: true, Categories: setting.DefaultAgentRoleCategories()},
 	} {
 		t.Run(label, func(t *testing.T) {
 			main, errandTools := names("", settings), names(CategoryErrand, settings)

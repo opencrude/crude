@@ -8,12 +8,12 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
-	"crude/types"
+	"crude/types/statuscenter"
 )
 
 // openTestWorkspaceDB creates a workspace DB in a temp dir and returns it.
 // The caller does not need to close it; t.Cleanup handles that.
-func openTestWorkspaceDB(t *testing.T) *WorkspaceDB {
+func openTestWorkspaceDB(t *testing.T) *DB {
 	t.Helper()
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "workspace.db")
@@ -50,7 +50,7 @@ func openTestSessionDB(t *testing.T, sessionID string) *sql.DB {
 }
 
 // registryCost reads total_cost back from workspace_sessions for assertions.
-func registryCost(t *testing.T, wdb *WorkspaceDB, sessionID string) float64 {
+func registryCost(t *testing.T, wdb *DB, sessionID string) float64 {
 	t.Helper()
 	var got float64
 	err := wdb.DB.QueryRow(
@@ -63,7 +63,7 @@ func registryCost(t *testing.T, wdb *WorkspaceDB, sessionID string) float64 {
 }
 
 // registryRow returns the full workspace_sessions row for assertions.
-func registryRow(t *testing.T, wdb *WorkspaceDB, sessionID string) (
+func registryRow(t *testing.T, wdb *DB, sessionID string) (
 	turnCount, messageCount int, firstPrompt, lastPrompt string, totalCost float64,
 ) {
 	t.Helper()
@@ -262,12 +262,12 @@ func TestRecordAgentUsagePushesCostToRegistry(t *testing.T) {
 	if got := waitRegistryCost(t, wdb, sid, 0.55); got != 0.55 {
 		t.Fatalf("after second usage: registry cost expected 0.55 (cumulative), got %v", got)
 	}
-	if summary, ok := ws.UsageSummary("orch", types.UsageSession); !ok || summary.Cost.USD != 0.55 {
+	if summary, ok := ws.UsageSummary("orch", statuscenter.UsageSession); !ok || summary.Cost.USD != 0.55 {
 		t.Fatalf("request-ledger session cost: %#v ok=%v", summary, ok)
 	}
 }
 
-func waitRegistryCost(t *testing.T, db *WorkspaceDB, sessionID string, want float64) float64 {
+func waitRegistryCost(t *testing.T, db *DB, sessionID string, want float64) float64 {
 	t.Helper()
 	deadline := time.Now().Add(time.Second)
 	for {

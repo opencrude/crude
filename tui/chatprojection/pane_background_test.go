@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"crude/tui/theme"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 func TestCollaborationToolBackgroundSurvivesEveryDisplayStage(t *testing.T) {
@@ -14,15 +14,15 @@ func TestCollaborationToolBackgroundSurvivesEveryDisplayStage(t *testing.T) {
 		"read_file", "execute_command", "remember", "capability_search",
 	} {
 		for _, status := range []string{
-			types.ToolStatusStreaming, types.ToolStatusCalling, types.ToolStatusSuccess,
-			types.ToolStatusError, types.ToolStatusCancelled, "interrupted",
+			conversation.ToolStatusStreaming, conversation.ToolStatusCalling, conversation.ToolStatusSuccess,
+			conversation.ToolStatusError, conversation.ToolStatusCancelled, "interrupted",
 		} {
 			t.Run(name+"/"+status, func(t *testing.T) {
 				r := NewRenderer(theme.DefaultDark())
 				r.SetSize(80, 30)
 				r.SetChatAreaBounds(0, 20)
-				r.SyncMessages([]types.ChatMessage{{
-					InternalID: "call", Role: types.RoleTool, ToolName: name, ToolStatus: status,
+				r.SyncMessages([]conversation.ChatMessage{{
+					InternalID: "call", Role: conversation.RoleTool, ToolName: name, ToolStatus: status,
 					ToolInput: `{"kind":"note","body":"Exact evidence"}`,
 					Content:   `{"message":"Exact evidence"}`,
 				}}, 1, 0)
@@ -49,9 +49,9 @@ func TestSpecialOnlyActivitySummaryKeepsPaneBackground(t *testing.T) {
 	r := NewRenderer(theme.DefaultDark())
 	r.SetSize(80, 30)
 	r.SetChatAreaBounds(0, 20)
-	r.SyncMessages([]types.ChatMessage{
-		{InternalID: "one", Role: types.RoleThinking, Content: "First thought"},
-		{InternalID: "two", Role: types.RoleThinking, Content: "Second thought"},
+	r.SyncMessages([]conversation.ChatMessage{
+		{InternalID: "one", Role: conversation.RoleThinking, Content: "First thought"},
+		{InternalID: "two", Role: conversation.RoleThinking, Content: "Second thought"},
 	}, 1, 0)
 	rows, _, _ := r.ExportMessageRows(76)
 	if len(rows) != 1 || len(rows[0].Native) != 2 {

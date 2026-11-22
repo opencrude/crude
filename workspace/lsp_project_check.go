@@ -10,8 +10,9 @@ import (
 	"time"
 
 	"crude/insight/facts"
-	"crude/sysload"
-	ttypes "crude/types"
+	"crude/internal/sysload"
+	"crude/types/insight"
+	"crude/types/setting"
 )
 
 // The project check gives files that are not open the same diagnostics as
@@ -81,7 +82,7 @@ type projectCheckItem struct {
 // projectCheckAllowedLocked is the user's and the workspace's permission.
 func (m *LSPManager) projectCheckAllowedLocked() bool {
 	return !m.closed && !m.paused && !m.projectWatchUnreliable && m.editorActiveLocked() &&
-		m.settings.Diagnostics && m.settings.ProjectCheckMode() != ttypes.ProjectCheckOff
+		m.settings.Diagnostics && m.settings.ProjectCheckMode() != setting.ProjectCheckOff
 }
 
 // cancelProjectCheckLocked stops a running pass; another one starts when
@@ -213,7 +214,7 @@ func (m *LSPManager) awaitProjectCheckTurn(ctx context.Context, generation uint6
 			return false
 		}
 		wait := m.projectCheckWaitLocked(command, load)
-		measuring := load.Warming && wait == "" && m.settings.ProjectCheckMode() != ttypes.ProjectCheckAlways
+		measuring := load.Warming && wait == "" && m.settings.ProjectCheckMode() != setting.ProjectCheckAlways
 		if measuring {
 			// The first sample has no interval yet; never treat an unmeasured
 			// computer as idle. The status keeps its last reason meanwhile.
@@ -253,7 +254,7 @@ func (m *LSPManager) projectCheckWaitLocked(command string, load sysload.Sample)
 		// the server answers the next file after it.
 		return "while the language server prepares the project"
 	}
-	if m.settings.ProjectCheckMode() == ttypes.ProjectCheckAlways {
+	if m.settings.ProjectCheckMode() == setting.ProjectCheckAlways {
 		return ""
 	}
 	if load.PowerKnown && load.OnBattery {
@@ -376,7 +377,7 @@ func (m *LSPManager) needsProjectCheckLocked(path string) (string, bool) {
 		return "", false
 	}
 	spec, ok := m.resolveServerLocked(path)
-	if !ok || spec.DiagnosticScope == ttypes.CoverageProject {
+	if !ok || spec.DiagnosticScope == insight.CoverageProject {
 		return "", false
 	}
 	for _, state := range m.states {
@@ -388,7 +389,7 @@ func (m *LSPManager) needsProjectCheckLocked(path string) (string, bool) {
 		return "", false
 	}
 	if fact, ok := m.sources.Insight.diagnostics.SnapshotPath(path); ok && fact.ID != "" &&
-		fact.State != ttypes.InsightStale && !fact.Limited && fact.Boundary.Producer.Provider == spec.Command {
+		fact.State != insight.Stale && !fact.Limited && fact.Boundary.Producer.Provider == spec.Command {
 		return "", false
 	}
 	return spec.Command, true
@@ -421,7 +422,7 @@ func (m *LSPManager) checkClosedFile(ctx context.Context, path string) (failed b
 	}()
 	fileCtx, cancel := context.WithTimeout(ctx, projectCheckFileTimeout)
 	defer cancel()
-	probe, err := m.acquireProbe(fileCtx, path, func(s ttypes.LSPSettings) bool { return s.Diagnostics }, "Diagnostics")
+	probe, err := m.acquireProbe(fileCtx, path, func(s setting.LSP) bool { return s.Diagnostics }, "Diagnostics")
 	if err != nil {
 		return false, err // the file itself: too large, unreadable or removed
 	}
@@ -438,12 +439,12 @@ func (m *LSPManager) checkClosedFile(ctx context.Context, path string) (failed b
 	if !diskView {
 		return false, nil // an editor or agent view owns the file now
 	}
-	check := func(ctx context.Context, client LSPClient, path string, view LSPProbeView) error {
+	check := func(ctx context.Context, client LSPClient, path string, view insight.LSPProbeView) error {
 		answer, settled := m.awaitProbeDiagnostics(ctx, client, path, view)
 		if !settled {
 			return errProjectCheckUnsettled
 		}
-		if answer.Limited || answer.State == ttypes.InsightLimited {
+		if answer.Limited || answer.State == insight.Limited {
 			return facts.ErrLimit
 		}
 		return nil
@@ -476,8 +477,8 @@ func (m *LSPManager) checkClosedFile(ctx context.Context, path string) (failed b
 }
 
 // openFilesCoverage says what a server that reports only open files covers.
-func openFilesCoverage(settings ttypes.LSPSettings) string {
-	if settings.Diagnostics && settings.ProjectCheckMode() != ttypes.ProjectCheckOff {
+func openFilesCoverage(settings setting.LSP) string {
+	if settings.Diagnostics && settings.ProjectCheckMode() != setting.ProjectCheckOff {
 		return "Checks open files. Crude checks closed files with it while you do not type."
 	}
 	return "Checks open files only."
@@ -507,7 +508,7 @@ const lspFileDeleted = 3
 func (m *LSPManager) forgetCheckedFactsLocked(path string) {
 	changed := false
 	if m.sources != nil && m.sources.Insight != nil {
-		changed = m.sources.Insight.diagnostics.RemoveMatching(func(b ttypes.InsightBoundary) bool {
+		changed = m.sources.Insight.diagnostics.RemoveMatching(func(b insight.Boundary) bool {
 			return isCheckedFact(b) && pathWithin(path, b.Source.Path)
 		}) > 0
 	}
@@ -559,7 +560,7 @@ func (m *LSPManager) rememberProjectCheckLocked(path, command, key, outcome stri
 func (m *LSPManager) invalidateCheckedResultsLocked(match func(path, command, key string) bool, reason string) {
 	changed := false
 	if m.sources != nil && m.sources.Insight != nil {
-		changed = m.sources.Insight.diagnostics.InvalidateMatching(func(b ttypes.InsightBoundary) bool {
+		changed = m.sources.Insight.diagnostics.InvalidateMatching(func(b insight.Boundary) bool {
 			return isCheckedFact(b) && match(b.Source.Path, b.Producer.Provider, b.Context.ID)
 		}, reason)
 	}
@@ -598,7 +599,7 @@ func (m *LSPManager) projectCheckCapacityLocked(diagnostics int) bool {
 		usage.Bytes < facts.MaxRetainedBytes-(1<<20)
 }
 
-func (m *LSPManager) projectPublicationFitsLocked(p ttypes.InsightDiagnosticPublication) bool {
+func (m *LSPManager) projectPublicationFitsLocked(p insight.DiagnosticPublication) bool {
 	store := m.sources.Insight.diagnostics
 	usage := store.Usage()
 	return store.CanPublishWithReserve(p, max(1, min(64, usage.MaxDocuments/8)), min(1024, usage.MaxDiagnostics/8), 1<<20)

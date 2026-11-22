@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/types"
+	"crude/types/conversation"
 	"crude/types/handover"
 )
 
@@ -22,7 +22,7 @@ func handoverDatabase(t *testing.T) (*DB, GoalRecord, GoalHandoverRecord) {
 	if err := CreateSessionRow(db, "source"); err != nil {
 		t.Fatal(err)
 	}
-	goal := GoalRecord{Goal: types.Goal{ID: "goal", Objective: "Keep all accepted work", Status: types.GoalActive, CreatedAt: time.Now()}}
+	goal := GoalRecord{Goal: conversation.Goal{ID: "goal", Objective: "Keep all accepted work", Status: conversation.GoalActive, CreatedAt: time.Now()}}
 	if err := SaveGoal(db, "source", goal); err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestGoalHandoverDatabaseConcurrentConsumeAndControlFence(t *testing.T) {
 	}
 
 	// A caller with a current epoch still cannot overwrite a newer user pause.
-	actual.Goal.Status = types.GoalPaused
+	actual.Goal.Status = conversation.GoalPaused
 	if err := SaveGoal(d.db, "source", actual); err != nil {
 		t.Fatal(err)
 	}

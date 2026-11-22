@@ -12,7 +12,7 @@ import (
 
 type ReferenceStore interface {
 	DeleteReference(id string) error
-	GetReference(id string) (sessiondb.Reference, bool)
+	Reference(id string) (sessiondb.Reference, bool)
 	ListReferences() []sessiondb.Reference
 }
 

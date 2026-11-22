@@ -10,7 +10,7 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
 	"crude/workspace"
 	"crude/workspace/document"
 	history "crude/workspace/localhistory"
@@ -29,9 +29,9 @@ func safetyFixture() workspace.HistorySafetyDetail {
 			Files: []workspace.ReviewedEditFile{{
 				Path: "/workspace/精確/exact-original.go", BeforeSHA256: strings.Repeat("b", 64), AfterSHA256: strings.Repeat("c", 64),
 				BeforeBytes: 41, AfterBytes: 42, Mode: 0644,
-				Source: types.InsightSource{DocumentID: "exact-document-generation", Revision: 81},
+				Source: insight.Source{DocumentID: "exact-document-generation", Revision: 81},
 			}},
-			Boundary: types.InsightBoundary{Context: types.InsightContext{UnknownInputs: []string{"original-unknown-build-input"}}},
+			Boundary: insight.Boundary{Context: insight.Context{UnknownInputs: []string{"original-unknown-build-input"}}},
 		},
 		Result: workspace.ReviewedEditResult{ID: "review-exact-original-reference", State: "committed", Detail: "original publication detail", Error: "original warning"},
 		LastEvent: &history.SafetyProtectionEvent{

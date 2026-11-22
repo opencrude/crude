@@ -12,16 +12,16 @@ import (
 	"sync"
 	"time"
 
-	"crude/agent"
 	"crude/agent/collaboration"
 	rootprompt "crude/agent/prompt"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
 	"crude/agent/tools"
+	"crude/agent/turnloop"
 	"crude/agent/worktree"
-	"crude/types"
 	captypes "crude/types/capability"
 	"crude/types/command"
+	"crude/types/setting"
 	"crude/types/toolresult"
 )
 
@@ -88,7 +88,7 @@ func (s *Session) PublishHumanSteering(ctx context.Context, agentID string, requ
 		if runner == nil {
 			return collaboration.PublishResult{}, collaboration.ErrUnavailable
 		}
-		handle, ok := runner.Manager().GetActive(agent.AgentID(agentID))
+		handle, ok := runner.Manager().Active(turnloop.AgentID(agentID))
 		if !ok {
 			return collaboration.PublishResult{}, collaboration.ErrUnavailable
 		}
@@ -138,7 +138,7 @@ func (s *Session) registerCollaborator(ctx context.Context, id, name, sessionID,
 		}
 	}
 	registered, err := store.RegisterAgent(ctx, collaboration.AgentRegistration{
-		ID: id, Name: types.AgentNameForRole(category, name), SessionID: sessionID, ParentID: parentID,
+		ID: id, Name: setting.AgentNameForRole(category, name), SessionID: sessionID, ParentID: parentID,
 		Category: category, State: collaboration.AgentAvailable, OwnerInstance: instanceID,
 		Admissions: receipts, PendingTerminal: pendingTerminal,
 	})
@@ -352,8 +352,8 @@ func (s *Session) humanSteeringMessages(
 	generation func() uint64,
 	model string,
 	sender EventSender,
-) (<-chan agent.RuntimeMessage, <-chan struct{}, func(context.Context) error) {
-	messages := make(chan agent.RuntimeMessage, 32)
+) (<-chan turnloop.RuntimeMessage, <-chan struct{}, func(context.Context) error) {
+	messages := make(chan turnloop.RuntimeMessage, 32)
 	done := make(chan struct{})
 	flushRequests := make(chan chan error)
 	store := s.CollaborationStore()
@@ -479,7 +479,7 @@ func (s *Session) newHumanSteeringRuntimeMessage(
 	model string,
 	sender EventSender,
 	delivery collaboration.PendingDelivery,
-) agent.RuntimeMessage {
+) turnloop.RuntimeMessage {
 	var mu sync.Mutex
 	settled := false
 	historyMessageID := collaborationHistoryMessageID(delivery.Event)
@@ -491,7 +491,7 @@ func (s *Session) newHumanSteeringRuntimeMessage(
 		if s.runtimeProfile == nil {
 			return nil
 		}
-		return s.runtimeProfile.GetEffectiveConfig(agentID)
+		return s.runtimeProfile.EffectiveConfig(agentID)
 	}
 	state, _, loadErr := sessiondb.LoadContextState(db, sessionID, contextOwnerID)
 	prepared, prepareErr := s.humanSteeringMessage(context.Background(), delivery, configuration(), state.Messages...)
@@ -570,7 +570,7 @@ func (s *Session) newHumanSteeringRuntimeMessage(
 			notify("collaboration_delivery_admitted", reason)
 		}
 	}
-	return agent.RuntimeMessage{
+	return turnloop.RuntimeMessage{
 		Message: message,
 		Prepare: func(ctx context.Context, current []provider.ChatMessage) ([]provider.ChatMessage, error) {
 			mu.Lock()
@@ -873,7 +873,7 @@ type collaborationControlTarget struct {
 	revision     uint64
 	messages     []provider.ChatMessage
 	root         *Orchestrator
-	child        *agent.SubAgentHandle
+	child        *turnloop.SubAgentHandle
 }
 
 func (s *Session) controlTarget(agentID string) (collaborationControlTarget, bool) {
@@ -896,7 +896,7 @@ func (s *Session) controlTarget(agentID string) (collaborationControlTarget, boo
 	if runner == nil {
 		return collaborationControlTarget{}, false
 	}
-	handle, ok := runner.Manager().GetActive(agent.AgentID(agentID))
+	handle, ok := runner.Manager().Active(turnloop.AgentID(agentID))
 	if !ok || handle.Agent == nil {
 		return collaborationControlTarget{}, false
 	}
@@ -1028,7 +1028,7 @@ func (s *Session) collaborationDefinitions(actorID string) []tools.ToolDef {
 	definitions := append([]tools.ToolDef(nil), tools.CollaborationTools...)
 	participant, err := store.Agent(context.Background(), actorID)
 	leaf := err == nil && participant.ParentID != ""
-	if leaf || s.runtimeProfile != nil && !s.runtimeProfile.GetEffectiveConfig(actorID).IsMultiAgentEnabled() {
+	if leaf || s.runtimeProfile != nil && !s.runtimeProfile.EffectiveConfig(actorID).IsMultiAgentEnabled() {
 		filtered := definitions[:0]
 		for _, definition := range definitions {
 			if definition.Function.Name != "agent_start" && definition.Function.Name != "agent_configure" {
@@ -1048,7 +1048,7 @@ func (s *Session) isGoalVerifier(actorID string) bool {
 	if runner == nil {
 		return false
 	}
-	handle, ok := runner.Manager().GetActive(agent.AgentID(actorID))
+	handle, ok := runner.Manager().Active(turnloop.AgentID(actorID))
 	return ok && handle.Spec.PolicyName == "verify"
 }
 
@@ -1074,7 +1074,7 @@ func (s *Session) executeCollaborationTool(ctx context.Context, actorID, name st
 		} else if participant.ParentID != "" {
 			return tools.ToolResult{}, true, fmt.Errorf("bounded leaf agents cannot launch children; request independent work from the parent or an existing peer")
 		}
-		if s.runtimeProfile != nil && !s.runtimeProfile.GetEffectiveConfig(actorID).IsMultiAgentEnabled() {
+		if s.runtimeProfile != nil && !s.runtimeProfile.EffectiveConfig(actorID).IsMultiAgentEnabled() {
 			return delegationDisabledResult(), true, nil
 		}
 		if !s.initSubAgentRunner() {
@@ -1291,7 +1291,7 @@ func (s *Session) executeCollaborationTool(ctx context.Context, actorID, name st
 		})
 		if err == nil && published.Artifact.Kind == collaboration.ReportFinal {
 			if runner := s.SubAgentRunner(); runner != nil {
-				if handle, ok := runner.Manager().GetActive(agent.AgentID(actorID)); ok {
+				if handle, ok := runner.Manager().Active(turnloop.AgentID(actorID)); ok {
 					runID, _ := handle.RunIdentity()
 					if published.Artifact.RunID == runID && published.Artifact.AuthorID == actorID {
 						handle.SetReportArtifact(published.Artifact.ID, published.Artifact.Revision)

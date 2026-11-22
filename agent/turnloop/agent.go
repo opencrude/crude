@@ -1,0 +1,350 @@
+package turnloop
+
+import (
+	"context"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+
+	rootprompt "crude/agent/prompt"
+	"crude/agent/provider"
+	"crude/agent/safety"
+	"crude/agent/tools"
+	"crude/internal/logger"
+	"crude/types/command"
+	"crude/types/control"
+	"crude/types/conversation"
+	"crude/types/reasoning"
+	"crude/workspace/fileio"
+)
+
+// CommandPolicyFor is the command review policy for one command tool call: the
+// configured policy, read in the syntax of the shell that will run the call.
+func (a *Agent) CommandPolicyFor(tool string, params map[string]any) safety.CommandPolicy {
+	policy := a.CommandPolicy
+	agentSyntax := command.SyntaxPOSIX
+	if a.CommandShell != nil {
+		agentSyntax = a.CommandShell().Syntax
+	}
+	policy.Syntax = safety.CallSyntax(tool, getStr(params, "shell"), agentSyntax)
+	return policy
+}
+
+type AgentEvent struct {
+	Type     string
+	Data     any
+	AgentID  string
+	Identity conversation.RuntimeEventIdentity
+}
+
+const (
+	loopDetectWindow        = 8
+	loopDetectRepeats       = 4
+	maxAutoContinuations    = 4
+	maxFinalReportReminders = 1
+)
+
+type StepRecord struct {
+	Content      string
+	ToolName     string
+	ToolInput    string
+	ToolResult   string
+	FinishReason string
+}
+
+type Agent struct {
+	Provider *provider.Provider
+	Model    string
+	// MediaReadPolicy is the exact resolved role's immutable input-modality
+	// snapshot for this Agent instance. Native reads and dynamic tool results
+	// must use it instead of another role's settings or the mutable model catalog.
+	// Nil remains available for standalone agents that inherit catalog policy.
+	MediaReadPolicy        *tools.MediaReadPolicy
+	ControlTarget          *control.Target
+	ReasoningContentKind   reasoning.Kind
+	condensedSamples       int
+	rawSamples             int
+	sawRawReasoning        bool
+	CompactionProvider     *provider.Provider
+	CompactionTargetModel  string
+	CompactionTargetWindow int
+	CompactionTargetTokens int
+	CompactionMaxOutput    int
+	CompactionAgentProfile string
+	AgentID                AgentID
+	// RunID is the immutable durable owner of this instance's effects. Never
+	// discover a replacement run from current inventory during tool execution.
+	RunID          string
+	TurnGeneration uint64
+	Policy         safety.Policy
+	CommandPolicy  safety.CommandPolicy
+	// CommandShell resolves the shell that runs this agent's commands now.
+	// Command review uses its syntax; nil is a POSIX shell.
+	CommandShell       func() command.Shell
+	PermissionReviewer PermissionReviewer
+	// CommandApprovals holds the session's "Always allow" answers for
+	// commands. Nil records nothing.
+	CommandApprovals CommandApprovals
+	// PlanInvestigation is set only on a root turn that started in Plan mode.
+	// It grants no generic execution or file-write capability.
+	PlanInvestigation *PlanInvestigationPolicy
+	// PermissionPolicyChanged returns a channel that closes at the next
+	// change of the session's permission policy, such as Auto Review being
+	// turned on. A waiting permission request is then checked again.
+	PermissionPolicyChanged func() <-chan struct{}
+	Depth                   int
+	ParentID                AgentID
+	WorkDir                 string
+	GuidancePaths           []string
+	// GuidanceEpoch, when its base prompt matches the run's, keeps the system
+	// prompt of an earlier run of the same context generation.
+	GuidanceEpoch   *GuidanceEpoch
+	MaxRetries      int
+	MaxOutputTokens int
+	// ContextCompactionPercent is the user's compaction choice: 0 lets Crude
+	// decide from cost and capacity (the default), 1-100 compacts at that
+	// fullness of the window, and CompactionOff disables automatic compaction.
+	ContextCompactionPercent int
+	// CompactionRetentionTokens bounds older verbatim human input carried
+	// through compaction; 0 sizes it to the checkpoint itself.
+	CompactionRetentionTokens int
+	// compactionTailHasHuman marks a checkpoint of older context followed by
+	// a verbatim tail that holds a later human turn.
+	compactionTailHasHuman bool
+	// Precompaction is the agent's background checkpoint slot. Owners that
+	// span runs (sessions, child handles) provide it; nil uses a run-local one.
+	Precompaction *PrecompactionSlot
+	// PriorCheckpointTokens is the size of this agent's last checkpoint,
+	// learned from earlier runs.
+	PriorCheckpointTokens int
+	ContextArchive        []provider.ChatMessage
+	FrozenPrefix          []provider.ChatMessage
+	lastActiveContext     []provider.ChatMessage
+	FilteredTools         []tools.ToolDef
+	// PrepareStep snapshots live tools and runtime notices between requests,
+	// never while a parallel tool batch is using the previous snapshot.
+	PrepareStep func() ([]tools.ToolDef, []provider.ChatMessage)
+	// BeforeFinish runs once per run when the model gives a final answer.
+	// Returned notices are appended and the run takes one more step.
+	BeforeFinish func() []provider.ChatMessage
+	// LiveSettings, when set, reads the owner's current passive settings
+	// before each step. They change no cached request prefix, so a change made
+	// while a run works applies at its next step without a cache miss.
+	LiveSettings func() LiveSettings
+	// RequestBoundary lets the owner apply a pending connection change (account,
+	// model, thinking effort) strictly between requests, before the step reads
+	// the provider. It reports whether the connection changed.
+	RequestBoundary func() bool
+	// FlushRuntimeMessages fences the durable inbox before an empty lane can
+	// end a turn. Async delivery alone cannot prove there is no pending input.
+	FlushRuntimeMessages func(context.Context) error
+	// SealRuntimeMessages atomically closes human steering admission and flushes
+	// every input accepted before that fence. Resume reopens it only if those
+	// inputs require another model step.
+	SealRuntimeMessages   func(context.Context) error
+	ResumeRuntimeMessages func()
+	// Runtime notices are admitted at model-request boundaries; human steering
+	// uses the separately fenced runtime-message lane.
+	PrepareRuntimeNotices  func() []provider.ChatMessage
+	CommitRuntimeNotices   func([]provider.ChatMessage) error
+	RuntimeNoticesAccepted func()
+	ToolFn                 func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error)
+	ToolMetadata           func(string) (tools.ToolMetadata, bool)
+	ToolResultAccepted     func(string, string, []provider.ChatMessage)
+	// RankActionMemories prepares optional context after a completed tool round.
+	// The session revalidates the selection only if steering did not supersede it.
+	RankActionMemories func(context.Context, int, []provider.ChatMessage, []provider.ChatMessage) (func() (string, error), error)
+	logger             *logger.Logger
+	turn               *logger.TurnLogger
+	Emit               func(AgentEvent)
+	PrepareCompaction  func(CompactionSource) error
+	// CompactionRequest takes a human compaction request accepted while the
+	// run is active (its request ID, or ""). The run then compacts before its
+	// next model request, even when automatic compaction is off.
+	CompactionRequest func() string
+	CommitCompaction  func(CompactionCommit) error
+	Checkpoint        func(archive, active []provider.ChatMessage) error
+	// CheckpointTools stores unfinished wrapper evidence separately from immutable
+	// accepted messages. A later completed result must not rewrite that evidence
+	// as though it were an already-committed protocol message.
+	CheckpointTools      func(archive, active, inFlight []provider.ChatMessage) error
+	ContinuationContext  func(context.Context) (rootprompt.SessionContinuityData, error)
+	LatestHumanTurnState func(context.Context) (string, bool, error)
+	GuidanceCacheLoad    func(string) (string, bool)
+	GuidanceCacheStore   func(string, string)
+	Ctx                  context.Context
+	Yolo                 bool
+	// YoloMode supplies the owning session's live policy to roots and children.
+	// Yolo remains the fallback for standalone agents.
+	YoloMode    func() bool
+	AsyncMgr    *fileio.AsyncCommandManager
+	SubAgentMgr *SubAgentManager
+	// testHTTPClient, when set, is injected into the provider transport for
+	// tests. Production agents use the provider's own tuned transport.
+	testHTTPClient       *http.Client
+	compactionRetryDelay func(int) time.Duration
+	contextBaseline      contextMeter
+
+	fileMu              sync.Map
+	reportPublished     bool
+	preserveReportState bool
+	guidance            *projectGuidance
+	// pendingGuidanceUpdate is guidance that changed since the epoch's system
+	// prompt; the run appends it once as runtime context.
+	pendingGuidanceUpdate string
+
+	runFailure      error
+	runFailureKind  RecoveryFailureKind
+	runRecoveryKind rootprompt.RecoveryKind
+	lastArchive     []provider.ChatMessage
+}
+
+// SeedContextUsage carries the latest provider-reported request baseline across
+// Session's per-turn Agent instances. requestMessages is the prior assistant
+// boundary in the new request's canonical message slice.
+func (a *Agent) SeedContextUsage(inputTokens, completionTokens, requestMessages int) {
+	if a == nil {
+		return
+	}
+	a.contextBaseline.observe(inputTokens, completionTokens, requestMessages)
+}
+
+func (a *Agent) ActiveContext() []provider.ChatMessage {
+	if a == nil {
+		return nil
+	}
+	return append([]provider.ChatMessage(nil), a.lastActiveContext...)
+}
+
+func (a *Agent) ArchiveContext() []provider.ChatMessage {
+	if a == nil {
+		return nil
+	}
+	return append([]provider.ChatMessage(nil), a.lastArchive...)
+}
+
+func (a *Agent) RunFailure() error {
+	if a == nil {
+		return nil
+	}
+	return a.runFailure
+}
+
+func (a *Agent) RunRecoveryKind() rootprompt.RecoveryKind {
+	if a == nil {
+		return ""
+	}
+	return a.runRecoveryKind
+}
+
+func (a *Agent) RunFailureKind() RecoveryFailureKind {
+	if a == nil {
+		return ""
+	}
+	return a.runFailureKind
+}
+
+func (a *Agent) setRunFailure(err error, kind rootprompt.RecoveryKind, failureKind ...RecoveryFailureKind) {
+	if a == nil || err == nil {
+		return
+	}
+	a.runFailure = err
+	if len(failureKind) > 0 && failureKind[0] != "" {
+		a.runFailureKind = failureKind[0]
+	}
+	if kind != "" {
+		a.runRecoveryKind = kind
+	}
+}
+
+func (a *Agent) RestorePublishedReport() {
+	if a != nil {
+		a.reportPublished = true
+	}
+}
+
+func (a *Agent) yoloEnabled() bool {
+	if a != nil && a.YoloMode != nil {
+		return a.YoloMode()
+	}
+	return a != nil && a.Yolo
+}
+
+func (a *Agent) providerDisplayName() string {
+	if a == nil || a.Provider == nil {
+		return "provider"
+	}
+	if name := strings.TrimSpace(a.Provider.Name); name != "" {
+		return name
+	}
+	if preset := provider.LookupPreset(a.Provider.ID); preset != nil && preset.Name != "" {
+		return preset.Name
+	}
+	if id := strings.TrimSpace(a.Provider.ID); id != "" {
+		return id
+	}
+	return "provider"
+}
+
+func (a *Agent) fileMutex(path string) *sync.Mutex {
+	val, _ := a.fileMu.LoadOrStore(path, &sync.Mutex{})
+	return val.(*sync.Mutex)
+}
+
+func (a *Agent) SetHTTPClient(client *http.Client) {
+	if client != nil {
+		a.testHTTPClient = client
+	}
+}
+
+func NewAgent(p *provider.Provider, model string, lg *logger.Logger) *Agent {
+	var turn *logger.TurnLogger
+	if lg != nil {
+		turn = lg.Turn()
+	}
+	return &Agent{
+		Provider:      p,
+		Model:         model,
+		CommandPolicy: safety.DefaultCommandPolicy(),
+		ToolFn: func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
+			return tools.ToolResult{}, nil
+		},
+		logger: lg,
+		turn:   turn,
+	}
+}
+
+func IsToolError(content string) bool {
+	prefixes := []string{"Error:", "Command failed:", "Search error:", "ArXiv search error:", "Fetch error:", "[SAFETY BLOCK]"}
+	for _, p := range prefixes {
+		if strings.HasPrefix(strings.TrimSpace(content), p) {
+			return true
+		}
+	}
+	return false
+}
+
+// LiveSettings are the user's settings a run applies between steps: they
+// change no system prompt, tool list or history bytes. Model, account,
+// thinking effort, tools and instructions are not here; they change the
+// cached prefix and apply at the next run or attempt.
+type LiveSettings struct {
+	CompactionPercent   int // as ContextCompactionPercent
+	RetentionTokens     int // as CompactionRetentionTokens
+	MaxOutputTokens     int
+	CompactionProvider  *provider.Provider
+	CompactionMaxOutput int
+}
+
+// applyLiveSettings adopts the owner's current passive settings and reports
+// whether any of them changed.
+func (a *Agent) applyLiveSettings(live LiveSettings) bool {
+	changed := live.CompactionPercent != a.ContextCompactionPercent || live.RetentionTokens != a.CompactionRetentionTokens ||
+		live.MaxOutputTokens != a.MaxOutputTokens || live.CompactionProvider != a.CompactionProvider ||
+		live.CompactionMaxOutput != a.CompactionMaxOutput
+	a.ContextCompactionPercent, a.CompactionRetentionTokens = live.CompactionPercent, live.RetentionTokens
+	a.MaxOutputTokens = live.MaxOutputTokens
+	a.CompactionProvider, a.CompactionMaxOutput = live.CompactionProvider, live.CompactionMaxOutput
+	return changed
+}

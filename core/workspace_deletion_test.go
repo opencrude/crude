@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/types/setting"
 	"crude/workspace"
 	"crude/workspace/document"
 )
@@ -36,11 +36,11 @@ func deletionFault(t *testing.T, c *Connection, id, ws, method string, value any
 	return out
 }
 
-func deletionPreview(t *testing.T, c *Connection, ws, project string) workspace.WorkspaceDeletion {
+func deletionPreview(t *testing.T, c *Connection, ws, project string) workspace.Deletion {
 	t.Helper()
-	var plan workspace.WorkspaceDeletion
-	decodeResource(t, callCore(t, c, "preview", ws, coreprotocol.WorkspaceDeletePreview, coreprotocol.WorkspaceDeletePreviewRequest{ID: workspace.WorkspaceID(project), ProjectDir: project}), &plan)
-	if plan.Token == "" || plan.Issue != nil || plan.ID != workspace.WorkspaceID(project) || plan.ProjectDir != project {
+	var plan workspace.Deletion
+	decodeResource(t, callCore(t, c, "preview", ws, coreprotocol.WorkspaceDeletePreview, coreprotocol.WorkspaceDeletePreviewRequest{ID: workspace.ID(project), ProjectDir: project}), &plan)
+	if plan.Token == "" || plan.Issue != nil || plan.ID != workspace.ID(project) || plan.ProjectDir != project {
 		t.Fatalf("no actionable immutable deletion preview: %+v", plan)
 	}
 	return plan
@@ -109,7 +109,7 @@ func TestWorkspaceDeletionRetiresDetachedActorAndUndoRestoresAuthorHistory(t *te
 	if !edit.Accepted {
 		t.Fatalf("fixture did not durably accept dirty text: %+v", edit)
 	}
-	saved, err := workspace.WorkspaceDir(root)
+	saved, err := workspace.Dir(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,14 +216,14 @@ func TestWorkspaceDeletionRefusesCurrentPeerAndBackgroundViewsWithoutClosing(t *
 	peer, _ := resourceConnection(t, r, root, "in-use-peer")
 	current, currentID := resourceConnection(t, r, t.TempDir(), "in-use-current")
 	targetActor := deletionActor(t, r, target)
-	input := coreprotocol.WorkspaceDeletePreviewRequest{ID: workspace.WorkspaceID(root), ProjectDir: root}
+	input := coreprotocol.WorkspaceDeletePreviewRequest{ID: workspace.ID(root), ProjectDir: root}
 	out := deletionFault(t, a, "refuse-current", target, coreprotocol.WorkspaceDeletePreview, input, "workspace_in_use")
 	if !strings.Contains(out.Error.Message, "current workspace") {
 		t.Fatalf("current-workspace refusal is not actionable: %+v", out.Error)
 	}
 	checkIssue := func(id, summary string) {
 		t.Helper()
-		var plan workspace.WorkspaceDeletion
+		var plan workspace.Deletion
 		decodeResource(t, callCore(t, current, id, currentID, coreprotocol.WorkspaceDeletePreview, input), &plan)
 		if plan.Token != "" || plan.Issue == nil || !strings.Contains(plan.Issue.Summary, summary) || plan.Issue.Guidance == "" {
 			t.Fatalf("unsafe workspace produced a deletable/nonactionable preview: %+v", plan)
@@ -275,8 +275,8 @@ func TestWorkspaceDeletionRefusesInFlightResourceWithoutClosing(t *testing.T) {
 	result := a.Dispatch(t.Context(), deletionRequest(t, a, "pending-open", target, coreprotocol.DocumentOpen, coreprotocol.DocumentOpenRequest{Path: "pending.txt"}))
 	callCore(t, a, "operation-admission-barrier", target, coreprotocol.Snapshot, coreprotocol.Empty{})
 	callCore(t, a, "operation-switch-away", target, coreprotocol.Detach, coreprotocol.Empty{})
-	var plan workspace.WorkspaceDeletion
-	decodeResource(t, callCore(t, current, "pending-operation-preview", currentID, coreprotocol.WorkspaceDeletePreview, coreprotocol.WorkspaceDeletePreviewRequest{ID: workspace.WorkspaceID(root), ProjectDir: root}), &plan)
+	var plan workspace.Deletion
+	decodeResource(t, callCore(t, current, "pending-operation-preview", currentID, coreprotocol.WorkspaceDeletePreview, coreprotocol.WorkspaceDeletePreviewRequest{ID: workspace.ID(root), ProjectDir: root}), &plan)
 	if plan.Token != "" || plan.Issue == nil || !strings.Contains(plan.Issue.Summary, "operations are still finishing") || plan.Issue.Guidance == "" {
 		t.Fatalf("in-flight resource was not safely refused: %+v", plan)
 	}
@@ -332,7 +332,7 @@ func TestWorkspaceDeletionCanceledFactoryStillOpeningIsActionablyRefused(t *test
 			close(entered)
 			<-release // A factory is allowed to finish after its caller cancels.
 		}
-		return workspace.NewWorkspace(project, "", "tester", types.Settings{}, coreTestLogger{}), nil
+		return workspace.NewWorkspace(project, "", "tester", setting.Settings{}, coreTestLogger{}), nil
 	}, filepath.Join(t.TempDir(), "receipts.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -372,7 +372,7 @@ func TestWorkspaceDeletionCanceledFactoryStillOpeningIsActionablyRefused(t *test
 	r.mu.Lock()
 	var opening *workspaceCreation
 	for _, creation := range r.creating {
-		if creation.savedID == workspace.WorkspaceID(root) {
+		if creation.savedID == workspace.ID(root) {
 			opening = creation
 		}
 	}
@@ -381,8 +381,8 @@ func TestWorkspaceDeletionCanceledFactoryStillOpeningIsActionablyRefused(t *test
 		t.Fatal("canceled factory lost its saved-storage identity while still running")
 	}
 	current, currentID := resourceConnection(t, r, t.TempDir(), "opening-current")
-	var plan workspace.WorkspaceDeletion
-	decodeResource(t, callCore(t, current, "opening-preview", currentID, coreprotocol.WorkspaceDeletePreview, coreprotocol.WorkspaceDeletePreviewRequest{ID: workspace.WorkspaceID(root), ProjectDir: root}), &plan)
+	var plan workspace.Deletion
+	decodeResource(t, callCore(t, current, "opening-preview", currentID, coreprotocol.WorkspaceDeletePreview, coreprotocol.WorkspaceDeletePreviewRequest{ID: workspace.ID(root), ProjectDir: root}), &plan)
 	if plan.Token != "" || plan.Issue == nil || !strings.Contains(plan.Issue.Summary, "still opening") || !strings.Contains(plan.Issue.Guidance, "Wait") {
 		t.Fatalf("still-opening storage was not actionably refused: %+v", plan)
 	}
@@ -455,8 +455,8 @@ func TestWorkspaceDeletionRefusesLiveTerminalWithoutStoppingIt(t *testing.T) {
 	}), &terminal)
 	targetActor := deletionActor(t, r, target)
 	callCore(t, owner, "detach-terminal-owner", target, coreprotocol.Detach, coreprotocol.Empty{})
-	var plan workspace.WorkspaceDeletion
-	decodeResource(t, callCore(t, current, "terminal-use-preview", currentID, coreprotocol.WorkspaceDeletePreview, coreprotocol.WorkspaceDeletePreviewRequest{ID: workspace.WorkspaceID(root), ProjectDir: root}), &plan)
+	var plan workspace.Deletion
+	decodeResource(t, callCore(t, current, "terminal-use-preview", currentID, coreprotocol.WorkspaceDeletePreview, coreprotocol.WorkspaceDeletePreviewRequest{ID: workspace.ID(root), ProjectDir: root}), &plan)
 	if plan.Token != "" || plan.Issue == nil || !strings.Contains(plan.Issue.Summary, "terminal is still running") || !strings.Contains(plan.Issue.Guidance, "No terminal was stopped") {
 		t.Fatalf("live terminal was not actionably refused: %+v", plan)
 	}

@@ -95,8 +95,8 @@ func mergeExistingPlanFields(existing Plan, req UpdateRequest) UpdateRequest {
 	return req
 }
 
-func cloneSteps(steps []PlanStep) []PlanStep {
-	copy := make([]PlanStep, len(steps))
+func cloneSteps(steps []Step) []Step {
+	copy := make([]Step, len(steps))
 	for i := range steps {
 		copy[i] = steps[i]
 		copy[i].DependsOn = append([]string(nil), steps[i].DependsOn...)
@@ -170,9 +170,9 @@ func (s *Store) updateExisting(ctx context.Context, req UpdateRequest, existing 
 	now := time.Now().UTC()
 	steps := updateSteps(existing, req.Steps, now)
 	if req.Replace {
-		fresh := make([]PlanStep, len(req.Steps))
+		fresh := make([]Step, len(req.Steps))
 		for i, step := range req.Steps {
-			fresh[i] = PlanStep{ID: step.ID, Description: step.Description, Status: step.Status, DependsOn: step.DependsOn, Reason: step.Reason}
+			fresh[i] = Step{ID: step.ID, Description: step.Description, Status: step.Status, DependsOn: step.DependsOn, Reason: step.Reason}
 		}
 		steps = normalizeSteps(fresh, now, true)
 	}
@@ -276,7 +276,7 @@ func (s *Store) Get(ctx context.Context, id string) (Plan, error) {
 	return p, nil
 }
 
-func (s *Store) loadSteps(ctx context.Context, id string) ([]PlanStep, error) {
+func (s *Store) loadSteps(ctx context.Context, id string) ([]Step, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT step_id, description, status, COALESCE(depends_on_json,''), COALESCE(reason,''), attempts, created_at, COALESCE(started_at,0), COALESCE(finished_at,0)
 		 FROM plan_steps WHERE plan_id = ? ORDER BY position`, id)
@@ -285,9 +285,9 @@ func (s *Store) loadSteps(ctx context.Context, id string) ([]PlanStep, error) {
 	}
 	defer func() { _ = rows.Close() }()
 
-	var steps []PlanStep
+	var steps []Step
 	for rows.Next() {
-		var st PlanStep
+		var st Step
 		var deps, reason string
 		var attempts int
 		var created, started, finished int64
@@ -341,7 +341,7 @@ func (s *Store) Active(ctx context.Context, sessionID string) (*Plan, error) {
 }
 
 // List returns recent plan summaries for the scoped session, newest first.
-func (s *Store) List(ctx context.Context, sessionID string) ([]PlanSummary, error) {
+func (s *Store) List(ctx context.Context, sessionID string) ([]Summary, error) {
 	if s.db == nil {
 		return nil, fmt.Errorf("plan store: nil db")
 	}
@@ -356,9 +356,9 @@ func (s *Store) List(ctx context.Context, sessionID string) ([]PlanSummary, erro
 	}
 	defer func() { _ = rows.Close() }()
 
-	var out []PlanSummary
+	var out []Summary
 	for rows.Next() {
-		var sm PlanSummary
+		var sm Summary
 		var updated int64
 		if err := rows.Scan(&sm.ID, &sm.Objective, &sm.Status, &sm.Revision, &updated); err != nil {
 			return nil, fmt.Errorf("plan list scan: %w", err)
@@ -374,7 +374,7 @@ func (s *Store) List(ctx context.Context, sessionID string) ([]PlanSummary, erro
 
 // Events returns the durable canonical snapshots for a plan, oldest revision
 // first. The event log is the plan's audit/history surface.
-func (s *Store) Events(ctx context.Context, planID string) ([]PlanEvent, error) {
+func (s *Store) Events(ctx context.Context, planID string) ([]Event, error) {
 	if _, err := s.Get(ctx, planID); err != nil {
 		return nil, err
 	}
@@ -385,9 +385,9 @@ func (s *Store) Events(ctx context.Context, planID string) ([]PlanEvent, error) 
 		return nil, fmt.Errorf("plan events: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	var events []PlanEvent
+	var events []Event
 	for rows.Next() {
-		var event PlanEvent
+		var event Event
 		var payload string
 		var created int64
 		if err := rows.Scan(&event.Revision, &event.Type, &payload, &created); err != nil {
@@ -444,7 +444,7 @@ func updatePlanRowCAS(ctx context.Context, tx *sql.Tx, sessionID string, p Plan,
 	return rows == 1, nil
 }
 
-func writeSteps(ctx context.Context, tx *sql.Tx, planID string, steps []PlanStep) error {
+func writeSteps(ctx context.Context, tx *sql.Tx, planID string, steps []Step) error {
 	for i, step := range steps {
 		var started, finished any
 		if step.StartedAt != nil {
@@ -464,7 +464,7 @@ func writeSteps(ctx context.Context, tx *sql.Tx, planID string, steps []PlanStep
 	return nil
 }
 
-func replaceSteps(ctx context.Context, tx *sql.Tx, planID string, steps []PlanStep) error {
+func replaceSteps(ctx context.Context, tx *sql.Tx, planID string, steps []Step) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM plan_steps WHERE plan_id = ?`, planID); err != nil {
 		return fmt.Errorf("plan steps replace: %w", err)
 	}
@@ -489,8 +489,8 @@ func writeEvent(ctx context.Context, tx *sql.Tx, planID string, revision uint64,
 
 // ── normalization / provenance ──
 
-func normalizeSteps(steps []PlanStep, now time.Time, isNew bool) []PlanStep {
-	out := make([]PlanStep, len(steps))
+func normalizeSteps(steps []Step, now time.Time, isNew bool) []Step {
+	out := make([]Step, len(steps))
 	for i, s := range steps {
 		cp := s
 		cp.ID = strings.TrimSpace(s.ID)
@@ -515,7 +515,7 @@ func normalizeSteps(steps []PlanStep, now time.Time, isNew bool) []PlanStep {
 	return out
 }
 
-func applyPlanLifecycle(status PlanStatus, explanation string, steps []PlanStep, now time.Time) []PlanStep {
+func applyPlanLifecycle(status Status, explanation string, steps []Step, now time.Time) []Step {
 	if status != StatusCancelled {
 		return steps
 	}
@@ -534,8 +534,8 @@ func applyPlanLifecycle(status PlanStatus, explanation string, steps []PlanStep,
 	return steps
 }
 
-func updateSteps(existing Plan, requested []PlanStep, now time.Time) []PlanStep {
-	prior := make(map[string]PlanStep, len(existing.Steps))
+func updateSteps(existing Plan, requested []Step, now time.Time) []Step {
+	prior := make(map[string]Step, len(existing.Steps))
 	for _, s := range existing.Steps {
 		prior[s.ID] = s
 	}

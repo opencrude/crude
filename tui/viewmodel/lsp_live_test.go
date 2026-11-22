@@ -13,8 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"crude/lsp/completion"
-	model "crude/types"
+	"crude/lsp/lspcompletion"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace"
 	"crude/workspace/document"
 )
@@ -34,14 +35,14 @@ type liveLSPClient struct {
 	owner *liveLSPRuntime
 }
 
-func (r *liveLSPRuntime) NewClient(spec model.LSPServerSpec, root string, startAdmission func() error) workspace.LSPClient {
+func (r *liveLSPRuntime) NewClient(spec setting.LSPServerSpec, root string, startAdmission func() error) workspace.LSPClient {
 	r.mu.Lock()
 	r.created++
 	r.mu.Unlock()
 	return &liveLSPClient{LSPClient: r.LSPRuntime.NewClient(spec, root, startAdmission), owner: r}
 }
 
-func (c *liveLSPClient) OpenFile(ctx context.Context, path, language, text string, boundary model.InsightBoundary) (int, error) {
+func (c *liveLSPClient) OpenFile(ctx context.Context, path, language, text string, boundary insight.Boundary) (int, error) {
 	c.owner.mu.Lock()
 	c.owner.opened = append(c.owner.opened, path)
 	c.owner.mu.Unlock()
@@ -82,7 +83,7 @@ func liveLSPManager(t *testing.T, root string) (*workspace.LSPManager, *liveLSPR
 	m := workspace.NewLSPManager(nil, r)
 	t.Cleanup(m.Close) // Only this manager's exact owned processes are stopped.
 	admitSemanticManager(t, m, root)
-	s := model.DefaultLSPSettings()
+	s := setting.DefaultLSP()
 	s.Enabled, s.MaxServers, s.ServerThreads = true, 1, 2
 	if address := os.Getenv("CRUDE_LSP_PROFILE_ADDR"); address != "" {
 		cfg := s.Languages["go"]
@@ -174,12 +175,12 @@ func liveLSPSemantics(t *testing.T, ctx context.Context, m *workspace.LSPManager
 		hover, err := m.RequestHover(ctx, path, line, col)
 		return err == nil && strings.Contains(hover, "answer")
 	})
-	defs, err := m.RequestNavigation(ctx, path, model.LSPNavigationDefinition, line, col, false)
-	if err != nil || defs.Answer != model.LSPNavigationTargets || len(defs.Targets) == 0 ||
+	defs, err := m.RequestNavigation(ctx, path, insight.LSPNavigationDefinition, line, col, false)
+	if err != nil || defs.Answer != insight.LSPNavigationTargets || len(defs.Targets) == 0 ||
 		filepath.Clean(defs.Targets[0].Path) != path || defs.Targets[0].Selection.Start.Line != 1 {
 		t.Fatalf("definition should resolve answer declaration in opened file: %+v, %v", defs, err)
 	}
-	response, err := m.RequestCompletions(ctx, path, line, completionCol, model.LSPCompletionContext{})
+	response, err := m.RequestCompletions(ctx, path, line, completionCol, insight.LSPCompletionContext{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +229,7 @@ func TestLiveLSPGo(t *testing.T) {
 	snapshot = liveLSPReplace(t, documents, snapshot, bad)
 	liveLSPWait(t, ctx, m, "unknown identifier diagnostic", func() bool {
 		for _, d := range diagnosticList(m, path) {
-			if d.Severity == model.DiagError && strings.Contains(d.Message, "missingLiveIdentifier") {
+			if d.Severity == insight.DiagError && strings.Contains(d.Message, "missingLiveIdentifier") {
 				return true
 			}
 		}
@@ -260,7 +261,7 @@ func TestLiveLSPClangd(t *testing.T) {
 	snapshot = liveLSPReplace(t, documents, snapshot, strings.Replace(good, "return answer();", "return missingLiveIdentifier;", 1))
 	liveLSPWait(t, ctx, m, "unknown identifier diagnostic", func() bool {
 		for _, d := range diagnosticList(m, path) {
-			if d.Severity == model.DiagError && strings.Contains(d.Message, "missingLiveIdentifier") {
+			if d.Severity == insight.DiagError && strings.Contains(d.Message, "missingLiveIdentifier") {
 				return true
 			}
 		}

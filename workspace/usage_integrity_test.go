@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"crude/agent/sessiondb"
-	"crude/types"
+	"crude/types/statuscenter"
 )
 
 func TestUsageContextIsAgentLocalAndLiveEqualsPersisted(t *testing.T) {
@@ -39,7 +39,7 @@ func TestUsageContextIsAgentLocalAndLiveEqualsPersisted(t *testing.T) {
 		}
 		resumed.SessionsByAgent["root"].usageRecords[r.RequestID] = r
 	}
-	for _, scope := range []types.UsageScope{types.UsageThisAgent, types.UsageSubtree, types.UsageSession} {
+	for _, scope := range []statuscenter.UsageScope{statuscenter.UsageThisAgent, statuscenter.UsageSubtree, statuscenter.UsageSession} {
 		a, _ := live.UsageSummary("root", scope)
 		b, _ := resumed.UsageSummary("root", scope)
 		if !reflect.DeepEqual(a, b) {
@@ -60,12 +60,12 @@ func TestUsageRequestRevisionsInvalidateCacheWithoutDoubleCounting(t *testing.T)
 	w := &Workspace{AgentMgr: manager, SessionsByAgent: map[string]*Session{"root": NewSession("session", "root", nil, nil)}}
 	event := map[string]any{"request_id": "request", "reported_at": int64(10), "turn_generation": uint64(1), "prompt": 100, "completion": 10, "context_prompt": 100, "context_window": 1000}
 	w.RecordAgentUsage("root", event)
-	w.UsageSummary("root", types.UsageThisAgent)
+	w.UsageSummary("root", statuscenter.UsageThisAgent)
 	event["completion"], event["reported_at"] = 20, int64(20)
 	w.RecordAgentUsage("root", event)
 	event["completion"], event["reported_at"] = 999, int64(15)
 	w.RecordAgentUsage("root", event)
-	usage, _ := w.UsageSummary("root", types.UsageThisAgent)
+	usage, _ := w.UsageSummary("root", statuscenter.UsageThisAgent)
 	if usage.Requests != 1 || usage.Output.Value != 20 {
 		t.Fatalf("revision counted twice or stale revision won: %+v", usage)
 	}

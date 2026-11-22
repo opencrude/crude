@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"crude/agent/toolstore"
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/types/insight"
 )
 
 func codeToolsStoreFixture(t *testing.T) (*toolstore.Store, string, string) {
@@ -86,7 +86,7 @@ func TestCodeToolsNativePreviewIsExactOwnerBoundAndOneShot(t *testing.T) {
 			var state codeToolsState
 			key := codeToolsOwner{coreprotocol.Owner{ClientID: "shell", Epoch: 1}, "project"}
 			scope := state.attach(key)
-			view, err := state.retain(key, scope, toolstore.RemovalPreview{Token: "store-token"}, types.CodeToolRemovalPreview{Paths: []string{"exact-folder"}, Tools: []types.CodeTool{{ID: "tool", Licenses: []string{"MIT"}}}})
+			view, err := state.retain(key, scope, toolstore.RemovalPreview{Token: "store-token"}, insight.CodeToolRemovalPreview{Paths: []string{"exact-folder"}, Tools: []insight.CodeTool{{ID: "tool", Licenses: []string{"MIT"}}}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -120,11 +120,11 @@ func TestCodeToolsPreviewRetentionIsBoundedAndDetachFencesQueuedPreview(t *testi
 	key := codeToolsOwner{coreprotocol.Owner{ClientID: "shell", Epoch: 1}, "project"}
 	scope := state.attach(key)
 	for range codeToolsPreviewLimit {
-		if _, err := state.retain(key, scope, toolstore.RemovalPreview{}, types.CodeToolRemovalPreview{}); err != nil {
+		if _, err := state.retain(key, scope, toolstore.RemovalPreview{}, insight.CodeToolRemovalPreview{}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := state.retain(key, scope, toolstore.RemovalPreview{}, types.CodeToolRemovalPreview{}); err == nil {
+	if _, err := state.retain(key, scope, toolstore.RemovalPreview{}, insight.CodeToolRemovalPreview{}); err == nil {
 		t.Fatal("unbounded previews")
 	}
 	state.detach(key.owner, key.workspace)
@@ -132,7 +132,7 @@ func TestCodeToolsPreviewRetentionIsBoundedAndDetachFencesQueuedPreview(t *testi
 	if replacement == scope {
 		t.Fatal("attachment lifetime not distinct")
 	}
-	if _, err := state.retain(key, scope, toolstore.RemovalPreview{}, types.CodeToolRemovalPreview{}); err == nil {
+	if _, err := state.retain(key, scope, toolstore.RemovalPreview{}, insight.CodeToolRemovalPreview{}); err == nil {
 		t.Fatal("detached preview worker republished authority")
 	}
 }
@@ -219,7 +219,7 @@ func TestCodeToolsNativeRPCRemovalRevalidatesAndRejectsSemanticCalls(t *testing.
 
 func TestCodeToolsInventoryIncludesExactFilesAndCancellation(t *testing.T) {
 	store, _, dir := codeToolsStoreFixture(t)
-	out, err := readCodeToolInventory(t.Context(), store, types.AssemblyPlan{}, 0, 50)
+	out, err := readCodeToolInventory(t.Context(), store, insight.AssemblyPlan{}, 0, 50)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +244,7 @@ func TestCodeToolsDetachCancelsConsumedRemovalBeforeStoreEffect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	view, err := r.codeTools.retain(key, scope, preview, types.CodeToolRemovalPreview{Paths: preview.Paths})
+	view, err := r.codeTools.retain(key, scope, preview, insight.CodeToolRemovalPreview{Paths: preview.Paths})
 	if err != nil {
 		t.Fatal(err)
 	}

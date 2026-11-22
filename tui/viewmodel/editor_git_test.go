@@ -9,12 +9,12 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/text/textdiff"
 	"crude/tui/cell"
 	"crude/tui/editor"
 	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/ui"
-	ttypes "crude/types"
 	"crude/workspace"
 )
 
@@ -37,7 +37,7 @@ func TestEditorGitAnnotationIgnoresStaleGeneration(t *testing.T) {
 		path:       path,
 		revision:   app.EditorState.Editor.Revision(),
 		annotation: workspace.GitFileAnnotation{
-			Hunks: []workspace.GitHunk{{NewLines: []string{"added\n"}}},
+			Hunks: []textdiff.Hunk{{NewLines: []string{"added\n"}}},
 		},
 	})
 	if got := gitGutterChar(t, app.EditorState.Editor, 0); got != ' ' {
@@ -50,7 +50,7 @@ func TestEditorGitAnnotationIgnoresStaleGeneration(t *testing.T) {
 		path:       path,
 		revision:   app.EditorState.Editor.Revision(),
 		annotation: workspace.GitFileAnnotation{
-			Hunks: []workspace.GitHunk{{NewLines: []string{"added\n"}}},
+			Hunks: []textdiff.Hunk{{NewLines: []string{"added\n"}}},
 			Blame: []workspace.GitBlameLine{{
 				Line: 1, Hash: "abc123def456", ShortHash: "abc123d", Author: "Ada",
 			}},
@@ -73,7 +73,7 @@ func TestEditorGitAnnotationIgnoresWorkspaceSwitch(t *testing.T) {
 		path:       paths[0],
 		revision:   app.EditorState.Editor.Revision(),
 		annotation: workspace.GitFileAnnotation{
-			Hunks: []workspace.GitHunk{{NewLines: []string{"added\n"}}},
+			Hunks: []textdiff.Hunk{{NewLines: []string{"added\n"}}},
 		},
 	})
 	if got := gitGutterChar(t, app.EditorState.Editor, 0); got != ' ' {
@@ -115,8 +115,8 @@ func TestEditorContextMenuCopyBlameCommit(t *testing.T) {
 func TestInspectEditorChangeStaysOpenAcrossEquivalentGitRefresh(t *testing.T) {
 	app, paths := newInputContractEditorApp(t, "inspect.go")
 	ed := app.EditorState.Editor
-	hunk := editor.GitHunk{OldLines: []string{"old\n"}, NewLines: []string{"new\n"}}
-	ed.SetGitAnnotation(ed.Revision(), "old\n", []editor.GitHunk{hunk}, nil, false)
+	hunk := textdiff.Hunk{OldLines: []string{"old\n"}, NewLines: []string{"new\n"}}
+	ed.SetGitAnnotation(ed.Revision(), "old\n", []textdiff.Hunk{hunk}, nil, false)
 	app.inspectEditorChange(ed, 0)
 	if app.overlayHost.Window(editorChangesOverlay) == nil {
 		t.Fatal("change inspector did not open")
@@ -125,7 +125,7 @@ func TestInspectEditorChangeStaysOpenAcrossEquivalentGitRefresh(t *testing.T) {
 	app.applyEditorGitAnnotation(editorGitAnnotationMsg{
 		generation: 1, workspace: app.workspaceSwitchGen.Load(), path: paths[0],
 		revision:   app.EditorState.Editor.Revision(),
-		annotation: workspace.GitFileAnnotation{HeadContent: "old\n", Hunks: []workspace.GitHunk{{OldLines: []string{"old\n"}, NewLines: []string{"new\n"}}}},
+		annotation: workspace.GitFileAnnotation{HeadContent: "old\n", Hunks: []textdiff.Hunk{{OldLines: []string{"old\n"}, NewLines: []string{"new\n"}}}},
 	})
 	if app.overlayHost.Window(editorChangesOverlay) == nil {
 		t.Fatal("equivalent refresh closed immutable inspection")
@@ -204,7 +204,7 @@ func TestBackgroundTabSyncDoesNotRestartEditorServices(t *testing.T) {
 	generation := app.editorGitGen.Load()
 	for range 64 {
 		app.syncAgentWindowTabs()
-		app.Update(ttypes.TickMsg(time.Now()))
+		app.Update(TickMsg(time.Now()))
 		if app.editorGitGen.Load() != generation || app.editorGitDue(time.Now()) {
 			t.Fatal("unchanged editor selection restarted Git work during background synchronization")
 		}
@@ -239,7 +239,7 @@ func TestBackgroundTabSyncDoesNotRestartEditorServices(t *testing.T) {
 func TestTransientGitFailureKeepsTheProjection(t *testing.T) {
 	app, paths := newInputContractEditorApp(t, "transient.go")
 	ed := app.EditorState.Editor
-	ed.SetGitAnnotation(ed.Revision(), "", []editor.GitHunk{{OldStart: 0, NewStart: 0, NewLines: []string{"package main\n"}}}, nil, false)
+	ed.SetGitAnnotation(ed.Revision(), "", []textdiff.Hunk{{OldStart: 0, NewStart: 0, NewLines: []string{"package main\n"}}}, nil, false)
 	if got := gitGutterChar(t, ed, 0); got != '▌' {
 		t.Fatalf("annotation did not paint: %q", got)
 	}
@@ -307,7 +307,7 @@ func TestAuthoritativeRefreshTakesOverTheGutterLocallyClaimedLine(t *testing.T) 
 	app.applyEditorGitAnnotation(editorGitAnnotationMsg{
 		generation: 5, workspace: app.workspaceSwitchGen.Load(), path: paths[0],
 		revision: ed.Revision(),
-		annotation: workspace.GitFileAnnotation{HeadContent: "package main\n", Hunks: []workspace.GitHunk{{
+		annotation: workspace.GitFileAnnotation{HeadContent: "package main\n", Hunks: []textdiff.Hunk{{
 			OldStart: 0, NewStart: 0, OldLines: []string{"package main\n"}, NewLines: []string{"xpackage main\n"},
 		}}},
 	})
@@ -325,7 +325,7 @@ func TestAuthoritativeRefreshTakesOverTheGutterLocallyClaimedLine(t *testing.T) 
 func TestTypingBurstKeepsThePaintedMarkerAndDefersTheRefresh(t *testing.T) {
 	app, _ := newInputContractEditorApp(t, "burst.go")
 	ed := app.EditorState.Editor
-	ed.SetGitAnnotation(ed.Revision(), "package legacy\n", []editor.GitHunk{
+	ed.SetGitAnnotation(ed.Revision(), "package legacy\n", []textdiff.Hunk{
 		{OldStart: 0, NewStart: 0, OldLines: []string{"package legacy\n"}, NewLines: []string{"package main\n"}},
 	}, nil, false)
 	if got := gitGutterChar(t, ed, 0); got != '▌' {

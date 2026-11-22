@@ -8,9 +8,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	ttypes "crude/types"
+	"crude/types/conversation"
 	"crude/types/reasoning"
-	"crude/workspace"
 )
 
 // dumpChatRows prints every non-space cell with column indices for the chat rect.
@@ -68,12 +67,12 @@ func TestThinkingScrollbarGeometry(t *testing.T) {
 	fillAgentChat(app, "repro-agent", 6, "fill")
 
 	// Promote thinking via the real threshold path.
-	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: "repro-agent", Data: reasoning.Delta{Text: thinkingLines(40)}})
+	app.handleAgentEvent(AgentEventMsg{Type: "thinking", AgentID: "repro-agent", Data: reasoning.Delta{Text: thinkingLines(40)}})
 	if app.thinkingPaneID(agent) == "" {
 		t.Fatal("thinking was not promoted")
 	}
 	for i := 0; i < 10; i++ {
-		app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: "repro-agent", Data: reasoning.Delta{Text: thinkingLines(5)}})
+		app.handleAgentEvent(AgentEventMsg{Type: "thinking", AgentID: "repro-agent", Data: reasoning.Delta{Text: thinkingLines(5)}})
 	}
 
 	app.paintShellFrame()
@@ -155,12 +154,12 @@ func TestThinkingScrolledWindowStable(t *testing.T) {
 	node := app.ws.AgentMgr().Get("scro-agent")
 	agent := node.State
 
-	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: "scro-agent", Data: reasoning.Delta{Text: thinkingLines(40)}})
+	app.handleAgentEvent(AgentEventMsg{Type: "thinking", AgentID: "scro-agent", Data: reasoning.Delta{Text: thinkingLines(40)}})
 	if app.thinkingPaneID(agent) == "" {
 		t.Fatal("thinking was not promoted")
 	}
 	for i := 0; i < 10; i++ {
-		app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: "scro-agent", Data: reasoning.Delta{Text: thinkingLines(5)}})
+		app.handleAgentEvent(AgentEventMsg{Type: "thinking", AgentID: "scro-agent", Data: reasoning.Delta{Text: thinkingLines(5)}})
 	}
 	app.paintShellFrame()
 
@@ -189,22 +188,22 @@ func TestCompletedExpandedThoughtScrollsWithTranscript(t *testing.T) {
 	for i := 0; i < 50; i++ {
 		fmt.Fprintf(&uniqueThinking, "reasoning-row-%02d %s\n", i, strings.Repeat("x", 35))
 	}
-	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: "done-scroll", Data: reasoning.Delta{Text: uniqueThinking.String()}})
+	app.handleAgentEvent(AgentEventMsg{Type: "thinking", AgentID: "done-scroll", Data: reasoning.Delta{Text: uniqueThinking.String()}})
 	paneID := app.thinkingPaneID(state)
 	if paneID == "" {
 		t.Fatal("thinking was not promoted")
 	}
-	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "done", AgentID: "done-scroll", Data: map[string]any{
+	app.handleAgentEvent(AgentEventMsg{Type: "done", AgentID: "done-scroll", Data: map[string]any{
 		"content": "", "reason": "completed",
 	}})
-	state.Messages.AppendMessage(workspace.Message{
-		InternalID: "after-thought", Role: ttypes.RoleAssistant, Content: "assistant after thought", Time: time.Now(),
+	state.Messages.AppendMessage(conversation.Message{
+		InternalID: "after-thought", Role: conversation.RoleAssistant, Content: "assistant after thought", Time: time.Now(),
 	})
 	app.syncAgentMessages("done-scroll", false)
 
 	thoughtID := ""
 	for _, message := range state.Messages.Messages() {
-		if message.Role == ttypes.RoleThinking {
+		if message.Role == conversation.RoleThinking {
 			thoughtID = message.InternalID
 			break
 		}

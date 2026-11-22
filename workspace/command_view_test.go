@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/terminalvt"
+	"crude/internal/terminalvt"
 	"crude/workspace/fileio"
 )
 

@@ -15,14 +15,14 @@ import (
 	captypes "crude/types/capability"
 )
 
-func (service *Service) activationResult(ctx context.Context, actor captypes.RuntimeActor, id string) (captypes.Result, error) {
-	prepared, err := service.Prepare(ctx, actor)
+func (s *Service) activationResult(ctx context.Context, actor captypes.RuntimeActor, id string) (captypes.Result, error) {
+	prepared, err := s.Prepare(ctx, actor)
 	if err != nil {
 		return captypes.Result{}, err
 	}
 	result := captypes.ActivationResult{ConnectionID: id, State: "connected", Notices: prepared.Notices}
-	budgets := service.snapshot().Settings.Acquisition
-	for _, state := range service.actorClients(actor).States() {
+	budgets := s.snapshot().Settings.Acquisition
+	for _, state := range s.actorClients(actor).States() {
 		if state.ID == id {
 			result.State = state.State
 			schemaBytes := 0
@@ -74,8 +74,8 @@ func decodeAccessRequests(raw any) ([]captypes.AccessRequest, error) {
 	return grants, nil
 }
 
-func (service *Service) accessPreview(actor captypes.RuntimeActor, id string, requests []captypes.AccessRequest) (captypes.AccessPreview, captypes.Settings, bool, error) {
-	snapshot := service.actorSnapshot(actor)
+func (s *Service) accessPreview(actor captypes.RuntimeActor, id string, requests []captypes.AccessRequest) (captypes.AccessPreview, captypes.Settings, bool, error) {
+	snapshot := s.actorSnapshot(actor)
 	connection, exists := snapshot.Settings.Connections[id]
 	if !exists || connection.Disabled {
 		return captypes.AccessPreview{}, snapshot.Settings, false, errors.New("installed MCP connection is unavailable")
@@ -120,7 +120,7 @@ func (service *Service) accessPreview(actor captypes.RuntimeActor, id string, re
 		preview.Tools = append(preview.Tools, observed)
 		expected := captypes.ToolGrant{Fingerprint: request.Fingerprint, Effect: request.Effect, Scope: request.Scope}
 		if connection.Grants[request.Tool] != expected {
-			if task, ok := service.taskAccess(actor, connection, request.Tool); !ok || task != expected {
+			if task, ok := s.taskAccess(actor, connection, request.Tool); !ok || task != expected {
 				changed = true
 			}
 		}
@@ -144,29 +144,29 @@ func (service *Service) accessPreview(actor captypes.RuntimeActor, id string, re
 	return preview, snapshot.Settings, changed, nil
 }
 
-func (service *Service) activateAccess(ctx context.Context, actor captypes.RuntimeActor, id string, raw any) (captypes.Result, error) {
+func (s *Service) activateAccess(ctx context.Context, actor captypes.RuntimeActor, id string, raw any) (captypes.Result, error) {
 	requests, err := decodeAccessRequests(raw)
 	if err != nil {
 		return captypes.Result{}, err
 	}
-	service.mu.RLock()
-	_, installed := service.settings.Connections[id]
-	service.mu.RUnlock()
+	s.mu.RLock()
+	_, installed := s.settings.Connections[id]
+	s.mu.RUnlock()
 	if !installed {
 		return captypes.Result{}, errors.New("install and activate the MCP connection first to observe its exact tool fingerprints")
 	}
-	service.mu.RLock()
-	boundScope := service.settings.Connections[id].Scope
-	service.mu.RUnlock()
-	if _, err := service.ActivateScoped(ctx, actor, id, false, boundScope); err != nil {
+	s.mu.RLock()
+	boundScope := s.settings.Connections[id].Scope
+	s.mu.RUnlock()
+	if _, err := s.ActivateScoped(ctx, actor, id, false, boundScope); err != nil {
 		return captypes.Result{}, err
 	}
-	preview, before, changed, err := service.accessPreview(actor, id, requests)
+	preview, before, changed, err := s.accessPreview(actor, id, requests)
 	if err != nil {
 		return captypes.Result{}, err
 	}
 	if !changed {
-		return service.activationResult(ctx, actor, id)
+		return s.activationResult(ctx, actor, id)
 	}
 	approved, exists := ctx.Value(captypes.AccessApprovedKey{}).(captypes.AccessPreview)
 	if !exists {
@@ -185,23 +185,23 @@ func (service *Service) activateAccess(ctx context.Context, actor captypes.Runti
 	if origin != "human" && actor.RunID == "" {
 		return captypes.Result{}, errors.New("automatic MCP access requires an active run identity")
 	}
-	if err := service.recordAuthorization(ctx, actor, origin, "access", preview.Token, (&captypes.AccessApprovalRequired{Preview: preview}).Evidence()); err != nil {
+	if err := s.recordAuthorization(ctx, actor, origin, "access", preview.Token, (&captypes.AccessApprovalRequired{Preview: preview}).Evidence()); err != nil {
 		return captypes.Result{}, err
 	}
 	if origin != "human" {
-		service.mu.Lock()
-		if service.runs[actorKey(actor)] != taskKey(actor) {
-			service.mu.Unlock()
+		s.mu.Lock()
+		if s.runs[actorKey(actor)] != taskKey(actor) {
+			s.mu.Unlock()
 			return captypes.Result{}, errors.New("MCP access run was revoked or replaced")
 		}
-		if service.taskGrants[taskKey(actor)] == nil {
-			service.taskGrants[taskKey(actor)] = make(map[string]taskGrant)
+		if s.taskGrants[taskKey(actor)] == nil {
+			s.taskGrants[taskKey(actor)] = make(map[string]taskGrant)
 		}
 		for _, request := range requests {
-			service.taskGrants[taskKey(actor)][id+"\x00"+request.Tool] = taskGrant{Connection: preview.Connection, Grant: captypes.ToolGrant{Effect: request.Effect, Scope: request.Scope, Fingerprint: request.Fingerprint}}
+			s.taskGrants[taskKey(actor)][id+"\x00"+request.Tool] = taskGrant{Connection: preview.Connection, Grant: captypes.ToolGrant{Effect: request.Effect, Scope: request.Scope, Fingerprint: request.Fingerprint}}
 		}
-		service.mu.Unlock()
-		return service.activationResult(ctx, actor, id)
+		s.mu.Unlock()
+		return s.activationResult(ctx, actor, id)
 	}
 	after := captypes.Clone(before)
 	connection := after.Connections[id]
@@ -219,10 +219,10 @@ func (service *Service) activateAccess(ctx context.Context, actor captypes.Runti
 		connection.Grants[request.Tool] = captypes.ToolGrant{Effect: request.Effect, Scope: request.Scope, Fingerprint: request.Fingerprint}
 	}
 	after.Connections[id] = connection
-	if err := service.publishRegistration(ctx, id, before, after); err != nil {
+	if err := s.publishRegistration(ctx, id, before, after); err != nil {
 		return captypes.Result{}, err
 	}
 	// Publication changes transport configuration. Reconnect explicitly as part
 	// of this activation, never during passive restart or a presentation read.
-	return service.Activate(ctx, actor, id, false)
+	return s.Activate(ctx, actor, id, false)
 }

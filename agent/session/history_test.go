@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"crude/agent"
 	"crude/agent/collaboration"
 	"crude/agent/safety"
 	"crude/agent/tools"
+	"crude/agent/turnloop"
 	"crude/workspace/fileio"
 )
 
@@ -79,7 +79,7 @@ func TestSubAgentToolPreservesMessageScopeAndReplacesActor(t *testing.T) {
 	runner.SetParentToolFn(sess.newToolFn(true))
 	policy := safety.DefaultPolicy()
 	policy.AllowedCapabilities[safety.CanUpdate] = true
-	spec := agent.SubAgentSpec{ID: "child-agent", Name: "child", PolicyName: "workspace-write", Policy: policy}
+	spec := turnloop.SubAgentSpec{ID: "child-agent", Name: "child", PolicyName: "workspace-write", Policy: policy}
 	toolFn := runner.buildProxiedToolFn(spec, nil, nil)
 	ctx := withHistoryScope(context.Background(), "session", "root-message", "root-agent")
 	ctx = context.WithValue(ctx, tools.ExecutionIdentityKey{}, tools.ExecutionIdentity{AgentID: "child-agent", RunID: run.ID, ToolCallID: "file-effect"})

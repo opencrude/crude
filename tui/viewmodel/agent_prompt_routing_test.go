@@ -12,11 +12,11 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/agent"
 	"crude/agent/provider"
+	"crude/agent/turnloop"
 	"crude/tui/screens/confirmation"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 	"crude/workspace"
 )
 
@@ -35,14 +35,14 @@ func (s promptFixtureSender) SendAgentEventWithID(kind string, data any, _ strin
 	s.SendAgentEvent(kind, data)
 }
 
-func newBackendPromptFamilyApp(t *testing.T) (*App, string, string, map[string]chan types.BlockResponse) {
+func newBackendPromptFamilyApp(t *testing.T) (*App, string, string, map[string]chan conversation.BlockResponse) {
 	t.Helper()
 	app, ws := newRealShellApp(t)
 	t.Cleanup(ws.Close)
 	wsOf(app).SessionsByID = make(map[string]*workspace.Session)
 	wsOf(app).SessionsByAgent = make(map[string]*workspace.Session)
 	t.Cleanup(wsOf(app).CloseAllSessions)
-	channels := make(map[string]chan types.BlockResponse)
+	channels := make(map[string]chan conversation.BlockResponse)
 	var roots []string
 	for _, label := range []string{"Alpha", "Beta"} {
 		cfg := testAccountConfig()
@@ -103,7 +103,7 @@ func newBackendPromptFamilyApp(t *testing.T) (*App, string, string, map[string]c
 		if label != "Alpha" {
 			continue
 		}
-		backend.RuntimeProfile().GetOrCreateOverride(orch.ID).MultiAgent = &enabled
+		backend.RuntimeProfile().EnsureOverride(orch.ID).MultiAgent = &enabled
 		if !orch.SubmitInput(provider.UserInput{Text: "Initialize the isolated permission test."}) {
 			t.Fatal("could not initialize test runner")
 		}
@@ -118,15 +118,15 @@ func newBackendPromptFamilyApp(t *testing.T) (*App, string, string, map[string]c
 			t.Fatalf("delegation dispatch did not create the test runner: %s (%d requests)", terminal, requests.Load())
 		}
 		for _, child := range []struct{ id, parent string }{{"child-a", orch.ID}, {"child-b", orch.ID}, {"nested", "child-a"}} {
-			blockCh := make(chan types.BlockResponse, 16)
-			handle := &agent.SubAgentHandle{Spec: agent.SubAgentSpec{
-				ID: agent.AgentID(child.id), ParentID: agent.AgentID(child.parent), Name: child.id, Category: agent.CatCrafter,
+			blockCh := make(chan conversation.BlockResponse, 16)
+			handle := &turnloop.SubAgentHandle{Spec: turnloop.SubAgentSpec{
+				ID: turnloop.AgentID(child.id), ParentID: turnloop.AgentID(child.parent), Name: child.id, Category: turnloop.CatCrafter,
 			}, BlockCh: blockCh, Cancel: func() {}}
 			if err := runner.Manager().Register(handle); err != nil {
 				t.Fatal(err)
 			}
 			channels[child.id] = blockCh
-			pane := app.ws.PaneMgr().GetOrCreate(child.id, workspace.PaneAgent, child.id)
+			pane := app.ws.PaneMgr().Ensure(child.id, workspace.PaneAgent, child.id)
 			app.ws.AgentMgr().AddSubAgent(child.id, child.parent, child.id, "Test", "crafter", workspace.NewAgentState(child.id, pane.Messages, app.ws.Logger()))
 		}
 	}
@@ -147,7 +147,7 @@ func TestFamilyTabCloseDeliversDenyToExactChildBackend(t *testing.T) {
 	app.closeAgentPromptTab(first.panelID())
 	select {
 	case response := <-channels["child-a"]:
-		if response.RequestID != "a-block" || response.Value != "deny" || response.Outcome != types.BlockAnswered {
+		if response.RequestID != "a-block" || response.Value != "deny" || response.Outcome != conversation.BlockAnswered {
 			t.Fatalf("tab X response=%+v", response)
 		}
 	default:
@@ -187,7 +187,7 @@ func newPromptFamilyApp(t testing.TB) *App {
 	beta := &workspace.Session{SessionID: "beta-family", AgentID: "beta"}
 	wsOf(app).SessionsByAgent = map[string]*workspace.Session{"alpha": alpha, "beta": beta}
 	for _, child := range []struct{ id, parent string }{{"child-a", "alpha"}, {"child-b", "alpha"}, {"nested", "child-a"}} {
-		pane := app.ws.PaneMgr().GetOrCreate(child.id, workspace.PaneAgent, child.id)
+		pane := app.ws.PaneMgr().Ensure(child.id, workspace.PaneAgent, child.id)
 		app.ws.AgentMgr().AddSubAgent(child.id, child.parent, child.id, "model", "researcher", workspace.NewAgentState(child.id, pane.Messages, app.ws.Logger()))
 	}
 	app.syncAgentWindowTabs()
@@ -205,7 +205,7 @@ func emitTestPermission(app *App, owner, block string) {
 			}
 		}
 	}
-	app.handleAgentEvent(types.AgentEventMsg{AgentID: owner, Type: "blocking", Data: map[string]string{
+	app.handleAgentEvent(AgentEventMsg{AgentID: owner, Type: "blocking", Data: map[string]string{
 		"block_id": block, "operation": "Update", "tool": "apply_patch", "target": owner + ".go",
 		"question": "Allow " + owner + " edit?", "reason": "This request belongs to " + owner,
 	}})
@@ -216,7 +216,7 @@ func TestQuestionReviewRetainedAcrossFamilySwitchAndConcurrentRequests(t *testin
 	wsOf(app).Logger = stubLogger{}
 	app.Input.SetInput("family-private draft")
 	emit := func(owner, block, payload string) *agentPromptState {
-		app.handleAgentEvent(types.AgentEventMsg{AgentID: owner, Type: "blocking", Data: map[string]any{
+		app.handleAgentEvent(AgentEventMsg{AgentID: owner, Type: "blocking", Data: map[string]any{
 			"block_id": block, "operation": "questions", "tool": "question", "questions_json": payload,
 		}})
 		app.paintShellFrame()
@@ -388,7 +388,7 @@ func TestOwnerCompletionAndLateResponsesCannotRemoveNewRequests(t *testing.T) {
 	emitTestPermission(app, "child-a", "new")
 	current := app.agentPrompts[0]
 	app.handleAppMessages(confirmation.ResultMsg{Target: old, Choice: "allow"})
-	app.handleAgentEvent(types.AgentEventMsg{AgentID: "child-a", Type: "blocking_complete", Data: map[string]string{"block_id": "old"}})
+	app.handleAgentEvent(AgentEventMsg{AgentID: "child-a", Type: "blocking_complete", Data: map[string]string{"block_id": "old"}})
 	if len(app.agentPrompts) != 1 || app.agentPrompts[0] != current || app.ws.AgentMgr().Get("child-a").State.PendingBlockID != "new" {
 		t.Fatal("late result/completion discarded the newer pending request")
 	}
@@ -405,7 +405,7 @@ func TestSubAgentConfirmationDocksInParentAndKeepsChildOwner(t *testing.T) {
 	session := &workspace.Session{SessionID: "root-session"}
 	app.ActiveSession = session
 	wsOf(app).SessionsByAgent = map[string]*workspace.Session{"root": session}
-	pane := app.ws.PaneMgr().GetOrCreate("child", workspace.PaneAgent, "child")
+	pane := app.ws.PaneMgr().Ensure("child", workspace.PaneAgent, "child")
 	childState := workspace.NewAgentState("child", pane.Messages, app.ws.Logger())
 	app.ws.AgentMgr().AddSubAgent("child", "root", "Child", "model", "researcher", childState)
 	app.switchToAgentView("root")
@@ -437,7 +437,7 @@ func TestActiveAgentConfirmationUsesModalOverEditorAndPreservesDraft(t *testing.
 	if app.agentPrompt == nil || app.agentPrompt.inline || !app.overlayHost.IsOpen(ui.OverlayAgentPrompt) {
 		t.Fatalf("editor-owned confirmation did not use modal routing: %+v", app.agentPrompt)
 	}
-	app.handleAgentEvent(types.AgentEventMsg{AgentID: "root", Type: "blocking_complete"})
+	app.handleAgentEvent(AgentEventMsg{AgentID: "root", Type: "blocking_complete"})
 	if got := app.Input.Value(); got != "unfinished user prompt" {
 		t.Fatalf("modal confirmation completion discarded composer draft: %q", got)
 	}
@@ -464,6 +464,6 @@ func TestOtherSessionConfirmationUsesModalWithoutChangingActiveSession(t *testin
 	}
 }
 
-func (s promptFixtureSender) SendAgentEventEnvelope(event agent.AgentEvent) {
+func (s promptFixtureSender) SendAgentEventEnvelope(event turnloop.AgentEvent) {
 	s.SendAgentEventWithID(event.Type, event.Data, event.AgentID)
 }

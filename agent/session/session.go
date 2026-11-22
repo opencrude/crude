@@ -12,7 +12,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"crude/agent"
 	"crude/agent/collaboration"
 	"crude/agent/memory"
 	"crude/agent/plan"
@@ -21,16 +20,19 @@ import (
 	"crude/agent/safety"
 	"crude/agent/sessiondb"
 	"crude/agent/tools"
-	"crude/buildinfo"
-	"crude/clipboard"
-	"crude/logger"
-	"crude/search"
+	"crude/agent/turnloop"
+	"crude/agent/websearch"
+	"crude/internal/buildinfo"
+	"crude/internal/clipboard"
+	"crude/internal/logger"
 	"crude/text/jsonrepair"
 	"crude/text/unidiff"
-	ttypes "crude/types"
 	captypes "crude/types/capability"
 	"crude/types/control"
+	"crude/types/conversation"
+	"crude/types/insight"
 	recoverytypes "crude/types/recovery"
+	"crude/types/setting"
 	"crude/workspace/fileio"
 )
 
@@ -45,7 +47,7 @@ type EventSender interface {
 	SendAgentEventWithID(typ string, data any, agentID string)
 	// SendAgentEventEnvelope is the exact-run seam. Runtime sources preserve a
 	// supplied identity rather than regenerating it on duplicate delivery.
-	SendAgentEventEnvelope(event agent.AgentEvent)
+	SendAgentEventEnvelope(event turnloop.AgentEvent)
 }
 
 type Session struct {
@@ -72,7 +74,7 @@ type Session struct {
 	executionSelection    string
 	executionRevision     uint64
 	controlRuntime        control.Runtime
-	fileOwnership         *agent.FileOwnership
+	fileOwnership         *turnloop.FileOwnership
 	collaborationStore    *collaboration.Store
 	collaborationInstance string
 	collaborationAgents   map[string]collaboration.Agent
@@ -116,7 +118,7 @@ type Session struct {
 	// guidanceEpoch is the project guidance the root context's system prompt
 	// carries in guidanceEpochGeneration. A later run of the same generation
 	// keeps that prompt and receives guidance changes as appended context.
-	guidanceEpoch           *agent.GuidanceEpoch
+	guidanceEpoch           *turnloop.GuidanceEpoch
 	guidanceEpochGeneration uint64
 
 	recoveredSubAgentMessages map[string][]sessiondb.MessageWithMeta
@@ -152,12 +154,12 @@ type Session struct {
 	// goalShownMu orders goal publications; goalShown is the last goal the
 	// transcript was told about, from which each change derives its row.
 	goalShownMu sync.Mutex
-	goalShown   *ttypes.Goal
+	goalShown   *conversation.Goal
 	// loopOpMu serializes schedule commits and their publications; loopMu
 	// protects detached reads without holding a lock during event delivery.
 	loopOpMu sync.Mutex
 	loopMu   sync.Mutex
-	loops    []ttypes.Loop
+	loops    []conversation.Loop
 
 	usageMu       sync.RWMutex
 	usageRecords  map[string]sessiondb.UsageRecord
@@ -183,7 +185,7 @@ type Session struct {
 	// precompaction holds each root agent's background checkpoint slot.
 	capabilitySharing        capabilitySharing
 	precompactionMu          sync.Mutex
-	precompaction            map[string]*agent.PrecompactionSlot
+	precompaction            map[string]*turnloop.PrecompactionSlot
 	precompactionCtx         context.Context
 	precompactionCancel      context.CancelFunc
 	compactionCancel         context.CancelFunc
@@ -248,7 +250,7 @@ type Session struct {
 	historyContinueEnd   func(context.Context, string, string) error
 	beforeTurn           func(context.Context, string) error
 	historyMutation      func(context.Context, HistoryMutation) error
-	workingSet           func(string) *ttypes.WorkingSetEvidence
+	workingSet           func(string) *insight.WorkingSetEvidence
 	historyWg            sync.WaitGroup
 	historyFinalizers    atomic.Int32
 }
@@ -403,7 +405,7 @@ func New(id string, cfg *Config, homeDir string) (*Session, error) {
 func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Session, error) {
 	workspaceCfg := copyConfig(cfg)
 	cfg = copyConfig(cfg)
-	mainCat := cfg.GetActiveDefaultCategory()
+	mainCat := cfg.ActiveDefaultCategory()
 	p, err := cfg.providerForCategory(mainCat)
 	if err != nil {
 		return nil, fmt.Errorf("provider standard: %w", err)
@@ -478,15 +480,15 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 	safety.SetCapabilitiesLogger(lg)
 
 	provider.SetLogger(lg)
-	search.SetLogger(lg)
+	websearch.SetLogger(lg)
 	clipboard.SetLogger(lg)
 	jsonrepair.SetLogger(lg)
-	diff.SetLogger(lg)
+	unidiff.SetLogger(lg)
 	fileio.SetSafetyLogger(lg)
 
 	editor = fileio.NewEditor(sessionID, lg)
 
-	name := ttypes.AgentNameForRole(cfg.SelectedAgent, "")
+	name := setting.AgentNameForRole(cfg.SelectedAgent, "")
 	if name == "" {
 		var nameErr error
 		name, nameErr = allocateAgentName(homeDir)
@@ -771,15 +773,15 @@ func (s *Session) RuntimeProfile() *RuntimeProfile { return s.runtimeProfile }
 
 // ModelName returns the display name of the active (main agent) model.
 func (s *Session) ModelName() string {
-	return s.cfg.GetActiveDefaultCategory().Model
+	return s.cfg.ActiveDefaultCategory().Model
 }
 
 // ModelIdentity reports configuration, not the last request's historical usage.
-func (s *Session) ModelIdentity() ttypes.TurnIdentity {
+func (s *Session) ModelIdentity() conversation.TurnIdentity {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	main := s.cfg.GetActiveDefaultCategory()
-	return ttypes.TurnIdentity{ModelID: main.Model, AccountID: main.AccountID, ProviderID: s.cfg.Accounts[main.AccountID].ProviderID}
+	main := s.cfg.ActiveDefaultCategory()
+	return conversation.TurnIdentity{ModelID: main.Model, AccountID: main.AccountID, ProviderID: s.cfg.Accounts[main.AccountID].ProviderID}
 }
 
 func (s *Session) systemPrompt(multiAgent bool) string {
@@ -817,7 +819,7 @@ func (s *Session) systemPromptForModelAtRoot(multiAgent, planMode bool, model, r
 	}
 	instructions := ""
 	if cfg != nil {
-		instructions = cfg.GetActiveDefaultCategory().Instructions
+		instructions = cfg.ActiveDefaultCategory().Instructions
 	}
 	catalog := ""
 	if multiAgent {
@@ -834,7 +836,7 @@ func (s *Session) systemPromptForModelAtRoot(multiAgent, planMode bool, model, r
 		MultiAgent: multiAgent, PlanMode: planMode, WorkDir: root, TempDir: s.TempDir(), Model: model,
 		WorkspaceAgent: workspaceAgent, Shell: shell, CrudeVersion: buildinfo.Version,
 	})
-	prompt = rootprompt.ApplyRootOverlays(prompt, instructions, ttypes.AgentNameForRole(s.selectedMainAgent, s.agentName), catalog)
+	prompt = rootprompt.ApplyRootOverlays(prompt, instructions, setting.AgentNameForRole(s.selectedMainAgent, s.agentName), catalog)
 	s.systemPrompts[key] = prompt
 	return prompt
 }
@@ -911,7 +913,7 @@ func (s *Session) initSubAgentRunnerFor(runtime bool) bool {
 		if owner != nil {
 			id = owner.ID
 		}
-		cfg = s.runtimeProfile.GetEffectiveConfig(id)
+		cfg = s.runtimeProfile.EffectiveConfig(id)
 	} else {
 		s.mu.Lock()
 		if s.cfg != nil {
@@ -944,7 +946,7 @@ func (s *Session) SubAgentRunner() *SubAgentRunner {
 // child remains part of its parent session; it is never a root resumable
 // session even though it owns a separate transcript database.
 type SubAgentSnapshot struct {
-	Result      agent.SubAgentResult
+	Result      turnloop.SubAgentResult
 	Model       string
 	Messages    []sessiondb.MessageWithMeta
 	Compactions []sessiondb.CompactionRecord
@@ -1001,7 +1003,7 @@ func loadSubAgentSnapshotDB(dbPath, agentID string) (sessiondb.SessionMeta, []se
 	}
 	db.SetMaxOpenConns(1)
 	defer func() { _ = db.Close() }()
-	meta, err := sessiondb.GetMeta(db)
+	meta, err := sessiondb.LoadMeta(db)
 	if err != nil {
 		return sessiondb.SessionMeta{}, nil, nil, err
 	}
@@ -1077,7 +1079,7 @@ func (s *Session) SubmitInput(id string, input provider.UserInput) bool {
 
 // ResolveBlock routes a request-correlated blocking outcome to its owning
 // orchestrator. Stale panels cannot resolve a later tool request.
-func (s *Session) ResolveBlock(id string, response ttypes.BlockResponse) bool {
+func (s *Session) ResolveBlock(id string, response conversation.BlockResponse) bool {
 	if s == nil || id == "" || response.RequestID == "" {
 		return false
 	}
@@ -1088,7 +1090,7 @@ func (s *Session) ResolveBlock(id string, response ttypes.BlockResponse) bool {
 		return orchestrator.ResolveBlock(response)
 	}
 	runner := s.SubAgentRunner()
-	return runner != nil && runner.ResolveBlock(agent.AgentID(id), response)
+	return runner != nil && runner.ResolveBlock(turnloop.AgentID(id), response)
 }
 
 func (s *Session) isHardCancelled() bool {
@@ -1164,7 +1166,7 @@ func (s *Session) NewOrchestrator(sender EventSender) (*Orchestrator, error) {
 
 	// Initialize a runtime profile override for this orchestrator.
 	// This is a fresh, empty override that starts from base config.
-	s.runtimeProfile.GetOrCreateOverride(o.ID)
+	s.runtimeProfile.EnsureOverride(o.ID)
 
 	// A restored runner is attached before the orchestrator is published.
 	if runner := s.SubAgentRunner(); runner != nil {

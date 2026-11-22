@@ -7,7 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/clientstate"
+	"crude/internal/clientstate"
 	"crude/tui/input"
 	"crude/workspace"
 )

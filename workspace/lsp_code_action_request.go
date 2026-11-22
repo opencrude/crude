@@ -7,22 +7,23 @@ import (
 	"path/filepath"
 	"slices"
 
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 )
 
 // codeActionRequest retains the same synchronized manager source on all result
 // paths, including empty/null evidence. It does not start another provider or
 // accept the adapter's unqualified Boundary as authoritative.
-func (m *LSPManager) codeActionRequest(ctx context.Context, path string, call func(context.Context, LSPClient, types.InsightBoundary, int) (types.LSPCodeActionResponse, error)) (types.LSPCodeActionResponse, error) {
+func (m *LSPManager) codeActionRequest(ctx context.Context, path string, call func(context.Context, LSPClient, insight.Boundary, int) (insight.LSPCodeActionResponse, error)) (insight.LSPCodeActionResponse, error) {
 	ctx, stop := context.WithTimeout(ctx, ManualLSPRequestTimeout)
 	defer stop()
 	if err := ctx.Err(); err != nil {
-		return types.LSPCodeActionResponse{}, err
+		return insight.LSPCodeActionResponse{}, err
 	}
-	if !m.featureOn(func(s types.LSPSettings) bool { return s.Enabled }) {
-		return types.LSPCodeActionResponse{}, errors.New("code actions unavailable: language intelligence is off or blocked")
+	if !m.featureOn(func(s setting.LSP) bool { return s.Enabled }) {
+		return insight.LSPCodeActionResponse{}, errors.New("code actions unavailable: language intelligence is off or blocked")
 	}
-	var out types.LSPCodeActionResponse
+	var out insight.LSPCodeActionResponse
 	err := m.trackInflight(func() error {
 		if err := m.awaitSynchronized(ctx, path); err != nil {
 			return err
@@ -34,7 +35,7 @@ func (m *LSPManager) codeActionRequest(ctx context.Context, path string, call fu
 		}
 		m.mu.Lock()
 		doc := m.documents[filepath.Clean(path)]
-		var boundary types.InsightBoundary
+		var boundary insight.Boundary
 		wire := 0
 		if doc != nil && doc.opened && !doc.syncPending {
 			boundary, wire = doc.boundary, doc.wireVersion
@@ -79,17 +80,19 @@ func (m *LSPManager) codeActionRequest(ctx context.Context, path string, call fu
 	return out, err
 }
 
-func (m *LSPManager) RequestCodeActions(ctx context.Context, path string, line, col, endLine, endCol int) (types.LSPCodeActionResponse, error) {
-	return m.codeActionRequest(ctx, path, func(requestCtx context.Context, client LSPClient, _ types.InsightBoundary, _ int) (types.LSPCodeActionResponse, error) {
+// RequestCodeActions asks the language server for the actions of a range.
+func (m *LSPManager) RequestCodeActions(ctx context.Context, path string, line, col, endLine, endCol int) (insight.LSPCodeActionResponse, error) {
+	return m.codeActionRequest(ctx, path, func(requestCtx context.Context, client LSPClient, _ insight.Boundary, _ int) (insight.LSPCodeActionResponse, error) {
 		return client.RequestCodeActions(requestCtx, path, line, col, endLine, endCol)
 	})
 }
 
-func (m *LSPManager) ResolveCodeAction(ctx context.Context, expected types.InsightBoundary, expectedWire int, original []byte) (types.LSPCodeActionResponse, error) {
+// ResolveCodeAction resolves one code action only if its provider and source still match.
+func (m *LSPManager) ResolveCodeAction(ctx context.Context, expected insight.Boundary, expectedWire int, original []byte) (insight.LSPCodeActionResponse, error) {
 	original = bytes.Clone(original)
-	return m.codeActionRequest(ctx, expected.Source.Path, func(requestCtx context.Context, client LSPClient, boundary types.InsightBoundary, wire int) (types.LSPCodeActionResponse, error) {
+	return m.codeActionRequest(ctx, expected.Source.Path, func(requestCtx context.Context, client LSPClient, boundary insight.Boundary, wire int) (insight.LSPCodeActionResponse, error) {
 		if !sameInsightBoundary(boundary, expected) || wire != expectedWire {
-			return types.LSPCodeActionResponse{}, errors.New("the original code-action provider/source/context is no longer synchronized")
+			return insight.LSPCodeActionResponse{}, errors.New("the original code-action provider/source/context is no longer synchronized")
 		}
 		return client.ResolveCodeAction(requestCtx, expected.Source.Path, wire, original)
 	})

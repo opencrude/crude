@@ -8,7 +8,7 @@ import (
 
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 // steppingClock advances by step at every reading, so a materialization
@@ -25,7 +25,7 @@ func TestMessageRowsSnapshotGenerationAndStableHeightDelta(t *testing.T) {
 	r := NewRenderer(theme.DefaultDark())
 	r.SetChatAreaBounds(0, 10)
 	r.SetSize(60, 20)
-	messages := []types.ChatMessage{{InternalID: "a", Role: types.RoleAssistant, Content: "first", Time: time.Now()}, {InternalID: "b", Role: types.RoleAssistant, Content: "second", Time: time.Now()}}
+	messages := []conversation.ChatMessage{{InternalID: "a", Role: conversation.RoleAssistant, Content: "first", Time: time.Now()}, {InternalID: "b", Role: conversation.RoleAssistant, Content: "second", Time: time.Now()}}
 	r.SyncMessages(messages, 1, 0)
 	first := r.ExportMessageRowsSnapshot(56)
 	same := r.ExportMessageRowsSnapshot(56)
@@ -48,9 +48,9 @@ func TestWidthOnlyReflowLazilyUpdatesRowsAsTheyEnterViewport(t *testing.T) {
 	r := NewRenderer(theme.DefaultDark())
 	r.SetChatAreaBounds(0, 4)
 	r.SetSize(80, 20)
-	messages := make([]types.ChatMessage, 20)
+	messages := make([]conversation.ChatMessage, 20)
 	for i := range messages {
-		messages[i] = types.ChatMessage{InternalID: fmt.Sprintf("m-%d", i), Role: types.RoleAssistant, Content: strings.Repeat("wide content ", 8), Time: time.Now()}
+		messages[i] = conversation.ChatMessage{InternalID: fmt.Sprintf("m-%d", i), Role: conversation.RoleAssistant, Content: strings.Repeat("wide content ", 8), Time: time.Now()}
 	}
 	r.SyncMessages(messages, 1, 0)
 	scroll := ui.NewScrollModel()
@@ -75,7 +75,7 @@ func TestRenderDeclaredFrameDependenciesAnimateWithoutStaticInvalidation(t *test
 	r := NewRenderer(theme.DefaultDark())
 	r.SetChatAreaBounds(0, 30)
 	r.SetSize(80, 30)
-	messages := []types.ChatMessage{{InternalID: "static", Role: types.RoleAssistant, Content: "static"}, {InternalID: "status", Role: types.RoleStatus, LifecyclePhase: "preparing"}, {InternalID: "thinking", Role: types.RoleThinking, Content: "thinking", ThinkingActive: true}, {InternalID: "tool", Role: types.RoleTool, ToolName: "read_file", ToolStatus: "streaming", ToolPreviewPhase: types.ToolPreviewStreaming}, {InternalID: "btw", Role: types.RoleUser, Content: "later", PendingSteering: true}}
+	messages := []conversation.ChatMessage{{InternalID: "static", Role: conversation.RoleAssistant, Content: "static"}, {InternalID: "status", Role: conversation.RoleStatus, LifecyclePhase: "preparing"}, {InternalID: "thinking", Role: conversation.RoleThinking, Content: "thinking", ThinkingActive: true}, {InternalID: "tool", Role: conversation.RoleTool, ToolName: "read_file", ToolStatus: "streaming", ToolPreviewPhase: conversation.ToolPreviewStreaming}, {InternalID: "btw", Role: conversation.RoleUser, Content: "later", PendingSteering: true}}
 	r.SetSpinFrame(0)
 	r.SyncMessages(messages, 1, 0)
 	first := r.ExportMessageRowsSnapshot(76)
@@ -102,12 +102,12 @@ func TestTransientLifecycleMetricsDoNotInvalidateTranscript(t *testing.T) {
 	r := NewRenderer(theme.DefaultDark())
 	r.SetChatAreaBounds(0, 10)
 	r.SetSize(80, 20)
-	base := types.ChatMessage{InternalID: "status", Role: types.RoleStatus, LifecyclePhase: "preparing", LifecycleProgress: 10, LifecycleUploadedBytes: 10, LifecycleTotalBytes: 100}
-	r.SyncMessages([]types.ChatMessage{base}, 1, 0)
+	base := conversation.ChatMessage{InternalID: "status", Role: conversation.RoleStatus, LifecyclePhase: "preparing", LifecycleProgress: 10, LifecycleUploadedBytes: 10, LifecycleTotalBytes: 100}
+	r.SyncMessages([]conversation.ChatMessage{base}, 1, 0)
 	first := r.ExportMessageRowsSnapshot(76)
 	base.LifecycleProgress = 75
 	base.LifecycleUploadedBytes = 75
-	r.SyncMessages([]types.ChatMessage{base}, 2, 0)
+	r.SyncMessages([]conversation.ChatMessage{base}, 2, 0)
 	second := r.ExportMessageRowsSnapshot(76)
 	if second.Generation != first.Generation || len(second.Rows) != 0 {
 		t.Fatalf("metric delta=%+v", second)
@@ -120,7 +120,7 @@ func TestStreamingCursorDependencyChangesWithTypingState(t *testing.T) {
 	r.SetSize(60, 20)
 	r.SetStreaming(true)
 	r.SetActiveTyping(true)
-	r.SyncMessages([]types.ChatMessage{{InternalID: "assistant", Role: types.RoleAssistant, Content: "working"}}, 1, 0)
+	r.SyncMessages([]conversation.ChatMessage{{InternalID: "assistant", Role: conversation.RoleAssistant, Content: "working"}}, 1, 0)
 	r.SetSpinFrame(ui.ActivityBlinkPhaseMillis)
 	solid := r.ExportMessageRowsSnapshot(56)
 	if !strings.Contains(strings.Join(solid.Rows[0].Lines, ""), "█") {
@@ -172,9 +172,9 @@ func TestLargeTranscriptMaterializesProgressivelyWithinBudget(t *testing.T) {
 	r.SetSize(100, 20)
 	r.MaterializeBudget = time.Millisecond
 	r.MaterializeClock = steppingClock(100 * time.Microsecond)
-	messages := make([]types.ChatMessage, 400)
+	messages := make([]conversation.ChatMessage, 400)
 	for i := range messages {
-		messages[i] = types.ChatMessage{InternalID: fmt.Sprintf("m-%d", i), Role: types.RoleAssistant,
+		messages[i] = conversation.ChatMessage{InternalID: fmt.Sprintf("m-%d", i), Role: conversation.RoleAssistant,
 			Content: fmt.Sprintf("## Heading %d\n\n%s\n\n- item\n- item", i, strings.Repeat("markdown *body* text ", 30)), Time: time.Now()}
 	}
 	r.SyncMessages(messages, 1, 0)
@@ -224,7 +224,7 @@ func TestMessageRowVersionNamesTheRenderThatProducedTheLines(t *testing.T) {
 	r := NewRenderer(theme.DefaultDark())
 	r.SetChatAreaBounds(0, 10)
 	r.SetSize(60, 20)
-	messages := []types.ChatMessage{{InternalID: "a", Role: types.RoleAssistant, Content: "first", Time: time.Now()}, {InternalID: "b", Role: types.RoleAssistant, Content: "second", Time: time.Now()}}
+	messages := []conversation.ChatMessage{{InternalID: "a", Role: conversation.RoleAssistant, Content: "first", Time: time.Now()}, {InternalID: "b", Role: conversation.RoleAssistant, Content: "second", Time: time.Now()}}
 	r.SyncMessages(messages, 1, 0)
 	// Exported rows are borrowed and updated in place, so read versions now.
 	versions := func() (uint64, uint64) {
@@ -259,9 +259,9 @@ func TestSettleHistoryDrawsRowsThatAWidthReflowLeftBlank(t *testing.T) {
 	r.SetSize(80, 20)
 	r.MaterializeBudget = time.Nanosecond // history draws slower than the first frames
 	r.MaterializeClock = steppingClock(time.Millisecond)
-	messages := make([]types.ChatMessage, 40)
+	messages := make([]conversation.ChatMessage, 40)
 	for i := range messages {
-		messages[i] = types.ChatMessage{InternalID: fmt.Sprintf("m-%d", i), Role: types.RoleAssistant, Content: fmt.Sprintf("message %d with a needle", i), Time: time.Now()}
+		messages[i] = conversation.ChatMessage{InternalID: fmt.Sprintf("m-%d", i), Role: conversation.RoleAssistant, Content: fmt.Sprintf("message %d with a needle", i), Time: time.Now()}
 	}
 	r.SyncMessages(messages, 1, 0)
 	scroll := ui.NewScrollModel()

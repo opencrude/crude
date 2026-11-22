@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"crude/agent/toolstore"
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/types/insight"
 )
 
 const codeToolsPreviewLimit = 64
@@ -35,7 +35,7 @@ type retainedCodeToolsPreview struct {
 	key     codeToolsOwner
 	expires time.Time
 	store   toolstore.RemovalPreview
-	view    types.CodeToolRemovalPreview
+	view    insight.CodeToolRemovalPreview
 }
 
 // codeToolsState retains only native attached-shell previews. Its mutex guards
@@ -74,7 +74,7 @@ func (s *codeToolsState) detach(owner coreprotocol.Owner, workspace string) {
 	}
 }
 
-func (s *codeToolsState) retain(key codeToolsOwner, scope *codeToolsScope, p toolstore.RemovalPreview, view types.CodeToolRemovalPreview) (types.CodeToolRemovalPreview, error) {
+func (s *codeToolsState) retain(key codeToolsOwner, scope *codeToolsScope, p toolstore.RemovalPreview, view insight.CodeToolRemovalPreview) (insight.CodeToolRemovalPreview, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now()
@@ -84,14 +84,14 @@ func (s *codeToolsState) retain(key codeToolsOwner, scope *codeToolsScope, p too
 		}
 	}
 	if s.scopes[key] != scope {
-		return types.CodeToolRemovalPreview{}, errors.New("the Settings window changed; review the removal again")
+		return insight.CodeToolRemovalPreview{}, errors.New("the Settings window changed; review the removal again")
 	}
 	if len(s.previews) >= codeToolsPreviewLimit {
-		return types.CodeToolRemovalPreview{}, errors.New("too many removal reviews are open; close one and try again")
+		return insight.CodeToolRemovalPreview{}, errors.New("too many removal reviews are open; close one and try again")
 	}
 	var random [32]byte
 	if _, err := rand.Read(random[:]); err != nil {
-		return types.CodeToolRemovalPreview{}, err
+		return insight.CodeToolRemovalPreview{}, err
 	}
 	view.Token = hex.EncodeToString(random[:])
 	if s.previews == nil {
@@ -101,14 +101,14 @@ func (s *codeToolsState) retain(key codeToolsOwner, scope *codeToolsScope, p too
 	return view, nil
 }
 
-func cloneRemovalView(view types.CodeToolRemovalPreview) types.CodeToolRemovalPreview {
+func cloneRemovalView(view insight.CodeToolRemovalPreview) insight.CodeToolRemovalPreview {
 	view.Paths = append([]string(nil), view.Paths...)
-	view.Tools = append([]types.CodeTool(nil), view.Tools...)
+	view.Tools = append([]insight.CodeTool(nil), view.Tools...)
 	for i := range view.Tools {
 		t := &view.Tools[i]
 		t.Licenses = append([]string(nil), t.Licenses...)
 		t.Workspaces = append([]string(nil), t.Workspaces...)
-		t.FileEntries = append([]types.CodeToolFile(nil), t.FileEntries...)
+		t.FileEntries = append([]insight.CodeToolFile(nil), t.FileEntries...)
 	}
 	return view
 }
@@ -144,7 +144,7 @@ func (r *Runtime) checkCodeToolsUnused(ctx context.Context, p toolstore.RemovalP
 	return nil
 }
 
-func (s *codeToolsState) consume(key codeToolsOwner, view types.CodeToolRemovalPreview) (toolstore.RemovalPreview, error) {
+func (s *codeToolsState) consume(key codeToolsOwner, view insight.CodeToolRemovalPreview) (toolstore.RemovalPreview, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p, ok := s.previews[view.Token]
@@ -194,7 +194,7 @@ func (a *actor) prepareCodeTools(request coreprotocol.Request) (func(context.Con
 			if len(p.Tools) == 0 {
 				return coreprotocol.PreviewCodeToolRemovalResult{}, nil
 			}
-			view := types.CodeToolRemovalPreview{Paths: append([]string(nil), p.Paths...), Bytes: p.Bytes}
+			view := insight.CodeToolRemovalPreview{Paths: append([]string(nil), p.Paths...), Bytes: p.Bytes}
 			for _, tool := range p.Tools {
 				value, err := inspectCodeTool(ctx, tool)
 				if err != nil {

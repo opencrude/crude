@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/text/diff"
+	"crude/text/textdiff"
 	"crude/workspace/localhistory"
 )
 

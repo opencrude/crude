@@ -10,7 +10,7 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 // choiceActionPrefix names a Choice as an action-bar action.
@@ -73,8 +73,8 @@ func OffersAutoReview(autoReviewOn bool, risk string) bool {
 
 // Choices for host execution do not offer durable workspace permission or auto review.
 func (d Details) Choices() []Choice {
-	if d.Operation == types.PlanInvestigationHostOperation {
-		return []Choice{{ID: types.PlanInvestigationHostAllow, Label: "Allow for this plan", Shortcut: "y", Variant: ui.VariantPrimary}, {ID: ChoiceDeny, Label: "Do not run", Shortcut: "n", Variant: ui.VariantSecondary}}
+	if d.Operation == conversation.PlanInvestigationHostOperation {
+		return []Choice{{ID: conversation.PlanInvestigationHostAllow, Label: "Allow for this plan", Shortcut: "y", Variant: ui.VariantPrimary}, {ID: ChoiceDeny, Label: "Do not run", Shortcut: "n", Variant: ui.VariantSecondary}}
 	}
 	choices := Choices(d.OfferAutoReview)
 	if d.InvestigationPath {
@@ -84,7 +84,7 @@ func (d Details) Choices() []Choice {
 }
 
 func (d Details) operationLabel() string {
-	if d.Operation == types.PlanInvestigationHostOperation {
+	if d.Operation == conversation.PlanInvestigationHostOperation {
 		return ""
 	}
 	return d.Operation
@@ -132,7 +132,7 @@ func New(th *theme.Theme) *Screen {
 
 func (s *Screen) Reset(details Details) {
 	s.details = details
-	hostConsent := details.Operation == types.PlanInvestigationHostOperation
+	hostConsent := details.Operation == conversation.PlanInvestigationHostOperation
 	if hostConsent {
 		s.form = ui.NewDockedReadingForm(FormID, "Confirmation required", details.Question+"\n"+details.HostDetails(), s.tokens)
 	} else {
@@ -217,7 +217,7 @@ func (s *Screen) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
 	case tea.KeyEsc:
 		return s.cancel()
 	case tea.KeyEnter:
-		if s.details.Operation == types.PlanInvestigationHostOperation {
+		if s.details.Operation == conversation.PlanInvestigationHostOperation {
 			return s.result(ChoiceDeny)
 		}
 		return s.result(ChoiceAllow)
@@ -243,7 +243,7 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 		}
 	}
 	if action.ID == "form.exit.forward" || action.ID == "form.exit.backward" {
-		if action.ID == "form.exit.backward" || s.details.Operation == types.PlanInvestigationHostOperation {
+		if action.ID == "form.exit.backward" || s.details.Operation == conversation.PlanInvestigationHostOperation {
 			s.actions.FocusLast()
 		} else {
 			s.actions.FocusFirst()

@@ -14,11 +14,11 @@ import (
 	"testing"
 	"time"
 
-	"crude/agent"
 	"crude/agent/collaboration"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
 	"crude/agent/tools"
+	"crude/agent/turnloop"
 	recoverytypes "crude/types/recovery"
 )
 
@@ -141,7 +141,7 @@ func testGuidanceDeferredCheckpoint(t *testing.T, child bool, order string) {
 	run := newRecoveryRunState(provider.PlainInput("task"), &sessiondb.RecoveryCheckpoint{Archive: state.Messages, ActiveContext: state.Messages,
 		ContextOwnerID: owner, ContextRevision: state.Revision, ContextGeneration: 1, ContextReason: "test"})
 	status := recoverytypes.Status{ID: "guidance-incident", AgentID: owner, Generation: 1}
-	a := agent.NewAgent(provider.FromPreset("openai-chat", "key", server.URL), "guidance-checkpoint", s.logger)
+	a := turnloop.NewAgent(provider.FromPreset("openai-chat", "key", server.URL), "guidance-checkpoint", s.logger)
 	a.WorkDir, a.Yolo = dir, true
 	a.FilteredTools = append(append([]tools.ToolDef(nil), tools.AgentTools...), tools.ParallelTool())
 	a.ContextArchive, a.FrozenPrefix = state.Messages, state.Messages

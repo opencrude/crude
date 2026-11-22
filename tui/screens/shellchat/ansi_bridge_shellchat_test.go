@@ -9,7 +9,7 @@ import (
 	"crude/tui/screens/shellchat"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 // TestShellchatPaintsMarkdownWithoutANSIPath drives a markdown assistant
@@ -24,8 +24,8 @@ func TestShellchatPaintsMarkdownWithoutANSIPath(t *testing.T) {
 	r.SetSize(80, 24)
 	r.SetChatAreaBounds(0, 24)
 	r.SetStreaming(false)
-	r.AppendMessage(types.ChatMessage{
-		Role:    types.RoleAssistant,
+	r.AppendMessage(conversation.ChatMessage{
+		Role:    conversation.RoleAssistant,
 		Content: "# Title\n\nSome **bold** and `code`.\n\n[Guide](https://example.test/docs)\n\n| Item | Status |\n| --- | --- |\n| [Library](https://example.test/library) | Ready |\n\n```go\nfunc f() { x := 1 }\n```",
 		Time:    time.Now(),
 	})
@@ -81,9 +81,9 @@ func TestShellchatPaintsDiffToolBodyNative(t *testing.T) {
 	r.SetChatAreaBounds(0, 24)
 	r.SetStreaming(false)
 	diff := "```diff\n--- a/main.go\n+++ b/main.go\n@@ -1,2 +1,2 @@\n-func old()\n+func new()\n```"
-	r.AppendMessage(types.ChatMessage{
+	r.AppendMessage(conversation.ChatMessage{
 		InternalID: "edit-1",
-		Role:       types.RoleTool,
+		Role:       conversation.RoleTool,
 		ToolName:   "edit_file",
 		ToolArgs:   "main.go",
 		Content:    "Edited main.go\n\n" + diff,

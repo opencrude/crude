@@ -6,7 +6,7 @@ import (
 
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 // The patch gutter must only ever paint patch rows. A result that carries no
@@ -14,9 +14,9 @@ import (
 // occurrence in <path>", used to be handed to the lenient unified-diff parser,
 // which turned that prose into a fake context row with line number 1.
 func TestProseToolBodyNeverRendersAsPatch(t *testing.T) {
-	msg := types.ChatMessage{
-		Role: types.RoleTool, ToolName: "edit_file", ToolStatus: "success",
-		ToolPreviewPhase: types.ToolPreviewDone, ToolArgs: "tui/tools/diff.go",
+	msg := conversation.ChatMessage{
+		Role: conversation.RoleTool, ToolName: "edit_file", ToolStatus: "success",
+		ToolPreviewPhase: conversation.ToolPreviewDone, ToolArgs: "tui/tools/diff.go",
 		Content: "Replaced 1 occurrence in tui/tools/diff.go\n",
 	}
 	ml := renderToolMessageLines(msg, theme.DefaultDark(), 60, 62, 64, 0, 20, "done", DisclosureExpanded)
@@ -37,9 +37,9 @@ func TestProseToolBodyNeverRendersAsPatch(t *testing.T) {
 // A no-change edit is a failure: one compact row, red failure dot, the reason on
 // the title line, and never the model-facing hint.
 func TestNoChangeEditFailureRendersOneRedRow(t *testing.T) {
-	msg := types.ChatMessage{
-		Role: types.RoleTool, ToolName: "edit_file", ToolStatus: types.ToolStatusError,
-		ToolPreviewPhase: types.ToolPreviewError, ToolArgs: "tools/dispatcher.go",
+	msg := conversation.ChatMessage{
+		Role: conversation.RoleTool, ToolName: "edit_file", ToolStatus: conversation.ToolStatusError,
+		ToolPreviewPhase: conversation.ToolPreviewError, ToolArgs: "tools/dispatcher.go",
 		Content: "Error: no changes to make: old_string and new_string are exactly the same",
 	}
 	ml := renderToolMessageLines(msg, theme.DefaultDark(), 96, 98, 100, 0, 20, "error", DisclosureCollapsed)
@@ -66,9 +66,9 @@ func TestNoChangeEditFailureRendersOneRedRow(t *testing.T) {
 // Native repair hints are separated at the producer (covered by the real
 // session failure journey); presentation must not guess from this wording.
 func TestLiteralHintTextInEvidenceRemainsReadable(t *testing.T) {
-	msg := types.ChatMessage{
-		Role: types.RoleTool, ToolName: "read_file", ToolStatus: types.ToolStatusError,
-		ToolPreviewPhase: types.ToolPreviewError, ToolArgs: "tui/ui/window_frame_widget.go",
+	msg := conversation.ChatMessage{
+		Role: conversation.RoleTool, ToolName: "read_file", ToolStatus: conversation.ToolStatusError,
+		ToolPreviewPhase: conversation.ToolPreviewError, ToolArgs: "tui/ui/window_frame_widget.go",
 		Content: "Error: read raw tui/ui/window_frame_widget.go: file does not exist\n\nHint: literal evidence from the source",
 	}
 	for _, disclosure := range []DisclosureState{DisclosureCollapsed, DisclosureExpanded} {
@@ -86,9 +86,9 @@ func TestLiteralHintTextInEvidenceRemainsReadable(t *testing.T) {
 // The gate must not cost real patches their card: a result with a fenced diff
 // still renders through the banded diff rows.
 func TestRealPatchBodyStillRendersDiffRows(t *testing.T) {
-	msg := types.ChatMessage{
-		Role: types.RoleTool, ToolName: "edit_file", ToolStatus: "success",
-		ToolPreviewPhase: types.ToolPreviewDone, ToolArgs: "x.go",
+	msg := conversation.ChatMessage{
+		Role: conversation.RoleTool, ToolName: "edit_file", ToolStatus: "success",
+		ToolPreviewPhase: conversation.ToolPreviewDone, ToolArgs: "x.go",
 		Content: "Replaced 1 occurrence in x.go\n\n```diff\n--- a/x.go\n+++ b/x.go\n@@ -1,1 +1,2 @@\n a\n+b\n```\n",
 	}
 	ml := renderToolMessageLines(msg, theme.DefaultDark(), 60, 62, 64, 0, 20, "done", DisclosureExpanded)
@@ -121,9 +121,9 @@ func TestEvidenceBodiesNeverTakePatchCard(t *testing.T) {
 		{tool: "execute_command", title: "│ ● Ran "},
 	}
 	for _, c := range cases {
-		msg := types.ChatMessage{
-			Role: types.RoleTool, ToolName: c.tool, ToolStatus: "success",
-			ToolPreviewPhase:  types.ToolPreviewDone,
+		msg := conversation.ChatMessage{
+			Role: conversation.RoleTool, ToolName: c.tool, ToolStatus: "success",
+			ToolPreviewPhase:  conversation.ToolPreviewDone,
 			ToolArgs:          "tui/viewmodel/projection_parity_test.go",
 			ToolProgressLabel: "tui/viewmodel/projection_parity_test.go line 22-66",
 			Content:           content,

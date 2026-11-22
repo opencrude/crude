@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"crude/core/protocol"
-	"crude/core/wire"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/core/corewire"
+	"crude/types/conversation"
 	"crude/workspace"
 )
 
@@ -93,7 +93,7 @@ func (a *actor) stopTopicPublication() {
 
 func stateMetadata(s workspace.AgentSnapshot) workspace.AgentSnapshot {
 	s.Messages = nil
-	s.ConversationRevision, s.LastTokenTime, s.RuntimeIdentity = 0, time.Time{}, types.RuntimeEventIdentity{}
+	s.ConversationRevision, s.LastTokenTime, s.RuntimeIdentity = 0, time.Time{}, conversation.RuntimeEventIdentity{}
 	// The independently published Status Center owns observation timestamps.
 	// Repeated tokens advance LastTokenTime in ConversationUpdate; a status
 	// observation clock alone must not resend the complete agent metadata tuple.

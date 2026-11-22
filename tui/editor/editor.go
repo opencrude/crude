@@ -13,10 +13,11 @@ import (
 	"github.com/alecthomas/chroma/v2"
 	"github.com/fsnotify/fsnotify"
 
-	"crude/text/encoding"
+	"crude/text/textdiff"
+	"crude/text/textencoding"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
 )
 
 type ActionType int
@@ -180,8 +181,8 @@ type Editor struct {
 	syntaxFailed                     bool
 	syntaxStopped                    bool
 	syntaxPlain                      bool
-	canonicalInsight                 *types.DocumentInsight
-	canonicalInk                     *types.DocumentInsight
+	canonicalInsight                 *insight.DocumentInsight
+	canonicalInk                     *insight.DocumentInsight
 	semantic                         semanticStore
 
 	lineRunesCacheValid bool
@@ -200,9 +201,9 @@ type Editor struct {
 	watchMu      sync.Mutex
 
 	diagMu                sync.RWMutex
-	diagnostics           []LSPDiagnostic
+	diagnostics           []insight.LSPDiagnostic
 	diagnosticsRevision   uint64
-	diagnosticFacts       types.InsightDiagnostics
+	diagnosticFacts       insight.Diagnostics
 	diagnosticProjectedID string
 	diagnosticsHidden     bool
 	diagByLine            map[int][]diagSpan
@@ -222,12 +223,12 @@ type Editor struct {
 
 	// Git supplies an immutable HEAD baseline. The editor owns one exact live
 	// projection for paint, navigation and inspection; there are no local claims.
-	gitHunks              []GitHunk
+	gitHunks              []textdiff.Hunk
 	gitHead               string
 	gitHeadLines          []string
 	gitSnapshot           textSnapshot
 	gitLineOffsets        []int
-	gitBlameHunks         []GitHunk
+	gitBlameHunks         []textdiff.Hunk
 	gitBlame              []GitBlameLine
 	gitLoaded             bool
 	gitConflicted         bool
@@ -292,7 +293,7 @@ func New(th *theme.Theme) *Editor {
 		tokens:      ui.NewTokenSet(th),
 		maxHistory:  500,
 		historyID:   rand.Uint64(),
-		diagnostics: make([]LSPDiagnostic, 0),
+		diagnostics: make([]insight.LSPDiagnostic, 0),
 		diagByLine:  make(map[int][]diagSpan),
 		search:      NewSearchState(),
 		// Lines take the direction of their prose by default, as the
@@ -691,15 +692,15 @@ func (e *Editor) SetOnContentChanged(fn func(filePath, text string)) {
 // SetDiagnostics retains a detached qualified publication. It never associates raw
 // callbacks with whichever text happens to be current when they arrive.
 // SetDiagnostics installs one observed batch in every view of the document.
-func (e *Editor) SetDiagnostics(facts types.InsightDiagnostics) {
+func (e *Editor) SetDiagnostics(facts insight.Diagnostics) {
 	e.eachView(func(v *Editor) { v.setDiagnostics(facts) })
 }
 
-func (e *Editor) setDiagnostics(facts types.InsightDiagnostics) {
+func (e *Editor) setDiagnostics(facts insight.Diagnostics) {
 	e.diagMu.Lock()
 	previous := e.diagnosticFacts
 	retainPaint := facts.ID == previous.ID || e.retainMappedDiagnosticPaint(previous, facts)
-	e.diagnosticFacts = types.CloneInsightDiagnostics(facts)
+	e.diagnosticFacts = insight.CloneDiagnostics(facts)
 	// New evidence cannot erase still-mapped ink merely by arriving after the
 	// source has advanced. RefreshDiagnostics replaces it only at exact source.
 	if facts.ID == "" || !retainPaint {
@@ -718,18 +719,18 @@ func (e *Editor) setDiagnostics(facts types.InsightDiagnostics) {
 // MatchesDiagnosticSource uses the canonical document clock, never PieceTable's
 // local mutation counter. Pending/history/conflict projections cannot authorize
 // diagnostics, even if their visible bytes equal the canonical source.
-func (e *Editor) MatchesDiagnosticSource(facts types.InsightDiagnostics) bool {
+func (e *Editor) MatchesDiagnosticSource(facts insight.Diagnostics) bool {
 	return facts.HasExactSource() && e.MatchesInsightSource(facts.Boundary.Source)
 }
 
 // CurrentInsightSource is a small metadata read. Unacknowledged text, pending
 // history and conflicts cannot authorize a semantic request for canonical text.
-func (e *Editor) CurrentInsightSource() (types.InsightSource, bool) {
+func (e *Editor) CurrentInsightSource() (insight.Source, bool) {
 	p := e.documentProjection
 	if p == nil {
-		return types.InsightSource{}, false
+		return insight.Source{}, false
 	}
-	s := types.InsightSource{WorkspaceGeneration: p.snapshot.AnalysisGeneration,
+	s := insight.Source{WorkspaceGeneration: p.snapshot.AnalysisGeneration,
 		DocumentID: p.snapshot.ID, Path: p.snapshot.Path, Lifetime: p.snapshot.AnalysisLifetime,
 		Revision: p.snapshot.Revision, Kind: "canonical"}
 	return s, e.MatchesInsightSource(s)
@@ -737,7 +738,7 @@ func (e *Editor) CurrentInsightSource() (types.InsightSource, bool) {
 
 // MatchesInsightSource shares one exact canonical-source gate across diagnostic
 // paint and explicit read-only semantic results. It does not attest a provider.
-func (e *Editor) MatchesInsightSource(s types.InsightSource) bool {
+func (e *Editor) MatchesInsightSource(s insight.Source) bool {
 	p := e.documentProjection
 	return e.open && p != nil && s.Kind == "canonical" &&
 		s.WorkspaceGeneration != "" && s.WorkspaceGeneration == p.snapshot.AnalysisGeneration &&
@@ -767,7 +768,7 @@ func (e *Editor) RefreshDiagnostics() {
 	// Convert LSP column offsets (UTF-16 code units from line start) to
 	// visual column offsets (tab-expanded, grapheme-aware). Must make a
 	// copy so we don't mutate the caller's slice (e.g. LSPManager cache).
-	converted := make([]LSPDiagnostic, len(diags))
+	converted := make([]insight.LSPDiagnostic, len(diags))
 	copy(converted, diags)
 	e.diagnostics = nil
 	for i, d := range converted {
@@ -877,7 +878,7 @@ func (e *Editor) lineDiagnostics(lineIdx int) []diagSpan {
 // DiagnosticsAt returns all LSPDiagnostics covering the given
 // position. Public version of diagnosticsAt for use by external
 // callers (e.g. the right-click context menu).
-func (e *Editor) DiagnosticsAt(line, col int) []LSPDiagnostic {
+func (e *Editor) DiagnosticsAt(line, col int) []insight.LSPDiagnostic {
 	return e.diagnosticsAt(line, col)
 }
 
@@ -887,13 +888,13 @@ func (e *Editor) DiagnosticsAt(line, col int) []LSPDiagnostic {
 // to walk the diagnostic list in order. The returned slice is a
 // copy in visual editor coordinates, not UTF-16; modifying it does not affect
 // the editor. Never feed it back to SetDiagnostics or a wire-navigation API.
-func (e *Editor) Diagnostics() []LSPDiagnostic {
+func (e *Editor) Diagnostics() []insight.LSPDiagnostic {
 	e.diagMu.RLock()
 	defer e.diagMu.RUnlock()
 	if !e.diagnosticsCurrent() {
 		return nil
 	}
-	out := make([]LSPDiagnostic, len(e.diagnostics))
+	out := make([]insight.LSPDiagnostic, len(e.diagnostics))
 	copy(out, e.diagnostics)
 	return out
 }
@@ -937,7 +938,7 @@ func (e *Editor) SetSelection(startLine, startCol, endLine, endCol int) {
 // col > fromCol). Returns nil if there is no such error. The
 // returned diagnostic uses visual editor coordinates and is a pointer into the editor's diagnostic
 // slice; do not retain across edits.
-func (e *Editor) NextError(fromLine, fromCol int) *LSPDiagnostic {
+func (e *Editor) NextError(fromLine, fromCol int) *insight.LSPDiagnostic {
 	e.diagMu.RLock()
 	defer e.diagMu.RUnlock()
 	if !e.diagnosticsCurrent() {
@@ -958,7 +959,7 @@ func (e *Editor) NextError(fromLine, fromCol int) *LSPDiagnostic {
 // PrevError returns the last diagnostic in the current file with
 // line strictly less than fromLine (or with line == fromLine and
 // col < fromCol). Returns nil if there is no such error.
-func (e *Editor) PrevError(fromLine, fromCol int) *LSPDiagnostic {
+func (e *Editor) PrevError(fromLine, fromCol int) *insight.LSPDiagnostic {
 	e.diagMu.RLock()
 	defer e.diagMu.RUnlock()
 	if !e.diagnosticsCurrent() {
@@ -979,7 +980,7 @@ func (e *Editor) PrevError(fromLine, fromCol int) *LSPDiagnostic {
 // FirstError returns the first error diagnostic in the current
 // file (sorted by line/col), or nil if there are none. Used by
 // project-wide "Goto first error" when the file is already open.
-func (e *Editor) FirstError() *LSPDiagnostic {
+func (e *Editor) FirstError() *insight.LSPDiagnostic {
 	e.diagMu.RLock()
 	defer e.diagMu.RUnlock()
 	if !e.diagnosticsCurrent() {
@@ -1025,13 +1026,13 @@ func (e *Editor) DeleteSelection() bool {
 }
 
 // diagnosticsAt returns all LSPDiagnostics covering the given position.
-func (e *Editor) diagnosticsAt(line, col int) []LSPDiagnostic {
+func (e *Editor) diagnosticsAt(line, col int) []insight.LSPDiagnostic {
 	e.diagMu.RLock()
 	defer e.diagMu.RUnlock()
 	if !e.diagnosticsCurrent() {
 		return nil
 	}
-	var result []LSPDiagnostic
+	var result []insight.LSPDiagnostic
 	lineEnd := -1
 	for _, d := range e.diagnostics {
 		start, end, ok := e.diagnosticRangeOnLine(d, line, &lineEnd)
@@ -1044,7 +1045,7 @@ func (e *Editor) diagnosticsAt(line, col int) []LSPDiagnostic {
 
 // diagnosticRangeOnLine is the common hit-test interval for mouse and cursor
 // inspection. lineEnd is shared across a scan to avoid repeated width work.
-func (e *Editor) diagnosticRangeOnLine(d LSPDiagnostic, line int, lineEnd *int) (int, int, bool) {
+func (e *Editor) diagnosticRangeOnLine(d insight.LSPDiagnostic, line int, lineEnd *int) (int, int, bool) {
 	if line < d.Line || line > max(d.Line, d.EndLine) {
 		return 0, 0, false
 	}

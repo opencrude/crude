@@ -7,12 +7,12 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/third_party/pathwalk"
+	"crude/third_party/fastwalk"
 )
 
 func TestRankPathEntriesPrefersBasenameAndBoundaries(t *testing.T) {
 	root := t.TempDir()
-	entries := []pathwalk.Entry{
+	entries := []fastwalk.Entry{
 		{Path: filepath.Join(root, "docs", "tree_rows.go"), Relative: "docs/tree_rows.go", Name: "tree_rows.go"},
 		{Path: filepath.Join(root, "src", "tree.go"), Relative: "src/tree.go", Name: "tree.go"},
 		{Path: filepath.Join(root, "src", "other.go"), Relative: "src/other.go", Name: "other.go"},
@@ -33,7 +33,7 @@ func TestAsyncSearchEnterOpensRankedMatchWithoutTreeNavigation(t *testing.T) {
 	root := t.TempDir()
 	file := filepath.Join(root, "workspace", "git_editor.go")
 	base := NewFileTreeModelWithOptions(root, ModelOptions{InitialLoad: false})
-	model := NewSearchModelFromBase(base, []PathMatch{{Entry: pathwalk.Entry{Path: file, Name: "git_editor.go"}}})
+	model := NewSearchModelFromBase(base, []PathMatch{{Entry: fastwalk.Entry{Path: file, Name: "git_editor.go"}}})
 	if selected := model.SelectedNode(); selected == nil || selected.Path != file {
 		t.Fatalf("selected=%+v, want matching file", selected)
 	}
@@ -48,8 +48,8 @@ func TestAsyncSearchEnterOpensRankedMatchWithoutTreeNavigation(t *testing.T) {
 }
 
 func TestRankPathEntriesExactNameWithRepeatedLetters(t *testing.T) {
-	entry := pathwalk.Entry{Path: "/repo/README.md", Relative: "README.md", Name: "README.md"}
-	matches := RankPathEntries([]pathwalk.Entry{entry}, "README.md")
+	entry := fastwalk.Entry{Path: "/repo/README.md", Relative: "README.md", Name: "README.md"}
+	matches := RankPathEntries([]fastwalk.Entry{entry}, "README.md")
 	if len(matches) != 1 || matches[0].Entry.Path != entry.Path {
 		t.Fatalf("exact filename did not match: %+v", matches)
 	}
@@ -59,7 +59,7 @@ func TestNewPickerSearchModelMaterializesAncestorsWithoutIO(t *testing.T) {
 	root := t.TempDir()
 	file := filepath.Join(root, "src", "nested", "main.go")
 	matches := []PathMatch{{
-		Entry: pathwalk.Entry{
+		Entry: fastwalk.Entry{
 			Path: file, Relative: "src/nested/main.go", Name: "main.go",
 		},
 		NamePositions: []int{0, 1, 2},

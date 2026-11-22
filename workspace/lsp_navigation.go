@@ -9,12 +9,12 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"crude/lsp/edit"
-	"crude/types"
+	"crude/lsp/lspedit"
+	"crude/types/insight"
 	"crude/workspace/document"
 )
 
-func (s *DocumentService) readOnlyLSPSourceLocked(owner document.Owner, source types.InsightSource) ([]byte, error) {
+func (s *DocumentService) readOnlyLSPSourceLocked(owner document.Owner, source insight.Source) ([]byte, error) {
 	if s.closed || s.idleFenced {
 		return nil, context.Canceled
 	}
@@ -39,12 +39,13 @@ func (s *DocumentService) readOnlyLSPSourceLocked(owner document.Owner, source t
 	return d.snapshot.Text, nil
 }
 
-func (w *Workspace) RequestLSPNavigation(ctx context.Context, owner document.Owner, source types.InsightSource, kind string, line, col int, includeDeclaration bool) (types.LSPNavigation, error) {
+// RequestLSPNavigation returns the navigation answer for one position in a document.
+func (w *Workspace) RequestLSPNavigation(ctx context.Context, owner document.Owner, source insight.Source, kind string, line, col int, includeDeclaration bool) (insight.LSPNavigation, error) {
 	if w == nil || w.LiveDocuments == nil || w.LSPMgr == nil {
-		return types.LSPNavigation{}, errors.New("navigation requires shared source and a language service")
+		return insight.LSPNavigation{}, errors.New("navigation requires shared source and a language service")
 	}
 	if err := ctx.Err(); err != nil {
-		return types.LSPNavigation{}, err
+		return insight.LSPNavigation{}, err
 	}
 	s := w.LiveDocuments
 	s.mu.Lock()
@@ -54,25 +55,25 @@ func (w *Workspace) RequestLSPNavigation(ctx context.Context, owner document.Own
 	}
 	s.mu.Unlock()
 	if err != nil {
-		return types.LSPNavigation{}, err
+		return insight.LSPNavigation{}, err
 	}
 	result, err := w.LSPMgr.RequestNavigation(ctx, source.Path, kind, line, col, includeDeclaration)
 	if err != nil {
-		return types.LSPNavigation{}, err
+		return insight.LSPNavigation{}, err
 	}
 	if result.Boundary.Source != source {
-		return types.LSPNavigation{}, document.ErrRevision
+		return insight.LSPNavigation{}, document.ErrRevision
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, err := s.readOnlyLSPSourceLocked(owner, source); err != nil {
-		return types.LSPNavigation{}, err
+		return insight.LSPNavigation{}, err
 	}
 	if _, err := w.LSPMgr.navigationFence(result.Boundary, result.WireVersion, kind); err != nil {
-		return types.LSPNavigation{}, err
+		return insight.LSPNavigation{}, err
 	}
 	if err := ctx.Err(); err != nil {
-		return types.LSPNavigation{}, err
+		return insight.LSPNavigation{}, err
 	}
 	return result, nil
 }
@@ -82,9 +83,9 @@ func (w *Workspace) RequestLSPNavigation(ctx context.Context, owner document.Own
 // canonical source ownership and the original live producer are still required.
 // The shell must verify the observation against the actual opened buffer before
 // positioning, because standard locations contain no target revision.
-func (w *Workspace) InspectLSPNavigationTarget(ctx context.Context, owner document.Owner, boundary types.InsightBoundary, wire int, kind string, target types.LSPNavigationTarget) (types.LSPNavigationLanding, error) {
+func (w *Workspace) InspectLSPNavigationTarget(ctx context.Context, owner document.Owner, boundary insight.Boundary, wire int, kind string, target insight.LSPNavigationTarget) (insight.LSPNavigationLanding, error) {
 	if w == nil || w.LiveDocuments == nil || w.LSPMgr == nil {
-		return types.LSPNavigationLanding{}, errors.New("navigation source authority is unavailable")
+		return insight.LSPNavigationLanding{}, errors.New("navigation source authority is unavailable")
 	}
 	boundary.Context.UnknownInputs = slices.Clone(boundary.Context.UnknownInputs)
 	if target.Origin != nil {
@@ -93,7 +94,7 @@ func (w *Workspace) InspectLSPNavigationTarget(ctx context.Context, owner docume
 	}
 	path, err := navigationURIPath(target.URI)
 	if err != nil {
-		return types.LSPNavigationLanding{}, err
+		return insight.LSPNavigationLanding{}, err
 	}
 	s := w.LiveDocuments
 	s.mu.Lock()
@@ -103,47 +104,47 @@ func (w *Workspace) InspectLSPNavigationTarget(ctx context.Context, owner docume
 	}
 	s.mu.Unlock()
 	if err != nil {
-		return types.LSPNavigationLanding{}, err
+		return insight.LSPNavigationLanding{}, err
 	}
 	check, err := w.LSPMgr.navigationFence(boundary, wire, kind)
 	if err != nil {
-		return types.LSPNavigationLanding{}, err
+		return insight.LSPNavigationLanding{}, err
 	}
 	selected, err := s.acquireAnalysisSource(ctx, path)
 	if err != nil {
-		return types.LSPNavigationLanding{}, err
+		return insight.LSPNavigationLanding{}, err
 	}
 	defer selected.release()
 	if selected.snapshot.Conflict {
-		return types.LSPNavigationLanding{}, errors.New("navigation target has unresolved shared changes")
+		return insight.LSPNavigationLanding{}, errors.New("navigation target has unresolved shared changes")
 	}
 	text := string(selected.snapshot.Text)
 	if err := validateNavigationRange(text, target.Range); err != nil {
-		return types.LSPNavigationLanding{}, err
+		return insight.LSPNavigationLanding{}, err
 	}
 	if err := validateNavigationRange(text, target.Selection); err != nil {
-		return types.LSPNavigationLanding{}, err
+		return insight.LSPNavigationLanding{}, err
 	}
 	if navigationPositionBefore(target.Selection.Start, target.Range.Start) || navigationPositionBefore(target.Range.End, target.Selection.End) ||
 		!target.Link && (target.Selection != target.Range || target.Origin != nil) {
-		return types.LSPNavigationLanding{}, errors.New("navigation selection does not identify its target range")
+		return insight.LSPNavigationLanding{}, errors.New("navigation selection does not identify its target range")
 	}
 	if err := selected.validate(ctx); err != nil {
-		return types.LSPNavigationLanding{}, err
+		return insight.LSPNavigationLanding{}, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, err := s.readOnlyLSPSourceLocked(owner, boundary.Source); err != nil {
-		return types.LSPNavigationLanding{}, err
+		return insight.LSPNavigationLanding{}, err
 	}
 	if err := selected.validateLocked(); err != nil {
-		return types.LSPNavigationLanding{}, err
+		return insight.LSPNavigationLanding{}, err
 	}
 	if err := check(); err != nil {
-		return types.LSPNavigationLanding{}, err
+		return insight.LSPNavigationLanding{}, err
 	}
 	if err := ctx.Err(); err != nil {
-		return types.LSPNavigationLanding{}, err
+		return insight.LSPNavigationLanding{}, err
 	}
 	// Re-derive presentation paths and flags, ignoring caller-authored policy.
 	target.Path, target.UnavailableReason = path, ""
@@ -168,6 +169,6 @@ func (w *Workspace) InspectLSPNavigationTarget(ctx context.Context, owner docume
 			end--
 		}
 	}
-	return types.LSPNavigationLanding{Boundary: boundary, Target: target, Source: selected.ref,
+	return insight.LSPNavigationLanding{Boundary: boundary, Target: target, Source: selected.ref,
 		TextHash: hex.EncodeToString(sum[:]), Preview: text[begin:end]}, nil
 }

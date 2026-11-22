@@ -7,13 +7,13 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/session"
-	"crude/types"
+	"crude/types/setting"
 )
 
 // ModelCatalogUpdated runs off the UI thread and never creates notices or jobs.
 func (w *Workspace) ModelCatalogUpdated(generation uint64) {
 	if w.eventBus != nil {
-		w.eventBus.Send(types.ModelCatalogUpdatedMsg{Generation: generation})
+		w.eventBus.Send(setting.ModelCatalogUpdatedMsg{Generation: generation})
 	}
 }
 
@@ -53,17 +53,17 @@ func cloneAccounts(accounts map[string]provider.Account) map[string]provider.Acc
 // PrepareAccountModels captures the connection on the UI owner thread; only
 // the returned operation performs I/O. A settings save or tab switch cannot
 // race a background read of sessionCfg's maps.
-func (w *Workspace) PrepareAccountModels(templateID string, accountID, baseURL, standardID string) func() ([]types.ModelEntry, error) {
+func (w *Workspace) PrepareAccountModels(templateID string, accountID, baseURL, standardID string) func() ([]setting.ModelEntry, error) {
 	cfg := w.sessionCfg
 	if cfg == nil {
-		return func() ([]types.ModelEntry, error) { return nil, fmt.Errorf("account configuration is unavailable") }
+		return func() ([]setting.ModelEntry, error) { return nil, fmt.Errorf("account configuration is unavailable") }
 	}
 	p, err := cfg.ConnectionProvider(accountID)
 	if err != nil {
-		return func() ([]types.ModelEntry, error) { return nil, err }
+		return func() ([]setting.ModelEntry, error) { return nil, err }
 	}
 	if templateID != "" && templateID != p.ID {
-		return func() ([]types.ModelEntry, error) {
+		return func() ([]setting.ModelEntry, error) {
 			return nil, fmt.Errorf("account %q does not belong to template %q", accountID, templateID)
 		}
 	}
@@ -72,14 +72,14 @@ func (w *Workspace) PrepareAccountModels(templateID string, accountID, baseURL, 
 	}
 	if standardID != "" {
 		if err := p.SetProtocolID(standardID); err != nil {
-			return func() ([]types.ModelEntry, error) { return nil, err }
+			return func() ([]setting.ModelEntry, error) { return nil, err }
 		}
 	}
 	return accountModelOperation(p)
 }
 
-func accountModelOperation(p *provider.Provider) func() ([]types.ModelEntry, error) {
-	return func() ([]types.ModelEntry, error) {
+func accountModelOperation(p *provider.Provider) func() ([]setting.ModelEntry, error) {
+	return func() ([]setting.ModelEntry, error) {
 		client, err := p.Client()
 		if err != nil {
 			return nil, err
@@ -88,16 +88,18 @@ func accountModelOperation(p *provider.Provider) func() ([]types.ModelEntry, err
 		if err != nil {
 			return nil, err
 		}
-		return types.ModelEntriesFromInfos(models), nil
+		return setting.ModelEntriesFromInfos(models), nil
 	}
 }
 
 // PrepareDraftAccountModels lets a newly added/reconnected account discover
 // models before Save without activating or persisting that draft. Unchanged
 // saved accounts use their durable token manager, including refresh.
-func (w *Workspace) PrepareDraftAccountModels(account provider.Account, baseURL, standardID string) func() ([]types.ModelEntry, error) {
+func (w *Workspace) PrepareDraftAccountModels(account provider.Account, baseURL, standardID string) func() ([]setting.ModelEntry, error) {
 	if account.ID == "" || account.ProviderID == "" {
-		return func() ([]types.ModelEntry, error) { return nil, fmt.Errorf("select an account before fetching models") }
+		return func() ([]setting.ModelEntry, error) {
+			return nil, fmt.Errorf("select an account before fetching models")
+		}
 	}
 	if w.sessionCfg != nil && w.sessionCfg.AccountManager != nil {
 		if saved, ok := w.sessionCfg.AccountManager.Account(account.ID); ok && reflect.DeepEqual(saved, account) {
@@ -109,14 +111,14 @@ func (w *Workspace) PrepareDraftAccountModels(account provider.Account, baseURL,
 	}
 	p, err := draftCfg.ConnectionProvider(account.ID)
 	if err != nil {
-		return func() ([]types.ModelEntry, error) { return nil, err }
+		return func() ([]setting.ModelEntry, error) { return nil, err }
 	}
 	if baseURL != "" {
 		p.BaseURL = baseURL
 	}
 	if standardID != "" {
 		if err := p.SetProtocolID(standardID); err != nil {
-			return func() ([]types.ModelEntry, error) { return nil, err }
+			return func() ([]setting.ModelEntry, error) { return nil, err }
 		}
 	}
 	return accountModelOperation(p)

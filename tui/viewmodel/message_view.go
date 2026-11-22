@@ -3,8 +3,8 @@ package viewmodel
 import (
 	"crude/agent/provider"
 	"crude/tui/chatprojection"
-	ttypes "crude/types"
 	"crude/types/command"
+	"crude/types/conversation"
 	"crude/types/recovery"
 	"crude/workspace"
 	"slices"
@@ -12,16 +12,16 @@ import (
 
 // ChatMessagesFromViews projects workspace hydration data into frontend-owned
 // message objects. Rendering caches intentionally start empty.
-func ChatMessagesFromViews(views []workspace.ChatMessageView) []ttypes.ChatMessage {
-	messages := make([]ttypes.ChatMessage, 0, len(views))
+func ChatMessagesFromViews(views []conversation.Message) []conversation.ChatMessage {
+	messages := make([]conversation.ChatMessage, 0, len(views))
 	for _, view := range views {
 		messages = append(messages, chatMessageFromCanonical(view))
 	}
 	return messages
 }
 
-func chatMessageFromCanonical(view workspace.ChatMessageView) ttypes.ChatMessage {
-	return ttypes.ChatMessage{
+func chatMessageFromCanonical(view conversation.Message) conversation.ChatMessage {
+	return conversation.ChatMessage{
 		InternalID:      view.InternalID,
 		Role:            view.Role,
 		Origin:          view.Origin,
@@ -86,16 +86,16 @@ func chatMessageFromCanonical(view workspace.ChatMessageView) ttypes.ChatMessage
 	}
 }
 
-func chatMessagesFromConversation(conversation *workspace.Conversation) ([]ttypes.ChatMessage, uint64) {
-	if conversation == nil {
+func chatMessagesFromConversation(transcript *workspace.Conversation) ([]conversation.ChatMessage, uint64) {
+	if transcript == nil {
 		return nil, 0
 	}
-	views := conversation.Messages()
-	messages := make([]ttypes.ChatMessage, 0, len(views))
+	views := transcript.Messages()
+	messages := make([]conversation.ChatMessage, 0, len(views))
 	for _, view := range views {
 		messages = append(messages, chatMessageFromCanonical(view))
 	}
-	return messages, conversation.Version()
+	return messages, transcript.Version()
 }
 
 // syncConversationChanges advances a retained projection by the source's exact
@@ -103,31 +103,31 @@ func chatMessagesFromConversation(conversation *workspace.Conversation) ([]ttype
 // token or tool update is independent of transcript length. It reports false
 // when only a complete export can be exact (a new source, a generation change
 // or a journal gap); the caller then performs SyncMessages.
-func syncConversationChanges(renderer *chatprojection.Renderer, conversation *workspace.Conversation) bool {
+func syncConversationChanges(renderer *chatprojection.Renderer, transcript *workspace.Conversation) bool {
 	base := renderer.SourceVersion()
-	if base == 0 || renderer.SourceGeneration() != conversation.SourceGeneration() {
+	if base == 0 || renderer.SourceGeneration() != transcript.SourceGeneration() {
 		return false
 	}
-	delta := conversation.ChangesSince(base)
+	delta := transcript.ChangesSince(base)
 	if delta.Reset {
 		return false
 	}
-	changed := make([]ttypes.ChatMessage, 0, len(delta.Upserts)+len(delta.Appends))
+	changed := make([]conversation.ChatMessage, 0, len(delta.Upserts)+len(delta.Appends))
 	for _, message := range delta.Upserts {
 		changed = append(changed, chatMessageFromCanonical(message))
 	}
 	for _, appended := range delta.Appends {
-		message, ok := conversation.Message(appended.InternalID)
+		message, ok := transcript.Message(appended.InternalID)
 		if !ok {
 			return false
 		}
 		changed = append(changed, chatMessageFromCanonical(message))
 	}
-	return renderer.SyncChanges(changed, delta.Removed, delta.Order, delta.Revision, conversation.SourceGeneration())
+	return renderer.SyncChanges(changed, delta.Removed, delta.Order, delta.Revision, transcript.SourceGeneration())
 }
 
-func workspaceMessageFromChat(message ttypes.ChatMessage) workspace.Message {
-	return workspace.Message{
+func workspaceMessageFromChat(message conversation.ChatMessage) conversation.Message {
+	return conversation.Message{
 		InternalID:      message.InternalID,
 		Role:            message.Role,
 		Origin:          message.Origin,
@@ -220,7 +220,7 @@ func (m *App) syncAgentMessages(agentID string, scroll bool) {
 	if sp == nil {
 		return
 	}
-	proj := m.subPaneProjections.GetExisting(agentID)
+	proj := m.subPaneProjections.Existing(agentID)
 	if proj == nil {
 		return
 	}
@@ -236,7 +236,7 @@ func (m *App) syncPaneMessages(paneID string, scroll bool) {
 	if sp == nil {
 		return
 	}
-	proj := m.subPaneProjections.GetExisting(paneID)
+	proj := m.subPaneProjections.Existing(paneID)
 	if proj == nil {
 		return
 	}
@@ -246,19 +246,19 @@ func (m *App) syncPaneMessages(paneID string, scroll bool) {
 	m.subPaneProjections.SyncFromWorkspace(paneID, sp.Messages, scroll)
 }
 
-func (m *App) appendAgentMessage(agentID string, message ttypes.ChatMessage) {
-	if m.ws.AppendAgentMessages(agentID, []workspace.Message{workspaceMessageFromChat(message)}, false) {
+func (m *App) appendAgentMessage(agentID string, message conversation.ChatMessage) {
+	if m.ws.AppendAgentMessages(agentID, []conversation.Message{workspaceMessageFromChat(message)}, false) {
 		m.syncAgentMessages(agentID, true)
 	}
 }
 
-func (m *App) appendActiveMessage(message ttypes.ChatMessage) {
+func (m *App) appendActiveMessage(message conversation.ChatMessage) {
 	m.appendAgentMessage(m.AgentView.ActiveID(), message)
 }
 
-func (m *App) hydrateActiveMessages(messages []ttypes.ChatMessage) {
+func (m *App) hydrateActiveMessages(messages []conversation.ChatMessage) {
 	agentID := m.AgentView.ActiveID()
-	canonical := make([]workspace.Message, 0, len(messages))
+	canonical := make([]conversation.Message, 0, len(messages))
 	for _, message := range messages {
 		canonical = append(canonical, workspaceMessageFromChat(message))
 	}

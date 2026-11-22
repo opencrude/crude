@@ -9,8 +9,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/agent/prompthistory"
 	"crude/agent/sessiondb"
-	"crude/history"
 	"crude/tui/input"
 	"crude/workspace"
 )
@@ -20,7 +20,7 @@ import (
 // composer recall, and the returned command writes the file to disk.
 func TestRecordPromptPersistsGlobalHistory(t *testing.T) {
 	app := newFullTestApp(t)
-	store := history.New()
+	store := prompthistory.New()
 	app.SetPromptHistory(store)
 	path := filepath.Join(t.TempDir(), "history.json")
 	app.promptHistoryPath = path
@@ -53,7 +53,7 @@ func TestRecordPromptPersistsGlobalHistory(t *testing.T) {
 // does not grow the recall list; it folds into one entry.
 func TestRecordPromptFoldsRepeats(t *testing.T) {
 	app := newTestApp(t)
-	app.SetPromptHistory(history.New())
+	app.SetPromptHistory(prompthistory.New())
 	app.promptHistoryPath = filepath.Join(t.TempDir(), "history.json")
 
 	for range 3 {
@@ -72,7 +72,7 @@ func TestRecordPromptFoldsRepeats(t *testing.T) {
 // TestRecordPromptSkipsBlank verifies blank submits don't touch history.
 func TestRecordPromptSkipsBlank(t *testing.T) {
 	app := newTestApp(t)
-	app.SetPromptHistory(history.New())
+	app.SetPromptHistory(prompthistory.New())
 	app.promptHistoryPath = filepath.Join(t.TempDir(), "history.json")
 
 	if cmd := app.recordPrompt("   \n\t "); cmd != nil {
@@ -85,7 +85,7 @@ func TestRecordPromptSkipsBlank(t *testing.T) {
 
 func TestPromptHistoryRecallsAttachmentsAcrossSessionsAndRestoresDraft(t *testing.T) {
 	app := newFullTestApp(t)
-	app.SetPromptHistory(history.New())
+	app.SetPromptHistory(prompthistory.New())
 	app.promptHistoryPath = filepath.Join(t.TempDir(), "history.json")
 	agentID := addBackendTestOrchestrator(t, app)
 	app.ActiveSession = app.ws.SessionsByAgent()[agentID]
@@ -143,7 +143,7 @@ func TestPromptHistoryRecallsAttachmentsAcrossSessionsAndRestoresDraft(t *testin
 func TestTextOnlyHistoryCannotCaptureAnotherSessionsAttachment(t *testing.T) {
 	app, ref := newAttachmentTestApp(t)
 	text := "Discuss the literal label " + ref.DisplayName()
-	app.recallPrompt(app.Input.RecallPrompt(history.Entry{Text: text}))
+	app.recallPrompt(app.Input.RecallPrompt(prompthistory.Entry{Text: text}))
 	if len(app.Input.PromptReferences()) != 0 {
 		t.Fatal("text-only recall captured a same-named attachment")
 	}
@@ -169,7 +169,7 @@ func TestPromptHistoryRecallBindsDestinationStoreBeforeSubmitting(t *testing.T) 
 	if err := os.WriteFile(path, []byte("image bytes"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	entry := history.Entry{Text: "inspect [Pasted IMG2]", Attachments: []history.Attachment{{
+	entry := prompthistory.Entry{Text: "inspect [Pasted IMG2]", Attachments: []prompthistory.Attachment{{
 		Start: 8, End: 21, Reference: sessiondb.Reference{ID: "source-image", Kind: sessiondb.KindPastedImage,
 			Label: "[Pasted IMG2]", FilePath: path, Mime: "image/png"},
 	}}}
@@ -198,7 +198,7 @@ func TestPromptHistoryRecallMixedReferencesThroughEditAndResubmit(t *testing.T) 
 			app.Input.SetReferenceStore(nil)
 			kinds := []sessiondb.Kind{sessiondb.KindPastedImage, sessiondb.KindPastedText,
 				sessiondb.KindPastedTextFile, sessiondb.KindSelectedFile, sessiondb.KindMCPTool, sessiondb.KindMCPContext}
-			entry := history.Entry{Text: "inspect "}
+			entry := prompthistory.Entry{Text: "inspect "}
 			for i, kind := range kinds {
 				ref := sessiondb.Reference{ID: string(kind), Kind: kind, Label: "[source " + string(kind) + "]",
 					Title: "exact source", Mime: "text/plain", Content: "captured content"}
@@ -214,18 +214,18 @@ func TestPromptHistoryRecallMixedReferencesThroughEditAndResubmit(t *testing.T) 
 				}
 				start := len([]rune(entry.Text))
 				entry.Text += ref.Label
-				entry.Attachments = append(entry.Attachments, history.Attachment{Start: start, End: len([]rune(entry.Text)), Reference: ref})
+				entry.Attachments = append(entry.Attachments, prompthistory.Attachment{Start: start, End: len([]rune(entry.Text)), Reference: ref})
 				entry.Text += " "
 			}
 			// A generated-looking literal must not acquire an imported reference.
 			entry.Text += "literal [Pasted IMG1] and array[0]"
-			store := history.New()
+			store := prompthistory.New()
 			store.Record(entry.Text, time.Now(), entry.Attachments...)
 			path := filepath.Join(t.TempDir(), "history.json")
 			if err := store.Save(path); err != nil {
 				t.Fatal(err)
 			}
-			loaded, err := history.LoadFile(path)
+			loaded, err := prompthistory.LoadFile(path)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -257,7 +257,7 @@ func TestPromptHistoryRecallMixedReferencesThroughEditAndResubmit(t *testing.T) 
 				t.Fatalf("editing/resubmitting lost attachments: %+v", event)
 			}
 			for _, id := range ids {
-				ref, ok := app.RefStore().GetReference(id)
+				ref, ok := app.RefStore().Reference(id)
 				if !ok || ref.SessionID != "destination" {
 					t.Fatalf("submission ID not owned by destination: %s", id)
 				}
@@ -297,7 +297,7 @@ func TestPromptHistoryRecallDoesNotRebindStaleOrFailedOwner(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			entry := history.Entry{Text: "[old]", Attachments: []history.Attachment{{Start: 0, End: 5,
+			entry := prompthistory.Entry{Text: "[old]", Attachments: []prompthistory.Attachment{{Start: 0, End: 5,
 				Reference: sessiondb.Reference{ID: "old", Label: "[old]", Kind: sessiondb.KindPastedImage, FilePath: path}}}}
 			cmd := app.recallPrompt(app.Input.RecallPrompt(entry))
 			result := cmd().(promptHistoryRestoredMsg)

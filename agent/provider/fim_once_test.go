@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/network"
+	"crude/internal/network"
 )
 
 func fimRequest() FIMOnceRequest {

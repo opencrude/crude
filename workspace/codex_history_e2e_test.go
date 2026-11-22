@@ -14,7 +14,7 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/session"
-	ttypes "crude/types"
+	"crude/types/setting"
 	"crude/workspace/localhistory"
 )
 
@@ -72,9 +72,9 @@ func TestCodexPatchProductionUndoRestoresMoveOverwriteAndDelete(t *testing.T) {
 	cat := profile.Categories[session.CategoryDefault]
 	cat.Model = "gpt-5.5"
 	profile.Categories[session.CategoryDefault] = cat
-	ws := NewWorkspace(project, "gpt-5.5", "tester", ttypes.Settings{}, &testLogger{})
+	ws := NewWorkspace(project, "gpt-5.5", "tester", setting.Settings{}, &testLogger{})
 	t.Cleanup(ws.Close)
-	ws.SetAppDefaults(ttypes.AppSettings{LocalHistory: ttypes.LocalHistorySettings{Enabled: "on", UseGitIgnore: "on", CaptureExternalChanges: "on", SafetySnapshotBeforeRestore: "on", MaxFileSizeMB: 10}})
+	ws.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "on", UseGitIgnore: "on", CaptureExternalChanges: "on", SafetySnapshotBeforeRestore: "on", MaxFileSizeMB: 10}})
 	frontend, err := ws.CreateSession(cfg, home)
 	if err != nil {
 		t.Fatal(err)

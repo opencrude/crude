@@ -3,8 +3,8 @@ package session
 import (
 	"context"
 
-	"crude/agent"
 	"crude/agent/sessiondb"
+	"crude/agent/turnloop"
 )
 
 // precompactionSlot returns a root agent's background checkpoint slot. It
@@ -12,17 +12,17 @@ import (
 // is already being prepared and paid for; the next run adopts it. Background
 // spend is recorded and progress reaches the shell whether or not a run is
 // active. The slot closes with its orchestrator or the session.
-func (s *Session) precompactionSlot(agentID string) *agent.PrecompactionSlot {
+func (s *Session) precompactionSlot(agentID string) *turnloop.PrecompactionSlot {
 	s.precompactionMu.Lock()
 	defer s.precompactionMu.Unlock()
 	if slot := s.precompaction[agentID]; slot != nil {
 		return slot
 	}
 	if s.precompaction == nil {
-		s.precompaction = make(map[string]*agent.PrecompactionSlot)
+		s.precompaction = make(map[string]*turnloop.PrecompactionSlot)
 		s.precompactionCtx, s.precompactionCancel = context.WithCancel(context.Background())
 	}
-	slot := agent.NewPrecompactionSlot(s.precompactionCtx, func(event agent.AgentEvent) {
+	slot := turnloop.NewPrecompactionSlot(s.precompactionCtx, func(event turnloop.AgentEvent) {
 		if event.AgentID == "" {
 			event.AgentID = agentID
 		}
@@ -39,7 +39,7 @@ func (s *Session) precompactionSlot(agentID string) *agent.PrecompactionSlot {
 // agent's when agentID is empty, and waits for it.
 func (s *Session) closePrecompaction(agentID string) {
 	s.precompactionMu.Lock()
-	var slots []*agent.PrecompactionSlot
+	var slots []*turnloop.PrecompactionSlot
 	for id, slot := range s.precompaction {
 		if agentID == "" || id == agentID {
 			slots = append(slots, slot)

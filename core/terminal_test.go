@@ -15,13 +15,13 @@ import (
 	"testing"
 	"time"
 
-	"crude/core/client"
-	"crude/core/port/remote"
-	"crude/core/protocol"
-	"crude/core/wire"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
+	"crude/core/corewire"
+	"crude/core/shellport/remote"
 	"crude/internal/testterminal"
-	"crude/types"
 	"crude/types/inspect"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -33,9 +33,9 @@ func attachingEnvironmentRuntime(t *testing.T, logger workspace.Logger) *Runtime
 	setCoreTestHome(t, t.TempDir())
 	executable, args := testterminal.Command(t, "env", attachEnvironmentProbe, daemonEnvironmentProbe)
 	r, err := New(func(root string) (*workspace.Workspace, error) {
-		ws := workspace.NewWorkspace(root, "", "tester", types.Settings{}, logger)
-		ws.SetAppDefaults(types.AppSettings{Terminal: types.TerminalSettings{
-			Shell: types.TerminalShellCustom, Command: executable,
+		ws := workspace.NewWorkspace(root, "", "tester", setting.Settings{}, logger)
+		ws.SetAppDefaults(setting.App{Terminal: setting.Terminal{
+			Shell: setting.TerminalShellCustom, Command: executable,
 			Args: args,
 		}})
 		return ws, nil

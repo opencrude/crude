@@ -12,13 +12,13 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"crude/agent"
 	"crude/agent/capability"
 	"crude/agent/collaboration"
 	"crude/agent/provider"
 	"crude/agent/skills"
-	"crude/types"
+	"crude/agent/turnloop"
 	captypes "crude/types/capability"
+	"crude/types/setting"
 	"os"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -111,7 +111,7 @@ func TestAutoReviewAcquiresLaunchesGrantsAndUsesMCPWithoutHumanResponse(test *te
 	defer providerServer.Close()
 	config := modelAttributionConfig(providerServer.URL, "capability-task-model")
 	config.Capabilities = settings
-	config.Safety.AutoPermission = types.AutoPermissionSettings{Enabled: "on", Provider: "openrouter", AccountID: "account", Model: "review-model", DenyMode: "deny", ThinkingEffort: "low", ResponseFormat: types.AutoPermissionFormatPrompt, TimeoutSeconds: 8, MaxOutputTokens: 96, MaxAttempts: 1, RetryTokenGrowth: types.AutoPermissionGrowthFixed, MaxRetryOutputTokens: 96, MaxInputBytes: 64 << 10}
+	config.Safety.AutoPermission = setting.AutoPermission{Enabled: "on", Provider: "openrouter", AccountID: "account", Model: "review-model", DenyMode: "deny", ThinkingEffort: "low", ResponseFormat: setting.AutoPermissionFormatPrompt, TimeoutSeconds: 8, MaxOutputTokens: 96, MaxAttempts: 1, RetryTokenGrowth: setting.AutoPermissionGrowthFixed, MaxRetryOutputTokens: 96, MaxInputBytes: 64 << 10}
 	home, directory := test.TempDir(), filepath.Join(test.TempDir(), "sessions")
 	owner, err := NewWithSessionDir("capability-task", config, home, directory)
 	if err != nil {
@@ -119,7 +119,7 @@ func TestAutoReviewAcquiresLaunchesGrantsAndUsesMCPWithoutHumanResponse(test *te
 	}
 	defer owner.Close()
 	owner.SetWorkDir(root)
-	owner.SetCapabilities(runtime, agent.NewFileOwnership())
+	owner.SetCapabilities(runtime, turnloop.NewFileOwnership())
 	store, err := collaboration.Attach(database, root, filepath.Join(home, "locks"))
 	if err != nil {
 		test.Fatal(err)

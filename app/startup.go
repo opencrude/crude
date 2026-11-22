@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"crude/types"
+	"crude/types/statuscenter"
 )
 
 // StartupPreparation is the non-interactive portion of IDE startup. Operational
@@ -14,13 +14,13 @@ import (
 type StartupPreparation struct {
 	Config   FileConfig
 	ResumeID string
-	Issues   []types.OperationIssue
+	Issues   []statuscenter.OperationIssue
 }
 
 func PrepareStartup(flags CLIFlags) StartupPreparation {
 	path := ConfigPath()
 	fc, loadErr := loadFileConfigFrom(path)
-	issues := make([]types.OperationIssue, 0, 2)
+	issues := make([]statuscenter.OperationIssue, 0, 2)
 	if loadErr != nil {
 		fc = DefaultFileConfig()
 		if !os.IsNotExist(loadErr) {
@@ -43,30 +43,30 @@ func PrepareStartup(flags CLIFlags) StartupPreparation {
 	return StartupPreparation{Config: fc, Issues: issues}
 }
 
-func configStartupIssue(path string, err error) types.OperationIssue {
-	return types.OperationIssue{
+func configStartupIssue(path string, err error) statuscenter.OperationIssue {
+	return statuscenter.OperationIssue{
 		Title: "Configuration needs repair", Summary: "Crude could not read the saved application configuration.",
 		Detail: err.Error(), Guidance: "Open the configuration file, correct the reported syntax or access problem, then restart Crude.",
-		Target: types.RepairConfigFile, Path: path,
+		Target: statuscenter.RepairConfigFile, Path: path,
 	}
 }
 
-func selectionStartupIssue(err error, flags CLIFlags) types.OperationIssue {
-	target := types.RepairMainAgent
+func selectionStartupIssue(err error, flags CLIFlags) statuscenter.OperationIssue {
+	target := statuscenter.RepairMainAgent
 	if flags.Account != "" || strings.Contains(err.Error(), "account") || strings.Contains(err.Error(), "credentials") {
-		target = types.RepairAccounts
+		target = statuscenter.RepairAccounts
 	}
-	return types.OperationIssue{Title: "Account setup required", Summary: "The selected model connection is not available.", Detail: err.Error(), Guidance: "Review the account and Main Agent selections; Crude did not choose a replacement account.", Target: target}
+	return statuscenter.OperationIssue{Title: "Account setup required", Summary: "The selected model connection is not available.", Detail: err.Error(), Guidance: "Review the account and Main Agent selections; Crude did not choose a replacement account.", Target: target}
 }
 
-func networkStartupIssue(err error) types.OperationIssue {
-	return types.OperationIssue{Title: "Network settings need repair", Summary: "Outbound network access is blocked because the saved policy is invalid.", Detail: err.Error(), Guidance: "Review Network settings and save a valid proxy, timeout, and certificate policy. Crude will not bypass it with a direct connection.", Target: types.RepairNetwork}
+func networkStartupIssue(err error) statuscenter.OperationIssue {
+	return statuscenter.OperationIssue{Title: "Network settings need repair", Summary: "Outbound network access is blocked because the saved policy is invalid.", Detail: err.Error(), Guidance: "Review Network settings and save a valid proxy, timeout, and certificate policy. Crude will not bypass it with a direct connection.", Target: statuscenter.RepairNetwork}
 }
 
-func remoteListenerIssue(err error) types.OperationIssue {
-	return types.OperationIssue{Title: "Remote access needs attention", Summary: "The local core is available, but its remote listeners could not start.", Detail: err.Error(), Guidance: "Review Application Settings › Network › Remote access and select free reachable listen addresses. Existing work and device credentials were retained.", Target: types.RepairNetwork}
+func remoteListenerIssue(err error) statuscenter.OperationIssue {
+	return statuscenter.OperationIssue{Title: "Remote access needs attention", Summary: "The local core is available, but its remote listeners could not start.", Detail: err.Error(), Guidance: "Review Application Settings › Network › Remote access and select free reachable listen addresses. Existing work and device credentials were retained.", Target: statuscenter.RepairNetwork}
 }
 
-func resumeStartupIssue(id string, err error) types.OperationIssue {
-	return types.OperationIssue{Title: "Session could not be resumed", Summary: fmt.Sprintf("Crude opened the workspace without resuming %q.", id), Detail: err.Error(), Guidance: "Choose an available session from the launcher or repair its saved account and session data.", Target: types.RepairSessionAccount}
+func resumeStartupIssue(id string, err error) statuscenter.OperationIssue {
+	return statuscenter.OperationIssue{Title: "Session could not be resumed", Summary: fmt.Sprintf("Crude opened the workspace without resuming %q.", id), Detail: err.Error(), Guidance: "Choose an available session from the launcher or repair its saved account and session data.", Target: statuscenter.RepairSessionAccount}
 }

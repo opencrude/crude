@@ -6,13 +6,14 @@ import (
 	"unicode/utf8"
 
 	"crude/insight/governor"
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 )
 
 // SetAnalysisPolicy installs the human-owned root binding without filesystem I/O.
 // Replaying the same persisted choice cannot repair a failed identity check.
-func (m *LSPManager) SetAnalysisPolicy(settings types.WorkspaceAnalysisSettings, rootIdentity string) {
-	settings = types.NormalizeWorkspaceAnalysis(settings)
+func (m *LSPManager) SetAnalysisPolicy(settings setting.WorkspaceAnalysis, rootIdentity string) {
+	settings = setting.NormalizeWorkspaceAnalysis(settings)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed || m.analysisSettings == settings && m.analysisRootIdentity == rootIdentity {
@@ -38,11 +39,12 @@ func validAnalysisIdentity(identity string) bool {
 	return true
 }
 
-func (m *LSPManager) AnalysisPolicy() types.WorkspaceAnalysisSettings {
+// AnalysisPolicy returns the analysis settings, or the undecided default when untrusted.
+func (m *LSPManager) AnalysisPolicy() setting.WorkspaceAnalysis {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if !m.analysisTrustedLocked() {
-		return types.DefaultWorkspaceAnalysisSettings()
+		return setting.DefaultWorkspaceAnalysis()
 	}
 	return m.analysisSettings
 }
@@ -73,7 +75,7 @@ func (m *LSPManager) analysisBoundaryLocked(reason string) {
 	// A new analysis boundary may answer closed files differently.
 	m.invalidateCheckedResultsLocked(func(string, string, string) bool { return true }, reason)
 	m.advanceContextLocked(reason)
-	m.docSymbols = make(map[string][]LSPSymbol)
+	m.docSymbols = make(map[string][]insight.LSPSymbol)
 	m.symbolCount, m.symbolsCached = 0, false
 	m.cancelUpdatesLocked()
 	for _, state := range m.states {

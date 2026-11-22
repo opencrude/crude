@@ -659,7 +659,7 @@ func (d *geminiStreamDecoder) finish(reason string, update StreamUpdate) StreamU
 	if len(d.parts) > 0 {
 		encoded, err := json.Marshal(map[string]any{"parts": d.parts})
 		if err == nil {
-			update.ProviderItems = append(update.ProviderItems, ProviderItem{Standard: "gemini", Type: geminiContentItem, Data: encoded})
+			update.ProviderItems = append(update.ProviderItems, Item{Standard: "gemini", Type: geminiContentItem, Data: encoded})
 		}
 	}
 	if update.Usage == nil && d.usage != nil {

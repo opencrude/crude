@@ -1,8 +1,8 @@
 package viewmodel
 
 import (
-	"crude/core/port"
-	"crude/types"
+	"crude/core/shellport"
+	"crude/types/insight"
 	"crude/workspace/document"
 )
 
@@ -35,7 +35,7 @@ func (m *App) applyDocumentInsight(msg shellport.DocumentInsightMsg) {
 		m.pendingInsights[msg.View.DocumentID] = cached
 	}
 	finish(nil)
-	if found && (msg.View.State == types.InsightFailed || msg.View.State == types.InsightLimited) {
+	if found && (msg.View.State == insight.Failed || msg.View.State == insight.Limited) {
 		if m.Feedback != nil {
 			m.Feedback.NotifyError("Syntax highlighting is unavailable. The syntax service reported an error. Reopen the file and try again. " + msg.View.Detail)
 		}

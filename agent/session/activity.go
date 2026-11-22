@@ -1,7 +1,7 @@
 package session
 
 import (
-	"crude/types"
+	"crude/types/conversation"
 	"crude/workspace/fileio"
 )
 
@@ -60,7 +60,7 @@ func (s *Session) AutonomousWork() (goals, loops int) {
 		return 0, 0
 	}
 	s.goalMu.Lock()
-	if s.goal.present && s.goal.record.Goal.Status == types.GoalActive && !s.readyGoalHandoverLocked() {
+	if s.goal.present && s.goal.record.Goal.Status == conversation.GoalActive && !s.readyGoalHandoverLocked() {
 		goals = 1
 	}
 	s.goalMu.Unlock()

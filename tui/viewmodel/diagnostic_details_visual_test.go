@@ -3,6 +3,8 @@ package viewmodel
 import (
 	"context"
 	"crude/internal/fileuri"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -20,9 +22,8 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/workspace"
 )
 
@@ -107,9 +108,9 @@ type diagnosticDetailsVisualModel struct {
 	tracePath  string
 	pids       []int
 	transcript strings.Builder
-	initial    types.InsightSource
-	facts      types.InsightDiagnostics
-	settings   types.LSPSettings
+	initial    insight.Source
+	facts      insight.Diagnostics
+	settings   setting.LSP
 	reader     *ui.TextArea
 	body       string
 	selected   ui.TextAreaState
@@ -159,9 +160,9 @@ func runDiagnosticDetailsVisual(t *testing.T, headless bool, width, height int) 
 	coreRuntime := remoteJourneyRuntime(t, "http://127.0.0.1:1", func(w *workspace.Workspace) {
 		retained = w
 		settings := w.AppDefaults()
-		settings.LSP = types.DefaultLSPSettings()
+		settings.LSP = setting.DefaultLSP()
 		settings.LSP.AutoDetect, settings.LSP.AutoComplete = false, false
-		settings.LSP.Languages = map[string]types.LSPLanguageSettings{"go": {
+		settings.LSP.Languages = map[string]setting.LSPLanguage{"go": {
 			Enabled: true, Command: executable, Args: []string{"serve", "-rpc.trace", "-logfile=" + tracePath},
 			RootMarkers: []string{"go.mod"},
 			Environment: map[string]string{
@@ -431,7 +432,7 @@ func (m *diagnosticDetailsVisualModel) setupDiagnosticDetails() error {
 		b := facts.Boundary
 		owner, generation := v.ws.LSPMgr().ContextCursor()
 		if d.Line != 2 || d.Col != 25 || d.EndLine != 2 || d.EndCol != 26 ||
-			d.Severity != types.DiagError || d.Source != "compiler" ||
+			d.Severity != insight.DiagError || d.Source != "compiler" ||
 			!strings.HasPrefix(d.Message, "cannot use 1") || len(d.Message) < 2500 ||
 			!strings.Contains(d.Message, diagnosticVisualLastField+" string") ||
 			!strings.HasSuffix(d.Message, diagnosticVisualMessageTail) ||
@@ -442,7 +443,7 @@ func (m *diagnosticDetailsVisualModel) setupDiagnosticDetails() error {
 			return fmt.Errorf("original gopls long-message/source/provider/context contract differs: %+v", facts)
 		}
 		m.initial, m.facts = source, facts
-		m.settings = types.CloneLSPSettings(v.ws.LSPMgr().Settings())
+		m.settings = setting.CloneLSP(v.ws.LSPMgr().Settings())
 		return featureVisualPaint(v, "func trigger()", "consume(1)")
 	}); err != nil {
 		return err

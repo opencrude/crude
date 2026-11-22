@@ -8,7 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/agent/sessiondb"
-	"crude/core/port"
+	"crude/core/shellport"
 	filepickerscreen "crude/tui/screens/filepicker"
 	"crude/tui/screens/launcher"
 	"crude/tui/ui"
@@ -201,7 +201,7 @@ func (m *App) openLauncher() {
 // load; stale generations are dropped by the handler.
 type launcherWorkspacesMsg struct {
 	Cwd    string
-	Infos  []workspace.WorkspaceInfo
+	Infos  []workspace.Info
 	Gen    uint64
 	Screen *launcher.Screen
 	Err    error
@@ -234,7 +234,7 @@ func (m *App) refreshLauncherAsync(cwd string) {
 	m.workspaceListCancel = cancel
 	m.runDetachedAsyncCmd(func() tea.Msg {
 		defer cancel()
-		var infos []workspace.WorkspaceInfo
+		var infos []workspace.Info
 		var err error
 		if remote {
 			infos, err = files.ListSavedWorkspaces(ctx)

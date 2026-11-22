@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"crude/metrics"
+	"crude/internal/metrics"
 	"crude/workspace"
 )
 

@@ -14,7 +14,7 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
 	"crude/workspace/document"
 )
 
@@ -35,11 +35,11 @@ func newInlayTestEditor(t testing.TB, text string) *Editor {
 	return e
 }
 
-func inlayTestSet(e *Editor, hints ...types.LSPInlayHint) types.LSPInlaySet {
+func inlayTestSet(e *Editor, hints ...insight.LSPInlayHint) insight.LSPInlaySet {
 	s := e.DocumentSnapshot()
-	return types.LSPInlaySet{
-		ID: "inlay-set", Answer: types.LSPInlayHints,
-		Boundary: types.InsightBoundary{Source: types.InsightSource{
+	return insight.LSPInlaySet{
+		ID: "inlay-set", Answer: insight.LSPInlayHints,
+		Boundary: insight.Boundary{Source: insight.Source{
 			WorkspaceGeneration: s.AnalysisGeneration, DocumentID: s.ID, Path: s.Path,
 			Lifetime: s.AnalysisLifetime, Revision: s.Revision, Kind: "canonical",
 		}},
@@ -47,7 +47,7 @@ func inlayTestSet(e *Editor, hints ...types.LSPInlayHint) types.LSPInlaySet {
 	}
 }
 
-func installTestInlays(t testing.TB, e *Editor, hints ...types.LSPInlayHint) {
+func installTestInlays(t testing.TB, e *Editor, hints ...insight.LSPInlayHint) {
 	t.Helper()
 	if err := e.SetInlayHints(inlayTestSet(e, hints...)); err != nil {
 		t.Fatal(err)
@@ -89,10 +89,10 @@ func TestEditorInlayLiteralUnicodeRenderCaretAndHit(t *testing.T) {
 	beforeCursor, beforeAnchor, beforeEnd := e.cursor, e.selAnchor, e.selEnd
 	revision, generation := e.Revision(), e.DiskGeneration()
 	installTestInlays(t, e,
-		types.LSPInlayHint{Index: 0, SourceByte: 2, Position: types.LSPInlayPosition{Character: 2}, Label: ":T", PaddingLeft: true, PaddingRight: true},
-		types.LSPInlayHint{Index: 1, SourceByte: 2, Position: types.LSPInlayPosition{Character: 2}, Label: "😀", PaddingRight: true},
-		types.LSPInlayHint{Index: 2, SourceByte: 24, Position: types.LSPInlayPosition{Character: 13}, Label: "!"},
-		types.LSPInlayHint{Index: 3, SourceByte: 26, Position: types.LSPInlayPosition{Line: 1}, Label: "EOF"},
+		insight.LSPInlayHint{Index: 0, SourceByte: 2, Position: insight.LSPInlayPosition{Character: 2}, Label: ":T", PaddingLeft: true, PaddingRight: true},
+		insight.LSPInlayHint{Index: 1, SourceByte: 2, Position: insight.LSPInlayPosition{Character: 2}, Label: "😀", PaddingRight: true},
+		insight.LSPInlayHint{Index: 2, SourceByte: 24, Position: insight.LSPInlayPosition{Character: 13}, Label: "!"},
+		insight.LSPInlayHint{Index: 3, SourceByte: 26, Position: insight.LSPInlayPosition{Line: 1}, Label: "EOF"},
 	)
 	if e.cursor != beforeCursor || e.selAnchor != beforeAnchor || e.selEnd != beforeEnd ||
 		e.Revision() != revision || e.DiskGeneration() != generation || e.Modified() ||
@@ -159,10 +159,10 @@ func TestEditorInlayLiteralUnicodeRenderCaretAndHit(t *testing.T) {
 
 func TestEditorInlaySelectionSearchDiagnosticsRemainSourceOnly(t *testing.T) {
 	e := newInlayTestEditor(t, "foo bar")
-	installTestInlays(t, e, types.LSPInlayHint{
+	installTestInlays(t, e, insight.LSPInlayHint{
 		Index: 0, SourceByte: 0, Label: "foo", PaddingRight: true,
 	})
-	e.SetDiagnostics(testDiagnosticFacts(e, []LSPDiagnostic{{Line: 0, Col: 0, EndCol: 3, Severity: DiagError}}))
+	e.SetDiagnostics(testDiagnosticFacts(e, []insight.LSPDiagnostic{{Line: 0, Col: 0, EndCol: 3, Severity: DiagError}}))
 	if count := e.SetQuery("foo"); count != 1 {
 		t.Fatalf("find must see one source occurrence, not the label: %d", count)
 	}
@@ -198,8 +198,8 @@ func TestEditorInlaySelectionSearchDiagnosticsRemainSourceOnly(t *testing.T) {
 
 func TestEditorInlayHoverNeverBorrowsTheFollowingSourceDiagnostic(t *testing.T) {
 	e := newInlayTestEditor(t, "foo")
-	installTestInlays(t, e, types.LSPInlayHint{Index: 0, Label: "type", PaddingRight: true})
-	e.SetDiagnostics(testDiagnosticFacts(e, []LSPDiagnostic{{Line: 0, Col: 0, EndCol: 3, Severity: DiagError, Message: "source-only issue"}}))
+	installTestInlays(t, e, insight.LSPInlayHint{Index: 0, Label: "type", PaddingRight: true})
+	e.SetDiagnostics(testDiagnosticFacts(e, []insight.LSPDiagnostic{{Line: 0, Col: 0, EndCol: 3, Severity: DiagError, Message: "source-only issue"}}))
 	renderTestInlays(e, 40, 8, false)
 	x := e.gutterWidth()
 	for col := 0; col < 5; col++ {
@@ -227,7 +227,7 @@ func TestEditorInlayNativeDragAndDoubleClickUseSourceWords(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := newInlayTestEditor(t, "alpha beta")
-			installTestInlays(t, e, types.LSPInlayHint{Index: 0, SourceByte: 6, Position: types.LSPInlayPosition{Character: 6}, Label: "hint "})
+			installTestInlays(t, e, insight.LSPInlayHint{Index: 0, SourceByte: 6, Position: insight.LSPInlayPosition{Character: 6}, Label: "hint "})
 			renderTestInlays(e, 40, 8, false)
 			x := e.gutterWidth()
 			for i := 0; i < tc.clicks; i++ {
@@ -253,7 +253,7 @@ func TestEditorInlayTypingAndCanonicalUndoRedoContainOnlySource(t *testing.T) {
 	}
 	var intent DocumentUndoIntent
 	e.SetOnDocumentUndo(func(i DocumentUndoIntent) { intent = i })
-	installTestInlays(t, e, types.LSPInlayHint{Index: 0, SourceByte: 2, Position: types.LSPInlayPosition{Character: 2}, Label: ":type"})
+	installTestInlays(t, e, insight.LSPInlayHint{Index: 0, SourceByte: 2, Position: insight.LSPInlayPosition{Character: 2}, Label: ":type"})
 	renderTestInlays(e, 50, 8, false)
 	x := e.gutterWidth()
 	e.HandleEvent(tea.MouseClickMsg{X: x + 6, Button: tea.MouseLeft})
@@ -312,24 +312,24 @@ func TestEditorInlayRejectsInvalidAnchorsAtomically(t *testing.T) {
 	const source = "a😀e\u0301👩‍💻Z\r\n"
 	for _, tc := range []struct {
 		name string
-		hint types.LSPInlayHint
+		hint insight.LSPInlayHint
 	}{
-		{"split surrogate", types.LSPInlayHint{SourceByte: 1, Position: types.LSPInlayPosition{Character: 2}, Label: "bad"}},
-		{"combining interior", types.LSPInlayHint{SourceByte: 6, Position: types.LSPInlayPosition{Character: 4}, Label: "bad"}},
-		{"ZWJ interior", types.LSPInlayHint{SourceByte: 12, Position: types.LSPInlayPosition{Character: 7}, Label: "bad"}},
-		{"byte UTF16 disagreement", types.LSPInlayHint{SourceByte: 5, Position: types.LSPInlayPosition{Character: 1}, Label: "bad"}},
-		{"negative byte", types.LSPInlayHint{SourceByte: -1, Label: "bad"}},
-		{"negative line", types.LSPInlayHint{Position: types.LSPInlayPosition{Line: -1}, Label: "bad"}},
-		{"missing line", types.LSPInlayHint{Position: types.LSPInlayPosition{Line: 2}, Label: "bad"}},
-		{"past EOL", types.LSPInlayHint{SourceByte: 20, Position: types.LSPInlayPosition{Character: 12}, Label: "bad"}},
-		{"negative original index", types.LSPInlayHint{Index: -1, Label: "bad"}},
-		{"invalid UTF8 label", types.LSPInlayHint{Label: "\xff"}},
-		{"zero width label", types.LSPInlayHint{Label: "\u200b"}},
-		{"oversize label", types.LSPInlayHint{Label: strings.Repeat("x", 4097)}},
+		{"split surrogate", insight.LSPInlayHint{SourceByte: 1, Position: insight.LSPInlayPosition{Character: 2}, Label: "bad"}},
+		{"combining interior", insight.LSPInlayHint{SourceByte: 6, Position: insight.LSPInlayPosition{Character: 4}, Label: "bad"}},
+		{"ZWJ interior", insight.LSPInlayHint{SourceByte: 12, Position: insight.LSPInlayPosition{Character: 7}, Label: "bad"}},
+		{"byte UTF16 disagreement", insight.LSPInlayHint{SourceByte: 5, Position: insight.LSPInlayPosition{Character: 1}, Label: "bad"}},
+		{"negative byte", insight.LSPInlayHint{SourceByte: -1, Label: "bad"}},
+		{"negative line", insight.LSPInlayHint{Position: insight.LSPInlayPosition{Line: -1}, Label: "bad"}},
+		{"missing line", insight.LSPInlayHint{Position: insight.LSPInlayPosition{Line: 2}, Label: "bad"}},
+		{"past EOL", insight.LSPInlayHint{SourceByte: 20, Position: insight.LSPInlayPosition{Character: 12}, Label: "bad"}},
+		{"negative original index", insight.LSPInlayHint{Index: -1, Label: "bad"}},
+		{"invalid UTF8 label", insight.LSPInlayHint{Label: "\xff"}},
+		{"zero width label", insight.LSPInlayHint{Label: "\u200b"}},
+		{"oversize label", insight.LSPInlayHint{Label: strings.Repeat("x", 4097)}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := newInlayTestEditor(t, source)
-			installTestInlays(t, e, types.LSPInlayHint{Label: "OK"})
+			installTestInlays(t, e, insight.LSPInlayHint{Label: "OK"})
 			e.SetSelection(0, 1, 0, 3)
 			cursor, anchor, end, revision := e.cursor, e.selAnchor, e.selEnd, e.Revision()
 			if err := e.SetInlayHints(inlayTestSet(e, tc.hint)); err == nil {
@@ -345,7 +345,7 @@ func TestEditorInlayRejectsInvalidAnchorsAtomically(t *testing.T) {
 		})
 	}
 	e := newInlayTestEditor(t, source)
-	if err := e.SetInlayHints(inlayTestSet(e, types.LSPInlayHint{Label: "one"}, types.LSPInlayHint{Label: "duplicate"})); err == nil {
+	if err := e.SetInlayHints(inlayTestSet(e, insight.LSPInlayHint{Label: "one"}, insight.LSPInlayHint{Label: "duplicate"})); err == nil {
 		t.Fatal("duplicate original indices accepted")
 	}
 }
@@ -354,7 +354,7 @@ func TestEditorInlayCanonicalBoundaryAndPendingEqualText(t *testing.T) {
 	for _, boundary := range []string{"workspace", "document", "path", "lifetime", "revision", "disk"} {
 		t.Run(boundary, func(t *testing.T) {
 			e := newInlayTestEditor(t, "abc")
-			set := inlayTestSet(e, types.LSPInlayHint{Label: "hint"})
+			set := inlayTestSet(e, insight.LSPInlayHint{Label: "hint"})
 			switch boundary {
 			case "workspace":
 				set.Boundary.Source.WorkspaceGeneration = "other"
@@ -377,7 +377,7 @@ func TestEditorInlayCanonicalBoundaryAndPendingEqualText(t *testing.T) {
 	for _, reason := range []string{"pending equal text", "equal-text revision", "equal-text lifetime"} {
 		t.Run(reason, func(t *testing.T) {
 			e := newInlayTestEditor(t, "abc")
-			set := inlayTestSet(e, types.LSPInlayHint{Label: "hint"})
+			set := inlayTestSet(e, insight.LSPInlayHint{Label: "hint"})
 			if err := e.SetInlayHints(set); err != nil {
 				t.Fatal(err)
 			}
@@ -411,7 +411,7 @@ func TestEditorInlayCanonicalBoundaryAndPendingEqualText(t *testing.T) {
 	preview := NewPreview(theme.DefaultDark(), "/virtual/inlay.txt", "abc", 1)
 	t.Cleanup(preview.Close)
 	canonical := newInlayTestEditor(t, "abc")
-	if err := preview.SetInlayHints(inlayTestSet(canonical, types.LSPInlayHint{Label: "hint"})); err == nil {
+	if err := preview.SetInlayHints(inlayTestSet(canonical, insight.LSPInlayHint{Label: "hint"})); err == nil {
 		t.Fatal("standalone preview accepted canonical hints")
 	}
 }
@@ -419,7 +419,7 @@ func TestEditorInlayCanonicalBoundaryAndPendingEqualText(t *testing.T) {
 func TestEditorInlayHorizontalExtentClippingAndVerticalGoal(t *testing.T) {
 	e := newInlayTestEditor(t, "abZ\n0123456789\nab\tQ\n0123456789")
 	renderTestInlays(e, 40, 8, false)
-	installTestInlays(t, e, types.LSPInlayHint{SourceByte: 2, Position: types.LSPInlayPosition{Character: 2}, Label: strings.Repeat("h", 60)})
+	installTestInlays(t, e, insight.LSPInlayHint{SourceByte: 2, Position: insight.LSPInlayPosition{Character: 2}, Label: strings.Repeat("h", 60)})
 	renderTestInlays(e, 40, 8, false)
 	if !e.hScrollbarVisible || e.hScrollModel.Content() != 63 {
 		t.Fatalf("display extent=%d visible=%v, want 63/true", e.hScrollModel.Content(), e.hScrollbarVisible)
@@ -449,7 +449,7 @@ func TestEditorInlayHorizontalExtentClippingAndVerticalGoal(t *testing.T) {
 
 	// A desired display column inside a hint lands at the source anchor; one
 	// inside a tab lands at its leading boundary, without losing the goal.
-	installTestInlays(t, e, types.LSPInlayHint{SourceByte: 2, Position: types.LSPInlayPosition{Character: 2}, Label: "hint"})
+	installTestInlays(t, e, insight.LSPInlayHint{SourceByte: 2, Position: insight.LSPInlayPosition{Character: 2}, Label: "hint"})
 	e.SetCursorPosition(1, 3)
 	e.HandleEvent(tea.KeyPressMsg{Code: tea.KeyUp})
 	if e.cursor != (Position{Col: 2}) || e.goalCol != 3 {
@@ -468,7 +468,7 @@ func TestEditorInlayHorizontalExtentClippingAndVerticalGoal(t *testing.T) {
 
 func TestEditorInlayControlsWideClipAndInvalidation(t *testing.T) {
 	e := newInlayTestEditor(t, "aZ")
-	installTestInlays(t, e, types.LSPInlayHint{SourceByte: 1, Position: types.LSPInlayPosition{Character: 1}, Label: "\x1b[31m\n\t\x7f\u2028"})
+	installTestInlays(t, e, insight.LSPInlayHint{SourceByte: 1, Position: insight.LSPInlayPosition{Character: 1}, Label: "\x1b[31m\n\t\x7f\u2028"})
 	b := renderTestInlays(e, 70, 8, false)
 	x := e.gutterWidth()
 	for col, ch := range `a\x1b[31m\n\t\x7f\u2028Z` {
@@ -478,7 +478,7 @@ func TestEditorInlayControlsWideClipAndInvalidation(t *testing.T) {
 		t.Fatal("control escaping changed source")
 	}
 	e.ClearInlayHints()
-	installTestInlays(t, e, types.LSPInlayHint{SourceByte: 1, Position: types.LSPInlayPosition{Character: 1}, Label: "👩‍💻" + strings.Repeat("h", 50)})
+	installTestInlays(t, e, insight.LSPInlayHint{SourceByte: 1, Position: insight.LSPInlayPosition{Character: 1}, Label: "👩‍💻" + strings.Repeat("h", 50)})
 	renderTestInlays(e, 30, 8, false)
 	e.scrollX, e.pendingReveal = 2, false
 	b = renderTestInlays(e, 30, 8, false)
@@ -487,7 +487,7 @@ func TestEditorInlayControlsWideClipAndInvalidation(t *testing.T) {
 	e.scrollX = 0
 	// Put a whole wide label one cell before the right clip edge.
 	e.ClearInlayHints()
-	installTestInlays(t, e, types.LSPInlayHint{SourceByte: 1, Position: types.LSPInlayPosition{Character: 1}, Label: strings.Repeat("h", 30-x-3) + "中"})
+	installTestInlays(t, e, insight.LSPInlayHint{SourceByte: 1, Position: insight.LSPInlayPosition{Character: 1}, Label: strings.Repeat("h", 30-x-3) + "中"})
 	b = renderTestInlays(e, 30, 8, false)
 	requireInlayGlyph(t, b, 28, 0, " ", 1)
 	e.InvalidateWidthProfile()
@@ -496,7 +496,7 @@ func TestEditorInlayControlsWideClipAndInvalidation(t *testing.T) {
 	if _, ok := e.InlayHintAt(x+1, 0); ok {
 		t.Fatal("width-profile invalidation retained old label geometry")
 	}
-	installTestInlays(t, e, types.LSPInlayHint{Label: "hint"})
+	installTestInlays(t, e, insight.LSPInlayHint{Label: "hint"})
 	e.Close()
 	if e.inlays != nil {
 		t.Fatal("close retained inlay projection")
@@ -505,7 +505,7 @@ func TestEditorInlayControlsWideClipAndInvalidation(t *testing.T) {
 
 func TestEditorInlayDenseWarmRenderAndLookupRetainProjection(t *testing.T) {
 	e := newInlayTestEditor(t, strings.Repeat("short source\n", 20000))
-	installTestInlays(t, e, types.LSPInlayHint{SourceByte: 6, Position: types.LSPInlayPosition{Character: 6}, Label: ":type "})
+	installTestInlays(t, e, insight.LSPInlayHint{SourceByte: 6, Position: insight.LSPInlayPosition{Character: 6}, Label: ":type "})
 	b := renderTestInlays(e, 80, 16, false)
 	requireInlayGlyph(t, b, e.gutterWidth()+6, 0, ":", 1)
 	projection, line := e.inlays, e.inlays.lines[0]
@@ -530,7 +530,7 @@ func BenchmarkEditorInlayWarmRender(b *testing.B) {
 	for _, lines := range []int{20, 20000} {
 		b.Run(fmt.Sprintf("lines-%d", lines), func(b *testing.B) {
 			e := newInlayTestEditor(b, strings.Repeat("short source\n", lines))
-			installTestInlays(b, e, types.LSPInlayHint{SourceByte: 6, Position: types.LSPInlayPosition{Character: 6}, Label: ":type "})
+			installTestInlays(b, e, insight.LSPInlayHint{SourceByte: 6, Position: insight.LSPInlayPosition{Character: 6}, Label: ":type "})
 			s := surface.NewSurface("warm-inlay-bench", 80, 16, cell.TransparentBlank())
 			e.Render(s, ui.PaintContext{})
 			b.ReportAllocs()

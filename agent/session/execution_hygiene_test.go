@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"crude/agent"
 	"crude/agent/collaboration"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
+	"crude/agent/turnloop"
 	"crude/agent/worktree"
 	"crude/types/control"
 	recoverytypes "crude/types/recovery"
@@ -99,7 +99,7 @@ func TestJanitorialSettlementRecoversChildOnlyLaunchCheckpoint(t *testing.T) {
 	}
 	const executionID = "11111111111111111111111111111111"
 	owner.Spec.ExecutionID, owner.Spec.ExecutionRunID = executionID, run.ID
-	owner.Spec.ParentID = agent.AgentID(parent.ID)
+	owner.Spec.ParentID = turnloop.AgentID(parent.ID)
 	cp.OwnerData, _ = json.Marshal(owner)
 	cp.Status.State = "" // Initial durable launch, before parent publication.
 	cp.Archive, cp.ActiveContext = nil, nil

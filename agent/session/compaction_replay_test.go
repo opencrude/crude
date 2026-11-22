@@ -10,9 +10,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"crude/agent"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
+	"crude/agent/turnloop"
 )
 
 func TestAutomaticCompactionCommitsLiveReplayTailAndContinues(t *testing.T) {
@@ -44,7 +44,7 @@ func TestAutomaticCompactionCommitsLiveReplayTailAndContinues(t *testing.T) {
 		)
 	}
 	live := provider.NewTextMessage("assistant", "recent evidence")
-	live.ProviderItems = []provider.ProviderItem{{
+	live.ProviderItems = []provider.Item{{
 		Standard: "openai-responses", Type: "reasoning",
 		Data: json.RawMessage(`{ "type": "reasoning", "encrypted_content": "opaque<&>signature", "summary": [] }`),
 	}}
@@ -72,24 +72,24 @@ func TestAutomaticCompactionCommitsLiveReplayTailAndContinues(t *testing.T) {
 	p := provider.FromPreset("openai-chat", "key", server.URL)
 	p.Model = "replay-tail-main"
 	provider.SetModelContext(p.Model, 200_000)
-	a := agent.NewAgent(p, p.Model, s.logger)
+	a := turnloop.NewAgent(p, p.Model, s.logger)
 	a.MaxOutputTokens, a.ContextCompactionPercent = 2048, 20
-	a.CompactionProvider, err = s.cfg.providerForCategory(s.cfg.GetCategoryConfig(CategoryErrand))
+	a.CompactionProvider, err = s.cfg.providerForCategory(s.cfg.CategoryConfig(CategoryErrand))
 	if err != nil {
 		t.Fatal(err)
 	}
 	a.CompactionMaxOutput = 2048
 	var revision uint64
-	a.PrepareCompaction = func(source agent.CompactionSource) error {
+	a.PrepareCompaction = func(source turnloop.CompactionSource) error {
 		var err error
 		revision, err = s.beginRootCompaction(s.sessionID, source)
 		return err
 	}
-	a.CommitCompaction = func(commit agent.CompactionCommit) error {
+	a.CommitCompaction = func(commit turnloop.CompactionCommit) error {
 		return s.commitRootCompaction(s.sessionID, revision, commit)
 	}
 	var compacted, failures int
-	result := a.Run(t.Context(), history, "system", func(event agent.AgentEvent) {
+	result := a.Run(t.Context(), history, "system", func(event turnloop.AgentEvent) {
 		switch event.Type {
 		case "context_compacted":
 			compacted++

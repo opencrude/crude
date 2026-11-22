@@ -9,9 +9,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/text/encoding"
+	"crude/text/textencoding"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
 	"crude/workspace/document"
 )
 
@@ -280,7 +280,7 @@ func (e *Editor) detachDocument() {
 		return
 	}
 	e.diagMu.Lock()
-	e.diagnosticFacts = types.InsightDiagnostics{}
+	e.diagnosticFacts = insight.Diagnostics{}
 	e.diagnosticProjectedID = ""
 	e.diagnostics, e.diagByLine = nil, nil
 	e.diagMu.Unlock()

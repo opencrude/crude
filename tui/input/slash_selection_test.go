@@ -5,8 +5,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/agent/prompthistory"
 	"crude/agent/sessiondb"
-	"crude/history"
 	"crude/tui/theme"
 	"crude/tui/ui"
 )
@@ -17,7 +17,7 @@ func TestSlashSelectionKeyboardPointerDraftParity(t *testing.T) {
 			model := NewModel(theme.DefaultDark())
 			model.SetInput("/goal")
 			model.UseReferenceIDs([]string{"old-unresolved-reference"})
-			model.SetHistory([]history.Entry{{Text: "old recalled prompt"}})
+			model.SetHistory([]prompthistory.Entry{{Text: "old recalled prompt"}})
 			model.histIdx, model.histDraft, model.histPrefix = 0, "old unsent draft", "old"
 			model.SetSelection(1, 3)
 			model.LayoutShell(72, model.ShellHeight(72))

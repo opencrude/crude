@@ -7,7 +7,7 @@ import (
 
 // TreeState is the retained TUI projection for the workspace file-tree data.
 type TreeState struct {
-	Model   *filetree.FileTreeModel
+	Model   *filetree.Model
 	Visible bool
 	Width   int
 	YOffset int
@@ -59,7 +59,8 @@ func (t *TreeState) ViewData() workspace.TreeView {
 	return view
 }
 
-func NewTreeState(model *filetree.FileTreeModel, defaultWidth int) *TreeState {
+// NewTreeState builds the visible tree sidebar state at a default width.
+func NewTreeState(model *filetree.Model, defaultWidth int) *TreeState {
 	return &TreeState{
 		Model:   model,
 		Visible: true,

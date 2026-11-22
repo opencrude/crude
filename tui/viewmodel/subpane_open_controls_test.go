@@ -4,8 +4,6 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-
-	"crude/types"
 )
 
 // findOnScreen returns the screen cell where text starts in the painted frame.
@@ -47,7 +45,7 @@ func TestSubAgentPaneOpensAsTabOrWindow(t *testing.T) {
 	app.AddOrchestrator("root")
 	root := app.ws.AgentMgr().Get("root").State.Messages
 	root.UpdateToolCall("spawn-1", "tool-1", "agent_start", "category: researcher")
-	app.handleAgentEvent(types.AgentEventMsg{Type: "sub_agent_started", AgentID: "child", Data: map[string]string{
+	app.handleAgentEvent(AgentEventMsg{Type: "sub_agent_started", AgentID: "child", Data: map[string]string{
 		"agent_id": "child", "agent_name": "Lily", "category": "researcher", "task": "Inspect recovery", "parent_id": "root", "parent_tool_id": "spawn-1",
 	}})
 	_ = app.View()
@@ -71,7 +69,7 @@ func TestSubAgentPaneOpensAsTabOrWindow(t *testing.T) {
 		t.Fatal("minimize kept the child tab")
 	}
 
-	app.handleAgentEvent(types.AgentEventMsg{Type: "sub_agent_completed", AgentID: "child", Data: map[string]string{
+	app.handleAgentEvent(AgentEventMsg{Type: "sub_agent_completed", AgentID: "child", Data: map[string]string{
 		"agent_id": "child", "agent_name": "Lily", "status": "completed",
 	}})
 	_ = app.View()

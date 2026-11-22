@@ -5,22 +5,23 @@ import (
 	"strings"
 	"testing"
 
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/editor"
 	"crude/tui/screens/problems"
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/statuscenter"
 	"crude/workspace"
 	"crude/workspace/document"
 )
 
 type diagnosticFixtureService struct {
 	shellport.LSPService
-	facts                map[string]types.InsightDiagnostics
+	facts                map[string]insight.Diagnostics
 	generation           string
 	version              uint64
 	snapshots            int
 	hideEditor, hideTree bool
-	insights             types.ProjectInsights
+	insights             insight.ProjectInsights
 }
 
 func (s *diagnosticFixtureService) DiagnosticCursor() (string, uint64) {
@@ -30,24 +31,24 @@ func (s *diagnosticFixtureService) DiagnosticSnapshot() shellport.LSPDiagnosticS
 	s.snapshots++
 	return shellport.LSPDiagnosticSnapshot{Generation: s.generation, Version: s.version, Diagnostics: s.AllDiagnostics()}
 }
-func (s *diagnosticFixtureService) AllDiagnostics() map[string]types.InsightDiagnostics {
-	out := make(map[string]types.InsightDiagnostics, len(s.facts))
+func (s *diagnosticFixtureService) AllDiagnostics() map[string]insight.Diagnostics {
+	out := make(map[string]insight.Diagnostics, len(s.facts))
 	for path, f := range s.facts {
-		out[path] = types.CloneInsightDiagnostics(f)
+		out[path] = insight.CloneDiagnostics(f)
 	}
 	return out
 }
-func (s *diagnosticFixtureService) FileDiagnostics(path string) (types.InsightDiagnostics, bool) {
+func (s *diagnosticFixtureService) FileDiagnostics(path string) (insight.Diagnostics, bool) {
 	f, ok := s.facts[path]
-	return types.CloneInsightDiagnostics(f), ok
+	return insight.CloneDiagnostics(f), ok
 }
-func (s *diagnosticFixtureService) ShowDiagnosticsInEditor() bool                  { return !s.hideEditor }
-func (s *diagnosticFixtureService) ShowDiagnosticsInTree() bool                    { return !s.hideTree }
-func (s *diagnosticFixtureService) ProjectInsights() types.ProjectInsights         { return s.insights }
-func (s *diagnosticFixtureService) ServerHealthSnapshots() []types.LSPServerHealth { return nil }
+func (s *diagnosticFixtureService) ShowDiagnosticsInEditor() bool                         { return !s.hideEditor }
+func (s *diagnosticFixtureService) ShowDiagnosticsInTree() bool                           { return !s.hideTree }
+func (s *diagnosticFixtureService) ProjectInsights() insight.ProjectInsights              { return s.insights }
+func (s *diagnosticFixtureService) ServerHealthSnapshots() []statuscenter.LSPServerHealth { return nil }
 func (s *diagnosticFixtureService) Stop() {
 	for path, f := range s.facts {
-		f.State, f.Detail = types.InsightStale, "Server stopped; observation retained"
+		f.State, f.Detail = insight.Stale, "Server stopped; observation retained"
 		s.facts[path] = f
 	}
 	s.version++
@@ -66,11 +67,11 @@ type diagnosticFixtureWorkspace struct {
 func (w *diagnosticFixtureWorkspace) LSPMgr() shellport.LSPService { return w.service }
 func (w *diagnosticFixtureWorkspace) RootPath() string             { return w.root }
 
-func qualifiedDiagnosticApp(t *testing.T) (*App, *editor.Editor, *diagnosticFixtureService, types.InsightDiagnostics) {
+func qualifiedDiagnosticApp(t *testing.T) (*App, *editor.Editor, *diagnosticFixtureService, insight.Diagnostics) {
 	t.Helper()
 	app := newTestApp(t)
 	service := &diagnosticFixtureService{
-		LSPService: app.ws.LSPMgr(), facts: make(map[string]types.InsightDiagnostics),
+		LSPService: app.ws.LSPMgr(), facts: make(map[string]insight.Diagnostics),
 		generation: "fixture-generation", version: 1,
 	}
 	app.ws = &diagnosticFixtureWorkspace{Workspace: app.ws, service: service, root: t.TempDir()}
@@ -85,7 +86,7 @@ func qualifiedDiagnosticApp(t *testing.T) (*App, *editor.Editor, *diagnosticFixt
 	}
 	app.EditorState.Tabs[path] = NewEditorTab(path, ed)
 	app.EditorState.Editor, app.EditorState.ActiveView = ed, path
-	facts := editorDiagnosticFacts(ed, []editor.LSPDiagnostic{{Line: 0, Col: 3, EndCol: 6, Severity: editor.DiagError, Message: "qualified error"}})
+	facts := editorDiagnosticFacts(ed, []insight.LSPDiagnostic{{Line: 0, Col: 3, EndCol: 6, Severity: editor.DiagError, Message: "qualified error"}})
 	service.facts[path] = facts
 	return app, ed, service, facts
 }
@@ -141,7 +142,7 @@ func TestDiagnosticDrainChecksGenerationAndVersionBeforeCopy(t *testing.T) {
 func TestLateDiagnosticEventCannotReplaceNewerAuthorityBatch(t *testing.T) {
 	app, ed, service, old := qualifiedDiagnosticApp(t)
 	app.drainLSPDiagnostics()
-	current := types.CloneInsightDiagnostics(old)
+	current := insight.CloneDiagnostics(old)
 	current.ID, current.Sequence = "newer-authoritative-publication", old.Sequence+1
 	current.Diagnostics[0].Message = "newer observed error"
 	service.facts[ed.FilePath()] = current
@@ -156,7 +157,7 @@ func TestOldWorkspaceEventCannotReprojectReplacementAuthority(t *testing.T) {
 	app.drainLSPDiagnostics()
 	oldGeneration := app.workspaceSwitchGen.Load()
 	app.workspaceSwitchGen.Add(1)
-	current := types.CloneInsightDiagnostics(old)
+	current := insight.CloneDiagnostics(old)
 	current.ID, current.Sequence = "replacement-workspace-publication", old.Sequence+1
 	service.facts[ed.FilePath()] = current
 	app.handleLSPDiagnosticsUpdate(workspace.LSPDiagnosticsMsg{
@@ -207,15 +208,15 @@ func TestDiagnosticSettingsFilterDoesNotRewriteFacts(t *testing.T) {
 func TestUnversionedEmptyProblemsAndFooterNeverImplyClean(t *testing.T) {
 	app, ed, service, facts := qualifiedDiagnosticApp(t)
 	facts.Binding, facts.ReportedVersion, facts.Diagnostics = "unversioned", nil, nil
-	facts.Boundary.Context = types.InsightContext{}
+	facts.Boundary.Context = insight.Context{}
 	service.facts[ed.FilePath()] = facts
-	service.insights = types.ProjectInsights{ServerReady: true, DiagnosticsUnverified: 1}
+	service.insights = insight.ProjectInsights{ServerReady: true, DiagnosticsUnverified: 1}
 	app.drainLSPDiagnostics()
 	if model := app.problemsModel(); model.Checked || len(model.Problems) != 0 ||
 		strings.Contains(strings.ToLower(model.Status.Text), "clean") || strings.Contains(model.Status.Text, "unverified") {
 		t.Fatalf("unverified empty observation over-certified: %+v", model)
 	}
-	if summary := workspaceHealthSummary(types.ProjectInsights{ServerReady: true}); !strings.Contains(summary, "No results yet") || strings.Contains(summary, "clean") {
+	if summary := workspaceHealthSummary(insight.ProjectInsights{ServerReady: true}); !strings.Contains(summary, "No results yet") || strings.Contains(summary, "clean") {
 		t.Fatal("zero observed units implied complete coverage")
 	}
 }
@@ -228,7 +229,7 @@ func TestDiagnosticStatusLinkRequiresFactIdentity(t *testing.T) {
 	if ed.CursorCol() != 0 {
 		t.Fatal("stale status link navigated using replacement fact")
 	}
-	service.facts[ed.FilePath()] = types.InsightDiagnostics{}
+	service.facts[ed.FilePath()] = insight.Diagnostics{}
 	app.jumpToDiagnostic(ed.FilePath(), facts.Diagnostics[0])
 	if ed.CursorCol() != 0 {
 		t.Fatal("raw range without observed batch authorized navigation")
@@ -240,11 +241,11 @@ func TestDiagnosticStatusLinkRequiresFactIdentity(t *testing.T) {
 func TestProblemsListsUnopenedFileFromProjectCheck(t *testing.T) {
 	app, _, service, _ := qualifiedDiagnosticApp(t)
 	path := filepath.Join(app.ws.RootPath(), "unopened.txt")
-	service.facts = map[string]types.InsightDiagnostics{path: {
-		ID: "project-fact", Binding: "unversioned", State: types.InsightProvisional, WireVersion: 1,
-		Boundary: types.InsightBoundary{Source: types.InsightSource{DocumentID: "unopened:" + path, Path: path,
-			Kind: types.InsightSourceDisk, Revision: 1, Lifetime: "producer", WorkspaceGeneration: "fixture-generation"}},
-		Diagnostics: []types.LSPDiagnostic{{Line: 2, Col: 4, EndLine: 2, EndCol: 9, Severity: types.DiagError, Message: "undefined: helper"}},
+	service.facts = map[string]insight.Diagnostics{path: {
+		ID: "project-fact", Binding: "unversioned", State: insight.Provisional, WireVersion: 1,
+		Boundary: insight.Boundary{Source: insight.Source{DocumentID: "unopened:" + path, Path: path,
+			Kind: insight.SourceDisk, Revision: 1, Lifetime: "producer", WorkspaceGeneration: "fixture-generation"}},
+		Diagnostics: []insight.LSPDiagnostic{{Line: 2, Col: 4, EndLine: 2, EndCol: 9, Severity: insight.DiagError, Message: "undefined: helper"}},
 	}}
 	service.version++
 	app.drainLSPDiagnostics()
@@ -269,7 +270,7 @@ func TestOpenFileInspectionQualifiesAnEmptyDiagnosticBatch(t *testing.T) {
 	if clean.DiagnosticEvidence != string(facts.State) || clean.Errors != 0 || clean.DiagnosticID == "" {
 		t.Fatalf("an observed empty batch is not a missing check: %+v", clean)
 	}
-	unknown := inspectOpenFile(1, ed, types.InsightDiagnostics{})
+	unknown := inspectOpenFile(1, ed, insight.Diagnostics{})
 	if unknown.DiagnosticEvidence != "not_observed" {
 		t.Fatal(unknown)
 	}

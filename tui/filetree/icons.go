@@ -1,9 +1,8 @@
-// Package filetree provides the file tree sidebar widget.
-//
 // This file implements the icon system with NerdFont file-type icons
 // and Unicode fallback auto-detection. The IconResolver detects
 // whether the terminal supports NerdFont glyphs and selects the
 // appropriate icon set.
+
 package filetree
 
 import (

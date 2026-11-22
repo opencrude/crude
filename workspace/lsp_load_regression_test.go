@@ -2,7 +2,8 @@ package workspace
 
 import (
 	"context"
-	model "crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -15,7 +16,7 @@ type loadProbeClient struct {
 	opened []string
 }
 
-func (c *loadProbeClient) OpenFile(_ context.Context, path, _, _ string, _ model.InsightBoundary) (int, error) {
+func (c *loadProbeClient) OpenFile(_ context.Context, path, _, _ string, _ insight.Boundary) (int, error) {
 	c.mu.Lock()
 	c.opened = append(c.opened, path)
 	c.mu.Unlock()
@@ -24,7 +25,7 @@ func (c *loadProbeClient) OpenFile(_ context.Context, path, _, _ string, _ model
 
 type loadProbeRuntime struct{ client *loadProbeClient }
 
-func (r loadProbeRuntime) NewClient(model.LSPServerSpec, string, func() error) LSPClient {
+func (r loadProbeRuntime) NewClient(setting.LSPServerSpec, string, func() error) LSPClient {
 	return r.client
 }
 

@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"crude/terminalvt"
+	"crude/internal/terminalvt"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"

@@ -12,10 +12,10 @@ import (
 
 	"crude/tui/cell"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/types/activity"
+	"crude/types/conversation"
 	"crude/types/recovery"
-	"crude/workspace"
+	"crude/types/statuscenter"
 )
 
 // Run sequentially through scripts/tuishot.sh. Data is isolated/seeded; normal
@@ -31,7 +31,7 @@ func TestPlanChatVisualAcceptance(t *testing.T) {
 	state := app.ws.AgentMgr().Get("visual-plan").State
 	state.Running = true
 	for i := range 12 {
-		state.Messages.AppendMessage(workspace.Message{Role: types.RoleAssistant, Content: fmt.Sprintf("### Accepted result %d\n\nChecked state ownership and retained completed work. The draft stays untouched while browsing the plan and older messages.", i+1), Time: time.Now()})
+		state.Messages.AppendMessage(conversation.Message{Role: conversation.RoleAssistant, Content: fmt.Sprintf("### Accepted result %d\n\nChecked state ownership and retained completed work. The draft stays untouched while browsing the plan and older messages.", i+1), Time: time.Now()})
 	}
 	app.syncAgentMessages("visual-plan", false)
 	app.Input.SetInput("Draft stays here")
@@ -41,7 +41,7 @@ func TestPlanChatVisualAcceptance(t *testing.T) {
 		p.Steps[i].Text = names[i]
 	}
 	p.Current = []activity.Step{p.Steps[1]}
-	wsOf(app).Status.SetAgent(types.AgentStatusSnapshot{Ref: types.ResourceRef{ID: "visual-plan"}, Phase: types.AgentTool, Detail: "Working"})
+	wsOf(app).Status.SetAgent(statuscenter.AgentStatusSnapshot{Ref: statuscenter.ResourceRef{ID: "visual-plan"}, Phase: statuscenter.AgentTool, Detail: "Working"})
 	model := &planChatVisualModel{App: app, t: t, plan: p}
 	program := tea.NewProgram(model, tea.WithWidthMethod(ansi.GraphemeWidth))
 	app.SetProgram(program)
@@ -82,12 +82,12 @@ func (m *planChatVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.clearPlanHover()
 			s := recovery.Status{ID: "visual-recovery", AgentID: "visual-plan", Generation: 1, State: recovery.Recovering, Attempt: 1,
 				Summary: "Connection to the provider was interrupted", Detail: "stream error: stream disconnected before completion: stream closed before response.completed", Action: "Recovery continues automatically. Accepted output stays intact.", StartedAt: time.Now(), UpdatedAt: time.Now(), RetryAt: time.Now().Add(time.Minute)}
-			m.handleAgentEvent(types.AgentEventMsg{AgentID: "visual-plan", Type: "recovery", Data: s})
+			m.handleAgentEvent(AgentEventMsg{AgentID: "visual-plan", Type: "recovery", Data: s})
 			return m, nil
 		case tea.KeyF3:
 			m.cancelAgentTurn("visual-plan")
-			m.handleAgentEvent(types.AgentEventMsg{AgentID: "visual-plan", Type: "recovery", Data: recovery.Status{ID: "visual-recovery", AgentID: "visual-plan", Generation: 1, State: recovery.Cancelled, Summary: "Run cancelled", Detail: "retained original diagnostic", UpdatedAt: time.Now()}})
-			m.handleAgentEvent(types.AgentEventMsg{AgentID: "visual-plan", Type: "done", Data: map[string]any{"reason": "cancelled"}})
+			m.handleAgentEvent(AgentEventMsg{AgentID: "visual-plan", Type: "recovery", Data: recovery.Status{ID: "visual-recovery", AgentID: "visual-plan", Generation: 1, State: recovery.Cancelled, Summary: "Run cancelled", Detail: "retained original diagnostic", UpdatedAt: time.Now()}})
+			m.handleAgentEvent(AgentEventMsg{AgentID: "visual-plan", Type: "done", Data: map[string]any{"reason": "cancelled"}})
 			return m, nil
 		case tea.KeyF7:
 			m.light = !m.light

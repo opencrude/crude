@@ -12,8 +12,10 @@ import (
 	"time"
 
 	"crude/insight/facts"
-	"crude/sysload"
-	model "crude/types"
+	"crude/internal/sysload"
+	"crude/types/insight"
+	"crude/types/setting"
+	"crude/types/statuscenter"
 )
 
 func countCalls(calls []string, prefix string) int {
@@ -37,7 +39,7 @@ func TestDiskViewLeavesOpenFilesAloneAndKeepsItsResult(t *testing.T) {
 	awaitLSP(t, func() bool { return len(r.snapshot()) == 1 })
 	client := r.snapshot()[0]
 	waitDiagnosticSend(t, m, client, source)
-	client.emit(client.publication(open, []LSPDiagnostic{{Message: "open problem", Severity: model.DiagError}}))
+	client.emit(client.publication(open, []insight.LSPDiagnostic{{Message: "open problem", Severity: insight.DiagError}}))
 	if batch, ok := m.FileDiagnostics(open); !ok || !batch.HasExactSource() {
 		t.Fatalf("open file result = %+v, present=%v", batch, ok)
 	}
@@ -56,7 +58,7 @@ func TestDiskViewLeavesOpenFilesAloneAndKeepsItsResult(t *testing.T) {
 	if n := countCalls(after, "change:open.go"); n != 0 {
 		t.Fatalf("checking a closed file sent the open file again %d times: %v", n, after)
 	}
-	if batch, _ := m.FileDiagnostics(open); !batch.HasExactSource() || batch.State == model.InsightStale {
+	if batch, _ := m.FileDiagnostics(open); !batch.HasExactSource() || batch.State == insight.Stale {
 		t.Fatalf("checking a closed file made the open file's result out of date: %+v", batch)
 	}
 	batch, ok := m.FileDiagnostics(closed)
@@ -94,7 +96,7 @@ func TestRestartedServerRetiresOldClosedFileResults(t *testing.T) {
 		h := m.ServerHealthSnapshots()
 		return len(r.snapshot()) == 2 && len(h) == 1 && h[0].Connected
 	})
-	if batch, ok := m.FileDiagnostics(closed); !ok || batch.State != model.InsightStale {
+	if batch, ok := m.FileDiagnostics(closed); !ok || batch.State != insight.Stale {
 		t.Fatalf("before the new server settled the old result must stay out of date: %+v, present=%v", batch, ok)
 	}
 	deadline := time.Now().Add(lspProjectSettleQuiet + 3*time.Second)
@@ -168,16 +170,16 @@ func TestProjectCheckCoversClosedFilesOneAtATime(t *testing.T) {
 
 	// A changed file is checked again; with the check off it is not.
 	settings := m.Settings()
-	settings.ProjectCheck = model.ProjectCheckOff
+	settings.ProjectCheck = setting.ProjectCheckOff
 	m.SetSettings(settings)
 	m.mu.Lock()
 	m.invalidateCheckedFactsLocked(files[0])
 	m.mu.Unlock()
 	time.Sleep(1500 * time.Millisecond)
-	if batch, _ := m.FileDiagnostics(files[0]); batch.State != model.InsightStale {
+	if batch, _ := m.FileDiagnostics(files[0]); batch.State != insight.Stale {
 		t.Fatalf("the check ran while it was off: %+v", batch)
 	}
-	settings.ProjectCheck = model.ProjectCheckIdle
+	settings.ProjectCheck = setting.ProjectCheckIdle
 	m.SetSettings(settings)
 	awaitProjectFact(t, m, files[0])
 }
@@ -209,7 +211,7 @@ func TestProjectCheckStartsFromAssemblyWithoutOpenFiles(t *testing.T) {
 	m.mu.Unlock()
 	m.publishAssembly(t.Context(), &assemblyDiscovery{root: root, languages: map[string]*discoveredLanguage{
 		"python": {id: "python", name: "Python", files: 1, sample: path, paths: []string{path}},
-	}}, model.AssemblyPlan{State: model.AssemblyReady, Generation: generation})
+	}}, insight.AssemblyPlan{State: insight.AssemblyReady, Generation: generation})
 	awaitProjectFact(t, m, path)
 	if summary := m.ProjectInsights(); summary.Errors != 1 || summary.FilesAffected != 1 {
 		t.Fatalf("Problems does not count the closed file: %+v", summary)
@@ -262,7 +264,7 @@ func TestProjectCheckYieldsToBatteryAndContention(t *testing.T) {
 	m.mu.Unlock()
 	m.publishAssembly(t.Context(), &assemblyDiscovery{root: root, languages: map[string]*discoveredLanguage{
 		"python": {id: "python", name: "Python", files: 1, sample: path, paths: []string{path}},
-	}}, model.AssemblyPlan{State: model.AssemblyReady, Generation: generation})
+	}}, insight.AssemblyPlan{State: insight.AssemblyReady, Generation: generation})
 
 	waits := func(reason string) {
 		t.Helper()
@@ -287,7 +289,7 @@ func TestProjectCheckYieldsToBatteryAndContention(t *testing.T) {
 	load.OnBattery, load.IOPressure = true, 0.5
 	mu.Unlock()
 	settings := m.Settings()
-	settings.ProjectCheck = model.ProjectCheckAlways
+	settings.ProjectCheck = setting.ProjectCheckAlways
 	m.SetSettings(settings)
 	awaitProjectFact(t, m, path)
 }
@@ -308,7 +310,7 @@ func TestProjectCheckWaitsForAFirstMeasurement(t *testing.T) {
 	m.mu.Unlock()
 	m.publishAssembly(t.Context(), &assemblyDiscovery{root: root, languages: map[string]*discoveredLanguage{
 		"python": {id: "python", name: "Python", files: 1, sample: path, paths: []string{path}},
-	}}, model.AssemblyPlan{State: model.AssemblyReady, Generation: generation})
+	}}, insight.AssemblyPlan{State: insight.AssemblyReady, Generation: generation})
 	awaitLSP(t, func() bool { return m.ProjectInsights().ProjectCheckTotal == 1 })
 	time.Sleep(1200 * time.Millisecond)
 	if _, ok := m.FileDiagnostics(path); ok {
@@ -371,7 +373,7 @@ func TestProjectCheckEndsWhenServersTakeTurns(t *testing.T) {
 		t.Fatalf("the project check kept starting servers after it had checked every file: %d, then %d", started, now)
 	}
 	for _, path := range all {
-		if batch, ok := m.FileDiagnostics(path); !ok || batch.State == model.InsightStale || !batch.FromProjectCheck() {
+		if batch, ok := m.FileDiagnostics(path); !ok || batch.State == insight.Stale || !batch.FromProjectCheck() {
 			t.Fatalf("%s lost its result when its server stopped: %+v, present=%v", filepath.Base(path), batch, ok)
 		}
 	}
@@ -396,7 +398,7 @@ func TestRestartServerRechecksClosedFiles(t *testing.T) {
 	}
 	awaitLSP(t, func() bool {
 		after, ok := m.FileDiagnostics(path)
-		return ok && after.ID != before.ID && after.State != model.InsightStale && len(r.snapshot()) == 2
+		return ok && after.ID != before.ID && after.State != insight.Stale && len(r.snapshot()) == 2
 	})
 }
 
@@ -420,11 +422,11 @@ func awaitProjectCheckEnd(t *testing.T, m *LSPManager) {
 type silentCheckRuntime struct{ *lifecycleRuntime }
 type silentCheckClient struct{ *lifecycleClient }
 
-func (r silentCheckRuntime) NewClient(spec model.LSPServerSpec, root string, admit func() error) LSPClient {
+func (r silentCheckRuntime) NewClient(spec setting.LSPServerSpec, root string, admit func() error) LSPClient {
 	return &silentCheckClient{r.lifecycleRuntime.NewClient(spec, root, admit).(*lifecycleClient)}
 }
-func (c *silentCheckClient) AwaitDiagnostics(context.Context, string) (model.InsightDiagnosticPublication, bool) {
-	return model.InsightDiagnosticPublication{}, false
+func (c *silentCheckClient) AwaitDiagnostics(context.Context, string) (insight.DiagnosticPublication, bool) {
+	return insight.DiagnosticPublication{}, false
 }
 
 func TestProjectCheckDoesNotRestartAServerThatGivesNoResult(t *testing.T) {
@@ -480,9 +482,9 @@ func TestFullFactStoreDoesNotFailTheServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b := model.InsightBoundary{
-		Source:  model.InsightSource{WorkspaceGeneration: "w", DocumentID: "occupied", Path: filepath.Join(root, "old.py"), Lifetime: "s", Revision: 1, Kind: model.InsightSourceDisk},
-		Context: model.InsightContext{ID: "k", Root: root, Generation: 1}, Producer: model.InsightProducer{InstanceID: "s", Provider: "checker", ToolIdentity: "tool"},
+	b := insight.Boundary{
+		Source:  insight.Source{WorkspaceGeneration: "w", DocumentID: "occupied", Path: filepath.Join(root, "old.py"), Lifetime: "s", Revision: 1, Kind: insight.SourceDisk},
+		Context: insight.Context{ID: "k", Root: root, Generation: 1}, Producer: insight.Producer{InstanceID: "s", Provider: "checker", ToolIdentity: "tool"},
 	}
 	if err := store.Observe(b); err != nil {
 		t.Fatal(err)
@@ -539,7 +541,7 @@ func TestProjectWatchRecoveryRechecksCheckedFiles(t *testing.T) {
 	pending, attempts := m.checkPending, len(m.checkResults)
 	m.mu.Unlock()
 	batch, _ := m.FileDiagnostics(path)
-	if !pending || attempts != 0 || batch.State != model.InsightStale {
+	if !pending || attempts != 0 || batch.State != insight.Stale {
 		t.Fatalf("watch recovery retained trusted checks: pending=%v attempts=%d fact=%+v", pending, attempts, batch)
 	}
 }
@@ -570,7 +572,7 @@ func TestProjectCheckReservesFactCapacityForOpenDocuments(t *testing.T) {
 	open := filepath.Join(root, "open.py")
 	source := editorSource(t, m, open, "x\n")
 	waitDiagnosticSend(t, m, r.snapshot()[0], source)
-	r.snapshot()[0].emit(r.snapshot()[0].publication(open, []LSPDiagnostic{{Severity: model.DiagError, Message: "editor problem"}}))
+	r.snapshot()[0].emit(r.snapshot()[0].publication(open, []insight.LSPDiagnostic{{Severity: insight.DiagError, Message: "editor problem"}}))
 	if batch, ok := m.FileDiagnostics(open); !ok || !batch.HasExactSource() || len(batch.Diagnostics) != 1 {
 		t.Fatalf("editor could not use reserve: %+v", batch)
 	}
@@ -632,7 +634,7 @@ type busyCheckClient struct {
 	busy *atomic.Bool
 }
 
-func (r busyCheckRuntime) NewClient(spec model.LSPServerSpec, root string, admit func() error) LSPClient {
+func (r busyCheckRuntime) NewClient(spec setting.LSPServerSpec, root string, admit func() error) LSPClient {
 	return &busyCheckClient{r.lifecycleRuntime.NewClient(spec, root, admit).(*lifecycleClient), r.busy}
 }
 func (c *busyCheckClient) Busy() bool { return c.busy.Load() }
@@ -688,7 +690,7 @@ func TestDeletedFilesLeaveProblems(t *testing.T) {
 	if _, ok := m.FileDiagnostics(gone); ok {
 		t.Fatal("a file below a deleted directory kept its problems")
 	}
-	if batch, ok := m.FileDiagnostics(kept); !ok || batch.State == model.InsightStale {
+	if batch, ok := m.FileDiagnostics(kept); !ok || batch.State == insight.Stale {
 		t.Fatalf("a file elsewhere lost its current result: %+v %v", batch, ok)
 	}
 }
@@ -706,8 +708,8 @@ func TestLSPIssueOutlivesAnIdleServerStop(t *testing.T) {
 	awaitProjectCheckEnd(t, m)
 	center := NewStatusCenter(nil, nil)
 	SyncLSPIssues(center, m)
-	open := func() []model.IssueSnapshot {
-		var out []model.IssueSnapshot
+	open := func() []statuscenter.IssueSnapshot {
+		var out []statuscenter.IssueSnapshot
 		for _, issue := range center.Issues() {
 			if issue.ResolvedAt.IsZero() && strings.HasPrefix(issue.ID, lspResultsIssuePrefix) {
 				out = append(out, issue)
@@ -730,7 +732,7 @@ func TestLSPIssueOutlivesAnIdleServerStop(t *testing.T) {
 	if after := open(); len(after) != 1 || after[0].ID != before[0].ID || !after[0].UpdatedAt.Equal(before[0].UpdatedAt) {
 		t.Fatalf("a stopped server dropped its issue: %+v", center.Issues())
 	}
-	if batch, ok := m.FileDiagnostics(path); !ok || batch.State == model.InsightStale {
+	if batch, ok := m.FileDiagnostics(path); !ok || batch.State == insight.Stale {
 		t.Fatalf("the stop changed the checked result: %+v %v", batch, ok)
 	}
 }
@@ -752,18 +754,18 @@ type interruptingCheckClient struct {
 	interrupted map[string]bool
 }
 
-func (r interruptingCheckRuntime) NewClient(spec model.LSPServerSpec, root string, admit func() error) LSPClient {
+func (r interruptingCheckRuntime) NewClient(spec setting.LSPServerSpec, root string, admit func() error) LSPClient {
 	return &interruptingCheckClient{lifecycleClient: r.lifecycleRuntime.NewClient(spec, root, admit).(*lifecycleClient),
 		manager: r.manager, root: r.root, interrupted: map[string]bool{}}
 }
-func (c *interruptingCheckClient) AwaitDiagnostics(ctx context.Context, path string) (model.InsightDiagnosticPublication, bool) {
+func (c *interruptingCheckClient) AwaitDiagnostics(ctx context.Context, path string) (insight.DiagnosticPublication, bool) {
 	c.mu.Lock()
 	first := !c.interrupted[path]
 	c.interrupted[path] = true
 	c.mu.Unlock()
 	if first {
 		c.manager.NotifyWatchedFilesChanged(ctx, filepath.Join(c.root, "target", "build.log"), 2)
-		return model.InsightDiagnosticPublication{}, false
+		return insight.DiagnosticPublication{}, false
 	}
 	return c.lifecycleClient.AwaitDiagnostics(ctx, path)
 }

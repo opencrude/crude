@@ -9,7 +9,7 @@ import (
 	"crude/tui/chatprojection"
 	"crude/tui/screens/shellchat"
 	"crude/tui/theme"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 // A chat screen that did not install every export of its renderer (a hidden
@@ -24,9 +24,9 @@ func TestScreenRebuildsWhenItMissedAnExport(t *testing.T) {
 	renderer := chatprojection.NewRenderer(th)
 	renderer.SetSize(width, height)
 	renderer.SetChatAreaBounds(0, height)
-	user := types.ChatMessage{InternalID: "user", Role: types.RoleUser, Content: "first", Time: time.Unix(1000, 0)}
-	reply := types.ChatMessage{InternalID: "reply", Role: types.RoleAssistant, Content: "Short start.", ModelID: "m", Time: time.Unix(1001, 0)}
-	renderer.SyncMessages([]types.ChatMessage{user, reply}, 1, 0)
+	user := conversation.ChatMessage{InternalID: "user", Role: conversation.RoleUser, Content: "first", Time: time.Unix(1000, 0)}
+	reply := conversation.ChatMessage{InternalID: "reply", Role: conversation.RoleAssistant, Content: "Short start.", ModelID: "m", Time: time.Unix(1001, 0)}
+	renderer.SyncMessages([]conversation.ChatMessage{user, reply}, 1, 0)
 
 	screen := shellchat.New(th)
 	install := func(snapshot chatprojection.MessageRowsSnapshot) {
@@ -46,14 +46,14 @@ func TestScreenRebuildsWhenItMissedAnExport(t *testing.T) {
 		fmt.Fprintf(&grown, "- **Point %d:** later text the user never saw.\n", i)
 	}
 	reply.Content = grown.String()
-	renderer.SyncChanges([]types.ChatMessage{reply}, nil, []string{"user", "reply"}, 2, 0)
+	renderer.SyncChanges([]conversation.ChatMessage{reply}, nil, []string{"user", "reply"}, 2, 0)
 	missed := renderer.ExportMessageRowsSnapshot(width)
 	if !missed.StructureChanged {
 		t.Fatal("the grown reply must change the transcript structure")
 	}
 	// A later same-height change produces a delta against the missed export.
 	user.Content = "fixed"
-	renderer.SyncChanges([]types.ChatMessage{user}, nil, []string{"user", "reply"}, 3, 0)
+	renderer.SyncChanges([]conversation.ChatMessage{user}, nil, []string{"user", "reply"}, 3, 0)
 	latest := renderer.ExportMessageRowsSnapshot(width)
 	if latest.StructureChanged {
 		t.Fatal("test setup: the latest export should be a same-height delta")

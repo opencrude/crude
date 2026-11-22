@@ -1,16 +1,18 @@
 package ui
 
-import "crude/types"
+import (
+	"crude/types/insight"
+)
 
 // DiagnosticGlyph and DiagnosticColor give editor markers and readers the
 // same severity language as the Problems panel.
 func DiagnosticGlyph(severity int) string {
 	switch severity {
-	case types.DiagError:
+	case insight.DiagError:
 		return "✕"
-	case types.DiagWarning:
+	case insight.DiagWarning:
 		return "⚠"
-	case types.DiagInfo:
+	case insight.DiagInfo:
 		return "i"
 	default:
 		return "·"
@@ -19,11 +21,11 @@ func DiagnosticGlyph(severity int) string {
 
 func DiagnosticColor(severity int) SemanticColor {
 	switch severity {
-	case types.DiagError:
+	case insight.DiagError:
 		return ColorError
-	case types.DiagWarning:
+	case insight.DiagWarning:
 		return ColorWarning
-	case types.DiagInfo:
+	case insight.DiagInfo:
 		return ColorAccent2
 	default:
 		return ColorMuted

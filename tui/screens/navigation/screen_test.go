@@ -10,29 +10,29 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
 )
 
-func navigationFixture() types.LSPNavigation {
-	r := types.LSPNavigationRange{
-		Start: types.LSPNavigationPosition{Line: 3, Character: 2},
-		End:   types.LSPNavigationPosition{Line: 6, Character: 18},
+func navigationFixture() insight.LSPNavigation {
+	r := insight.LSPNavigationRange{
+		Start: insight.LSPNavigationPosition{Line: 3, Character: 2},
+		End:   insight.LSPNavigationPosition{Line: 6, Character: 18},
 	}
-	return types.LSPNavigation{
-		Kind: types.LSPNavigationReferences, Answer: types.LSPNavigationTargets,
+	return insight.LSPNavigation{
+		Kind: insight.LSPNavigationReferences, Answer: insight.LSPNavigationTargets,
 		WireVersion: 17, Line: 2, Col: 4, IncludeDeclaration: true,
-		Boundary: types.InsightBoundary{
-			Source: types.InsightSource{Kind: "canonical", DocumentID: "source-document",
+		Boundary: insight.Boundary{
+			Source: insight.Source{Kind: "canonical", DocumentID: "source-document",
 				WorkspaceGeneration: "workspace-generation", Path: "/workspace/source.go",
 				Lifetime: "source-lifetime", Revision: 29},
-			Context: types.InsightContext{ID: "source-context", Root: "/workspace", Generation: 31,
+			Context: insight.Context{ID: "source-context", Root: "/workspace", Generation: 31,
 				UnknownInputs: []string{"unknown-build-input"}},
-			Producer: types.InsightProducer{InstanceID: "provider-instance", Provider: "test-provider",
+			Producer: insight.Producer{InstanceID: "provider-instance", Provider: "test-provider",
 				ToolIdentity: "tool-identity"},
 		},
-		Targets: []types.LSPNavigationTarget{
+		Targets: []insight.LSPNavigationTarget{
 			{URI: "file:///workspace/pkg/first.go", Path: "/workspace/pkg/first.go", Range: r,
-				Selection: types.LSPNavigationRange{Start: r.Start, End: r.Start}, Origin: &r, Link: true},
+				Selection: insight.LSPNavigationRange{Start: r.Start, End: r.Start}, Origin: &r, Link: true},
 			{URI: "custom://unavailable", UnavailableReason: "Unsupported URI scheme", Range: r, Selection: r},
 			{URI: "file:///external/third.go", Path: "/external/third.go", External: true, Range: r, Selection: r},
 		},
@@ -166,11 +166,11 @@ func TestEscClosesWithoutFooterAndTabKeepsTheList(t *testing.T) {
 
 func TestEmptyAnswersSayWhatWasNotFound(t *testing.T) {
 	cases := []struct{ kind, answer, want string }{
-		{types.LSPNavigationReferences, types.LSPNavigationEmpty, "No references found."},
-		{types.LSPNavigationDefinition, types.LSPNavigationNull, "No definition found."},
-		{types.LSPNavigationImplementation, types.LSPNavigationEmpty, "No implementation found."},
-		{types.LSPNavigationTypeDefinition, types.LSPNavigationNull, "No type definition found."},
-		{types.LSPNavigationReferences, types.LSPNavigationUnsupported, "This language server cannot do that for this file."},
+		{insight.LSPNavigationReferences, insight.LSPNavigationEmpty, "No references found."},
+		{insight.LSPNavigationDefinition, insight.LSPNavigationNull, "No definition found."},
+		{insight.LSPNavigationImplementation, insight.LSPNavigationEmpty, "No implementation found."},
+		{insight.LSPNavigationTypeDefinition, insight.LSPNavigationNull, "No type definition found."},
+		{insight.LSPNavigationReferences, insight.LSPNavigationUnsupported, "This language server cannot do that for this file."},
 	}
 	for _, c := range cases {
 		t.Run(c.kind+"/"+c.answer, func(t *testing.T) {
@@ -196,7 +196,7 @@ func TestEmptyAnswersSayWhatWasNotFound(t *testing.T) {
 func TestLoadingAndFailureShowOnlyPlainText(t *testing.T) {
 	s := New(nil)
 	s.SetResult(navigationFixture())
-	s.SetLoading(types.LSPNavigationReferences)
+	s.SetLoading(insight.LSPNavigationReferences)
 	host := navigationHost(s, 80, 24)
 	paint := navigationPaint(host, 80, 24)
 	if s.InList() || !strings.Contains(paint, "Searching") || strings.Contains(paint, "Close") {
@@ -220,24 +220,24 @@ func TestLoadingAndFailureShowOnlyPlainText(t *testing.T) {
 }
 
 func TestInvalidAnswersAreRefusedWithoutActiveRows(t *testing.T) {
-	for name, invalidate := range map[string]func(*types.LSPNavigation){
-		"target count": func(r *types.LSPNavigation) { r.Targets = make([]types.LSPNavigationTarget, 1025) },
-		"uri":          func(r *types.LSPNavigation) { r.Targets[0].URI = strings.Repeat("u", 4097) },
-		"path":         func(r *types.LSPNavigation) { r.Targets[0].Path = strings.Repeat("p", 4097) },
-		"aggregate": func(r *types.LSPNavigation) {
+	for name, invalidate := range map[string]func(*insight.LSPNavigation){
+		"target count": func(r *insight.LSPNavigation) { r.Targets = make([]insight.LSPNavigationTarget, 1025) },
+		"uri":          func(r *insight.LSPNavigation) { r.Targets[0].URI = strings.Repeat("u", 4097) },
+		"path":         func(r *insight.LSPNavigation) { r.Targets[0].Path = strings.Repeat("p", 4097) },
+		"aggregate": func(r *insight.LSPNavigation) {
 			r.Boundary.Context.UnknownInputs = make([]string, 40)
 			for i := range r.Boundary.Context.UnknownInputs {
 				r.Boundary.Context.UnknownInputs[i] = strings.Repeat("x", 4096)
 			}
 		},
-		"unknown inputs": func(r *types.LSPNavigation) { r.Boundary.Context.UnknownInputs = make([]string, 1025) },
-		"utf8":           func(r *types.LSPNavigation) { r.Targets[0].URI = "\xff" },
-		"range":          func(r *types.LSPNavigation) { r.Targets[0].Range.End.Line = -1 },
-		"selection":      func(r *types.LSPNavigation) { r.Targets[0].Selection.End.Character = -1 },
-		"origin":         func(r *types.LSPNavigation) { r.Targets[0].Origin.End.Line = 0 },
-		"answer":         func(r *types.LSPNavigation) { r.Answer = "future" },
-		"kind":           func(r *types.LSPNavigation) { r.Kind = "typeDefinition" },
-		"null targets":   func(r *types.LSPNavigation) { r.Answer = types.LSPNavigationNull },
+		"unknown inputs": func(r *insight.LSPNavigation) { r.Boundary.Context.UnknownInputs = make([]string, 1025) },
+		"utf8":           func(r *insight.LSPNavigation) { r.Targets[0].URI = "\xff" },
+		"range":          func(r *insight.LSPNavigation) { r.Targets[0].Range.End.Line = -1 },
+		"selection":      func(r *insight.LSPNavigation) { r.Targets[0].Selection.End.Character = -1 },
+		"origin":         func(r *insight.LSPNavigation) { r.Targets[0].Origin.End.Line = 0 },
+		"answer":         func(r *insight.LSPNavigation) { r.Answer = "future" },
+		"kind":           func(r *insight.LSPNavigation) { r.Kind = "typeDefinition" },
+		"null targets":   func(r *insight.LSPNavigation) { r.Answer = insight.LSPNavigationNull },
 	} {
 		t.Run(name, func(t *testing.T) {
 			s := New(nil)
@@ -260,7 +260,7 @@ func TestLongListScrollsAndSurvivesResizeAndTinyBounds(t *testing.T) {
 	s := New(nil)
 	result := navigationFixture()
 	base := result.Targets[0]
-	result.Targets = make([]types.LSPNavigationTarget, 1024)
+	result.Targets = make([]insight.LSPNavigationTarget, 1024)
 	for i := range result.Targets {
 		result.Targets[i] = base
 		result.Targets[i].URI = fmt.Sprintf("file:///workspace/target-%04d.go", i)
@@ -302,7 +302,7 @@ func TestNarrowListKeepsFileNamesVisible(t *testing.T) {
 	first, second := result.Targets[0], result.Targets[0]
 	first.Path, second.Path = root+"lib.go", root+"main.go"
 	result.Boundary.Context.Root = "/workspace"
-	result.Targets = []types.LSPNavigationTarget{first, second}
+	result.Targets = []insight.LSPNavigationTarget{first, second}
 	s := New(nil)
 	s.SetResult(result)
 	host := navigationHost(s, 54, 14)

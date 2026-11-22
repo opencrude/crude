@@ -2,12 +2,12 @@ package session
 
 import (
 	"context"
-	"crude/agent"
 	"crude/agent/collaboration"
 	"crude/agent/provider"
 	"crude/agent/safety"
 	"crude/agent/sessiondb"
 	"crude/agent/tools"
+	"crude/agent/turnloop"
 	"crude/agent/worktree"
 	captypes "crude/types/capability"
 	"crude/types/control"
@@ -241,14 +241,14 @@ func (s *Session) CleanupExecution(ctx context.Context, id string, owner worktre
 	return e.Cleanup(ctx, id, owner)
 }
 
-func childExecutionRoot(spec agent.SubAgentSpec, logical string) string {
+func childExecutionRoot(spec turnloop.SubAgentSpec, logical string) string {
 	if spec.ExecutionRoot != "" {
 		return spec.ExecutionRoot
 	}
 	return logical
 }
 
-func (r *SubAgentRunner) prepareChildExecution(ctx context.Context, spec *agent.SubAgentSpec, runID string) error {
+func (r *SubAgentRunner) prepareChildExecution(ctx context.Context, spec *turnloop.SubAgentSpec, runID string) error {
 	mode := worktree.Mode(spec.Isolation)
 	if mode == "" {
 		mode = worktree.Auto
@@ -348,12 +348,12 @@ func resolveExecutionPath(path string) (string, error) {
 	return filepath.Join(resolved, filepath.Base(path)), err
 }
 
-func childIndependentWriter(spec agent.SubAgentSpec) bool {
+func childIndependentWriter(spec turnloop.SubAgentSpec) bool {
 	if spec.ParentID == "" || !spec.Policy.AllowedCapabilities[safety.CanCreate] && !spec.Policy.AllowedCapabilities[safety.CanUpdate] && !spec.Policy.AllowedCapabilities[safety.CanDelete] {
 		return false
 	}
-	for _, def := range agent.FilterToolsForModel(tools.AgentTools, spec.AllowedTools, spec.DeniedTools, spec.Category, true, spec.Model) {
-		if isWriteTool(def.Function.Name) && agent.PolicyAllows(spec.Policy, def.Function.Name) {
+	for _, def := range turnloop.FilterToolsForModel(tools.AgentTools, spec.AllowedTools, spec.DeniedTools, spec.Category, true, spec.Model) {
+		if isWriteTool(def.Function.Name) && turnloop.PolicyAllows(spec.Policy, def.Function.Name) {
 			return true
 		}
 	}
@@ -362,7 +362,7 @@ func childIndependentWriter(spec agent.SubAgentSpec) bool {
 
 // releaseExecutionPin requires exact terminal evidence for the run that acquired
 // the pin. Inventory's CurrentRunID is not proof that an old operation settled.
-func (r *SubAgentRunner) releaseExecutionPin(spec agent.SubAgentSpec, handle *agent.SubAgentHandle) {
+func (r *SubAgentRunner) releaseExecutionPin(spec turnloop.SubAgentSpec, handle *turnloop.SubAgentHandle) {
 	if spec.ExecutionID == "" || spec.ExecutionRunID == "" {
 		return
 	}
@@ -386,7 +386,7 @@ func (r *SubAgentRunner) releaseExecutionPin(spec agent.SubAgentSpec, handle *ag
 
 // BindRootExecution binds an existing exact artifact to the already reserved
 // durable root run. Call before guidance, tools or immutable input preparation.
-func (s *Session) BindRootExecution(ctx context.Context, live *agent.Agent, id, runID string) error {
+func (s *Session) BindRootExecution(ctx context.Context, live *turnloop.Agent, id, runID string) error {
 	if live == nil || live.AgentID == "" || runID == "" {
 		return errors.New("execution binding requires an exact agent and durable run")
 	}
@@ -488,7 +488,7 @@ func (s *Session) reconcileRootExecutionPins() {
 }
 
 // Revocation uses the same exact shell/workspace task identity as acquisition.
-func (r *SubAgentRunner) revokeChildCapabilityRun(handle *agent.SubAgentHandle, runID string) {
+func (r *SubAgentRunner) revokeChildCapabilityRun(handle *turnloop.SubAgentHandle, runID string) {
 	actor := captypes.RuntimeActor{ID: string(handle.Spec.ID), SessionID: handle.SessionID, RunID: runID, RuntimeEpoch: handle.RuntimeEpoch, TurnGeneration: handle.Agent.TurnGeneration, ExecutionRoot: handle.Agent.WorkDir}
 	if target := handle.Spec.ControlTarget; target != nil {
 		actor.WorkspaceID = target.WorkspaceID

@@ -4,7 +4,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/ui"
-	wm "crude/tui/wm"
+	"crude/tui/wm"
 )
 
 // textClipboardHit pairs the text control a whole-text context menu edits with

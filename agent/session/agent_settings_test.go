@@ -10,17 +10,17 @@ import (
 	"strings"
 	"testing"
 
-	"crude/agent"
 	"crude/agent/provider"
 	"crude/agent/tools"
-	"crude/types"
+	"crude/agent/turnloop"
+	"crude/types/setting"
 )
 
 func TestAgentSettingsRoundTripAndRuntimeRestrictions(t *testing.T) {
 	cfg := &Config{Agents: DefaultAgentsConfig()}
 	settings := ConfigToSettings(cfg).Agents
-	settings.Categories[CategoryDefault] = types.CategorySettings{Instructions: "Explain uncertainty", DeniedTools: []string{"execute_command", "write_file", "edit_file"}}
-	settings.AgentProfiles = map[string]types.AgentProfileSettings{"audit": {Category: CategoryResearcher, Instructions: "Review safety", Description: "Independent review", DeniedTools: []string{"web_fetch"}}}
+	settings.Categories[CategoryDefault] = setting.Category{Instructions: "Explain uncertainty", DeniedTools: []string{"execute_command", "write_file", "edit_file"}}
+	settings.AgentProfiles = map[string]setting.AgentProfile{"audit": {Category: CategoryResearcher, Instructions: "Review safety", Description: "Independent review", DeniedTools: []string{"web_fetch"}}}
 	ApplyWorkspaceAgentDefaults(cfg, settings)
 	got := ConfigToSettings(cfg).Agents
 	if got.Categories[CategoryDefault].Instructions != "Explain uncertainty" || got.AgentProfiles["audit"].Instructions != "Review safety" {
@@ -32,12 +32,12 @@ func TestAgentSettingsRoundTripAndRuntimeRestrictions(t *testing.T) {
 		}
 	}
 	runner := &SubAgentRunner{effectiveCfg: cfg}
-	spec := agent.SubAgentSpec{Category: CategoryCrafter, AllowedTools: []string{"web_fetch"}, Instructions: "Task-specific instructions"}
+	spec := turnloop.SubAgentSpec{Category: CategoryCrafter, AllowedTools: []string{"web_fetch"}, Instructions: "Task-specific instructions"}
 	instructions := runner.resolveProfile("audit", CategoryCrafter, &spec)
 	if spec.Category != CategoryResearcher || !strings.Contains(instructions, "Review safety") || spec.Instructions != "Task-specific instructions" {
 		t.Fatalf("named profile resolution lost its role or prompt: %+v %q", spec, instructions)
 	}
-	for _, tool := range agent.FilterTools(tools.AgentTools, spec.AllowedTools, spec.DeniedTools, spec.Category, true) {
+	for _, tool := range turnloop.FilterTools(tools.AgentTools, spec.AllowedTools, spec.DeniedTools, spec.Category, true) {
 		if tool.Function.Name == "web_fetch" {
 			t.Fatal("model-supplied allow list bypassed configured block")
 		}
@@ -53,9 +53,9 @@ func TestNamedAgentProfilePinsItsConfiguredConnection(t *testing.T) {
 	profile := cfg.Agents.Profiles["default"]
 	profile.Categories[CategoryResearcher] = CategoryConfig{Model: "role-model", AccountID: "personal", ContextCompactionPercent: &rolePercent}
 	cfg.Agents.Profiles["default"] = profile
-	cfg.Agents.AgentProfiles["reviewer"] = AgentProfileConfig{Category: CategoryResearcher, Model: "review-model", AccountID: "work", ContextCompactionPercent: &percent}
+	cfg.Agents.AgentProfiles["reviewer"] = setting.AgentProfile{Category: CategoryResearcher, Model: "review-model", AccountID: "work", ContextCompactionPercent: &percent}
 	runner := &SubAgentRunner{effectiveCfg: cfg}
-	for _, spec := range []agent.SubAgentSpec{{}, {Model: "requested-model", AccountID: "requested-account"}} {
+	for _, spec := range []turnloop.SubAgentSpec{{}, {Model: "requested-model", AccountID: "requested-account"}} {
 		runner.resolveProfile("reviewer", CategoryResearcher, &spec)
 		if spec.Model != "review-model" || spec.AccountID != "work" || spec.ContextCompactionPercent == nil || *spec.ContextCompactionPercent != percent {
 			t.Fatalf("named profile did not own its configured connection: %+v", spec)
@@ -70,7 +70,7 @@ func TestSelectedRootAgentPersistsAndFollowsProfileWithoutLosingAccountPin(t *te
 	work := cfg.Accounts["work"]
 	work.ID = "work"
 	cfg.Accounts["work"] = work
-	cfg.Agents.AgentProfiles["reviewer"] = AgentProfileConfig{Category: CategoryResearcher, AccountID: "work", Model: "review-v1", Instructions: "Check edge cases"}
+	cfg.Agents.AgentProfiles["reviewer"] = setting.AgentProfile{Category: CategoryResearcher, AccountID: "work", Model: "review-v1", Instructions: "Check edge cases"}
 	sess, err := NewWithSessionDir("", cfg, home, home)
 	if err != nil {
 		t.Fatal(err)
@@ -78,12 +78,12 @@ func TestSelectedRootAgentPersistsAndFollowsProfileWithoutLosingAccountPin(t *te
 	settings := sess.SettingsSnapshot()
 	settings.SessionOverrides = sess.SessionOverridesSnapshot()
 	settings.SessionMainAgent = "profile/reviewer"
-	settings.SessionOverrides["root/profile/reviewer"] = types.CategorySettings{AccountID: "work"}
+	settings.SessionOverrides["root/profile/reviewer"] = setting.Category{AccountID: "work"}
 	if err := sess.HandleSettingsSave(settings); err != nil {
 		t.Fatal(err)
 	}
-	if got := sess.RuntimeProfile().GetEffectiveConfig("root"); got.GetActiveDefaultCategory().Model != "review-v1" || got.GetActiveDefaultCategory().AccountID != "work" || got.SelectedAgent != "profile/reviewer" {
-		t.Fatalf("root request still uses Main Agent: %+v", got.GetActiveDefaultCategory())
+	if got := sess.RuntimeProfile().EffectiveConfig("root"); got.ActiveDefaultCategory().Model != "review-v1" || got.ActiveDefaultCategory().AccountID != "work" || got.SelectedAgent != "profile/reviewer" {
+		t.Fatalf("root request still uses Main Agent: %+v", got.ActiveDefaultCategory())
 	}
 	if got := sess.SettingsSnapshot(); got.SessionMainAgent != "profile/reviewer" || got.Model != "review-v1" {
 		t.Fatalf("session projection does not match request: %+v", got)
@@ -108,13 +108,13 @@ func TestSelectedRootAgentPersistsAndFollowsProfileWithoutLosingAccountPin(t *te
 	if got.SessionMainAgent != "profile/reviewer" || got.Model != "review-v2" || got.AccountID != "work" {
 		t.Fatalf("selected agent did not survive resume/profile update: %+v", got)
 	}
-	if err := resumed.RuntimeProfile().GetEffectiveConfig("root").ValidateSelectedAgent(); err != nil {
+	if err := resumed.RuntimeProfile().EffectiveConfig("root").ValidateSelectedAgent(); err != nil {
 		t.Fatal(err)
 	}
 	profile.Enabled = new(bool)
 	cfg.Agents.AgentProfiles["reviewer"] = profile
-	resumed.UpdateWorkspaceDefaults(types.AppSettings{Agents: ConfigToSettings(cfg).Agents, Accounts: cfg.Accounts})
-	if err := resumed.RuntimeProfile().GetEffectiveConfig("root").ValidateSelectedAgent(); err == nil {
+	resumed.UpdateWorkspaceDefaults(setting.App{Agents: ConfigToSettings(cfg).Agents, Accounts: cfg.Accounts})
+	if err := resumed.RuntimeProfile().EffectiveConfig("root").ValidateSelectedAgent(); err == nil {
 		t.Fatal("disabled selected agent silently fell back to Main Agent")
 	}
 }
@@ -152,7 +152,7 @@ func TestMemoryAgentUsesEditedInstructionsAndOutputLimit(t *testing.T) {
 	a := cfg.Accounts["account"]
 	a.Connection = template
 	cfg.Accounts["account"] = a
-	cfg.Memory.MemoryCategory = types.CategorySettings{Model: "memory-model", AccountID: "account", Instructions: "Use factual summaries", ModelMaxOutput: 56}
+	cfg.Memory.MemoryCategory = setting.Category{Model: "memory-model", AccountID: "account", Instructions: "Use factual summaries", ModelMaxOutput: 56}
 	sess := &Session{cfg: cfg}
 	complete, err := sess.memoryCompleter()
 	if err != nil {
@@ -178,7 +178,7 @@ func TestExplicitNoModalitiesSurvivesConfigurationRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(encoded, &restored); err != nil {
 		t.Fatal(err)
 	}
-	if got := restored.GetActiveDefaultCategory().ModelModalities; got == nil || len(got) != 0 {
+	if got := restored.ActiveDefaultCategory().ModelModalities; got == nil || len(got) != 0 {
 		t.Fatalf("explicit No became automatic discovery after restart: %#v", got)
 	}
 }

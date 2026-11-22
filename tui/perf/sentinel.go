@@ -7,6 +7,7 @@
 // The sentinel is the in-the-wild tripwire for the paths no benchmark covers:
 // budget lines name the probe's top call sites, which is the same "which part
 // exactly is breaking" answer the work-budget tests print.
+
 package perf
 
 import (

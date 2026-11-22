@@ -8,38 +8,38 @@ import (
 	"path/filepath"
 	"strings"
 
-	"crude/agent"
 	"crude/agent/capability"
 	"crude/agent/collaboration"
 	"crude/agent/mcpclient"
 	"crude/agent/provider"
 	"crude/agent/session"
 	"crude/agent/skills"
-	"crude/buildinfo"
-	"crude/types"
+	"crude/agent/turnloop"
+	"crude/internal/buildinfo"
 	captypes "crude/types/capability"
+	"crude/types/setting"
 	"crude/workspace/fileio"
 )
 
-func (workspace *Workspace) ensureCapabilities(ctx context.Context) error {
+func (w *Workspace) ensureCapabilities(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	workspace.capabilityMu.RLock()
-	available := workspace.Capabilities != nil && workspace.WorkspaceDB != nil
-	workspace.capabilityMu.RUnlock()
+	w.capabilityMu.RLock()
+	available := w.Capabilities != nil && w.WorkspaceDB != nil
+	w.capabilityMu.RUnlock()
 	if available {
 		return nil
 	}
-	workspace.capabilityMu.Lock()
-	defer workspace.capabilityMu.Unlock()
+	w.capabilityMu.Lock()
+	defer w.capabilityMu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if workspace.Capabilities != nil {
+	if w.Capabilities != nil {
 		return nil
 	}
-	if workspace.WorkspaceDB == nil {
+	if w.WorkspaceDB == nil {
 		return errors.New("workspace persistence is unavailable")
 	}
 	// Downloaded/verified artifacts and MCP credentials are application-owned:
@@ -49,7 +49,7 @@ func (workspace *Workspace) ensureCapabilities(ctx context.Context) error {
 	// overlay row pointing at this app-global path. The project root stays the
 	// service root because it remains the correct base for relative authored
 	// paths and the default stdio working directory.
-	home := workspace.homeDir
+	home := w.homeDir
 	if home == "" {
 		home, _ = buildinfo.Home()
 	}
@@ -57,76 +57,78 @@ func (workspace *Workspace) ensureCapabilities(ctx context.Context) error {
 		return errors.New("application capability storage is unavailable")
 	}
 	cache := filepath.Join(home, buildinfo.DataDir(), "capabilities", "artifacts")
-	service, err := capability.New(workspace.RootPath, cache, workspace.WorkspaceDB.DB)
+	service, err := capability.New(w.RootPath, cache, w.WorkspaceDB.DB)
 	if err != nil {
 		return err
 	}
-	service.SetRegistrationStore(newCapabilityRegistrationStore(workspace))
-	service.SetRuntimeAuthority(capabilityRuntimeAuthority{store: workspace.Collaboration})
-	if cfg := workspace.sessionCfg; cfg != nil && cfg.AccountManager != nil {
+	service.SetRegistrationStore(newCapabilityRegistrationStore(w))
+	service.SetRuntimeAuthority(capabilityRuntimeAuthority{store: w.Collaboration})
+	if cfg := w.sessionCfg; cfg != nil && cfg.AccountManager != nil {
 		// Capture the application credential owner, not a session profile,
 		// workspace defaults map, or a copy of live credentials.
 		service.SetWebSearchRunner(accountSearchRunner{accounts: &session.Config{AccountManager: cfg.AccountManager}})
 	}
-	settings := workspace.LoadAppSettings().Capabilities
-	service.SetPublishedWebSearchRoutes(workspace.AppDefaults().Capabilities.WebSearchRoutes)
+	settings := w.LoadAppSettings().Capabilities
+	service.SetPublishedWebSearchRoutes(w.AppDefaults().Capabilities.WebSearchRoutes)
 	if err := service.Configure(ctx, settings); err != nil {
 		service.Close()
 		return err
 	}
-	workspace.Capabilities = service
-	if workspace.FileOwnership == nil {
-		workspace.FileOwnership = agent.NewFileOwnership()
+	w.Capabilities = service
+	if w.FileOwnership == nil {
+		w.FileOwnership = turnloop.NewFileOwnership()
 	}
 	return nil
 }
 
-func (workspace *Workspace) CapabilitySnapshot(ctx context.Context) (captypes.Snapshot, error) {
-	if err := workspace.ensureCapabilities(ctx); err != nil {
+// CapabilitySnapshot returns the capability catalog with the current settings applied.
+func (w *Workspace) CapabilitySnapshot(ctx context.Context) (captypes.Snapshot, error) {
+	if err := w.ensureCapabilities(ctx); err != nil {
 		return captypes.Snapshot{}, err
 	}
-	workspace.capabilityMu.RLock()
-	defer workspace.capabilityMu.RUnlock()
-	if workspace.Capabilities == nil || workspace.WorkspaceDB == nil || ctx.Err() != nil {
+	w.capabilityMu.RLock()
+	defer w.capabilityMu.RUnlock()
+	if w.Capabilities == nil || w.WorkspaceDB == nil || ctx.Err() != nil {
 		return captypes.Snapshot{}, errors.New("capability workspace owner is closed or cancelled")
 	}
-	if err := workspace.Capabilities.Configure(ctx, workspace.LoadAppSettings().Capabilities); err != nil {
+	if err := w.Capabilities.Configure(ctx, w.LoadAppSettings().Capabilities); err != nil {
 		return captypes.Snapshot{}, err
 	}
-	return workspace.Capabilities.Snapshot(), nil
+	return w.Capabilities.Snapshot(), nil
 }
 
 // CapabilityRuntimeSnapshot observes already initialized live state. Unlike
 // CapabilitySnapshot it does not reload settings, inspect skill files, or
 // reconfigure transports; presentation polling must never do that work.
-func (workspace *Workspace) CapabilityRuntimeSnapshot(ctx context.Context) (captypes.Snapshot, error) {
+func (w *Workspace) CapabilityRuntimeSnapshot(ctx context.Context) (captypes.Snapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return captypes.Snapshot{}, err
 	}
-	workspace.capabilityMu.RLock()
-	defer workspace.capabilityMu.RUnlock()
-	if workspace.Capabilities == nil {
+	w.capabilityMu.RLock()
+	defer w.capabilityMu.RUnlock()
+	if w.Capabilities == nil {
 		return captypes.Snapshot{}, nil
 	}
-	return workspace.Capabilities.Snapshot(), ctx.Err()
+	return w.Capabilities.Snapshot(), ctx.Err()
 }
 
-func (workspace *Workspace) CapabilityAction(ctx context.Context, action captypes.Action) (captypes.Snapshot, []captypes.Entry, string, error) {
-	if err := workspace.ensureCapabilities(ctx); err != nil {
+// CapabilityAction runs one capability action and returns the new snapshot, entries and text.
+func (w *Workspace) CapabilityAction(ctx context.Context, action captypes.Action) (captypes.Snapshot, []captypes.Entry, string, error) {
+	if err := w.ensureCapabilities(ctx); err != nil {
 		return captypes.Snapshot{}, nil, "", err
 	}
-	workspace.capabilityMu.RLock()
-	defer workspace.capabilityMu.RUnlock()
-	if workspace.Capabilities == nil || workspace.WorkspaceDB == nil || ctx.Err() != nil {
+	w.capabilityMu.RLock()
+	defer w.capabilityMu.RUnlock()
+	if w.Capabilities == nil || w.WorkspaceDB == nil || ctx.Err() != nil {
 		return captypes.Snapshot{}, nil, "", errors.New("capability workspace owner is closed or cancelled")
 	}
-	service := workspace.Capabilities
-	if err := service.Configure(ctx, workspace.LoadAppSettings().Capabilities); err != nil {
+	service := w.Capabilities
+	if err := service.Configure(ctx, w.LoadAppSettings().Capabilities); err != nil {
 		return service.Snapshot(), nil, "", err
 	}
-	working := workspace.LoadAppSettings()
+	working := w.LoadAppSettings()
 	if action.Scope == captypes.ScopeApplication {
-		working = workspace.AppDefaults()
+		working = w.AppDefaults()
 	}
 	working.Capabilities = captypes.Normalize(working.Capabilities)
 	persist := false
@@ -195,15 +197,15 @@ func (workspace *Workspace) CapabilityAction(ctx context.Context, action captype
 		if err = applyWebSearchRoute(&working, action); err == nil {
 			// Commit only the search method list. The persisted settings owner
 			// keeps concurrent edits to neighboring keys and registrations.
-			edit := types.SettingEdit{Path: []string{"capabilities", "web_search_routes"}}
+			edit := setting.Edit{Path: []string{"capabilities", "web_search_routes"}}
 			if len(working.Capabilities.WebSearchRoutes) != 0 {
 				edit.After, _ = json.Marshal(working.Capabilities.WebSearchRoutes)
 			}
 			if err = ctx.Err(); err == nil {
-				result := workspace.PreparePreferencesSave(types.SettingsScopeApplication, []types.SettingEdit{edit})()
+				result := w.PreparePreferencesSave(setting.ScopeApplication, []setting.Edit{edit})()
 				err = result.Err
 				if err == nil {
-					workspace.ApplyPreferencesSave(result)
+					w.ApplyPreferencesSave(result)
 					service.SetPublishedWebSearchRoutes(result.AppSettings.Capabilities.WebSearchRoutes)
 				}
 			}
@@ -239,7 +241,7 @@ func (workspace *Workspace) CapabilityAction(ctx context.Context, action captype
 			err = errors.New("only workspace overrides can reset to inherited")
 			break
 		}
-		inherited := workspace.AppDefaults().Capabilities
+		inherited := w.AppDefaults().Capabilities
 		switch action.Kind {
 		case captypes.KindSkill:
 			delete(working.Capabilities.Skills, action.ID)
@@ -272,7 +274,7 @@ func (workspace *Workspace) CapabilityAction(ctx context.Context, action captype
 		}
 		path := value.Path
 		if !filepath.IsAbs(path) {
-			path = filepath.Join(workspace.RootPath, path)
+			path = filepath.Join(w.RootPath, path)
 		}
 		if filepath.Base(filepath.Clean(path)) != value.Name {
 			err = errors.New("local name must match its destination directory")
@@ -296,7 +298,7 @@ func (workspace *Workspace) CapabilityAction(ctx context.Context, action captype
 		value := *action.Skill
 		path := value.Path
 		if !filepath.IsAbs(path) {
-			path = filepath.Join(workspace.RootPath, path)
+			path = filepath.Join(w.RootPath, path)
 		}
 		var loaded skills.Skill
 		if action.Operation == "create-skill" {
@@ -417,28 +419,29 @@ func (workspace *Workspace) CapabilityAction(ctx context.Context, action captype
 			return service.Snapshot(), entries, content, err
 		}
 		if action.Scope == captypes.ScopeApplication {
-			err = workspace.SaveAppSettings(working)
+			err = w.SaveAppSettings(working)
 		} else {
-			err = workspace.SaveWorkspaceSettings(types.OverridesFromDiff(workspace.AppDefaults(), working))
+			err = w.SaveWorkspaceSettings(setting.OverridesFromDiff(w.AppDefaults(), working))
 		}
 		if err == nil {
-			err = service.Configure(ctx, workspace.LoadAppSettings().Capabilities)
+			err = service.Configure(ctx, w.LoadAppSettings().Capabilities)
 		}
 	}
 	return service.Snapshot(), entries, content, err
 }
 
-func (workspace *Workspace) PrepareSkillInput(ctx context.Context, agentID, id, arguments string) (provider.UserInput, error) {
-	if err := workspace.ensureCapabilities(ctx); err != nil {
+// PrepareSkillInput builds the user input that starts a skill with its arguments.
+func (w *Workspace) PrepareSkillInput(ctx context.Context, agentID, id, arguments string) (provider.UserInput, error) {
+	if err := w.ensureCapabilities(ctx); err != nil {
 		return provider.UserInput{}, err
 	}
-	frontend := workspace.sessionForAgent(agentID)
+	frontend := w.sessionForAgent(agentID)
 	if frontend == nil || frontend.backend == nil {
 		return provider.UserInput{}, errors.New("owning agent is unavailable")
 	}
-	category := frontend.backend.RuntimeProfile().GetEffectiveConfig(agentID).GetActiveDefaultCategory()
+	category := frontend.backend.RuntimeProfile().EffectiveConfig(agentID).ActiveDefaultCategory()
 	actor := captypes.RuntimeActor{ID: agentID, SessionID: frontend.backend.SessionID(), Effects: []captypes.Effect{captypes.EffectRead, captypes.EffectCommunication}, SkillModes: category.SkillModes, AllowedTools: category.AllowedTools, DeniedTools: category.DeniedTools, SessionDisabled: frontend.backend.DisabledCapabilities()}
-	result, err := workspace.Capabilities.Activate(ctx, actor, id, true)
+	result, err := w.Capabilities.Activate(ctx, actor, id, true)
 	if err != nil {
 		return provider.UserInput{}, err
 	}

@@ -1,9 +1,9 @@
 package workspace
 
-// WorkspaceActivity contains sampled facts for one retained workspace. An
+// Activity contains sampled facts for one retained workspace. An
 // unobserved count is not a measured zero. It is never restored from catalog
 // metadata or inferred from a shell's private buffers.
-type WorkspaceActivity struct {
+type Activity struct {
 	Agents, Terminals, Unsaved ActivityCount
 }
 
@@ -16,8 +16,8 @@ type ActivityCount struct {
 // RecentActivity samples the retained authorities. Call on the workspace owner
 // to serialize access to the agent inventory and service lifetimes. Neither a
 // database, process inspection nor a new service is needed for this read.
-func (w *Workspace) RecentActivity() WorkspaceActivity {
-	var out WorkspaceActivity
+func (w *Workspace) RecentActivity() Activity {
+	var out Activity
 	if w.AgentMgr != nil {
 		out.Agents.Observed = true
 		for _, node := range w.AgentMgr.byID {

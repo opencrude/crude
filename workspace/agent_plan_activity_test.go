@@ -5,11 +5,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"crude/agent"
 	"crude/agent/plan"
 	"crude/agent/provider"
 	"crude/agent/session"
 	"crude/agent/sessiondb"
+	"crude/agent/turnloop"
 )
 
 func TestAgentActivityUsesExactPlanOwner(t *testing.T) {
@@ -33,7 +33,7 @@ func TestAgentActivityUsesExactPlanOwner(t *testing.T) {
 		}
 		if id != "no-plan" {
 			store := plan.NewStore(db, id)
-			if _, _, err := store.Update(t.Context(), plan.UpdateRequest{PlanID: "same-id", Objective: id + " goal", Steps: []plan.PlanStep{{ID: "task", Description: id + " task", Status: plan.StepInProgress}}}); err != nil {
+			if _, _, err := store.Update(t.Context(), plan.UpdateRequest{PlanID: "same-id", Objective: id + " goal", Steps: []plan.Step{{ID: "task", Description: id + " task", Status: plan.StepInProgress}}}); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -42,7 +42,7 @@ func TestAgentActivityUsesExactPlanOwner(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, child := range []string{"child", "no-plan"} {
-				if err := sessiondb.InsertSubAgentResult(db, sessiondb.SubAgentResultRow{ParentSessionID: id, ChildSessionID: child, AgentID: child, Status: string(agent.SubAgentCompleted)}); err != nil {
+				if err := sessiondb.InsertSubAgentResult(db, sessiondb.SubAgentResultRow{ParentSessionID: id, ChildSessionID: child, AgentID: child, Status: string(turnloop.SubAgentCompleted)}); err != nil {
 					t.Fatal(err)
 				}
 			}

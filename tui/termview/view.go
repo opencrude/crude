@@ -3,7 +3,7 @@
 package termview
 
 import (
-	"crude/terminalvt"
+	"crude/internal/terminalvt"
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/surface"

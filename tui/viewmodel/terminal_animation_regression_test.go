@@ -6,11 +6,11 @@ import (
 	"testing"
 	"time"
 
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/cell"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/types/reasoning"
+	"crude/types/statuscenter"
 	"crude/workspace"
 )
 
@@ -41,8 +41,8 @@ func TestTerminalFocusKeepsChatActivityAnimating(t *testing.T) {
 	state.Messages.AppendReasoning(reasoning.Delta{Text: "Inspecting the actual state", Kind: reasoning.Summary})
 	state.Running = true
 	app.syncAgentMessages("region-root", false)
-	shellport.Unwrap(app.ws.(*streamTestWorkspace).Workspace).Status.SetAgent(types.AgentStatusSnapshot{
-		Ref: types.ResourceRef{Kind: types.ResourceAgent, ID: "region-root"}, Phase: types.AgentThinking,
+	shellport.Unwrap(app.ws.(*streamTestWorkspace).Workspace).Status.SetAgent(statuscenter.AgentStatusSnapshot{
+		Ref: statuscenter.ResourceRef{Kind: statuscenter.ResourceAgent, ID: "region-root"}, Phase: statuscenter.AgentThinking,
 	})
 	app.SpinFrame = 0
 	app.forceFrame()
@@ -53,7 +53,7 @@ func TestTerminalFocusKeepsChatActivityAnimating(t *testing.T) {
 	generation := app.activeMessageList().ExportMessageRowsSnapshot(app.chatReflowInnerW).Generation
 	app.SpinFrame = 700
 	app.subPaneProjections.TickAll(app.SpinFrame)
-	app.invalidateMessageRegions(types.TickMsg(time.UnixMilli(700)))
+	app.invalidateMessageRegions(TickMsg(time.UnixMilli(700)))
 	app.presentImmediateFrame()
 	view := app.View()
 	if !app.terminalOwnsKeys() || reflect.DeepEqual(before, clockRegion(app, rect)) {
@@ -100,7 +100,7 @@ func TestLauncherAnimationKeepsAdvancingWithTerminalFocus(t *testing.T) {
 					// The same deterministic clock boundary used by the caret
 					// regressions: source time advances, not focus or pointer input.
 					app.SpinFrame = frame * 100
-					app.invalidateMessageRegions(types.TickMsg(time.UnixMilli(int64(app.SpinFrame))))
+					app.invalidateMessageRegions(TickMsg(time.UnixMilli(int64(app.SpinFrame))))
 					app.presentImmediateFrame()
 					app.View()
 					after := clockRegion(app, rect)
@@ -132,7 +132,7 @@ func BenchmarkLauncherClockWithTerminal(b *testing.B) {
 					app.Update(regionTerminalFrame(service, info, frame))
 				}
 				app.SpinFrame = frame * 16
-				app.invalidateMessageRegions(types.TickMsg(time.UnixMilli(int64(app.SpinFrame))))
+				app.invalidateMessageRegions(TickMsg(time.UnixMilli(int64(app.SpinFrame))))
 				app.presentImmediateFrame()
 				app.View()
 			}

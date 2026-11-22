@@ -7,7 +7,7 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 const mixedBenchmarkBody = "## نتیجه\n\n> نسخه Go 1.24 را بررسی کنید.\n\n" +
@@ -45,7 +45,7 @@ func BenchmarkMixedMarkdownStreamingBlink(b *testing.B) {
 	r := NewRenderer(theme.DefaultDark())
 	r.SetSize(84, 40) // 80 document columns, just like Reflow.
 	r.SetChatAreaBounds(0, 40)
-	r.AppendMessage(types.ChatMessage{InternalID: "m", Role: types.RoleAssistant, Content: mixedBenchmarkBody + strings.Repeat("نتیجه API 1.24 ", 18)})
+	r.AppendMessage(conversation.ChatMessage{InternalID: "m", Role: conversation.RoleAssistant, Content: mixedBenchmarkBody + strings.Repeat("نتیجه API 1.24 ", 18)})
 	r.SetStreaming(true)
 	msg := r.sync.Messages[0]
 	r.renderSingleMessage(msg)

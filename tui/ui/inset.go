@@ -5,31 +5,26 @@ import (
 	"crude/tui/theme"
 )
 
-// Insets is the four-sided padding type. It lives in theme (Spacing.Frame is
-// a theme.Insets) and is aliased here so component code keeps the ui.Insets
-// spelling.
-type Insets = theme.Insets
-
 // InsetsFromSides builds insets from explicit sides.
-func InsetsFromSides(t, r, b, l int) Insets {
-	return Insets{Top: t, Right: r, Bottom: b, Left: l}
+func InsetsFromSides(t, r, b, l int) theme.Insets {
+	return theme.Insets{Top: t, Right: r, Bottom: b, Left: l}
 }
 
 // InsetsAll builds uniform insets on all four sides.
-func InsetsAll(v int) Insets {
-	return Insets{Top: v, Right: v, Bottom: v, Left: v}
+func InsetsAll(v int) theme.Insets {
+	return theme.Insets{Top: v, Right: v, Bottom: v, Left: v}
 }
 
 // Inset pads a single child by a fixed cell margin. The child is laid out at a
 // parent-local rect offset by the insets and shrunk by the inset extents.
 type Inset struct {
 	Base
-	insets Insets
+	insets theme.Insets
 	child  Component
 }
 
 // NewInset creates an inset container around child.
-func NewInset(id ComponentID, insets Insets, child Component) *Inset {
+func NewInset(id ComponentID, insets theme.Insets, child Component) *Inset {
 	return &Inset{Base: NewBase(id), insets: insets, child: child}
 }
 

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"crude/text/diff"
+	"crude/text/textdiff"
 	"crude/tui/cell"
 	"crude/tui/ui"
 )
@@ -28,18 +28,16 @@ type GitBlameLine struct {
 	Uncommitted             bool
 }
 
-type GitHunk = textdiff.Hunk
-
 // SetGitAnnotation publishes an immutable HEAD baseline and revision-bound blame.
 // Background refreshes of the same HEAD never replace the live hunk projection.
 // Linked views share the primary's projection.
-func (e *Editor) SetGitAnnotation(sourceRevision uint64, head string, hunks []GitHunk, blame []GitBlameLine, conflicted bool) {
+func (e *Editor) SetGitAnnotation(sourceRevision uint64, head string, hunks []textdiff.Hunk, blame []GitBlameLine, conflicted bool) {
 	if e == nil || e.buf == nil {
 		return
 	}
 	e = e.Primary()
 	e.gitBlame = blame
-	e.gitBlameHunks = append([]GitHunk(nil), hunks...)
+	e.gitBlameHunks = append([]textdiff.Hunk(nil), hunks...)
 	e.gitConflicted = conflicted
 	if e.gitLoaded && e.gitHead == head {
 		e.remapGitProjection()
@@ -50,7 +48,7 @@ func (e *Editor) SetGitAnnotation(sourceRevision uint64, head string, hunks []Gi
 	e.gitHeadLines = textdiff.Lines(head)
 	e.gitLoaded = true
 	if sourceRevision == e.Revision() {
-		e.gitHunks = append([]GitHunk(nil), hunks...)
+		e.gitHunks = append([]textdiff.Hunk(nil), hunks...)
 	} else {
 		e.gitHunks = textdiff.ContentHunks(head, string(e.buf.cachedBytes))
 	}
@@ -140,7 +138,7 @@ func (e *Editor) remapGitProjection() {
 		return newOffsets[line]
 	}
 	changed := textdiff.ContentHunks(strings.Join(e.gitHeadLines[headFrom:headTo], ""), string(e.buf.cachedBytes[byteAt(from):byteAt(newTo)]))
-	next := make([]GitHunk, 0, first+len(changed)+len(e.gitHunks)-last)
+	next := make([]textdiff.Hunk, 0, first+len(changed)+len(e.gitHunks)-last)
 	next = append(next, e.gitHunks[:first]...)
 	for _, h := range changed {
 		h.OldStart += headFrom
@@ -201,9 +199,10 @@ func (e *Editor) gitDeletionMarkerAt(line, lineCount int) rune {
 	return ' '
 }
 
-func (e *Editor) GitHunkAtLine(line int) (GitHunk, int, bool) {
+// GitHunkAtLine returns the hunk that covers a line, with its index.
+func (e *Editor) GitHunkAtLine(line int) (textdiff.Hunk, int, bool) {
 	if e == nil {
-		return GitHunk{}, -1, false
+		return textdiff.Hunk{}, -1, false
 	}
 	e = e.Primary()
 	e.remapGitProjection()
@@ -216,9 +215,11 @@ func (e *Editor) GitHunkAtLine(line int) (GitHunk, int, bool) {
 			return h, index, true
 		}
 	}
-	return GitHunk{}, -1, false
+	return textdiff.Hunk{}, -1, false
 }
-func (e *Editor) GitHunks() []GitHunk {
+
+// GitHunks returns the working tree hunks in document order.
+func (e *Editor) GitHunks() []textdiff.Hunk {
 	if e == nil {
 		return nil
 	}

@@ -3,8 +3,8 @@ package viewmodel
 import (
 	"strings"
 
-	"crude/core/port"
-	types "crude/types"
+	"crude/core/shellport"
+	"crude/types/statuscenter"
 )
 
 // feedbackSink maps short presentation feedback into the typed workspace
@@ -20,21 +20,21 @@ func (s *feedbackSink) center() shellport.StatusService {
 	return s.app.ws.Status()
 }
 
-func (s *feedbackSink) owner() types.ResourceRef {
+func (s *feedbackSink) owner() statuscenter.ResourceRef {
 	if s == nil || s.app == nil {
-		return types.ResourceRef{}
+		return statuscenter.ResourceRef{}
 	}
 	if path := s.app.EditorState.ActiveView; path != "" {
-		return types.ResourceRef{Kind: types.ResourceEditor, ID: path}
+		return statuscenter.ResourceRef{Kind: statuscenter.ResourceEditor, ID: path}
 	}
 	if id := s.app.AgentView.ActiveID(); id != "" {
-		ref := types.ResourceRef{Kind: types.ResourceAgent, ID: id}
+		ref := statuscenter.ResourceRef{Kind: statuscenter.ResourceAgent, ID: id}
 		if session := s.app.ws.SessionsByAgent()[id]; session != nil {
 			ref.SessionID = session.SessionID
 		}
 		return ref
 	}
-	return types.ResourceRef{Kind: types.ResourceWorkspace, ID: s.app.ws.RootPath()}
+	return statuscenter.ResourceRef{Kind: statuscenter.ResourceWorkspace, ID: s.app.ws.RootPath()}
 }
 
 func (s *feedbackSink) NotifyInfo(message string) {
@@ -42,19 +42,19 @@ func (s *feedbackSink) NotifyInfo(message string) {
 	if center == nil || strings.TrimSpace(message) == "" {
 		return
 	}
-	center.Notify(types.NotificationRecord{
+	center.Notify(statuscenter.NotificationRecord{
 		DedupKey: "feedback:" + string(owner.Kind) + ":" + owner.ID + ":" + message,
-		Owner:    owner, Severity: types.SeverityInfo, Source: "feedback",
+		Owner:    owner, Severity: statuscenter.SeverityInfo, Source: "feedback",
 		Summary: message, Read: true, Transient: true,
 	})
 }
 
-func (s *feedbackSink) NotifyAgentTransient(agentID, message string, severity types.StatusSeverity) {
+func (s *feedbackSink) NotifyAgentTransient(agentID, message string, severity statuscenter.Severity) {
 	center := s.center()
 	if center == nil || strings.TrimSpace(agentID) == "" || strings.TrimSpace(message) == "" {
 		return
 	}
-	owner := types.ResourceRef{Kind: types.ResourceAgent, ID: agentID}
+	owner := statuscenter.ResourceRef{Kind: statuscenter.ResourceAgent, ID: agentID}
 	if s.app != nil && s.app.ws.AgentMgr() != nil {
 		if root := s.app.ws.AgentMgr().OrchestratorFor(agentID); root != nil {
 			if root.ID != agentID {
@@ -65,7 +65,7 @@ func (s *feedbackSink) NotifyAgentTransient(agentID, message string, severity ty
 			}
 		}
 	}
-	center.Notify(types.NotificationRecord{
+	center.Notify(statuscenter.NotificationRecord{
 		DedupKey: "agent-terminal:" + agentID + ":" + message,
 		Owner:    owner, Severity: severity, Source: "agent", Summary: message,
 		Read: true, Transient: true,
@@ -83,9 +83,9 @@ func (s *feedbackSink) NotifyErrorDetail(summary, detail string) {
 	if center == nil || strings.TrimSpace(summary) == "" {
 		return
 	}
-	center.Notify(types.NotificationRecord{
+	center.Notify(statuscenter.NotificationRecord{
 		DedupKey: "error:" + string(owner.Kind) + ":" + owner.ID + ":" + summary,
-		Owner:    owner, Severity: types.SeverityError, Source: "operation",
+		Owner:    owner, Severity: statuscenter.SeverityError, Source: "operation",
 		Summary: summary, Detail: detail,
 	})
 }

@@ -17,7 +17,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/types"
+	"crude/types/conversation"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -146,7 +146,7 @@ func TestPlanInvestigationThroughConnectedShell(t *testing.T) {
 	runAppCommand(t, app, cmd)
 	remoteJourneyUntilWithin(t, shells, 30*time.Second, func() bool { return len(app.agentPrompts) > 0 })
 	consent := app.agentPrompts[0]
-	if consent.request.operation != types.PlanInvestigationHostOperation || consent.offerAutoReview {
+	if consent.request.operation != conversation.PlanInvestigationHostOperation || consent.offerAutoReview {
 		t.Fatalf("wrong prompt: %+v", consent.request)
 	}
 	paint := frameText(app)
@@ -162,7 +162,7 @@ func TestPlanInvestigationThroughConnectedShell(t *testing.T) {
 		t.Fatal("test file reached source before approval")
 	}
 	pressKeys(t, app, tea.KeyPressMsg{Code: 'y', Text: "y"})
-	var rev types.PlanRevision
+	var rev conversation.PlanRevision
 	remoteJourneyUntilWithin(t, shells, 90*time.Second, func() bool {
 		var ok bool
 		rev, ok = app.latestPlanRevision(id)
@@ -172,7 +172,7 @@ func TestPlanInvestigationThroughConnectedShell(t *testing.T) {
 	if len(app.agentPrompts) > 0 {
 		t.Fatalf("unexpected second permission: %+v", app.agentPrompts[0].request)
 	}
-	if len(rev.Evidence) != 2 || rev.Evidence[0].Status != types.PlanEvidenceFailed || rev.Evidence[1].Status != types.PlanEvidencePassed {
+	if len(rev.Evidence) != 2 || rev.Evidence[0].Status != conversation.PlanEvidenceFailed || rev.Evidence[1].Status != conversation.PlanEvidencePassed {
 		t.Fatalf("test did not fail then pass: %+v", rev.Evidence)
 	}
 	paint = frameText(app)
@@ -201,7 +201,7 @@ func TestPlanInvestigationThroughConnectedShell(t *testing.T) {
 		t.Fatal("evidence accepted a different revision")
 	}
 	app.setMode(ModeChat)
-	out, err := app.ws.SettlePlanReview(id, types.PlanReviewSettle{Action: types.PlanReviewImplement, Revision: rev.Number})
+	out, err := app.ws.SettlePlanReview(id, conversation.PlanReviewSettle{Action: conversation.PlanReviewImplement, Revision: rev.Number})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +270,7 @@ func (m *investigationCapture) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // observe publishes each step once, after the shell shows it.
 func (m *investigationCapture) observe() {
 	id := m.f.id
-	if len(m.agentPrompts) > 0 && m.agentPrompts[0].request.operation == types.PlanInvestigationHostOperation {
+	if len(m.agentPrompts) > 0 && m.agentPrompts[0].request.operation == conversation.PlanInvestigationHostOperation {
 		m.consent = true
 		m.publish("consent")
 	}
@@ -281,7 +281,7 @@ func (m *investigationCapture) observe() {
 	if screen := m.sessionTextOverlay(); screen != nil && screen.IsOpen() && screen.ReadOnly() && strings.Contains(screen.Value(), "expected five, got 3") {
 		m.publish("evidence")
 	}
-	if ok && rev.Outcome == types.PlanOutcomeImplemented && !m.ws.PlanModeForAgent(id) && !m.ws.AgentTurnActive(id) {
+	if ok && rev.Outcome == conversation.PlanOutcomeImplemented && !m.ws.PlanModeForAgent(id) && !m.ws.AgentTurnActive(id) {
 		m.publish("implemented")
 	}
 }
@@ -305,18 +305,18 @@ func (m *investigationCapture) publish(step string) {
 
 func (m *investigationCapture) finish() {
 	rev, _ := m.latestPlanRevision(m.f.id)
-	var statuses []types.PlanEvidenceStatus
+	var statuses []conversation.PlanEvidenceStatus
 	for _, e := range rev.Evidence {
 		statuses = append(statuses, e.Status)
 	}
 	switch {
 	case !m.consent:
 		m.t.Error("the host-run question was not shown")
-	case len(statuses) != 2 || statuses[0] != types.PlanEvidenceFailed || statuses[1] != types.PlanEvidencePassed:
+	case len(statuses) != 2 || statuses[0] != conversation.PlanEvidenceFailed || statuses[1] != conversation.PlanEvidencePassed:
 		m.t.Errorf("evidence = %v, want failed then passed", statuses)
 	case !m.seen["evidence"]:
 		m.t.Error("the failing evidence was not opened")
-	case rev.Outcome != types.PlanOutcomeImplemented || m.ws.PlanModeForAgent(m.f.id):
+	case rev.Outcome != conversation.PlanOutcomeImplemented || m.ws.PlanModeForAgent(m.f.id):
 		m.t.Errorf("revision %d outcome %q; Plan mode %t", rev.Number, rev.Outcome, m.ws.PlanModeForAgent(m.f.id))
 	}
 	if err := m.f.sourceUnchanged(); err != nil {

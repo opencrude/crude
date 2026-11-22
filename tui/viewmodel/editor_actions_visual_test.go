@@ -3,9 +3,9 @@ package viewmodel
 import (
 	tea "charm.land/bubbletea/v2"
 	"context"
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/cell"
-	"crude/types"
+	"crude/types/insight"
 	"crude/workspace"
 	"errors"
 	"fmt"
@@ -196,7 +196,7 @@ func (m *editorActionsVisualModel) observeEditorActions(phase int) error {
 		}
 		state := ed.DocumentState()
 		syntax, _ := ed.InsightStatus()
-		if ed.Value() != want || state.PendingEdits != 0 || state.InFlight || state.UndoPending || state.HistoryQueued || state.Conflict != nil || syntax != types.InsightCurrent {
+		if ed.Value() != want || state.PendingEdits != 0 || state.InFlight || state.UndoPending || state.HistoryQueued || state.Conflict != nil || syntax != insight.Current {
 			return fmt.Errorf("source not settled: %q %+v; %s", ed.Value(), state, m.lastInput)
 		}
 		if v.Input.Value() != "Private editor draft stays unsent." {

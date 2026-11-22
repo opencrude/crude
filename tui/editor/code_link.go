@@ -43,7 +43,7 @@ func (e *Editor) wordAt(pos Position) (codeLink, bool) {
 	if start.Line != pos.Line || end.Line != pos.Line || end.Col <= start.Col {
 		return codeLink{}, false
 	}
-	text := e.buf.GetText(start, end)
+	text := e.buf.Text(start, end)
 	for _, r := range text {
 		if !isWordChar(r) {
 			return codeLink{}, false

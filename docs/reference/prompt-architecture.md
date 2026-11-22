@@ -40,7 +40,7 @@ contracts rather than adding repeated checklists or provider-specific overlays.
 | `agent/` | Model requests, admission budgets, guidance compilation/verification execution, tool-batch deferral, checkpoint validation |
 | `agent/session/`, `agent/memory/`, `workspace/`, `workspace/fileio/` | Configuration and source selection, typed live facts, evidence validation, domain lifecycle and persistence |
 | `agent/provider/`, `agent/tools/`, `agent/codexio/` | Wire encoding/replay, exact offered schemas, native execution interfaces |
-| `tui/`, `history/`, `agent/sessiondb/` | User input/dialogs, prompt history, references and persistence; not behavioral prompt templates |
+| `tui/`, `agent/prompthistory/`, `agent/sessiondb/` | User input/dialogs, prompt history, references and persistence; not behavioral prompt templates |
 
 Root and child callers use `prompt.BuildRoot` and `prompt.BuildChild`. Background
 jobs use their specialized `agent/prompt/` builders; a memory curator or permission
@@ -238,7 +238,7 @@ policy; see [capability workflows](../guides/capability-workflows.md).
 There is no bundled vendor behavioral prompt tree and no agent/prompts.go
 compatibility facade. If a future change genuinely needs shipped instruction
 assets, their sole owner remains `agent/prompt/`, not a second provider-local loader.
-Names such as `tui/ui/textprompt.go`, `dirty_prompt.go`, or
+Names such as `tui/ui/text_prompt.go`, `dirty_prompt.go`, or
 `agent/sessiondb/promptref.go` describe unrelated UI/reference concerns and remain in
 their owning packages.
 
@@ -302,7 +302,7 @@ tree.
 ### Small And Large Sets
 
 These terms refer to the estimated tokens of the complete rendered guidance,
-not a fixed file size. `agent/project_guidance.go` calculates the target budget:
+not a fixed file size. `agent/turnloop/project_guidance.go` calculates the target budget:
 
 ```text
 available = context_window - base_system_tokens - output_reserve - safety_reserve

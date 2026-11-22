@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"crude/types"
+	"crude/types/insight"
 )
 
 func TestDiagnosticPublicationRequiresActualCanonicalSource(t *testing.T) {
@@ -12,7 +12,7 @@ func TestDiagnosticPublicationRequiresActualCanonicalSource(t *testing.T) {
 		t.Run(mismatch, func(t *testing.T) {
 			ed := loadEditorText(t, "qualified.txt", "\t😀bad")
 			setTestDiagnostics(ed, nil)
-			facts := testDiagnosticFacts(ed, []LSPDiagnostic{{Line: 0, Col: 3, EndCol: 6, Severity: DiagError}})
+			facts := testDiagnosticFacts(ed, []insight.LSPDiagnostic{{Line: 0, Col: 3, EndCol: 6, Severity: DiagError}})
 			switch mismatch {
 			case "workspace":
 				facts.Boundary.Source.WorkspaceGeneration = "other-workspace"
@@ -32,7 +32,7 @@ func TestDiagnosticPublicationRequiresActualCanonicalSource(t *testing.T) {
 				v := 100
 				facts.ReportedVersion = &v
 			case "stale":
-				facts.State = types.InsightStale
+				facts.State = insight.Stale
 			case "limited":
 				facts.Limited = true
 			}
@@ -50,7 +50,7 @@ func TestDiagnosticPublicationRequiresActualCanonicalSource(t *testing.T) {
 func TestFutureDiagnosticWaitsForCanonicalSourceAndCannotStampDraft(t *testing.T) {
 	ed := loadEditorText(t, "future.txt", "before")
 	setTestDiagnostics(ed, nil)
-	facts := testDiagnosticFacts(ed, []LSPDiagnostic{{Line: 0, Col: 2, EndCol: 5, Severity: DiagError}})
+	facts := testDiagnosticFacts(ed, []insight.LSPDiagnostic{{Line: 0, Col: 2, EndCol: 5, Severity: DiagError}})
 	facts.Boundary.Source.Revision = 42
 	ed.SetDiagnostics(facts)
 	if len(ed.Diagnostics()) != 0 || len(ed.lineDiagnostics(0)) != 0 {
@@ -82,7 +82,7 @@ func TestDiagnosticErrorNavigationReportsOnlyTheCurrentFile(t *testing.T) {
 	ed := loadEditorText(t, "empty.txt", "source")
 	setTestDiagnostics(ed, nil)
 	facts := testDiagnosticFacts(ed, nil)
-	facts.Boundary.Context = types.InsightContext{UnknownInputs: []string{"build flags", "dependencies"}}
+	facts.Boundary.Context = insight.Context{UnknownInputs: []string{"build flags", "dependencies"}}
 	ed.SetDiagnostics(facts)
 	status := ed.DiagnosticStatus()
 	if status != "No errors to jump to in this file." || ed.FirstError() != nil || ed.DiagnosticFacts().ID != facts.ID {
@@ -98,7 +98,7 @@ func TestDiagnosticErrorNavigationReportsOnlyTheCurrentFile(t *testing.T) {
 func TestDiagnosticWarningWithUnknownContextRemainsReadable(t *testing.T) {
 	ed := loadEditorText(t, "unknown.txt", "\t😀bad")
 	setTestDiagnostics(ed, nil)
-	facts := testDiagnosticFacts(ed, []LSPDiagnostic{{Line: 0, Col: 3, EndCol: 6, Severity: DiagWarning}})
+	facts := testDiagnosticFacts(ed, []insight.LSPDiagnostic{{Line: 0, Col: 3, EndCol: 6, Severity: DiagWarning}})
 	facts.Boundary.Context.UnknownInputs = []string{"configuration"}
 	ed.SetDiagnostics(facts)
 	if len(ed.DiagnosticsAt(0, 6)) != 1 || len(ed.lineDiagnostics(0)) != 1 || ed.FirstError() != nil ||
@@ -113,7 +113,7 @@ func TestDiagnosticWarningWithUnknownContextRemainsReadable(t *testing.T) {
 func TestDiagnosticFiltersKeepDetachedBatch(t *testing.T) {
 	ed := loadEditorText(t, "filter.txt", "\t😀bad")
 	setTestDiagnostics(ed, nil)
-	facts := testDiagnosticFacts(ed, []LSPDiagnostic{{Line: 0, Col: 3, EndCol: 6, Severity: DiagError, Message: "original"}})
+	facts := testDiagnosticFacts(ed, []insight.LSPDiagnostic{{Line: 0, Col: 3, EndCol: 6, Severity: DiagError, Message: "original"}})
 	ed.SetDiagnostics(facts)
 	facts.Diagnostics[0].Message = "caller mutated"
 	ed.SetDiagnosticsVisible(false)
@@ -133,7 +133,7 @@ func TestDiagnosticFiltersKeepDetachedBatch(t *testing.T) {
 
 func TestReopenedEditorRejectsPreviousLifetimeEvenAtSameRevision(t *testing.T) {
 	ed := loadEditorText(t, "reopen.txt", "bad")
-	setTestDiagnostics(ed, []LSPDiagnostic{{Line: 0, EndCol: 3, Severity: DiagError}})
+	setTestDiagnostics(ed, []insight.LSPDiagnostic{{Line: 0, EndCol: 3, Severity: DiagError}})
 	old, snapshot := ed.DiagnosticFacts(), ed.DocumentSnapshot()
 	ed.Close()
 	snapshot.AnalysisLifetime = "new-open"
@@ -154,7 +154,7 @@ func TestSameQualifiedBatchTwoEditorShellsProjectsWithoutMutation(t *testing.T) 
 	if err := two.InstallDocument(one.DocumentSnapshot()); err != nil {
 		t.Fatal(err)
 	}
-	facts := testDiagnosticFacts(one, []LSPDiagnostic{{Line: 0, Col: 3, EndCol: 6, Severity: DiagError}})
+	facts := testDiagnosticFacts(one, []insight.LSPDiagnostic{{Line: 0, Col: 3, EndCol: 6, Severity: DiagError}})
 	one.SetDiagnostics(facts)
 	two.SetDiagnostics(facts)
 	one.InsertRune('x')
@@ -167,14 +167,14 @@ func TestSameQualifiedBatchTwoEditorShellsProjectsWithoutMutation(t *testing.T) 
 func TestDiagnosticStrictNavigationRejectsMalformedEndpoints(t *testing.T) {
 	ed := loadEditorText(t, "strict.txt", "\t😀bad\nsecond")
 	setTestDiagnostics(ed, nil)
-	for _, diagnostic := range []LSPDiagnostic{
+	for _, diagnostic := range []insight.LSPDiagnostic{
 		{Line: 0, Col: 2, EndCol: 3}, // split surrogate
 		{Line: 0, Col: 3, EndCol: 2}, // reversed
 		{Line: 0, Col: 3, EndLine: 2, EndCol: 0},
 		{Line: 0, Col: 3, EndCol: 99},
 	} {
 		diagnostic.Severity = DiagError
-		ed.SetDiagnostics(testDiagnosticFacts(ed, []LSPDiagnostic{diagnostic}))
+		ed.SetDiagnostics(testDiagnosticFacts(ed, []insight.LSPDiagnostic{diagnostic}))
 		if ed.FirstError() != nil || len(ed.Diagnostics()) != 0 || len(ed.DiagnosticsAt(0, 6)) != 0 {
 			t.Fatalf("malformed range authorized interaction: %+v", diagnostic)
 		}
@@ -183,7 +183,7 @@ func TestDiagnosticStrictNavigationRejectsMalformedEndpoints(t *testing.T) {
 
 func TestNewUnverifiedBatchCannotReuseAcceptedProvisionalInk(t *testing.T) {
 	ed := loadEditorText(t, "late.txt", "edit\nbad")
-	setTestDiagnostics(ed, []LSPDiagnostic{{Line: 1, EndLine: 1, EndCol: 3, Severity: DiagWarning}})
+	setTestDiagnostics(ed, []insight.LSPDiagnostic{{Line: 1, EndLine: 1, EndCol: 3, Severity: DiagWarning}})
 	old := ed.DiagnosticFacts()
 	ed.InsertRune('x')
 	if len(ed.lineDiagnostics(1)) != 1 {

@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 
 	"crude/agent/sessiondb"
-	"crude/types"
+	"crude/types/setting"
 )
 
 // ErrSettingsSessionClosing rejects settings operations after shutdown starts.
@@ -18,9 +18,9 @@ var ErrSettingsSessionClosing = errors.New("session is closing")
 // SettingsSnapshotSet is one detached, atomically captured session projection.
 type SettingsSnapshotSet struct {
 	Revision  uint64
-	Effective types.Settings
-	Base      types.Settings
-	Overrides map[string]types.CategorySettings
+	Effective setting.Settings
+	Base      setting.Settings
+	Overrides map[string]setting.Category
 }
 
 // beginSettingsOperation returns with the lifetime fence held on success.
@@ -73,7 +73,7 @@ func (s *Session) settingsSnapshotSetLocked() SettingsSnapshotSet {
 	}
 }
 
-func detachedSettingsSnapshot(cfg *Config) types.Settings {
+func detachedSettingsSnapshot(cfg *Config) setting.Settings {
 	settings := ConfigToSettings(copyConfig(cfg))
 	// Memory's category is already a settings value, unlike role categories,
 	// so ConfigToSettings otherwise passes its nested references through.
@@ -101,7 +101,7 @@ func (s *Session) SettingsSnapshots() SettingsSnapshotSet {
 
 // SaveSettingsSnapshot saves a form and captures all projections before another
 // settings mutation can intervene. Failed saves return no success projection.
-func (s *Session) SaveSettingsSnapshot(settings types.Settings) (SettingsSnapshotSet, error) {
+func (s *Session) SaveSettingsSnapshot(settings setting.Settings) (SettingsSnapshotSet, error) {
 	return s.saveSettingsSnapshot(settings)
 }
 
@@ -120,13 +120,13 @@ func (s *Session) withSettingsSnapshot(mutate func() error) (SettingsSnapshotSet
 	return s.settingsSnapshotSetLocked(), nil
 }
 
-func (s *Session) saveSettingsSnapshot(settings types.Settings) (SettingsSnapshotSet, error) {
+func (s *Session) saveSettingsSnapshot(settings setting.Settings) (SettingsSnapshotSet, error) {
 	if settings.SessionEdits != nil {
 		return s.withSettingsSnapshot(func() error {
 			current := s.settingsSnapshotLocked()
 			current.SessionOverrides = s.sessionOverridesSnapshotLocked()
-			local := types.SessionPreferencesOf(current)
-			if err := types.ApplySettingsEdits(&local, settings.SessionEdits); err != nil {
+			local := setting.SessionPreferencesOf(current)
+			if err := setting.ApplyEdits(&local, settings.SessionEdits); err != nil {
 				return err
 			}
 			current.SessionMainAgent, current.SessionOverrides, current.SessionMultiAgent = local.MainAgent, local.Overrides, local.MultiAgent
@@ -172,7 +172,7 @@ func (s *Session) resetSessionSettingsLocked() error {
 	oldDelegation := s.cfg.IsMultiAgentEnabled()
 	pins := make(map[string]sessiondb.AgentSettingOverride)
 	newCfg := configWithSessionOverrides(s.workspaceCfg, pins)
-	main := newCfg.GetActiveDefaultCategory()
+	main := newCfg.ActiveDefaultCategory()
 	configuredProvider, err := newCfg.providerForCategory(main)
 	// Reset remains possible while the parent connection needs repair.
 	_ = err

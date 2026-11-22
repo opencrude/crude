@@ -3,6 +3,8 @@ package workspace
 import (
 	"context"
 	"crude/internal/fileuri"
+	"crude/types/insight"
+	"crude/types/setting"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -12,15 +14,14 @@ import (
 	"testing"
 	"time"
 
-	"crude/sysload"
-	model "crude/types"
+	"crude/internal/sysload"
 )
 
 type lifecycleRuntime struct {
 	mu                  sync.Mutex
 	clients             []*lifecycleClient
 	roots               []string
-	specs               []model.LSPServerSpec
+	specs               []setting.LSPServerSpec
 	startGate, stopGate <-chan struct{}
 	active, peak        int
 	// startErrs fail the next starts in order, like a missing executable.
@@ -31,13 +32,13 @@ type lifecycleClient struct {
 	reapableClient
 	mu                  sync.Mutex
 	runtime             *lifecycleRuntime
-	diagnostics         func(model.InsightDiagnosticPublication)
-	unopened            func(string, model.InsightDiagnosticPublication)
+	diagnostics         func(insight.DiagnosticPublication)
+	unopened            func(string, insight.DiagnosticPublication)
 	calls               []string
 	wireVersion         int
-	boundaries          map[string]model.InsightBoundary
+	boundaries          map[string]insight.Boundary
 	versions            map[string]int
-	publications        map[string]model.InsightDiagnosticPublication
+	publications        map[string]insight.DiagnosticPublication
 	sequence            uint64
 	startGate, stopGate <-chan struct{}
 	started, stopped    bool
@@ -47,7 +48,7 @@ type lifecycleClient struct {
 	errorMessage        string
 }
 
-func (r *lifecycleRuntime) NewClient(spec model.LSPServerSpec, root string, startAdmission func() error) LSPClient {
+func (r *lifecycleRuntime) NewClient(spec setting.LSPServerSpec, root string, startAdmission func() error) LSPClient {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	c := &lifecycleClient{runtime: r, startGate: r.startGate, stopGate: r.stopGate, stopErr: r.stopErr, startAdmission: startAdmission, reapableClient: reapableClient{done: make(chan struct{})}}
@@ -59,7 +60,7 @@ func (r *lifecycleRuntime) NewClient(spec model.LSPServerSpec, root string, star
 	r.specs = append(r.specs, spec)
 	return c
 }
-func (c *lifecycleClient) OnDiagnostics(fn func(model.InsightDiagnosticPublication)) {
+func (c *lifecycleClient) OnDiagnostics(fn func(insight.DiagnosticPublication)) {
 	c.mu.Lock()
 	c.diagnostics = fn
 	c.mu.Unlock()
@@ -118,23 +119,23 @@ func (c *lifecycleClient) record(value string) {
 	c.calls = append(c.calls, value)
 	c.mu.Unlock()
 }
-func (c *lifecycleClient) send(path, call string, boundary model.InsightBoundary) (int, error) {
+func (c *lifecycleClient) send(path, call string, boundary insight.Boundary) (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.calls = append(c.calls, call)
 	c.wireVersion++
 	if c.boundaries == nil {
-		c.boundaries = make(map[string]model.InsightBoundary)
+		c.boundaries = make(map[string]insight.Boundary)
 		c.versions = make(map[string]int)
-		c.publications = make(map[string]model.InsightDiagnosticPublication)
+		c.publications = make(map[string]insight.DiagnosticPublication)
 	}
 	c.boundaries[path], c.versions[path] = boundary, c.wireVersion
 	return c.wireVersion, nil
 }
-func (c *lifecycleClient) OpenFile(_ context.Context, path, language, text string, boundary model.InsightBoundary) (int, error) {
+func (c *lifecycleClient) OpenFile(_ context.Context, path, language, text string, boundary insight.Boundary) (int, error) {
 	return c.send(path, "open:"+filepath.Base(path)+":"+language+":"+text, boundary)
 }
-func (c *lifecycleClient) UpdateFile(_ context.Context, path, text string, boundary model.InsightBoundary) (int, error) {
+func (c *lifecycleClient) UpdateFile(_ context.Context, path, text string, boundary insight.Boundary) (int, error) {
 	return c.send(path, "change:"+filepath.Base(path)+":"+text, boundary)
 }
 func (c *lifecycleClient) CloseFile(_ context.Context, path string) {
@@ -150,25 +151,25 @@ func (c *lifecycleClient) NotifySave(_ context.Context, _ string, text string, _
 	}
 	c.record(phase + text)
 }
-func (c *lifecycleClient) RequestCompletions(_ context.Context, path string, _, _ int, trigger model.LSPCompletionContext) (model.LSPCompletionResponse, error) {
+func (c *lifecycleClient) RequestCompletions(_ context.Context, path string, _, _ int, trigger insight.LSPCompletionContext) (insight.LSPCompletionResponse, error) {
 	c.record("complete")
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return model.LSPCompletionResponse{WireVersion: c.versions[path], JSON: []byte(`[{"label":"ok"}]`)}, nil
+	return insight.LSPCompletionResponse{WireVersion: c.versions[path], JSON: []byte(`[{"label":"ok"}]`)}, nil
 }
-func (c *lifecycleClient) publication(path string, ds []LSPDiagnostic) model.InsightDiagnosticPublication {
+func (c *lifecycleClient) publication(path string, ds []insight.LSPDiagnostic) insight.DiagnosticPublication {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.sequence++
 	v := c.versions[path]
-	return model.InsightDiagnosticPublication{Boundary: c.boundaries[path], Sequence: c.sequence,
+	return insight.DiagnosticPublication{Boundary: c.boundaries[path], Sequence: c.sequence,
 		WireVersion: v, ReportedVersion: &v, Diagnostics: ds}
 }
-func (c *lifecycleClient) emit(p model.InsightDiagnosticPublication) {
+func (c *lifecycleClient) emit(p insight.DiagnosticPublication) {
 	c.mu.Lock()
 	fn := c.diagnostics
 	if c.publications == nil {
-		c.publications = make(map[string]model.InsightDiagnosticPublication)
+		c.publications = make(map[string]insight.DiagnosticPublication)
 	}
 	c.publications[p.Boundary.Source.Path] = p
 	c.mu.Unlock()
@@ -254,7 +255,7 @@ func TestLSPStopRestartRetainsDocumentAndRejectsStaleDiagnostics(t *testing.T) {
 	awaitLSP(t, func() bool { cs := r.snapshot(); return len(cs) == 1 && len(cs[0].snapshot()) == 1 })
 	old := r.snapshot()[0]
 	waitDiagnosticSend(t, m, old, initial)
-	old.emit(old.publication(path, []LSPDiagnostic{{Message: "error", Severity: 1}}))
+	old.emit(old.publication(path, []insight.LSPDiagnostic{{Message: "error", Severity: 1}}))
 	requireDiagnostic(t, m, path, "error")
 	id := m.ServerHealthSnapshots()[0].ID
 	if !m.StopServer(id) {
@@ -262,7 +263,7 @@ func TestLSPStopRestartRetainsDocumentAndRejectsStaleDiagnostics(t *testing.T) {
 	}
 	awaitLSP(t, func() bool { old.mu.Lock(); defer old.mu.Unlock(); return old.stopped })
 	editorSource(t, m, path, "kept while stopped")
-	old.emit(old.publication(path, []LSPDiagnostic{{Message: "stale", Severity: 1}}))
+	old.emit(old.publication(path, []insight.LSPDiagnostic{{Message: "stale", Severity: 1}}))
 	if batch, _ := m.FileDiagnostics(path); batch.HasExactSource() {
 		t.Fatal("stale diagnostics revived stopped state")
 	}
@@ -273,11 +274,11 @@ func TestLSPStopRestartRetainsDocumentAndRejectsStaleDiagnostics(t *testing.T) {
 	if got := r.snapshot()[1].snapshot()[0]; got != "open:main.go:go:kept while stopped" {
 		t.Fatal(got)
 	}
-	old.emit(old.publication(path, []LSPDiagnostic{{Message: "old owner", Severity: 1}}))
+	old.emit(old.publication(path, []insight.LSPDiagnostic{{Message: "old owner", Severity: 1}}))
 	if batch, _ := m.FileDiagnostics(path); batch.HasExactSource() {
 		t.Fatal("old process wrote new process cache")
 	}
-	if batch, ok := m.FileDiagnostics(path); !ok || batch.State != model.InsightStale {
+	if batch, ok := m.FileDiagnostics(path); !ok || batch.State != insight.Stale {
 		t.Fatal("retirement did not retain stale publication evidence")
 	}
 }
@@ -404,7 +405,7 @@ func TestLSPRequestsFlushDebounceAndWatchersDoNotOpenFiles(t *testing.T) {
 	editorSource(t, m, path, "initial")
 	awaitLSP(t, func() bool { cs := r.snapshot(); return len(cs) == 1 && len(cs[0].snapshot()) == 1 })
 	editorSource(t, m, path, "changed")
-	if _, err := m.RequestCompletions(t.Context(), path, 0, 1, model.LSPCompletionContext{}); err != nil {
+	if _, err := m.RequestCompletions(t.Context(), path, 0, 1, insight.LSPCompletionContext{}); err != nil {
 		t.Fatal(err)
 	}
 	m.NotifyWatchedFilesChanged(t.Context(), filepath.Join(root, "go.mod"), 2)
@@ -470,14 +471,14 @@ func TestLSPRootUsesLanguageMarkersAndWorkspaceBoundary(t *testing.T) {
 	}
 }
 
-func (c *lifecycleClient) AwaitDiagnostics(_ context.Context, path string) (model.InsightDiagnosticPublication, bool) {
+func (c *lifecycleClient) AwaitDiagnostics(_ context.Context, path string) (insight.DiagnosticPublication, bool) {
 	c.record("await:" + filepath.Base(path))
 	c.mu.Lock()
 	p, ok := c.publications[path]
 	current := ok && sameInsightBoundary(p.Boundary, c.boundaries[path]) && p.WireVersion == c.versions[path]
 	c.mu.Unlock()
 	if !current {
-		p = c.publication(path, []LSPDiagnostic{{Message: "probe diagnostic", Severity: 1}})
+		p = c.publication(path, []insight.LSPDiagnostic{{Message: "probe diagnostic", Severity: 1}})
 		c.emit(p)
 	}
 	return p, true

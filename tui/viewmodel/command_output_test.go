@@ -17,8 +17,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/agent/session"
-	"crude/core/port"
-	"crude/terminalvt"
+	"crude/core/shellport"
+	"crude/internal/terminalvt"
 	"crude/tui/rendering"
 	"crude/tui/screens/backgroundjobs"
 	"crude/tui/ui"
@@ -174,7 +174,7 @@ func TestConnectedCommandOutputAndChatReveal(t *testing.T) {
 	shell, process, agentID := commandOutputJourney(t)
 	app := shell.app
 	clickCommandDeck(t, shell, "Show build in the conversation")
-	renderer := app.subPaneProjections.GetExisting(agentID).renderer
+	renderer := app.subPaneProjections.Existing(agentID).renderer
 	expanded := false
 	for _, msg := range app.ws.AgentMgr().Get(agentID).State.Messages.Messages() {
 		if msg.ToolName == "async_execute_command" {

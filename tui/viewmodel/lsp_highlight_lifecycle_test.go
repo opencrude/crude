@@ -6,17 +6,18 @@ import (
 	"path/filepath"
 	"testing"
 
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/editor"
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace/document"
 )
 
 type occurrenceCursorService struct {
 	shellport.LSPService
 	cursor         uint64
-	producer       types.InsightProducer
-	settings       types.LSPSettings
+	producer       insight.Producer
+	settings       setting.LSP
 	unsynchronized bool
 	settingsReads  int
 }
@@ -24,13 +25,13 @@ type occurrenceCursorService struct {
 func (s *occurrenceCursorService) ContextCursor() (string, uint64) {
 	return "occurrence-owner", s.cursor
 }
-func (s *occurrenceCursorService) FileProducer(string) types.InsightProducer { return s.producer }
-func (s *occurrenceCursorService) FileSynchronized(types.InsightSource, uint64) bool {
+func (s *occurrenceCursorService) FileProducer(string) insight.Producer { return s.producer }
+func (s *occurrenceCursorService) FileSynchronized(insight.Source, uint64) bool {
 	return !s.unsynchronized
 }
-func (s *occurrenceCursorService) Settings() types.LSPSettings {
+func (s *occurrenceCursorService) Settings() setting.LSP {
 	s.settingsReads++
-	return types.CloneLSPSettings(s.settings)
+	return setting.CloneLSP(s.settings)
 }
 func (s *occurrenceCursorService) ReferencesEnabled() bool {
 	return s.settings.Enabled && s.settings.References
@@ -42,7 +43,7 @@ type occurrenceCursorWorkspace struct {
 }
 
 func (w *occurrenceCursorWorkspace) LSPMgr() shellport.LSPService { return w.service }
-func (*occurrenceCursorWorkspace) RequestLSPHighlights(context.Context, types.InsightSource, int, int) (types.LSPHighlights, error) {
+func (*occurrenceCursorWorkspace) RequestLSPHighlights(context.Context, insight.Source, int, int) (insight.LSPHighlights, error) {
 	panic("test controls the independently delivered response")
 }
 
@@ -60,9 +61,9 @@ func occurrenceCursorFixture(t *testing.T) (*App, *editor.Editor, *occurrenceCur
 		t.Fatal(err)
 	}
 	original := app.ws
-	settings := types.DefaultLSPSettings()
+	settings := setting.DefaultLSP()
 	settings.Enabled, settings.References = true, true
-	service := &occurrenceCursorService{LSPService: original.LSPMgr(), cursor: 7, producer: types.InsightProducer{InstanceID: "provider"}, settings: settings}
+	service := &occurrenceCursorService{LSPService: original.LSPMgr(), cursor: 7, producer: insight.Producer{InstanceID: "provider"}, settings: settings}
 	app.ws = &occurrenceCursorWorkspace{Workspace: original, service: service}
 	t.Cleanup(func() { app.resetOccurrences(); app.ws = original })
 	app.setFocusEditor()
@@ -71,16 +72,16 @@ func occurrenceCursorFixture(t *testing.T) (*App, *editor.Editor, *occurrenceCur
 	return app, ed, service
 }
 
-func occurrenceCursorResult(r *occurrenceRequest, generation uint64) types.LSPHighlights {
-	span := func(start, end int) types.LSPNavigationRange {
-		return types.LSPNavigationRange{Start: types.LSPNavigationPosition{Line: 0, Character: start}, End: types.LSPNavigationPosition{Line: 0, Character: end}}
+func occurrenceCursorResult(r *occurrenceRequest, generation uint64) insight.LSPHighlights {
+	span := func(start, end int) insight.LSPNavigationRange {
+		return insight.LSPNavigationRange{Start: insight.LSPNavigationPosition{Line: 0, Character: start}, End: insight.LSPNavigationPosition{Line: 0, Character: end}}
 	}
-	return types.LSPHighlights{Boundary: types.InsightBoundary{Source: r.source, Producer: r.producer, Context: types.InsightContext{Generation: generation}}, WireVersion: 1, Line: r.line, Col: r.col, Answer: types.LSPHighlightsFound,
-		Highlights: []types.LSPHighlight{{Range: span(0, 3), Kind: types.LSPHighlightRead}, {Range: span(4, 7), Kind: types.LSPHighlightRead}}}
+	return insight.LSPHighlights{Boundary: insight.Boundary{Source: r.source, Producer: r.producer, Context: insight.Context{Generation: generation}}, WireVersion: 1, Line: r.line, Col: r.col, Answer: insight.LSPHighlightsFound,
+		Highlights: []insight.LSPHighlight{{Range: span(0, 3), Kind: insight.LSPHighlightRead}, {Range: span(4, 7), Kind: insight.LSPHighlightRead}}}
 }
 
 func TestOccurrencesWaitForContextAndRetireOnChange(t *testing.T) {
-	for _, answer := range []string{types.LSPHighlightsFound, types.LSPHighlightsNull, types.LSPHighlightsEmpty, types.LSPHighlightsUnsupported} {
+	for _, answer := range []string{insight.LSPHighlightsFound, insight.LSPHighlightsNull, insight.LSPHighlightsEmpty, insight.LSPHighlightsUnsupported} {
 		t.Run(answer, func(t *testing.T) {
 			app, ed, service := occurrenceCursorFixture(t)
 			app.syncOccurrences()
@@ -90,7 +91,7 @@ func TestOccurrencesWaitForContextAndRetireOnChange(t *testing.T) {
 			}
 			result := occurrenceCursorResult(r, 8)
 			result.Answer = answer
-			if answer != types.LSPHighlightsFound {
+			if answer != insight.LSPHighlightsFound {
 				result.Highlights = nil
 			}
 			app.handleOccurrenceResult(occurrenceResultMsg{owner: r, result: result})
@@ -100,7 +101,7 @@ func TestOccurrencesWaitForContextAndRetireOnChange(t *testing.T) {
 			}
 			service.cursor = 8
 			app.syncOccurrences()
-			if !r.installed || ed.OccurrencesCoverCaret() != (answer == types.LSPHighlightsFound) {
+			if !r.installed || ed.OccurrencesCoverCaret() != (answer == insight.LSPHighlightsFound) {
 				t.Fatal("the matching context did not present the right answer")
 			}
 			service.cursor = 9
@@ -132,7 +133,7 @@ func TestOccurrencesRetireWhenProviderOrPreferenceChanges(t *testing.T) {
 	if !ed.OccurrencesCoverCaret() {
 		t.Fatal("moving inside the symbol removed the marks")
 	}
-	service.producer = types.InsightProducer{InstanceID: "replacement"}
+	service.producer = insight.Producer{InstanceID: "replacement"}
 	app.syncOccurrences()
 	next := app.occurrence
 	if ed.OccurrencesCoverCaret() || next == nil || next == r || next.producer != service.producer {

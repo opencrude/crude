@@ -1,13 +1,13 @@
 package workspace
 
 import (
-	"crude/types"
+	"crude/types/insight"
 	"path/filepath"
 )
 
 // Each open path observes only its own selected, initialized server. This is
 // detached memory, independent of the shell's most recently focused file.
-func (m *LSPManager) AssistanceCapabilities(path string) types.LSPAssistanceCapabilities {
+func (m *LSPManager) AssistanceCapabilities(path string) insight.LSPAssistanceCapabilities {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.assistanceCapabilitiesLocked(filepath.Clean(path))
@@ -15,7 +15,7 @@ func (m *LSPManager) AssistanceCapabilities(path string) types.LSPAssistanceCapa
 
 // FileProducer returns the connected producer for this open path without
 // copying completion/signature trigger lists on every editor update.
-func (m *LSPManager) FileProducer(path string) types.InsightProducer {
+func (m *LSPManager) FileProducer(path string) insight.Producer {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	_, producer := m.assistanceStateLocked(filepath.Clean(path))
@@ -24,18 +24,18 @@ func (m *LSPManager) FileProducer(path string) types.InsightProducer {
 
 // FileSynchronized reports whether the exact source reached its connected
 // producer in the current project context. It never sends a document update.
-func (m *LSPManager) FileSynchronized(source types.InsightSource, context uint64) bool {
+func (m *LSPManager) FileSynchronized(source insight.Source, context uint64) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.fileSynchronizationLocked(filepath.Clean(source.Path)).MatchesSynchronizedSource(source, context)
 }
 
-func (m *LSPManager) fileSynchronizationLocked(path string) types.LSPAssistanceCapabilities {
+func (m *LSPManager) fileSynchronizationLocked(path string) insight.LSPAssistanceCapabilities {
 	state, producer := m.assistanceStateLocked(path)
 	if state == nil {
-		return types.LSPAssistanceCapabilities{}
+		return insight.LSPAssistanceCapabilities{}
 	}
-	out := types.LSPAssistanceCapabilities{Producer: producer}
+	out := insight.LSPAssistanceCapabilities{Producer: producer}
 	doc := m.documents[path]
 	if !doc.syncPending && doc.syncedRevision == doc.revision && doc.syncedContext == m.contextGeneration {
 		out.SynchronizedSource = doc.boundary.Source
@@ -44,37 +44,38 @@ func (m *LSPManager) fileSynchronizationLocked(path string) types.LSPAssistanceC
 	return out
 }
 
-func (m *LSPManager) assistanceStateLocked(path string) (*lspClientState, types.InsightProducer) {
+func (m *LSPManager) assistanceStateLocked(path string) (*lspClientState, insight.Producer) {
 	if m.closed || m.paused || !m.settings.Enabled || m.analysisErrorLocked() != nil {
-		return nil, types.InsightProducer{}
+		return nil, insight.Producer{}
 	}
 	doc := m.documents[path]
 	if doc == nil || !doc.opened {
-		return nil, types.InsightProducer{}
+		return nil, insight.Producer{}
 	}
 	state := m.states[doc.key]
 	if state == nil || doc.boundary.Producer.InstanceID != state.instance || state.status != LSPConnected || state.client == nil || state.closing || state.stopped || state.teardownErr != nil {
-		return nil, types.InsightProducer{}
+		return nil, insight.Producer{}
 	}
 	return state, doc.boundary.Producer
 }
 
-func (m *LSPManager) assistanceCapabilitiesLocked(path string) types.LSPAssistanceCapabilities {
+func (m *LSPManager) assistanceCapabilitiesLocked(path string) insight.LSPAssistanceCapabilities {
 	state, producer := m.assistanceStateLocked(path)
 	if state == nil {
-		return types.LSPAssistanceCapabilities{}
+		return insight.LSPAssistanceCapabilities{}
 	}
-	out := types.CloneLSPAssistance(state.assistance)
+	out := insight.CloneLSPAssistance(state.assistance)
 	synchronized := m.fileSynchronizationLocked(path)
 	out.Producer = producer
 	out.SynchronizedSource, out.SynchronizedContext = synchronized.SynchronizedSource, synchronized.SynchronizedContext
 	return out
 }
 
-func (m *LSPManager) AssistanceSnapshots() map[string]types.LSPAssistanceCapabilities {
+// AssistanceSnapshots returns the language assistance capabilities of each open document.
+func (m *LSPManager) AssistanceSnapshots() map[string]insight.LSPAssistanceCapabilities {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	out := make(map[string]types.LSPAssistanceCapabilities)
+	out := make(map[string]insight.LSPAssistanceCapabilities)
 	for path := range m.documents {
 		if caps := m.assistanceCapabilitiesLocked(path); caps.Producer.InstanceID != "" {
 			out[path] = caps

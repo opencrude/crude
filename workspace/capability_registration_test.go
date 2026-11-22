@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"crude/agent/skills"
-	"crude/types"
 	captypes "crude/types/capability"
+	"crude/types/setting"
 )
 
 func TestCapabilityRegistrationWaitingForClosingOwnerIsCancellable(t *testing.T) {
@@ -48,8 +48,8 @@ func TestCapabilityRegistrationStoreMergesOnlySelectedIdentity(t *testing.T) {
 	db := openTestWorkspaceDB(t)
 	root := t.TempDir()
 	owner := &Workspace{RootPath: root, WorkspaceDB: db, Logger: testLogger{}}
-	defaults := types.AppSettings{
-		Editor: types.EditorSettings{TabSize: 4},
+	defaults := setting.App{
+		Editor: setting.Editor{TabSize: 4},
 		Capabilities: captypes.Settings{
 			Sources: map[string]captypes.SourceConfig{
 				"local": {ID: "local", Name: "Local", Kind: "local", Location: root, Trusted: true, Scope: captypes.ScopeApplication},
@@ -68,7 +68,7 @@ func TestCapabilityRegistrationStoreMergesOnlySelectedIdentity(t *testing.T) {
 	working.Capabilities.Skills["neighbor"] = captypes.SkillConfig{
 		ID: "neighbor", Name: "Neighbor", Path: filepath.Join(root, "neighbor"), Scope: captypes.ScopeWorkspace,
 	}
-	if err := owner.SaveWorkspaceSettings(types.OverridesFromDiff(owner.AppDefaults(), working)); err != nil {
+	if err := owner.SaveWorkspaceSettings(setting.OverridesFromDiff(owner.AppDefaults(), working)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -116,18 +116,18 @@ func TestCapabilityRegistrationStoreMergesOnlySelectedIdentity(t *testing.T) {
 
 func TestPreferenceDraftCannotEraseLaterAgentCapabilityInstall(t *testing.T) {
 	owner := &Workspace{RootPath: t.TempDir(), WorkspaceDB: openTestWorkspaceDB(t), Logger: testLogger{}}
-	owner.SetAppDefaults(types.AppSettings{Editor: types.EditorSettings{TabSize: 4}})
+	owner.SetAppDefaults(setting.App{Editor: setting.Editor{TabSize: 4}})
 	draft := owner.LoadAppSettings()
 	draft.Editor.TabSize = 8
 	draft.Capabilities.Acquisition.Mode = "manual"
-	save := owner.PreparePreferencesSave(types.SettingsScopeWorkspace, types.SettingsEdits(owner.LoadAppSettings(), draft))
+	save := owner.PreparePreferencesSave(setting.ScopeWorkspace, setting.Edits(owner.LoadAppSettings(), draft))
 	current := owner.LoadAppSettings()
 	current.Capabilities.Skills["later-install"] = captypes.SkillConfig{ID: "later-install", Name: "Later skill", Path: "later", Scope: captypes.ScopeWorkspace}
 	current.Capabilities.Connections["later-mcp"] = captypes.ConnectionConfig{
 		ID: "later-mcp", Name: "Later MCP", Transport: "http", URL: "https://example.test", Scope: captypes.ScopeWorkspace,
 		Grants: map[string]captypes.ToolGrant{"lookup": {Effect: captypes.EffectRead, Scope: "public", Fingerprint: "exact"}},
 	}
-	if err := owner.SaveWorkspaceSettings(types.OverridesFromDiff(owner.AppDefaults(), current)); err != nil {
+	if err := owner.SaveWorkspaceSettings(setting.OverridesFromDiff(owner.AppDefaults(), current)); err != nil {
 		t.Fatal(err)
 	}
 	result := save()
@@ -147,7 +147,7 @@ func TestCapabilityRegistrationStoreRejectsStalePreimageAndReplacementOwner(t *t
 	db := openTestWorkspaceDB(t)
 	root := t.TempDir()
 	owner := &Workspace{RootPath: root, WorkspaceDB: db, Logger: testLogger{}}
-	owner.SetAppDefaults(types.AppSettings{Capabilities: captypes.Settings{
+	owner.SetAppDefaults(setting.App{Capabilities: captypes.Settings{
 		Sources: map[string]captypes.SourceConfig{
 			"local": {ID: "local", Name: "Local", Kind: "local", Location: root, Trusted: true},
 		},
@@ -163,7 +163,7 @@ func TestCapabilityRegistrationStoreRejectsStalePreimageAndReplacementOwner(t *t
 
 	working := owner.LoadAppSettings()
 	working.Capabilities.Acquisition.Mode = "manual"
-	if err := owner.SaveWorkspaceSettings(types.OverridesFromDiff(owner.AppDefaults(), working)); err != nil {
+	if err := owner.SaveWorkspaceSettings(setting.OverridesFromDiff(owner.AppDefaults(), working)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.CommitRegistration(t.Context(), "local:selected", before, after); err == nil {
@@ -180,7 +180,7 @@ func TestCapabilityRegistrationStoreRejectsStalePreimageAndReplacementOwner(t *t
 	source := working.Capabilities.Sources["local"]
 	source.Location = filepath.Join(root, "replacement")
 	working.Capabilities.Sources["local"] = source
-	if err := owner.SaveWorkspaceSettings(types.OverridesFromDiff(owner.AppDefaults(), working)); err != nil {
+	if err := owner.SaveWorkspaceSettings(setting.OverridesFromDiff(owner.AppDefaults(), working)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.CommitRegistration(t.Context(), "local:selected", before, after); err == nil {
@@ -211,7 +211,7 @@ func TestAgentCapabilityActivationPersistsInWorkspaceSettingsWithoutShadowInstal
 		sources[id] = source
 	}
 	sources["local"] = captypes.SourceConfig{ID: "local", Name: "Local", Kind: "local", Location: catalog, Trusted: true}
-	owner.SetAppDefaults(types.AppSettings{Capabilities: captypes.Settings{
+	owner.SetAppDefaults(setting.App{Capabilities: captypes.Settings{
 		Sources:     sources,
 		Acquisition: captypes.AcquisitionSettings{Mode: "automatic", AutomaticSelection: "on"},
 	}})

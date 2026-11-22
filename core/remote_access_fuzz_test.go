@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
 )
 
 // This model intentionally never reads RemoteAccess fields or uses its registry

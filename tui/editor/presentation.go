@@ -1,11 +1,11 @@
 package editor
 
 import (
-	"crude/text/indent"
+	"crude/text/indentation"
 	"crude/tui/bidi"
 	"crude/tui/rendering"
 	"crude/tui/theme"
-	"crude/types"
+	"crude/types/setting"
 	"sort"
 	"strings"
 )
@@ -13,8 +13,8 @@ import (
 // SetPresentation consumes the existing display preferences without changing
 // canonical bytes, source analysis, selection, snippets, dirty state or history.
 // Linked views share the setting but retain independent paint caches.
-func (e *Editor) SetPresentation(settings types.EditorSettings) {
-	settings = types.NormalizeEditorSettings(settings)
+func (e *Editor) SetPresentation(settings setting.Editor) {
+	settings = setting.NormalizeEditor(settings)
 	policy := indentation.Choices{Style: settings.IndentStyle, Size: settings.IndentSize, TabWidth: settings.TabSize}
 	if e.buf.indentSettings != policy {
 		e.buf.indentSettings = policy
@@ -31,7 +31,7 @@ func (e *Editor) SetPresentation(settings types.EditorSettings) {
 		view.indentGuides = settings.IndentGuides
 		view.setMinimap(settings.Minimap)
 		direction := bidi.LeftToRight
-		if settings.TextDirectionOrDefault() == types.EditorTextDirectionByLine {
+		if settings.TextDirectionOrDefault() == setting.EditorTextDirectionByLine {
 			direction = bidi.Auto
 		}
 		view.SetTextDirection(direction)

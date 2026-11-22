@@ -7,10 +7,11 @@ import (
 	"path/filepath"
 	"slices"
 
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 )
 
-func inlayHintsEnabled(s types.LSPSettings) bool { return s.InlayHints }
+func inlayHintsEnabled(s setting.LSP) bool { return s.InlayHints }
 
 // InlayHintsState is a constant-size view gate. Its epoch revokes prior evidence
 // across disable/re-enable, without restarting the producer or restamping facts.
@@ -23,14 +24,14 @@ func (m *LSPManager) InlayHintsState() (bool, uint64) {
 // inlayRequest borrows only the existing synchronized producer. No request,
 // including tooltip-only resolve, starts a second server or trusts an
 // adapter-authored Boundary. Negative answers cross the identical fences.
-func (m *LSPManager) inlayRequest(ctx context.Context, path string, call func(context.Context, LSPClient, types.InsightBoundary, int) (types.LSPInlayResponse, error)) (types.LSPInlayResponse, error) {
+func (m *LSPManager) inlayRequest(ctx context.Context, path string, call func(context.Context, LSPClient, insight.Boundary, int) (insight.LSPInlayResponse, error)) (insight.LSPInlayResponse, error) {
 	if err := ctx.Err(); err != nil {
-		return types.LSPInlayResponse{}, err
+		return insight.LSPInlayResponse{}, err
 	}
 	if !m.featureOn(inlayHintsEnabled) {
-		return types.LSPInlayResponse{}, errors.New("inlay hints are off or blocked in Code Intelligence settings")
+		return insight.LSPInlayResponse{}, errors.New("inlay hints are off or blocked in Code Intelligence settings")
 	}
-	var out types.LSPInlayResponse
+	var out insight.LSPInlayResponse
 	err := m.trackInflight(func() error {
 		client, requestCtx, valid, cancel := m.requestClient(ctx, path)
 		defer cancel()
@@ -39,7 +40,7 @@ func (m *LSPManager) inlayRequest(ctx context.Context, path string, call func(co
 		}
 		m.mu.Lock()
 		doc := m.documents[filepath.Clean(path)]
-		var boundary types.InsightBoundary
+		var boundary insight.Boundary
 		wire := 0
 		if doc != nil && doc.opened && !doc.syncPending {
 			boundary, wire = doc.boundary, doc.wireVersion
@@ -72,22 +73,24 @@ func (m *LSPManager) inlayRequest(ctx context.Context, path string, call func(co
 		return nil
 	})
 	if err != nil {
-		return types.LSPInlayResponse{}, err
+		return insight.LSPInlayResponse{}, err
 	}
 	return out, nil
 }
 
-func (m *LSPManager) RequestInlayHints(ctx context.Context, path string, span types.LSPInlayRange) (types.LSPInlayResponse, error) {
-	return m.inlayRequest(ctx, path, func(ctx context.Context, client LSPClient, _ types.InsightBoundary, _ int) (types.LSPInlayResponse, error) {
+// RequestInlayHints asks the language server for the hints inside a range.
+func (m *LSPManager) RequestInlayHints(ctx context.Context, path string, span insight.LSPInlayRange) (insight.LSPInlayResponse, error) {
+	return m.inlayRequest(ctx, path, func(ctx context.Context, client LSPClient, _ insight.Boundary, _ int) (insight.LSPInlayResponse, error) {
 		return client.RequestInlayHints(ctx, path, span)
 	})
 }
 
-func (m *LSPManager) ResolveInlayHint(ctx context.Context, expected types.InsightBoundary, wire int, original []byte) (types.LSPInlayResponse, error) {
+// ResolveInlayHint resolves one inlay hint only if its provider and source still match.
+func (m *LSPManager) ResolveInlayHint(ctx context.Context, expected insight.Boundary, wire int, original []byte) (insight.LSPInlayResponse, error) {
 	original = bytes.Clone(original)
-	return m.inlayRequest(ctx, expected.Source.Path, func(ctx context.Context, client LSPClient, boundary types.InsightBoundary, version int) (types.LSPInlayResponse, error) {
+	return m.inlayRequest(ctx, expected.Source.Path, func(ctx context.Context, client LSPClient, boundary insight.Boundary, version int) (insight.LSPInlayResponse, error) {
 		if wire != version || !sameInsightBoundary(boundary, expected) {
-			return types.LSPInlayResponse{}, errors.New("the original inlay provider, source or context is no longer synchronized")
+			return insight.LSPInlayResponse{}, errors.New("the original inlay provider, source or context is no longer synchronized")
 		}
 		return client.ResolveInlayHint(ctx, expected.Source.Path, wire, original)
 	})
@@ -96,7 +99,7 @@ func (m *LSPManager) ResolveInlayHint(ctx context.Context, expected types.Insigh
 // inlayFence is memory-only, safe under DocumentService.mu, and never a source
 // reader. Settings/Trust, context, synchronized source and exact process instance
 // all remain authoritative after a request has completed.
-func (m *LSPManager) inlayFence(boundary types.InsightBoundary, wire int) (func() error, error) {
+func (m *LSPManager) inlayFence(boundary insight.Boundary, wire int) (func() error, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	doc := m.documents[filepath.Clean(boundary.Source.Path)]

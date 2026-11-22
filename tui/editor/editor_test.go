@@ -9,6 +9,7 @@ import (
 
 	"crude/tui/rendering"
 	"crude/tui/theme"
+	"crude/types/insight"
 )
 
 // chroma style tests
@@ -224,7 +225,7 @@ func TestBuildLineColorMap_MarkdownBold(t *testing.T) {
 
 func TestSetDiagnostics_StoresAndCounts(t *testing.T) {
 	e := editorWithTheme()
-	diags := []LSPDiagnostic{
+	diags := []insight.LSPDiagnostic{
 		{Line: 0, Col: 0, EndCol: 5, Severity: DiagError, Message: "err1"},
 		{Line: 1, Col: 2, EndCol: 4, Severity: DiagWarning, Message: "warn1"},
 		{Line: 2, Col: 0, EndCol: 1, Severity: DiagInfo, Message: "info1"},
@@ -248,7 +249,7 @@ func TestSetDiagnostics_Empty(t *testing.T) {
 
 func TestSetDiagnostics_MultipleSameLine(t *testing.T) {
 	e := editorWithTheme()
-	diags := []LSPDiagnostic{
+	diags := []insight.LSPDiagnostic{
 		{Line: 0, Col: 0, EndCol: 3, Severity: DiagError, Message: "e1"},
 		{Line: 0, Col: 5, EndCol: 8, Severity: DiagError, Message: "e2"},
 	}
@@ -261,8 +262,8 @@ func TestSetDiagnostics_MultipleSameLine(t *testing.T) {
 
 func TestSetDiagnostics_ReplacesPrevious(t *testing.T) {
 	e := editorWithTheme()
-	setTestDiagnostics(e, []LSPDiagnostic{{Severity: DiagError, Message: "old"}})
-	setTestDiagnostics(e, []LSPDiagnostic{{Severity: DiagWarning, Message: "new"}})
+	setTestDiagnostics(e, []insight.LSPDiagnostic{{Severity: DiagError, Message: "old"}})
+	setTestDiagnostics(e, []insight.LSPDiagnostic{{Severity: DiagWarning, Message: "new"}})
 	errs, warns, _ := e.DiagnosticCounts()
 	assert.Equal(t, 0, errs, "old errors should be replaced")
 	assert.Equal(t, 1, warns, "new warning should be counted")
@@ -271,7 +272,7 @@ func TestSetDiagnostics_ReplacesPrevious(t *testing.T) {
 func TestSetDiagnostics_ThreadSafety(t *testing.T) {
 	e := editorWithTheme()
 	setTestDiagnostics(e, nil)
-	facts := testDiagnosticFacts(e, []LSPDiagnostic{{Line: 0, EndCol: 0, Severity: DiagError, Message: "race"}})
+	facts := testDiagnosticFacts(e, []insight.LSPDiagnostic{{Line: 0, EndCol: 0, Severity: DiagError, Message: "race"}})
 	done := make(chan bool)
 	go func() {
 		for i := 0; i < 100; i++ {
@@ -292,7 +293,7 @@ func TestLineDiagnostics_ByLine(t *testing.T) {
 	e := editorWithTheme()
 	_, err := e.buf.Insert(Position{}, []byte("abcde\nabc\n"))
 	assert.NoError(t, err)
-	diags := []LSPDiagnostic{
+	diags := []insight.LSPDiagnostic{
 		{Line: 0, Col: 0, EndCol: 5, Severity: DiagError, Message: "e"},
 		{Line: 1, Col: 0, EndLine: 1, EndCol: 3, Severity: DiagWarning, Message: "w"},
 	}
@@ -317,7 +318,7 @@ func TestLineDiagnostics_Span(t *testing.T) {
 	e := editorWithTheme()
 	_, err := e.buf.Insert(Position{}, []byte("abcdefgh"))
 	assert.NoError(t, err)
-	setTestDiagnostics(e, []LSPDiagnostic{
+	setTestDiagnostics(e, []insight.LSPDiagnostic{
 		{Line: 0, Col: 3, EndCol: 7, Severity: DiagError},
 	})
 	spans := e.lineDiagnostics(0)
@@ -331,7 +332,7 @@ func TestLineDiagnostics_TabConversion(t *testing.T) {
 	e := editorWithTheme()
 	_, err := e.buf.Insert(Position{}, []byte("\t\tfoo\nbar"))
 	assert.NoError(t, err)
-	setTestDiagnostics(e, []LSPDiagnostic{
+	setTestDiagnostics(e, []insight.LSPDiagnostic{
 		{Line: 0, Col: 2, EndCol: 5, Severity: DiagError, Message: "on-foo"},
 		{Line: 1, Col: 1, EndLine: 1, EndCol: 4, Severity: DiagWarning, Message: "on-bar"},
 	})
@@ -547,7 +548,7 @@ func TestEditorDiagnosticPipeline(t *testing.T) {
 	e := editorWithTheme()
 	_, err := e.buf.Insert(Position{}, []byte("abcdefghijklmnopqrst\nabcdefgh\nabcde\n"))
 	assert.NoError(t, err)
-	diags := []LSPDiagnostic{
+	diags := []insight.LSPDiagnostic{
 		{Line: 0, Col: 0, EndCol: 10, Severity: DiagError, Message: "syntax error"},
 		{Line: 0, Col: 15, EndCol: 20, Severity: DiagHint, Message: "hint"},
 		{Line: 1, Col: 3, EndCol: 8, Severity: DiagWarning, Message: "unused variable"},
@@ -581,7 +582,7 @@ func TestEditorDiagnosticPipeline(t *testing.T) {
 func TestEditorDiagnosticPipeline_Replace(t *testing.T) {
 	e := editorWithTheme()
 
-	setTestDiagnostics(e, []LSPDiagnostic{{Line: 0, Col: 0, EndCol: 5, Severity: DiagError}})
+	setTestDiagnostics(e, []insight.LSPDiagnostic{{Line: 0, Col: 0, EndCol: 5, Severity: DiagError}})
 	errs, _, _ := e.DiagnosticCounts()
 	assert.Equal(t, 1, errs)
 
@@ -589,7 +590,7 @@ func TestEditorDiagnosticPipeline_Replace(t *testing.T) {
 	errs, _, _ = e.DiagnosticCounts()
 	assert.Equal(t, 0, errs)
 
-	setTestDiagnostics(e, []LSPDiagnostic{{Line: 0, Col: 0, EndCol: 5, Severity: DiagWarning}})
+	setTestDiagnostics(e, []insight.LSPDiagnostic{{Line: 0, Col: 0, EndCol: 5, Severity: DiagWarning}})
 	_, warns, _ := e.DiagnosticCounts()
 	assert.Equal(t, 1, warns)
 }

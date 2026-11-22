@@ -16,11 +16,11 @@ import (
 	"testing"
 	"time"
 
-	"crude/buildinfo"
-	"crude/core/client"
-	"crude/core/protocol"
-	"crude/core/wire"
-	"crude/terminalvt"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
+	"crude/core/corewire"
+	"crude/internal/buildinfo"
+	"crude/internal/terminalvt"
 	"crude/workspace"
 
 	"github.com/fsnotify/fsnotify"

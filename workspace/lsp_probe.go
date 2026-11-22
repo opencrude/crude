@@ -3,19 +3,17 @@ package workspace
 import (
 	"context"
 	"crude/internal/fileuri"
+	"crude/types/insight"
+	"crude/types/setting"
 	"errors"
 	"fmt"
 	"path/filepath"
 	"sync"
-
-	ttypes "crude/types"
 )
 
 // ErrLSPStopped reports that the human stopped language servers; agent
 // requests never restart them behind that decision.
 var ErrLSPStopped = errors.New("language servers were stopped from the Code Intelligence controls; start them there to use code intelligence")
-
-type LSPProbeView = ttypes.LSPProbeView
 
 // probe borrows a language-server view of path for one agent request. The
 // editor's live buffer is used when the file is open there; otherwise the disk
@@ -27,14 +25,14 @@ type lspProbe struct {
 	doc        *lspDocument
 	source     *analysisSourceLease
 	generation uint64
-	gate       func(ttypes.LSPSettings) bool
-	view       LSPProbeView
+	gate       func(setting.LSP) bool
+	view       insight.LSPProbeView
 }
 
-func (m *LSPManager) probe(ctx context.Context, path string, gate func(ttypes.LSPSettings) bool, gateName string, fn func(context.Context, LSPClient, string, LSPProbeView) error) (LSPProbeView, error) {
+func (m *LSPManager) probe(ctx context.Context, path string, gate func(setting.LSP) bool, gateName string, fn func(context.Context, LSPClient, string, insight.LSPProbeView) error) (insight.LSPProbeView, error) {
 	probe, err := m.acquireProbe(ctx, path, gate, gateName)
 	if err != nil {
-		return LSPProbeView{}, err
+		return insight.LSPProbeView{}, err
 	}
 	defer m.releasePreparedProbe(probe)
 	return probe.view, m.runProbe(ctx, probe, fn)
@@ -45,7 +43,7 @@ func (m *LSPManager) releasePreparedProbe(probe *lspProbe) {
 	probe.source.release()
 }
 
-func (m *LSPManager) acquireProbe(ctx context.Context, path string, gate func(ttypes.LSPSettings) bool, gateName string) (*lspProbe, error) {
+func (m *LSPManager) acquireProbe(ctx context.Context, path string, gate func(setting.LSP) bool, gateName string) (*lspProbe, error) {
 	path = filepath.Clean(path)
 	m.mu.Lock()
 	if !filepath.IsAbs(path) {
@@ -111,7 +109,7 @@ func (m *LSPManager) acquireProbe(ctx context.Context, path string, gate func(tt
 	if doc == nil {
 		doc = &lspDocument{text: string(source.snapshot.Text), source: source.ref, revision: 1, diskView: onDisk}
 		m.documents[path] = doc
-		m.removeProjectFactsLocked(func(b ttypes.InsightBoundary) bool { return b.Source.Path == path })
+		m.removeProjectFactsLocked(func(b insight.Boundary) bool { return b.Source.Path == path })
 		// A view of the file as it is on disk shows the server nothing new, so
 		// the other views keep their results and need not be sent again.
 		if !onDisk {
@@ -124,7 +122,7 @@ func (m *LSPManager) acquireProbe(ctx context.Context, path string, gate func(tt
 		doc.diskView = false
 		m.advanceContextLocked("Requested analysis source changed.")
 	}
-	view := LSPProbeView{BufferDiffers: source.snapshot.Dirty || source.snapshot.Conflict || !source.snapshot.DiskExists,
+	view := insight.LSPProbeView{BufferDiffers: source.snapshot.Dirty || source.snapshot.Conflict || !source.snapshot.DiskExists,
 		Server: spec.Command, Source: source.ref, SourceText: string(source.snapshot.Text)}
 	doc.probes++
 	m.signalLocked()
@@ -139,7 +137,7 @@ func (m *LSPManager) acquireProbe(ctx context.Context, path string, gate func(tt
 // request itself did not fail.
 var errProbeStateChanged = errors.New("the file or language server state changed during the request; run the request again")
 
-func (m *LSPManager) runProbe(ctx context.Context, probe *lspProbe, fn func(context.Context, LSPClient, string, LSPProbeView) error) error {
+func (m *LSPManager) runProbe(ctx context.Context, probe *lspProbe, fn func(context.Context, LSPClient, string, insight.LSPProbeView) error) error {
 	path, doc, generation := probe.path, probe.doc, probe.generation
 	source, gate, view := probe.source, probe.gate, probe.view
 	sources := source.documents
@@ -267,13 +265,13 @@ func (m *LSPManager) releaseProbe(path string, doc *lspDocument) {
 // ProbeDiagnostics returns the server's diagnostics for path once analysis has
 // settled. settled=false means no accepted result was available before the
 // request ended; the list may be incomplete.
-func (m *LSPManager) ProbeDiagnostics(ctx context.Context, path string) (answer ttypes.InsightDiagnostics, settled bool, view LSPProbeView, err error) {
-	view, err = m.probe(ctx, path, func(s ttypes.LSPSettings) bool { return s.Diagnostics }, "Diagnostics", func(ctx context.Context, client LSPClient, path string, view LSPProbeView) error {
+func (m *LSPManager) ProbeDiagnostics(ctx context.Context, path string) (answer insight.Diagnostics, settled bool, view insight.LSPProbeView, err error) {
+	view, err = m.probe(ctx, path, func(s setting.LSP) bool { return s.Diagnostics }, "Diagnostics", func(ctx context.Context, client LSPClient, path string, view insight.LSPProbeView) error {
 		answer, settled = m.awaitProbeDiagnostics(ctx, client, path, view)
 		return nil
 	})
 	if err != nil {
-		answer, settled = ttypes.InsightDiagnostics{}, false
+		answer, settled = insight.Diagnostics{}, false
 	}
 	return answer, settled, view, err
 }
@@ -282,8 +280,8 @@ func (m *LSPManager) ProbeDiagnostics(ctx context.Context, path string) (answer 
 // and releases them only after every read joins. Opening or closing one file
 // must not invalidate another file in the same request. Actual source, settings,
 // context and producer changes still pass through the ordinary probe checks.
-func (m *LSPManager) ProbeDiagnosticsBatch(ctx context.Context, paths []string) []ttypes.LSPDiagnosticsResult {
-	results := make([]ttypes.LSPDiagnosticsResult, len(paths))
+func (m *LSPManager) ProbeDiagnosticsBatch(ctx context.Context, paths []string) []insight.LSPDiagnosticsResult {
+	results := make([]insight.LSPDiagnosticsResult, len(paths))
 	probes := make([]*lspProbe, len(paths))
 	originals := make([]int, len(paths))
 	seen := make(map[string]int, len(paths))
@@ -307,7 +305,7 @@ func (m *LSPManager) ProbeDiagnosticsBatch(ctx context.Context, paths []string) 
 			continue
 		}
 		seen[path], originals[i] = i, i
-		probe, err := m.acquireProbe(ctx, path, func(s ttypes.LSPSettings) bool { return s.Diagnostics }, "Diagnostics")
+		probe, err := m.acquireProbe(ctx, path, func(s setting.LSP) bool { return s.Diagnostics }, "Diagnostics")
 		if err != nil {
 			results[i].Error = err.Error()
 			continue
@@ -322,12 +320,12 @@ func (m *LSPManager) ProbeDiagnosticsBatch(ctx context.Context, paths []string) 
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			err := m.runProbe(ctx, probe, func(ctx context.Context, client LSPClient, path string, view LSPProbeView) error {
+			err := m.runProbe(ctx, probe, func(ctx context.Context, client LSPClient, path string, view insight.LSPProbeView) error {
 				results[i].Diagnostics, results[i].Settled = m.awaitProbeDiagnostics(ctx, client, path, view)
 				return nil
 			})
 			if err != nil {
-				results[i].Diagnostics, results[i].Settled, results[i].Error = ttypes.InsightDiagnostics{}, false, err.Error()
+				results[i].Diagnostics, results[i].Settled, results[i].Error = insight.Diagnostics{}, false, err.Error()
 			}
 		}()
 	}
@@ -340,7 +338,7 @@ func (m *LSPManager) ProbeDiagnosticsBatch(ctx context.Context, paths []string) 
 	return results
 }
 
-func (m *LSPManager) awaitProbeDiagnostics(ctx context.Context, client LSPClient, path string, view LSPProbeView) (ttypes.InsightDiagnostics, bool) {
+func (m *LSPManager) awaitProbeDiagnostics(ctx context.Context, client LSPClient, path string, view insight.LSPProbeView) (insight.Diagnostics, bool) {
 	publication, quiet := client.AwaitDiagnostics(ctx, path)
 	m.mu.Lock()
 	doc := m.documents[path]
@@ -357,8 +355,9 @@ func (m *LSPManager) awaitProbeDiagnostics(ctx context.Context, client LSPClient
 	return answer, quiet && answer.ID != ""
 }
 
-func (m *LSPManager) ProbeHover(ctx context.Context, path string, position ttypes.LSPSourcePosition) (text string, view LSPProbeView, err error) {
-	view, err = m.probe(ctx, path, func(s ttypes.LSPSettings) bool { return s.Hover }, "Hover", func(ctx context.Context, client LSPClient, path string, view LSPProbeView) error {
+// ProbeHover returns the hover text of a position and the view it came from.
+func (m *LSPManager) ProbeHover(ctx context.Context, path string, position insight.LSPSourcePosition) (text string, view insight.LSPProbeView, err error) {
+	view, err = m.probe(ctx, path, func(s setting.LSP) bool { return s.Hover }, "Hover", func(ctx context.Context, client LSPClient, path string, view insight.LSPProbeView) error {
 		line, col, err := position.Resolve(view.SourceText)
 		if err != nil {
 			return err
@@ -373,8 +372,9 @@ func (m *LSPManager) ProbeHover(ctx context.Context, path string, position ttype
 	return text, view, err
 }
 
-func (m *LSPManager) ProbeSymbols(ctx context.Context, path string) (symbols []LSPSymbol, view LSPProbeView, err error) {
-	view, err = m.probe(ctx, path, func(s ttypes.LSPSettings) bool { return s.Outline }, "Document outline", func(ctx context.Context, client LSPClient, path string, _ LSPProbeView) error {
+// ProbeSymbols returns the document symbols and the view they came from.
+func (m *LSPManager) ProbeSymbols(ctx context.Context, path string) (symbols []insight.LSPSymbol, view insight.LSPProbeView, err error) {
+	view, err = m.probe(ctx, path, func(s setting.LSP) bool { return s.Outline }, "Document outline", func(ctx context.Context, client LSPClient, path string, _ insight.LSPProbeView) error {
 		symbols = client.RequestDocumentSymbols(ctx, path)
 		return nil
 	})

@@ -6,9 +6,9 @@ import (
 	"testing"
 
 	"crude/agent/skills"
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
 	captypes "crude/types/capability"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -23,7 +23,7 @@ func TestConnectedCapabilityReviewedInstallRejectsChangedBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	runtime, err := New(func(root string) (*workspace.Workspace, error) {
-		ws := workspace.NewWorkspace(root, "", "tester", types.Settings{}, coreTestLogger{})
+		ws := workspace.NewWorkspace(root, "", "tester", setting.Settings{}, coreTestLogger{})
 		app := ws.AppDefaults()
 		app.Capabilities.Sources["local"] = captypes.SourceConfig{ID: "local", Name: "Local", Kind: "local", Location: filepath.Dir(directory), Trusted: true}
 		ws.SetAppDefaults(app)
@@ -31,9 +31,9 @@ func TestConnectedCapabilityReviewedInstallRejectsChangedBinding(t *testing.T) {
 			ws.Close()
 			return nil, err
 		}
-		ws.OnAppPreferencesCommit = func(edits []types.SettingEdit) (types.AppSettings, error) {
+		ws.OnAppPreferencesCommit = func(edits []setting.Edit) (setting.App, error) {
 			next := ws.AppDefaults()
-			err := types.ApplySettingsEdits(&next, edits)
+			err := setting.ApplyEdits(&next, edits)
 			return next, err
 		}
 		return ws, nil

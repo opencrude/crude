@@ -11,12 +11,13 @@ import (
 	"time"
 
 	"crude/agent/collaboration"
-	"crude/core/protocol"
-	"crude/metrics"
-	"crude/perfdata"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/internal/metrics"
+	"crude/internal/perfdata"
 	"crude/types/control"
+	"crude/types/insight"
 	"crude/types/inspect"
+	"crude/types/statuscenter"
 	"crude/workspace"
 )
 
@@ -385,7 +386,7 @@ func diagnosticText(s string) string {
 	return diagnosticTextLimit(s, 1024)
 }
 func diagnosticLabel(s string) string { return diagnosticTextLimit(s, 256) }
-func diagnosticRef(ref types.ResourceRef) types.ResourceRef {
+func diagnosticRef(ref statuscenter.ResourceRef) statuscenter.ResourceRef {
 	ref.ID, ref.WorkspaceID, ref.SessionID, ref.ParentID = diagnosticLabel(ref.ID), diagnosticLabel(ref.WorkspaceID), diagnosticLabel(ref.SessionID), diagnosticLabel(ref.ParentID)
 	return ref
 }
@@ -406,7 +407,7 @@ type problemFileInspection struct {
 	Path        string                     `json:"path"`
 	ServerID    string                     `json:"server_id"`
 	Provider    string                     `json:"provider"`
-	State       types.InsightState         `json:"state"`
+	State       insight.State              `json:"state"`
 	Limited     bool                       `json:"limited"`
 	Errors      int                        `json:"errors"`
 	Warnings    int                        `json:"warnings"`
@@ -426,7 +427,7 @@ type problemMessageInspection struct {
 	Source   string `json:"source,omitempty"`
 }
 
-func problemInspection(path string, batch types.InsightDiagnostics) problemFileInspection {
+func problemInspection(path string, batch insight.Diagnostics) problemFileInspection {
 	out := problemFileInspection{Path: path, ServerID: batch.Boundary.Context.ID, Provider: diagnosticLabel(batch.Boundary.Producer.Provider),
 		State: batch.State, Limited: batch.Limited, Total: len(batch.Diagnostics)}
 	diagnostics := slices.Clone(batch.Diagnostics)
@@ -442,13 +443,13 @@ func problemInspection(path string, batch types.InsightDiagnostics) problemFileI
 	})
 	for i, d := range diagnostics {
 		switch d.Severity {
-		case types.DiagError:
+		case insight.DiagError:
 			out.Errors++
-		case types.DiagWarning:
+		case insight.DiagWarning:
 			out.Warnings++
-		case types.DiagInfo:
+		case insight.DiagInfo:
 			out.Information++
-		case types.DiagHint:
+		case insight.DiagHint:
 			out.Hints++
 		}
 		if i < 5 {

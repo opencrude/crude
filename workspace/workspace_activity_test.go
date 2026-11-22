@@ -27,7 +27,7 @@ func TestWorkspaceRecentActivityCountsOnlyRetainedResourceState(t *testing.T) {
 	ws.AgentMgr.AddSubAgent("done", "root", "", "", "", &AgentState{Completed: true})
 	ws.AgentMgr.AddOrchestrator("idle", &AgentState{})
 
-	if got := ws.RecentActivity(); got != (WorkspaceActivity{
+	if got := ws.RecentActivity(); got != (Activity{
 		Agents: ActivityCount{2, true}, Terminals: ActivityCount{1, true}, Unsaved: ActivityCount{2, true},
 	}) {
 		t.Fatalf("retained activity = %+v", got)
@@ -36,7 +36,7 @@ func TestWorkspaceRecentActivityCountsOnlyRetainedResourceState(t *testing.T) {
 	ws.TermMgr.items["open shell"].alive = false
 	ws.LiveDocuments.docs["edited"].snapshot.Dirty = false
 	ws.LiveDocuments.docs["unnamed"].snapshot.Dirty = false
-	if got := ws.RecentActivity(); got != (WorkspaceActivity{
+	if got := ws.RecentActivity(); got != (Activity{
 		Agents: ActivityCount{Observed: true}, Terminals: ActivityCount{Observed: true}, Unsaved: ActivityCount{Observed: true},
 	}) {
 		t.Fatalf("settled resources did not read as observed zero: %+v", got)

@@ -1,7 +1,7 @@
 package viewmodel
 
 import (
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/ui"
 	"crude/workspace"
 )

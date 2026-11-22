@@ -12,8 +12,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/types/control"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -31,29 +32,29 @@ type completionConnectedClient struct {
 	owner *completionConnectedRuntime
 }
 
-func (r *completionConnectedRuntime) NewClient(spec types.LSPServerSpec, root string, admit func() error) workspace.LSPClient {
+func (r *completionConnectedRuntime) NewClient(spec setting.LSPServerSpec, root string, admit func() error) workspace.LSPClient {
 	return &completionConnectedClient{r.base.NewClient(spec, root, admit).(*renameConnectedClient), r}
 }
 
-func (c *completionConnectedClient) RequestCompletions(_ context.Context, path string, line, col int, trigger types.LSPCompletionContext) (types.LSPCompletionResponse, error) {
+func (c *completionConnectedClient) RequestCompletions(_ context.Context, path string, line, col int, trigger insight.LSPCompletionContext) (insight.LSPCompletionResponse, error) {
 	r := c.owner
 	r.base.mu.Lock()
 	defer r.base.mu.Unlock()
 	d := c.docs[path]
 	if d.text != "pr" || line != 0 || col != 2 {
-		return types.LSPCompletionResponse{}, fmt.Errorf("completion did not query the literal acknowledged prefix: %q %d:%d", d.text, line, col)
+		return insight.LSPCompletionResponse{}, fmt.Errorf("completion did not query the literal acknowledged prefix: %q %d:%d", d.text, line, col)
 	}
 	r.requests++
-	return types.LSPCompletionResponse{WireVersion: d.version, ResolveSupported: true,
+	return insight.LSPCompletionResponse{WireVersion: d.version, ResolveSupported: true,
 		JSON: []byte("[" + completionConnectedFirst + "," + completionConnectedSecond + "]")}, nil
 }
 
-func (c *completionConnectedClient) ResolveCompletion(_ context.Context, path string, wire int, original []byte) (types.LSPCompletionResponse, error) {
+func (c *completionConnectedClient) ResolveCompletion(_ context.Context, path string, wire int, original []byte) (insight.LSPCompletionResponse, error) {
 	r := c.owner
 	r.base.mu.Lock()
 	defer r.base.mu.Unlock()
 	if c.docs[path].version != wire {
-		return types.LSPCompletionResponse{}, fmt.Errorf("selected-row resolve changed its synchronized wire source")
+		return insight.LSPCompletionResponse{}, fmt.Errorf("selected-row resolve changed its synchronized wire source")
 	}
 	raw := string(original)
 	switch raw {
@@ -62,10 +63,10 @@ func (c *completionConnectedClient) ResolveCompletion(_ context.Context, path st
 	case completionConnectedSecond:
 		raw = strings.Replace(raw, "SECOND_INITIAL", "SECOND_RESOLVED", 1)
 	default:
-		return types.LSPCompletionResponse{}, fmt.Errorf("resolve reconstructed the exact original row: %s", raw)
+		return insight.LSPCompletionResponse{}, fmt.Errorf("resolve reconstructed the exact original row: %s", raw)
 	}
 	r.originals = append(r.originals, string(original))
-	return types.LSPCompletionResponse{WireVersion: wire, ResolveSupported: true, JSON: []byte(raw)}, nil
+	return insight.LSPCompletionResponse{WireVersion: wire, ResolveSupported: true, JSON: []byte(raw)}, nil
 }
 
 func TestConnectedCompletionSemanticReadAndAcceptanceRetainOriginalOwners(t *testing.T) {
@@ -87,9 +88,9 @@ func TestConnectedCompletionSemanticReadAndAcceptanceRetainOriginalOwners(t *tes
 		owned = w
 		w.LSPMgr.SetRuntime(engine)
 		settings := w.AppDefaults()
-		settings.LSP = types.DefaultLSPSettings()
+		settings.LSP = setting.DefaultLSP()
 		settings.LSP.AutoDetect, settings.LSP.AutoComplete = false, false
-		settings.LSP.Languages = map[string]types.LSPLanguageSettings{"go": {
+		settings.LSP.Languages = map[string]setting.LSPLanguage{"go": {
 			Enabled: true, Command: command, RootMarkers: []string{"go.mod"},
 		}}
 		w.SetAppDefaults(settings)
@@ -99,7 +100,7 @@ func TestConnectedCompletionSemanticReadAndAcceptanceRetainOriginalOwners(t *tes
 	shells := []remoteJourneyShell{one, two}
 	a, b := liveTestOpen(t, one.app, path), liveTestOpen(t, two.app, path)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	_, view, err := owned.LSPMgr.ProbeHover(ctx, path, types.LSPSourcePosition{Line: 1, Column: 1})
+	_, view, err := owned.LSPMgr.ProbeHover(ctx, path, insight.LSPSourcePosition{Line: 1, Column: 1})
 	cancel()
 	if err != nil || view.SourceText != "pr" {
 		t.Fatal("provider did not synchronize initial canonical bytes", view, err)

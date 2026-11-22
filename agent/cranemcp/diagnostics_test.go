@@ -9,17 +9,17 @@ import (
 	"testing"
 
 	"crude/core"
-	"crude/core/protocol"
-	"crude/metrics"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/internal/metrics"
 	"crude/types/control"
 	"crude/types/inspect"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
 func TestSDKDiagnosticsRealCoreReadPagingAndImmutableLaunchBinding(t *testing.T) {
 	r, err := core.New(func(root string) (*workspace.Workspace, error) {
-		return workspace.NewWorkspace(root, "", "tester", types.Settings{}, logger{}), nil
+		return workspace.NewWorkspace(root, "", "tester", setting.Settings{}, logger{}), nil
 	}, filepath.Join(t.TempDir(), "receipts.db"))
 	if err != nil {
 		t.Fatal(err)

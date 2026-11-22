@@ -2,7 +2,7 @@ package workspace
 
 import (
 	"context"
-	"crude/types"
+	"crude/types/insight"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -51,7 +51,7 @@ func TestProbeAgainstRealGopls(t *testing.T) {
 		t.Fatalf("diagnostics = %+v", diags)
 	}
 	if diags.ID == "" || diags.Boundary.Source != view.Source || view.SourceText != "package probe\n\nvar x int = Answer() + missing\n" ||
-		diags.State != types.InsightProvisional || len(diags.Boundary.Context.UnknownInputs) == 0 {
+		diags.State != insight.Provisional || len(diags.Boundary.Context.UnknownInputs) == 0 {
 		t.Fatalf("real server quiescence lost source or implied complete context: answer=%+v view=%+v", diags, view)
 	}
 
@@ -60,21 +60,21 @@ func TestProbeAgainstRealGopls(t *testing.T) {
 		t.Fatalf("after the fix: %+v settled=%v err=%v", diags, settled, err)
 	}
 
-	locs, sourceView, err := m.ProbeNavigation(ctx, main, types.LSPNavigationDefinition, types.LSPSourcePosition{Line: 3, Symbol: "Answer"}, false)
-	if err != nil || locs.Answer != types.LSPNavigationTargets || len(locs.Targets) != 1 || filepath.Clean(locs.Targets[0].Path) != lib || locs.Targets[0].Selection.Start.Line != 2 {
+	locs, sourceView, err := m.ProbeNavigation(ctx, main, insight.LSPNavigationDefinition, insight.LSPSourcePosition{Line: 3, Symbol: "Answer"}, false)
+	if err != nil || locs.Answer != insight.LSPNavigationTargets || len(locs.Targets) != 1 || filepath.Clean(locs.Targets[0].Path) != lib || locs.Targets[0].Selection.Start.Line != 2 {
 		t.Fatalf("definition = %+v err=%v", locs, err)
 	}
 	if locs.Boundary.Source != sourceView.Source || locs.Boundary.Producer.InstanceID == "" ||
 		locs.Boundary.Context.Generation == 0 || len(locs.Boundary.Context.UnknownInputs) == 0 ||
-		locs.Kind != types.LSPNavigationDefinition || locs.Line != 2 || locs.Col != 12 || locs.WireVersion <= 0 ||
+		locs.Kind != insight.LSPNavigationDefinition || locs.Line != 2 || locs.Col != 12 || locs.WireVersion <= 0 ||
 		locs.Targets[0].URI == "" || locs.Targets[0].UnavailableReason != "" || locs.Targets[0].External {
 		t.Fatalf("definition lost source/query/target qualification: %+v view=%+v", locs, sourceView)
 	}
-	refs, sourceView, err := m.ProbeNavigation(ctx, lib, types.LSPNavigationReferences, types.LSPSourcePosition{Line: 3, Symbol: "Answer"}, true)
-	if err != nil || refs.Answer != types.LSPNavigationTargets || len(refs.Targets) != 2 {
+	refs, sourceView, err := m.ProbeNavigation(ctx, lib, insight.LSPNavigationReferences, insight.LSPSourcePosition{Line: 3, Symbol: "Answer"}, true)
+	if err != nil || refs.Answer != insight.LSPNavigationTargets || len(refs.Targets) != 2 {
 		t.Fatalf("references = %+v err=%v", refs, err)
 	}
-	if refs.Boundary.Source != sourceView.Source || refs.Kind != types.LSPNavigationReferences || !refs.IncludeDeclaration ||
+	if refs.Boundary.Source != sourceView.Source || refs.Kind != insight.LSPNavigationReferences || !refs.IncludeDeclaration ||
 		refs.Boundary.Producer.InstanceID == "" || len(refs.Boundary.Context.UnknownInputs) == 0 {
 		t.Fatalf("references lost qualification: %+v view=%+v", refs, sourceView)
 	}

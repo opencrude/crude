@@ -8,7 +8,7 @@ import (
 	"slices"
 	"sort"
 
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
 	captypes "crude/types/capability"
 	"crude/types/control"
 )

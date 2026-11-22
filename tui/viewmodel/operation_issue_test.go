@@ -10,7 +10,7 @@ import (
 	"crude/tui/screens/operationissue"
 	"crude/tui/surface"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/statuscenter"
 	"crude/workspace"
 
 	tea "charm.land/bubbletea/v2"
@@ -72,7 +72,7 @@ func TestOperationFailurePromptExplainsReasonWithoutLauncherAnnotation(t *testin
 func TestStartupIssuesWaitForSizeAndRemainActionable(t *testing.T) {
 	app := newTestAppWithLauncher(t)
 	app.width, app.height = 0, 0
-	wsOf(app).QueueStartupIssue(types.OperationIssue{Title: "Account setup required", Summary: "Selected connection unavailable", Detail: `account "5c7eb662d2f8abcca6eeeb1cf1acbc50" not found`, Guidance: "Add an account and review Main Agent.", Target: types.RepairAccounts})
+	wsOf(app).QueueStartupIssue(statuscenter.OperationIssue{Title: "Account setup required", Summary: "Selected connection unavailable", Detail: `account "5c7eb662d2f8abcca6eeeb1cf1acbc50" not found`, Guidance: "Add an account and review Main Agent.", Target: statuscenter.RepairAccounts})
 	app.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	text := paintedOperationIssue(t, app)
 	if !strings.Contains(text, "5c7eb662d2f8abcca6eeeb1cf1acbc50") || !strings.Contains(text, "Add account") {
@@ -95,7 +95,7 @@ func TestStartupResumeMissingSessionShowsPromptWithoutLeavingShell(t *testing.T)
 	wsOf(app).RootPath = t.TempDir()
 	wsOf(app).SetBackendConfig(testAccountConfig(), t.TempDir())
 	app.ws.SetEventSender(noopEventSender{})
-	app.Update(types.ResumeStartupMsg{SessionID: "missing-session"})
+	app.Update(statuscenter.ResumeStartupMsg{SessionID: "missing-session"})
 	text := paintedOperationIssue(t, app)
 	if !strings.Contains(text, "Session could not be resumed") || !strings.Contains(text, "session database unavailable") || !strings.Contains(app.operationIssue.screen.Issue().Detail, "missing-session") {
 		t.Fatal(text)
@@ -107,7 +107,7 @@ func TestStartupResumeMissingSessionShowsPromptWithoutLeavingShell(t *testing.T)
 
 func TestNetworkRecoveryOpensPaintedNetworkForm(t *testing.T) {
 	app := newTestAppWithLauncher(t)
-	app.presentOperationIssue(types.OperationIssue{Title: "Network needs repair", Summary: "Outbound requests blocked", Detail: "invalid policy", Target: types.RepairNetwork})
+	app.presentOperationIssue(statuscenter.OperationIssue{Title: "Network needs repair", Summary: "Outbound requests blocked", Detail: "invalid policy", Target: statuscenter.RepairNetwork})
 	app.Update(operationissue.ActionMsg{Screen: app.operationIssue.screen, Action: "repair"})
 	fw := app.overlayHost.Window(ui.OverlayWorkspaceSettings)
 	if fw == nil {
@@ -130,7 +130,7 @@ func TestConfigRepairLoadsOffUIAndPreservesOriginalBytes(t *testing.T) {
 	if err := os.WriteFile(path, raw, 0600); err != nil {
 		t.Fatal(err)
 	}
-	app.presentOperationIssue(types.OperationIssue{Title: "Configuration needs repair", Summary: "Saved configuration could not load.", Detail: "unexpected end of JSON input", Guidance: "Correct the syntax, save, then restart.", Target: types.RepairConfigFile, Path: path})
+	app.presentOperationIssue(statuscenter.OperationIssue{Title: "Configuration needs repair", Summary: "Saved configuration could not load.", Detail: "unexpected end of JSON input", Guidance: "Correct the syntax, save, then restart.", Target: statuscenter.RepairConfigFile, Path: path})
 	old := app.operationIssue.screen
 	_, cmd := app.Update(operationissue.ActionMsg{Screen: old, Action: "repair"})
 	if app.EditorState.ActiveView != "" || cmd == nil {
@@ -143,7 +143,7 @@ func TestConfigRepairLoadsOffUIAndPreservesOriginalBytes(t *testing.T) {
 	if bytes, err := os.ReadFile(path); err != nil || string(bytes) != string(raw) {
 		t.Fatal("opening repair rewrote original config")
 	}
-	app.presentOperationIssue(types.OperationIssue{Title: "Later failure", Summary: "Current issue", Detail: "new reason", Target: types.RepairSettings})
+	app.presentOperationIssue(statuscenter.OperationIssue{Title: "Later failure", Summary: "Current issue", Detail: "new reason", Target: statuscenter.RepairSettings})
 	app.Update(operationissue.ActionMsg{Screen: old, Action: "close"})
 	if app.operationIssue == nil || app.operationIssue.screen.Issue().Title != "Later failure" {
 		t.Fatal("stale action dismissed a newer recovery prompt")

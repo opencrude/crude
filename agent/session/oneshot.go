@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"crude/agent"
 	"crude/agent/provider"
+	"crude/agent/turnloop"
 )
 
 // TextCompleter is one role's provider and model, resolved on the caller's
@@ -23,7 +23,7 @@ func (c *Config) ErrandCompleter() (TextCompleter, error) {
 	if c == nil {
 		return TextCompleter{}, fmt.Errorf("model configuration is unavailable")
 	}
-	category := c.GetCategoryConfig(CategoryErrand)
+	category := c.CategoryConfig(CategoryErrand)
 	if category.Enabled != nil && !*category.Enabled {
 		return TextCompleter{}, fmt.Errorf("the Errand agent is disabled in settings")
 	}
@@ -39,5 +39,5 @@ func (t TextCompleter) Complete(ctx context.Context, system, user string, emit f
 	if t.provider == nil {
 		return "", fmt.Errorf("model is not configured")
 	}
-	return agent.CompleteTextStreaming(ctx, t.provider, t.Model, system, user, t.maxOutput, emit)
+	return turnloop.CompleteTextStreaming(ctx, t.provider, t.Model, system, user, t.maxOutput, emit)
 }

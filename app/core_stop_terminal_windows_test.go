@@ -12,10 +12,10 @@ import (
 	"time"
 
 	"crude/core"
-	"crude/core/client"
-	"crude/core/protocol"
-	"crude/terminalvt"
-	"crude/types"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
+	"crude/internal/terminalvt"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -33,8 +33,8 @@ func TestCoreStopAndHandoverAfterTerminalCommandCompletes(t *testing.T) {
 				t.Run(method, func(t *testing.T) {
 					home := coreTestHome(t)
 					t.Setenv("CRUDE_HOME", home)
-					settings := types.TerminalSettings{
-						Shell: types.TerminalShellCustom, Command: command,
+					settings := setting.Terminal{
+						Shell: setting.TerminalShellCustom, Command: command,
 						Args: []string{"-NoLogo", "-NoProfile"},
 					}
 					if shell == "cmd.exe" {

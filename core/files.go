@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
 	"crude/workspace"
 	"crude/workspace/fileio"
 )

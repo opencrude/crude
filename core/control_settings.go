@@ -10,9 +10,9 @@ import (
 	"reflect"
 	"strings"
 
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
 	"crude/types/control"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -115,7 +115,7 @@ func (a *actor) prepareControlSettings(in control.Request, owner coreprotocol.Ow
 		value := coreprotocol.SessionSettingsDTO{Value: snap.Effective, MainAgent: snap.Effective.SessionMainAgent, Overrides: snap.Effective.SessionOverrides, MultiAgent: snap.Effective.SessionMultiAgent, CodeIntelligence: snap.Effective.SessionCodeIntelligence, MaxSubAgents: snap.Effective.SessionMaxSubAgents}
 		value.TurnLogs = snap.Effective.SessionTurnLogs
 		// The session persists exact role pins, not the effective display fields.
-		value.Overrides = make(map[string]types.CategorySettings, len(snap.Overrides)+1)
+		value.Overrides = make(map[string]setting.Category, len(snap.Overrides)+1)
 		for id, cfg := range snap.Overrides {
 			value.Overrides[id] = cfg
 		}
@@ -160,12 +160,12 @@ func (a *actor) prepareControlSettings(in control.Request, owner coreprotocol.Ow
 				return controlFailure(in, control.Invalid, "selected root agent required")
 			}
 			if _, ok := value.Overrides[role]; !ok {
-				value.Overrides[role] = types.CategorySettings{}
+				value.Overrides[role] = setting.Category{}
 			}
 			if reset {
 				// Empty sparse pins inherit from the exact role/profile at the
 				// next request boundary; copying default values pins the wrong root.
-				raw, err := controlFieldJSON(types.CategorySettings{}, parts[2])
+				raw, err := controlFieldJSON(setting.Category{}, parts[2])
 				if err != nil {
 					return controlFailure(in, control.Invalid, err.Error())
 				}
@@ -184,7 +184,7 @@ func (a *actor) prepareControlSettings(in control.Request, owner coreprotocol.Ow
 		if err := controlValidateField(value, path); err != nil {
 			return controlFailure(in, control.Invalid, err.Error())
 		}
-		return prepare(coreprotocol.SessionSettingsSave, coreprotocol.SessionSettingsMutationRequest{SessionID: in.Target.SessionID, Edits: []types.SettingEdit{{Path: strings.Split(path, "."), After: input.Value}}})
+		return prepare(coreprotocol.SessionSettingsSave, coreprotocol.SessionSettingsMutationRequest{SessionID: in.Target.SessionID, Edits: []setting.Edit{{Path: strings.Split(path, "."), After: input.Value}}})
 	}
 	app := a.ws.AppDefaults()
 	before := app
@@ -203,8 +203,8 @@ func (a *actor) prepareControlSettings(in control.Request, owner coreprotocol.Ow
 	if reset {
 		base := app
 		if input.Scope == "application" {
-			base = types.AppSettings{Editor: types.DefaultEditorSettings()}
-			types.ApplyAppDefaults(&base)
+			base = setting.App{Editor: setting.DefaultEditor()}
+			setting.ApplyAppDefaults(&base)
 		}
 		raw, err := controlFieldJSON(base, input.Path)
 		if err != nil {
@@ -213,7 +213,7 @@ func (a *actor) prepareControlSettings(in control.Request, owner coreprotocol.Ow
 		input.Value = raw
 	}
 	// Detach maps/pointers: preparing a change must never mutate the live source.
-	var after types.AppSettings
+	var after setting.App
 	encoded, _ := json.Marshal(before)
 	_ = json.Unmarshal(encoded, &after)
 	if err := controlSetField(&after, input.Path, input.Value); err != nil {
@@ -237,15 +237,15 @@ func (a *actor) prepareControlSettings(in control.Request, owner coreprotocol.Ow
 	}
 	if input.Scope == "application" {
 		// Entity containers remain server-owned and secrets are explicit Keep.
-		return prepare(coreprotocol.ApplicationPreferencesSave, coreprotocol.ApplicationPreferencesRequest{Edits: []types.SettingEdit{{Path: strings.Split(input.Path, "."), After: input.Value}}, ProxyURL: coreprotocol.SecretString{Keep: true}})
+		return prepare(coreprotocol.ApplicationPreferencesSave, coreprotocol.ApplicationPreferencesRequest{Edits: []setting.Edit{{Path: strings.Split(input.Path, "."), After: input.Value}}, ProxyURL: coreprotocol.SecretString{Keep: true}})
 	}
 	// Patch only the selected sparse leaf, preserving explicit false and all
 	// neighboring overrides. Reset removes exactly this leaf, not its section.
-	edit := types.SettingEdit{Path: strings.Split(input.Path, "."), After: input.Value}
+	edit := setting.Edit{Path: strings.Split(input.Path, "."), After: input.Value}
 	if reset {
 		edit.After = nil
 	}
-	return prepare(coreprotocol.WorkspaceOverridesSet, coreprotocol.WorkspacePreferencesRequest{Edits: []types.SettingEdit{edit}})
+	return prepare(coreprotocol.WorkspaceOverridesSet, coreprotocol.WorkspacePreferencesRequest{Edits: []setting.Edit{edit}})
 }
 
 func controlDecode(raw []byte, value any) error {
@@ -329,7 +329,7 @@ func controlSetField(value any, path string, raw json.RawMessage) error {
 	if err = controlExactJSONKeys(v.Type(), object); err != nil {
 		return err
 	}
-	return types.ApplySettingsEdits(value, []types.SettingEdit{{Path: strings.Split(path, "."), After: raw}})
+	return setting.ApplyEdits(value, []setting.Edit{{Path: strings.Split(path, "."), After: raw}})
 }
 
 func controlExactJSONKeys(t reflect.Type, value any) error {
@@ -377,7 +377,7 @@ func controlExactJSONKeys(t reflect.Type, value any) error {
 	return nil
 }
 
-func controlValidatePreferences(value types.AppSettings, path string) error {
+func controlValidatePreferences(value setting.App, path string) error {
 	if path == "editor" || strings.HasPrefix(path, "editor.") {
 		if value.Editor.TabSize < 0 || value.Editor.TabSize > 16 {
 			return errors.New("tab_size must be 0..16")
@@ -386,7 +386,7 @@ func controlValidatePreferences(value types.AppSettings, path string) error {
 			return errors.New("auto_save_delay must be 250..60000 ms")
 		}
 		switch value.Editor.AutoSave {
-		case "", types.AutoSaveOff, types.AutoSaveAfterDelay, types.AutoSaveEditorFocusChange, types.AutoSaveTerminalFocusLoss:
+		case "", setting.AutoSaveOff, setting.AutoSaveAfterDelay, setting.AutoSaveEditorFocusChange, setting.AutoSaveTerminalFocusLoss:
 		default:
 			return errors.New("unknown auto_save mode")
 		}

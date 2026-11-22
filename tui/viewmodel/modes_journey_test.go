@@ -12,7 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 	"crude/workspace"
 )
 
@@ -207,7 +207,7 @@ func TestPlanProposalOfferConnectedJourney(t *testing.T) {
 }
 
 func TestGoalDetailsDoNotHideBlockedReasonOrBudget(t *testing.T) {
-	goal := types.Goal{Objective: "Ship", Status: types.GoalBudgetLimited, TokensUsed: 1200, TokenBudget: 1000, Reason: "Budget reached."}
+	goal := conversation.Goal{Objective: "Ship", Status: conversation.GoalBudgetLimited, TokensUsed: 1200, TokenBudget: 1000, Reason: "Budget reached."}
 	text := goalDetails(goal, false)
 	for _, want := range []string{"limited by budget", "1.2k / 1.0k", "Budget reached.", "Ship"} {
 		if !strings.Contains(text, want) {

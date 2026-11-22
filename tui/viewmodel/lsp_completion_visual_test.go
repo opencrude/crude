@@ -3,6 +3,8 @@ package viewmodel
 import (
 	"context"
 	"crude/internal/fileuri"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -19,9 +21,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/workspace"
 )
 
@@ -76,12 +77,12 @@ type completionVisualModel struct {
 	executable, tracePath string
 	pids                  []int
 	transcript            strings.Builder
-	initial, last         types.InsightSource
-	settings              types.LSPSettings
-	trust                 types.WorkspaceAnalysisSettings
-	firstSet              *types.LSPCompletionSet
-	initialEntries        []types.LSPCompletionEntry
-	alpha, beta           types.LSPCompletionEntry
+	initial, last         insight.Source
+	settings              setting.LSP
+	trust                 setting.WorkspaceAnalysis
+	firstSet              *insight.LSPCompletionSet
+	initialEntries        []insight.LSPCompletionEntry
+	alpha, beta           insight.LSPCompletionEntry
 	resolveSupported      bool // original installed-provider initialization evidence
 }
 
@@ -123,9 +124,9 @@ func runCompletionVisual(t *testing.T, headless bool, width, height int) {
 	coreRuntime := remoteJourneyRuntime(t, "http://127.0.0.1:1", func(w *workspace.Workspace) {
 		retained = w
 		settings := w.AppDefaults()
-		settings.LSP = types.DefaultLSPSettings()
+		settings.LSP = setting.DefaultLSP()
 		settings.LSP.AutoDetect, settings.LSP.AutoComplete = false, false
-		settings.LSP.Languages = map[string]types.LSPLanguageSettings{"go": {
+		settings.LSP.Languages = map[string]setting.LSPLanguage{"go": {
 			Enabled: true, Command: executable, Args: []string{"serve", "-rpc.trace", "-logfile=" + tracePath},
 			RootMarkers: []string{"go.mod"}, Settings: map[string]any{"gopls": map[string]any{"usePlaceholders": true}},
 			Environment: map[string]string{"HOME": home, "GOROOT": strings.TrimSpace(string(goroot)),
@@ -339,7 +340,7 @@ func (m *completionVisualModel) setupCompletion() error {
 			return fmt.Errorf("setup source/provider/focus not ready")
 		}
 		m.initial, m.last = source, source
-		m.settings = types.CloneLSPSettings(v.ws.LSPMgr().Settings())
+		m.settings = setting.CloneLSP(v.ws.LSPMgr().Settings())
 		m.trust = m.retained.LoadAppSettings().Analysis
 		return featureVisualPaint(v, "var _ = Doc")
 	}); err != nil {
@@ -364,10 +365,10 @@ func (m *completionVisualModel) observeCompletion(phase int) error {
 	case 7:
 		want = completionVisualEdited
 	}
-	var source types.InsightSource
+	var source insight.Source
 	var paint, docs string
-	var set *types.LSPCompletionSet
-	var row types.LSPCompletionEntry
+	var set *insight.LSPCompletionSet
+	var row insight.LSPCompletionEntry
 	if err := m.await(func(v *controlVisualModel) error {
 		ed := v.EditorState.Editor
 		current, ready := ed.CurrentInsightSource()
@@ -407,7 +408,7 @@ func (m *completionVisualModel) observeCompletion(phase int) error {
 			if phase == 2 && m.firstSet == nil && s != nil && s.set != nil {
 				m.firstSet = s.set
 				for _, original := range s.set.Entries {
-					original.Insertion = types.CloneCompletionItem(original.Insertion)
+					original.Insertion = insight.CloneCompletionItem(original.Insertion)
 					m.initialEntries = append(m.initialEntries, original)
 				}
 			}
@@ -494,10 +495,10 @@ func (m *completionVisualModel) observeCompletion(phase int) error {
 	switch phase {
 	case 2:
 		m.firstSet, m.alpha = set, row
-		m.alpha.Insertion = types.CloneCompletionItem(row.Insertion)
+		m.alpha.Insertion = insight.CloneCompletionItem(row.Insertion)
 	case 3:
 		m.beta = row
-		m.beta.Insertion = types.CloneCompletionItem(row.Insertion)
+		m.beta.Insertion = insight.CloneCompletionItem(row.Insertion)
 	}
 	if err := m.verifyCompletionTrace(phase); err != nil {
 		return err
@@ -642,7 +643,7 @@ func (m *completionVisualModel) verifyCompletionTrace(phase int) error {
 			return fmt.Errorf("selected resolve/cache RPC count=%d/%d want=%d", len(resolves), len(resolved), want)
 		}
 	}
-	for i, row := range []types.LSPCompletionEntry{m.alpha, m.beta} {
+	for i, row := range []insight.LSPCompletionEntry{m.alpha, m.beta} {
 		if row.ID == "" {
 			continue
 		}

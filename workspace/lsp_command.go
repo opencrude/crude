@@ -7,26 +7,27 @@ import (
 	"errors"
 	"path/filepath"
 
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 )
 
 // ExecuteCodeActionCommand runs one explicit server command for the exact
 // synchronized source. Any workspace/applyEdit request is captured by the
 // adapter and returned as original evidence; the caller must review it through
 // the canonical edit owner before any file changes.
-func (m *LSPManager) ExecuteCodeActionCommand(ctx context.Context, expected types.InsightBoundary, expectedWire int, command string, arguments json.RawMessage) (types.LSPCommandResponse, error) {
+func (m *LSPManager) ExecuteCodeActionCommand(ctx context.Context, expected insight.Boundary, expectedWire int, command string, arguments json.RawMessage) (insight.LSPCommandResponse, error) {
 	ctx, stop := context.WithTimeout(ctx, ManualLSPRequestTimeout)
 	defer stop()
 	if err := ctx.Err(); err != nil {
-		return types.LSPCommandResponse{}, err
+		return insight.LSPCommandResponse{}, err
 	}
 	if command == "" || len(command) > 4096 || len(arguments) > 1<<20 {
-		return types.LSPCommandResponse{}, errors.New("invalid or oversized language-server command")
+		return insight.LSPCommandResponse{}, errors.New("invalid or oversized language-server command")
 	}
-	if !m.featureOn(func(s types.LSPSettings) bool { return s.Enabled }) {
-		return types.LSPCommandResponse{}, errors.New("code actions unavailable: language intelligence is off or blocked")
+	if !m.featureOn(func(s setting.LSP) bool { return s.Enabled }) {
+		return insight.LSPCommandResponse{}, errors.New("code actions unavailable: language intelligence is off or blocked")
 	}
-	var out types.LSPCommandResponse
+	var out insight.LSPCommandResponse
 	err := m.trackInflight(func() error {
 		if err := m.awaitSynchronized(ctx, expected.Source.Path); err != nil {
 			return err
@@ -39,7 +40,7 @@ func (m *LSPManager) ExecuteCodeActionCommand(ctx context.Context, expected type
 		}
 		m.mu.Lock()
 		doc := m.documents[filepath.Clean(expected.Source.Path)]
-		var boundary types.InsightBoundary
+		var boundary insight.Boundary
 		wire := 0
 		if doc != nil && doc.opened && !doc.syncPending {
 			boundary, wire = doc.boundary, doc.wireVersion

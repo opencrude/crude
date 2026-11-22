@@ -10,9 +10,9 @@ import (
 	"testing"
 
 	"crude/agent/provider"
-	"crude/clientstate"
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/internal/clientstate"
+	"crude/types/setting"
 	"crude/workspace"
 	"crude/workspace/document"
 	"crude/workspace/localhistory"
@@ -27,7 +27,7 @@ func featureRuntime(t *testing.T, configure func(*workspace.Workspace)) (*Runtim
 	t.Helper()
 	t.Setenv("CRUDE_HOME", t.TempDir())
 	r, err := New(func(root string) (*workspace.Workspace, error) {
-		ws := workspace.NewWorkspace(root, "", "fuzzer", types.Settings{}, coreTestLogger{})
+		ws := workspace.NewWorkspace(root, "", "fuzzer", setting.Settings{}, coreTestLogger{})
 		if configure != nil {
 			configure(ws)
 		}
@@ -284,13 +284,13 @@ func FuzzCoreFeatureSettings(f *testing.F) {
 		const sentinel = "fuzz-private-credential"
 		want, commits := sentinel, 0
 		r, root := featureRuntime(t, func(ws *workspace.Workspace) {
-			ws.SetAppDefaults(types.AppSettings{Accounts: map[string]provider.Account{"one": {ID: "one", ProviderID: "custom", APIKey: sentinel}}})
-			ws.OnAppAccountCommit = func(change types.AccountChange) (types.AppSettings, error) {
+			ws.SetAppDefaults(setting.App{Accounts: map[string]provider.Account{"one": {ID: "one", ProviderID: "custom", APIKey: sentinel}}})
+			ws.OnAppAccountCommit = func(change setting.AccountChange) (setting.App, error) {
 				if change.ID != "one" || change.After == nil || change.After.APIKey != want {
 					t.Error("secret update or account identity diverged")
 				}
 				commits++
-				return types.AppSettings{Accounts: map[string]provider.Account{"one": *change.After}}, nil
+				return setting.App{Accounts: map[string]provider.Account{"one": *change.After}}, nil
 			}
 		})
 		w := newResourceWire(t, r, "settings-owner")

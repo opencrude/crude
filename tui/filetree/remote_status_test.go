@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"crude/third_party/pathwalk"
+	"crude/third_party/fastwalk"
 )
 
 func TestRemoteDiagnosticsAggregateUnloadedPathsAndSurviveBrowse(t *testing.T) {
@@ -38,7 +38,7 @@ func TestRemoteSearchStatusIncludesUnloadedMatchesAndRefreshPreservesSelection(t
 	base := NewRemoteModel(root, nil)
 	base.SetRemoteGitStatuses(map[string]GitStatus{path: GitModified})
 	base.SetDiagnostics(path, 1, 0, 0)
-	search := NewSearchModelFromBase(base, []PathMatch{{Entry: pathwalk.Entry{Path: path, Name: "main.go"}}})
+	search := NewSearchModelFromBase(base, []PathMatch{{Entry: fastwalk.Entry{Path: path, Name: "main.go"}}})
 	if node := search.NodeByPath(path); node.GitStatus != GitModified || node.DiagErrors != 1 {
 		t.Fatalf("unloaded search match has no status: %+v", node)
 	}

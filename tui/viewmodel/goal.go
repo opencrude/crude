@@ -7,10 +7,10 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/screens/decision"
 	"crude/tui/tools"
-	"crude/types"
+	"crude/types/conversation"
 	"crude/workspace"
 )
 
@@ -106,7 +106,7 @@ func (m *App) offerGoalResume(agentID string) {
 		return
 	}
 	goal, ok := m.ws.GoalForAgent(agentID)
-	resumable := goal.Status == types.GoalPaused || goal.Status == types.GoalBlocked || goal.Status == types.GoalActive && goal.Waiting
+	resumable := goal.Status == conversation.GoalPaused || goal.Status == conversation.GoalBlocked || goal.Status == conversation.GoalActive && goal.Waiting
 	if !ok || !resumable {
 		return
 	}
@@ -123,9 +123,9 @@ func (m *App) offerGoalResume(agentID string) {
 	})
 }
 
-func goalDetails(goal types.Goal, planMode bool) string {
+func goalDetails(goal conversation.Goal, planMode bool) string {
 	status := tools.GoalStatusLabel(goal)
-	if planMode && goal.Status == types.GoalActive && !goal.Verifying && !goal.Waiting {
+	if planMode && goal.Status == conversation.GoalActive && !goal.Verifying && !goal.Waiting {
 		status = "active; automatic continuation waits for Plan mode to end"
 	}
 	var text strings.Builder
@@ -153,7 +153,7 @@ func (m *App) goalHeaderText(agentID string) string {
 		return ""
 	}
 	label := tools.GoalStatusLabel(goal)
-	if m.ws.PlanModeForAgent(agentID) && goal.Status == types.GoalActive && !goal.Verifying && !goal.Waiting {
+	if m.ws.PlanModeForAgent(agentID) && goal.Status == conversation.GoalActive && !goal.Verifying && !goal.Waiting {
 		label = "plan wait"
 	}
 	return "Goal · " + label

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -15,12 +15,12 @@ func TestCapabilityObservationDoesNotWaitForSettingsWriter(t *testing.T) {
 	setCoreTestHome(t, t.TempDir())
 	entered, release := make(chan struct{}), make(chan struct{})
 	runtime, err := New(func(root string) (*workspace.Workspace, error) {
-		w := workspace.NewWorkspace(root, "", "tester", types.Settings{}, nil)
-		w.OnAppPreferencesCommit = func(edits []types.SettingEdit) (types.AppSettings, error) {
+		w := workspace.NewWorkspace(root, "", "tester", setting.Settings{}, nil)
+		w.OnAppPreferencesCommit = func(edits []setting.Edit) (setting.App, error) {
 			close(entered)
 			<-release
 			next := w.AppDefaults()
-			err := types.ApplySettingsEdits(&next, edits)
+			err := setting.ApplyEdits(&next, edits)
 			return next, err
 		}
 		return w, nil
@@ -43,7 +43,7 @@ func TestCapabilityObservationDoesNotWaitForSettingsWriter(t *testing.T) {
 		t.Fatal(err)
 	}
 	settings.Application.Accounts = nil
-	raw, err := coreprotocol.Marshal(coreprotocol.Ptr(coreprotocol.ApplicationPreferencesRequest{Edits: []types.SettingEdit{}, ProxyURL: coreprotocol.SecretString{Keep: true}}))
+	raw, err := coreprotocol.Marshal(coreprotocol.Ptr(coreprotocol.ApplicationPreferencesRequest{Edits: []setting.Edit{}, ProxyURL: coreprotocol.SecretString{Keep: true}}))
 	if err != nil {
 		t.Fatal(err)
 	}

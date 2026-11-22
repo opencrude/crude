@@ -6,14 +6,14 @@ import (
 	"strings"
 	"testing"
 
-	"crude/types"
+	"crude/types/insight"
 )
 
 // A large source with both an explicit UTF-16 edit and an implicit prefix must
 // retain the provider's exact row, text and range, not a nearby display column.
 func TestCompletionNormalizationKeepsSourceRangesInLargeUnicodeDocument(t *testing.T) {
 	source := strings.Repeat("fill\n", 20000) + strings.Repeat("x ", 150) + "界😀名"
-	response := types.LSPCompletionResponse{JSON: []byte(`[{"label":"explicit","textEdit":{"range":{"start":{"line":20000,"character":300},"end":{"line":20000,"character":304}},"newText":"value"}},{"label":"implicit","insertText":"newName"}]`)}
+	response := insight.LSPCompletionResponse{JSON: []byte(`[{"label":"explicit","textEdit":{"range":{"start":{"line":20000,"character":300},"end":{"line":20000,"character":304}},"newText":"value"}},{"label":"implicit","insertText":"newName"}]`)}
 	originals, set, _, err := normalizeCompletionSet(source, 20000, 304, response)
 	if err != nil || len(set.Entries) != 2 {
 		t.Fatal("completion result was not normalized", err)
@@ -47,7 +47,7 @@ func TestCompletionNormalizationKeepsSourceRangesInLargeUnicodeDocument(t *testi
 // to accept an invalid position or an unsupported response with invented data.
 func TestCompletionEmptyAnswerStillValidatesOriginalCursor(t *testing.T) {
 	for _, raw := range []string{"[]", "null"} {
-		response := types.LSPCompletionResponse{JSON: []byte(raw)}
+		response := insight.LSPCompletionResponse{JSON: []byte(raw)}
 		originals, set, retained, err := normalizeCompletionSet("a😀\r\n", 0, 3, response)
 		if err != nil || len(originals) != 0 || len(set.Entries) != 0 || retained != 0 {
 			t.Fatal("valid empty answer changed", raw, err)
@@ -79,7 +79,7 @@ func BenchmarkCompletionNormalization(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
-			response := types.LSPCompletionResponse{JSON: raw}
+			response := insight.LSPCompletionResponse{JSON: raw}
 			b.ReportAllocs()
 			b.ResetTimer()
 			for b.Loop() {
@@ -94,7 +94,7 @@ func BenchmarkCompletionNormalization(b *testing.B) {
 
 // Item commit characters replace the provider's default, even when empty.
 func TestCompletionCommitCharactersUseItemThenProviderDefault(t *testing.T) {
-	response := types.LSPCompletionResponse{CommitCharacters: []string{".", "("},
+	response := insight.LSPCompletionResponse{CommitCharacters: []string{".", "("},
 		JSON: []byte(`[{"label":"own","commitCharacters":[";"]},{"label":"none","commitCharacters":[]},{"label":"inherits"}]`)}
 	_, set, _, err := normalizeCompletionSet("x", 0, 1, response)
 	if err != nil || len(set.Entries) != 3 {

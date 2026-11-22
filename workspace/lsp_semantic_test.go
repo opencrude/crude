@@ -11,7 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace/document"
 )
 
@@ -19,7 +20,7 @@ type semanticTestCall struct{ mode, previous string }
 type semanticTestClient struct {
 	lifecycleClient
 	lock                     sync.Mutex
-	support                  types.LSPSemanticSupport
+	support                  insight.LSPSemanticSupport
 	unsupported              bool
 	full, delta, rangeResult string
 	calls                    []semanticTestCall
@@ -27,13 +28,13 @@ type semanticTestClient struct {
 	release                  <-chan struct{}
 }
 
-func (c *semanticTestClient) RequestSemanticTokens(ctx context.Context, path, mode, previous string, _ types.LSPSemanticRange) (types.LSPSemanticResponse, error) {
+func (c *semanticTestClient) RequestSemanticTokens(ctx context.Context, path, mode, previous string, _ insight.LSPSemanticRange) (insight.LSPSemanticResponse, error) {
 	c.mu.Lock()
 	wire := c.versions[path]
 	c.mu.Unlock()
 	c.lock.Lock()
 	c.calls = append(c.calls, semanticTestCall{mode, previous})
-	out := types.LSPSemanticResponse{WireVersion: wire, Support: c.support, Unsupported: c.unsupported, Boundary: types.InsightBoundary{Source: types.InsightSource{Path: "forged"}}}
+	out := insight.LSPSemanticResponse{WireVersion: wire, Support: c.support, Unsupported: c.unsupported, Boundary: insight.Boundary{Source: insight.Source{Path: "forged"}}}
 	switch mode {
 	case "full":
 		out.JSON = []byte(c.full)
@@ -58,7 +59,7 @@ func (c *semanticTestClient) RequestSemanticTokens(ctx context.Context, path, mo
 
 type semanticTestRuntime struct{ c *semanticTestClient }
 
-func (r semanticTestRuntime) NewClient(_ types.LSPServerSpec, _ string, admission func() error) LSPClient {
+func (r semanticTestRuntime) NewClient(_ setting.LSPServerSpec, _ string, admission func() error) LSPClient {
 	r.c.startAdmission = admission
 	return r.c
 }
@@ -67,14 +68,14 @@ type semanticFixture struct {
 	w      *Workspace
 	c      *semanticTestClient
 	owner  document.Owner
-	source types.InsightSource
+	source insight.Source
 	path   string
 }
 
 func newSemanticFixture(t *testing.T, text string) *semanticFixture {
 	t.Helper()
 	root := t.TempDir()
-	c := &semanticTestClient{lifecycleClient: lifecycleClient{runtime: &lifecycleRuntime{}, reapableClient: reapableClient{done: make(chan struct{})}}, support: types.LSPSemanticSupport{Types: []string{"variable", "parameter"}, Modifiers: []string{"declaration"}, Full: true, Delta: true, Range: true}, full: `{"resultId":"first","data":[0,0,1,0,0]}`, delta: `{"resultId":"second","edits":[]}`, rangeResult: `{"data":[0,0,1,0,0]}`}
+	c := &semanticTestClient{lifecycleClient: lifecycleClient{runtime: &lifecycleRuntime{}, reapableClient: reapableClient{done: make(chan struct{})}}, support: insight.LSPSemanticSupport{Types: []string{"variable", "parameter"}, Modifiers: []string{"declaration"}, Full: true, Delta: true, Range: true}, full: `{"resultId":"first","data":[0,0,1,0,0]}`, delta: `{"resultId":"second","edits":[]}`, rangeResult: `{"data":[0,0,1,0,0]}`}
 	m := NewLSPManager(nil, semanticTestRuntime{c})
 	trustAnalysis(t, m, root)
 	t.Cleanup(m.Close)
@@ -95,9 +96,9 @@ func newSemanticFixture(t *testing.T, text string) *semanticFixture {
 	docs.mu.Unlock()
 	return &semanticFixture{&Workspace{LiveDocuments: docs, LSPMgr: m}, c, owner, source, path}
 }
-func (f *semanticFixture) request(t *testing.T, seq uint64) (types.LSPSemanticSet, error) {
+func (f *semanticFixture) request(t *testing.T, seq uint64) (insight.LSPSemanticSet, error) {
 	t.Helper()
-	return f.w.RequestLSPSemantic(t.Context(), f.owner, f.source, "view", seq, types.LSPSemanticRange{Start: types.LSPSemanticPosition{Line: 0}, End: types.LSPSemanticPosition{Line: 0, Character: 1}})
+	return f.w.RequestLSPSemantic(t.Context(), f.owner, f.source, "view", seq, insight.LSPSemanticRange{Start: insight.LSPSemanticPosition{Line: 0}, End: insight.LSPSemanticPosition{Line: 0, Character: 1}})
 }
 func TestSemanticCanonicalDeltaFallbackAndRelease(t *testing.T) {
 	f := newSemanticFixture(t, "abc\n")
@@ -106,7 +107,7 @@ func TestSemanticCanonicalDeltaFallbackAndRelease(t *testing.T) {
 		t.Fatal(err)
 	}
 	first, err := f.request(t, 1)
-	if err != nil || first.Boundary.Source != f.source || !first.Full || len(first.Spans) != 1 || first.Spans[0] != (types.LSPSemanticSpan{Start: 0, End: 1, Type: 0}) {
+	if err != nil || first.Boundary.Source != f.source || !first.Full || len(first.Spans) != 1 || first.Spans[0] != (insight.LSPSemanticSpan{Start: 0, End: 1, Type: 0}) {
 		t.Fatal(first, err)
 	}
 	f.c.lock.Lock()
@@ -114,7 +115,7 @@ func TestSemanticCanonicalDeltaFallbackAndRelease(t *testing.T) {
 	f.c.full = `{"resultId":"fresh","data":[0,1,1,1,1]}`
 	f.c.lock.Unlock()
 	second, err := f.request(t, 2)
-	if err != nil || len(second.Spans) != 1 || second.Spans[0] != (types.LSPSemanticSpan{Start: 1, End: 2, Type: 1, Modifiers: 1}) {
+	if err != nil || len(second.Spans) != 1 || second.Spans[0] != (insight.LSPSemanticSpan{Start: 1, End: 2, Type: 1, Modifiers: 1}) {
 		t.Fatal(second, err)
 	}
 	f.c.lock.Lock()

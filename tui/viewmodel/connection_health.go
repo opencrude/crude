@@ -6,9 +6,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/buildinfo"
-	"crude/core/port"
 	"crude/core/remoteconn"
+	"crude/core/shellport"
+	"crude/internal/buildinfo"
 	"crude/tui/screens/connectionpopover"
 	"crude/tui/screens/shellheader"
 	"crude/tui/ui"

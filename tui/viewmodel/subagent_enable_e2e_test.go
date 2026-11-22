@@ -17,7 +17,7 @@ import (
 	"crude/agent/provider"
 	"crude/agent/session"
 	"crude/agent/sessiondb"
-	ttypes "crude/types"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -95,7 +95,7 @@ func TestEnableSubAgentsMidSessionSurfacesChildren(t *testing.T) {
 		wsOf(app).LiveDocuments = workspace.NewDocumentService(wsOf(app).RootPath, wsOf(app).Documents, wsOf(app).LSPMgr)
 		defer wsOf(app).LiveDocuments.Close()
 		wsOf(app).Logger = &testLogger{}
-		wsOf(app).SetAppDefaults(ttypes.AppSettings{LocalHistory: ttypes.LocalHistorySettings{Enabled: "off"}})
+		wsOf(app).SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}})
 		wsOf(app).SessionsByID = make(map[string]*workspace.Session)
 		wsOf(app).SessionsByAgent = make(map[string]*workspace.Session)
 		owner, err := wsOf(app).CreateSession(cfg, home)
@@ -103,7 +103,7 @@ func TestEnableSubAgentsMidSessionSurfacesChildren(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer wsOf(app).CloseAllSessions()
-		sender := &latencyEventSender{ctx: t.Context(), events: make(chan ttypes.AgentEventMsg, 4096)}
+		sender := &latencyEventSender{ctx: t.Context(), events: make(chan AgentEventMsg, 4096)}
 		orch, err := wsOf(app).StartOrchestrator(owner.SessionID, sender)
 		if err != nil {
 			t.Fatal(err)

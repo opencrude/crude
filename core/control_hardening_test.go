@@ -8,17 +8,17 @@ import (
 	"strings"
 	"testing"
 
-	"crude/core/client"
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
 	"crude/types/control"
+	"crude/types/setting"
 	"crude/workspace"
 	"crude/workspace/document"
 )
 
 func TestControlGatewayReadRevisionAndBoundedMutationReceipt(t *testing.T) {
 	r, err := New(func(root string) (*workspace.Workspace, error) {
-		return workspace.NewWorkspace(root, "", "test", types.Settings{}, coreTestLogger{}), nil
+		return workspace.NewWorkspace(root, "", "test", setting.Settings{}, coreTestLogger{}), nil
 	}, filepath.Join(t.TempDir(), "receipts.db"))
 	if err != nil {
 		t.Fatal(err)

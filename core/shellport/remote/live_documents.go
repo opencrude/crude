@@ -1,0 +1,331 @@
+package remote
+
+import (
+	"context"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
+	"crude/core/shellport"
+	"crude/text/indentation"
+	"crude/text/textencoding"
+	"crude/workspace"
+	"crude/workspace/document"
+	"errors"
+	"sync"
+	"sync/atomic"
+)
+
+var _ shellport.LiveDocuments = (*Workspace)(nil)
+var _ shellport.UntitledDocuments = (*Workspace)(nil)
+var _ shellport.UntitledDocumentSaver = (*Workspace)(nil)
+var _ shellport.UntitledOverwriteReviewer = (*Workspace)(nil)
+
+func (w *Workspace) DocumentOwner() document.Owner {
+	client, _ := w.conn()
+	if client == nil {
+		return document.Owner{}
+	}
+	owner := client.Owner()
+	return document.Owner{ClientID: owner.ClientID, Epoch: owner.Epoch}
+}
+func (w *Workspace) OpenDocument(ctx context.Context, path string) (document.Snapshot, error) {
+	return w.openDocument(ctx, path, false)
+}
+func (w *Workspace) OpenExistingDocument(ctx context.Context, path string) (document.Snapshot, error) {
+	return w.openDocument(ctx, path, true)
+}
+func (w *Workspace) openDocument(ctx context.Context, path string, existingOnly bool) (document.Snapshot, error) {
+	var out document.Snapshot
+	err := w.call(ctx, coreprotocol.DocumentOpen, coreprotocol.DocumentOpenRequest{Path: path, WithEditorConfig: true, ExistingOnly: existingOnly}, &out)
+	if err == nil {
+		w.registerDocumentTopic(out.ID, path)
+	}
+	return out, err
+}
+func (w *Workspace) CreateUntitledDocument(ctx context.Context) (document.Snapshot, error) {
+	var out document.Snapshot
+	err := w.call(ctx, coreprotocol.DocumentCreateUntitled, &coreprotocol.Empty{}, &out)
+	if err == nil {
+		w.registerDocumentTopic(out.ID, out.Path)
+	}
+	return out, err
+}
+func (w *Workspace) OpenUntitledDocument(ctx context.Context, id string) (document.Snapshot, error) {
+	var out document.Snapshot
+	err := w.call(ctx, coreprotocol.DocumentOpenUntitled, &coreprotocol.DocumentReadRequest{ID: id}, &out)
+	if err == nil {
+		w.registerDocumentTopic(out.ID, out.Path)
+	}
+	return out, err
+}
+func (w *Workspace) SaveUntitledDocument(ctx context.Context, id string, revision uint64, directory, name string, encoding textencoding.Encoding, requestID string) (document.Snapshot, error) {
+	var out document.Snapshot
+	err := w.documentCall(ctx, requestID, coreprotocol.DocumentSaveUntitled,
+		&coreprotocol.DocumentSaveUntitledRequest{ID: id, Revision: revision, Directory: directory, Name: name, Encoding: encoding}, &out)
+	return out, err
+}
+
+func (w *Workspace) PrepareUntitledOverwrite(ctx context.Context, id string, revision uint64, directory, name string, encoding textencoding.Encoding) (workspace.ReviewedEditPreview, error) {
+	var out coreprotocol.ReviewedEditReply
+	err := w.callCancellable(ctx, coreprotocol.DocumentReviewUntitled,
+		&coreprotocol.DocumentSaveUntitledRequest{ID: id, Revision: revision, Directory: directory, Name: name, Encoding: encoding}, &out)
+	return out.Preview, err
+}
+
+func (w *Workspace) ReadUntitledOverwrite(ctx context.Context, id, digest string) (workspace.UntitledOverwriteComparison, error) {
+	var out coreprotocol.UntitledComparisonReply
+	err := w.callCancellable(ctx, coreprotocol.DocumentCompareUntitled,
+		&coreprotocol.ReviewedEditRequest{ID: id, Digest: digest}, &out)
+	return out.Comparison, err
+}
+
+func (w *Workspace) SyncDocument(ctx context.Context, id string, after uint64) (document.SyncResult, error) {
+	var out document.SyncResult
+	err := w.call(ctx, coreprotocol.DocumentSync, coreprotocol.DocumentSyncRequest{ID: id, After: after}, &out)
+	return out, err
+}
+
+// documentCall carries the editor's own request identity, so a retried edit
+// returns its original receipt instead of applying twice.
+func (w *Workspace) documentCall(ctx context.Context, requestID, method string, input coreprotocol.Value, out coreprotocol.Target) error {
+	client, id := w.conn()
+	if client == nil {
+		return errDisconnected
+	}
+	if requestID == "" {
+		return document.ErrRequest
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stop := context.AfterFunc(w.ctx, cancel)
+	defer stop()
+	_, err := client.CallWith(ctx, id, method, input, out, coreclient.CallOptions{ID: requestID})
+	return err
+}
+func (w *Workspace) EditDocument(ctx context.Context, c document.Change) (document.Receipt, error) {
+	var out document.Receipt
+	if c.Owner != w.DocumentOwner() {
+		return out, document.ErrOwner
+	}
+	err := w.documentCall(ctx, c.RequestID, coreprotocol.DocumentEdit, &coreprotocol.DocumentEditRequest{ID: c.DocumentID, Revision: c.BaseRevision, Group: c.GroupID, Edits: c.Edits, Following: c.Following}, &out)
+	var failure *coreprotocol.Fault
+	if errors.As(err, &failure) && failure.Code == "resource_failed" {
+		if out.DocumentID == c.DocumentID && out.RequestID == c.RequestID {
+			return out, nil
+		}
+		return document.Receipt{RequestID: c.RequestID, DocumentID: c.DocumentID, Before: c.BaseRevision, Revision: c.BaseRevision, Error: failure.Message}, nil
+	}
+	return out, err
+}
+func (w *Workspace) UndoDocument(ctx context.Context, id, requestID string, revision uint64, redo bool) (document.Receipt, error) {
+	var out document.Receipt
+	method := coreprotocol.DocumentUndo
+	if redo {
+		method = coreprotocol.DocumentRedo
+	}
+	err := w.documentCall(ctx, requestID, method, &coreprotocol.DocumentRevisionRequest{ID: id, Revision: revision}, &out)
+	var failure *coreprotocol.Fault
+	if errors.As(err, &failure) && failure.Code == "resource_failed" {
+		if out.DocumentID == id && out.RequestID == requestID {
+			return out, nil
+		}
+		return document.Receipt{RequestID: requestID, DocumentID: id, Before: revision, Revision: revision, Error: failure.Message}, nil
+	}
+	return out, err
+}
+func (w *Workspace) SaveDocument(ctx context.Context, id string, revision uint64, reason workspace.DocumentSaveReason) (document.Snapshot, error) {
+	var out document.Snapshot
+	err := w.call(ctx, coreprotocol.DocumentSave, &coreprotocol.DocumentRevisionRequest{ID: id, Revision: revision, Reason: reason}, &out)
+	return out, err
+}
+func (w *Workspace) CloseDocument(ctx context.Context, id string) error {
+	w.liveDocumentMu.Lock()
+	if topic := w.liveDocumentTopics[id]; topic != nil {
+		topic.cancel()
+		delete(w.liveDocumentTopics, id)
+	}
+	w.liveDocumentMu.Unlock()
+	return w.call(ctx, coreprotocol.DocumentClose, coreprotocol.DocumentReadRequest{ID: id}, nil)
+}
+
+type liveDocumentTopic struct {
+	path   string
+	client *coreclient.Client
+	cancel context.CancelFunc
+	ended  atomic.Bool
+}
+
+func (w *Workspace) registerDocumentTopic(id, path string) {
+	client, _ := w.conn()
+	w.liveDocumentMu.Lock()
+	defer w.liveDocumentMu.Unlock()
+	if w.liveDocumentTopics == nil {
+		w.liveDocumentTopics = make(map[string]*liveDocumentTopic)
+	}
+	if old := w.liveDocumentTopics[id]; old != nil && old.client == client {
+		return
+	}
+	w.startDocumentTopicLocked(client, id, path, false)
+}
+
+func (w *Workspace) startDocumentTopics(client *coreclient.Client) {
+	w.liveDocumentMu.Lock()
+	defer w.liveDocumentMu.Unlock()
+	for id, old := range w.liveDocumentTopics {
+		if old.client != client {
+			old.cancel()
+			w.startDocumentTopicLocked(client, id, old.path, true)
+		}
+	}
+}
+
+func (w *Workspace) startDocumentTopicLocked(client *coreclient.Client, id, path string, reopen bool) {
+	ctx, cancel := context.WithCancel(w.ctx)
+	token := &liveDocumentTopic{path: path, client: client, cancel: cancel}
+	w.liveDocumentTopics[id] = token
+	w.wg.Add(1)
+	go func() {
+		defer w.wg.Done()
+		defer cancel()
+		defer token.ended.Store(true)
+		if reopen {
+			var snapshot document.Snapshot
+			_, workspaceID := w.conn()
+			method := coreprotocol.DocumentOpen
+			var input coreprotocol.Value = &coreprotocol.DocumentOpenRequest{Path: path, ExistingOnly: true}
+			if document.IsUntitledID(id) {
+				method, input = coreprotocol.DocumentOpenUntitled, &coreprotocol.DocumentReadRequest{ID: id}
+			}
+			if err := client.Call(ctx, workspaceID, method, input, &snapshot); err != nil {
+				w.reportFailure("Reopen document", err)
+				return
+			}
+			if snapshot.ID != id {
+				w.reportFailure("Reopen document", document.ErrOwner)
+				return
+			}
+		}
+		_, workspaceID := w.conn()
+		w.wg.Add(1)
+		go func() {
+			defer w.wg.Done()
+			insight := client.Subscribe(ctx, workspaceID, coreprotocol.TopicInsight, id, func(_ coreprotocol.TopicHeader, body []byte) error {
+				var update coreprotocol.InsightUpdate
+				if err := coreprotocol.Decode(body, &update); err != nil {
+					return err
+				}
+				done := make(chan error, 1)
+				var once sync.Once
+				w.send(shellport.DocumentInsightMsg{Owner: w, View: update.View,
+					Valid: func() bool {
+						w.liveDocumentMu.Lock()
+						defer w.liveDocumentMu.Unlock()
+						current, _ := w.conn()
+						return ctx.Err() == nil && w.liveDocumentTopics[id] == token && current == client
+					},
+					Done: func(err error) { once.Do(func() { done <- err }) },
+				})
+				select {
+				case err := <-done:
+					return err
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			})
+			<-insight.Done()
+		}()
+		sub := client.Subscribe(ctx, workspaceID, coreprotocol.TopicDocument, id, func(header coreprotocol.TopicHeader, body []byte) error {
+			var update coreprotocol.DocumentUpdate
+			if err := coreprotocol.Decode(body, &update); err != nil {
+				w.reportFailure("Decode document", err)
+				return err
+			}
+			w.liveDocumentMu.Lock()
+			if w.liveDocumentTopics[id] == token && update.State.Path != "" {
+				token.path = update.State.Path
+			}
+			w.liveDocumentMu.Unlock()
+			done := make(chan error, 1)
+			var once sync.Once
+			msg := shellport.LiveDocumentsChangedMsg{Owner: w, DocumentID: id, Header: header, Update: update,
+				Valid: func() bool {
+					w.liveDocumentMu.Lock()
+					defer w.liveDocumentMu.Unlock()
+					current, _ := w.conn()
+					return ctx.Err() == nil && w.liveDocumentTopics[id] == token && current == client
+				}, Done: func(err error) {
+					once.Do(func() {
+						if err != nil {
+							token.ended.Store(true)
+						}
+						done <- err
+					})
+				}}
+			w.send(msg)
+			select {
+			case err := <-done:
+				if err != nil {
+					token.ended.Store(true)
+				}
+				return err
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		})
+		<-sub.Done()
+	}()
+}
+func (w *Workspace) FormatDocument(ctx context.Context, id string, revision uint64) (document.Snapshot, error) {
+	var out document.Snapshot
+	err := w.documentCall(ctx, randomID(), coreprotocol.DocumentFormat, &coreprotocol.DocumentRevisionRequest{ID: id, Revision: revision}, &out)
+	return out, err
+}
+
+func (w *Workspace) SaveDocumentRequest(ctx context.Context, id string, revision uint64, reason workspace.DocumentSaveReason, requestID string) (document.Snapshot, error) {
+	var out document.Snapshot
+	err := w.documentCall(ctx, requestID, coreprotocol.DocumentSave, &coreprotocol.DocumentRevisionRequest{ID: id, Revision: revision, Reason: reason}, &out)
+	return out, err
+}
+
+func (w *Workspace) SaveDocumentEncodingRequest(ctx context.Context, id string, revision uint64, encoding textencoding.Encoding, requestID string) (document.Snapshot, error) {
+	var out document.Snapshot
+	err := w.documentCall(ctx, requestID, coreprotocol.DocumentSave, &coreprotocol.DocumentRevisionRequest{ID: id, Revision: revision, Reason: workspace.DocumentSaveManual, Encoding: &encoding}, &out)
+	return out, err
+}
+func (w *Workspace) FormatDocumentRequest(ctx context.Context, id string, revision uint64, requestID string) (document.Snapshot, error) {
+	var out document.Snapshot
+	err := w.documentCall(ctx, requestID, coreprotocol.DocumentFormat, &coreprotocol.DocumentRevisionRequest{ID: id, Revision: revision}, &out)
+	return out, err
+}
+func (w *Workspace) ReloadDocumentRequest(ctx context.Context, id string, revision uint64, requestID string, resolve *document.Resolution) (document.Snapshot, error) {
+	var out document.Snapshot
+	err := w.documentCall(ctx, requestID, coreprotocol.DocumentReload, &coreprotocol.DocumentRevisionRequest{ID: id, Revision: revision, Resolve: resolve}, &out)
+	return out, err
+}
+func (w *Workspace) FenceDocumentTopics() {
+	w.liveDocumentMu.Lock()
+	defer w.liveDocumentMu.Unlock()
+	for _, topic := range w.liveDocumentTopics {
+		topic.ended.Store(true)
+		topic.cancel()
+	}
+}
+
+func (w *Workspace) ResumeDocumentTopics() {
+	client, _ := w.conn()
+	w.liveDocumentMu.Lock()
+	defer w.liveDocumentMu.Unlock()
+	if w.ctx.Err() != nil {
+		return
+	}
+	for id, topic := range w.liveDocumentTopics {
+		if topic.ended.Load() {
+			w.startDocumentTopicLocked(client, id, topic.path, false)
+		}
+	}
+}
+
+func (w *Workspace) ReadEditorConfig(ctx context.Context, id string) (string, indentation.Choices, error) {
+	var out coreprotocol.EditorConfigReply
+	err := w.callCancellable(ctx, coreprotocol.DocumentEditorConfig, &coreprotocol.DocumentReadRequest{ID: id}, &out)
+	return out.Path, out.Choices, err
+}

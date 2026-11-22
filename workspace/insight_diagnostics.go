@@ -2,6 +2,8 @@ package workspace
 
 import (
 	"crude/internal/fileuri"
+	"crude/types/insight"
+	"crude/types/setting"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -11,19 +13,19 @@ import (
 	"unicode/utf16"
 
 	"crude/insight/facts"
-	"crude/types"
 	"crude/workspace/document"
 )
 
-func sameInsightBoundary(a, b types.InsightBoundary) bool {
+func sameInsightBoundary(a, b insight.Boundary) bool {
 	return a.Source == b.Source && a.Producer == b.Producer &&
 		a.Context.ID == b.Context.ID && a.Context.Root == b.Context.Root &&
 		a.Context.Generation == b.Context.Generation &&
 		slices.Equal(a.Context.UnknownInputs, b.Context.UnknownInputs)
 }
 
-func (s *InsightService) DiagnosticSnapshot() map[string]types.InsightDiagnostics {
-	out := make(map[string]types.InsightDiagnostics)
+// DiagnosticSnapshot returns the diagnostics of every document, keyed by path.
+func (s *InsightService) DiagnosticSnapshot() map[string]insight.Diagnostics {
+	out := make(map[string]insight.Diagnostics)
 	for _, batch := range s.diagnostics.All() {
 		out[batch.Boundary.Source.Path] = batch
 	}
@@ -39,7 +41,8 @@ func (m *LSPManager) DiagnosticCursor() (string, uint64) {
 	return m.sources.Insight.generation, m.version
 }
 
-func (m *LSPManager) AllDiagnostics() map[string]types.InsightDiagnostics {
+// AllDiagnostics returns every document diagnostic, or nil without an insight source.
+func (m *LSPManager) AllDiagnostics() map[string]insight.Diagnostics {
 	m.mu.Lock()
 	sources := m.sources
 	m.mu.Unlock()
@@ -49,25 +52,26 @@ func (m *LSPManager) AllDiagnostics() map[string]types.InsightDiagnostics {
 	return sources.Insight.DiagnosticSnapshot()
 }
 
-func (m *LSPManager) FileDiagnostics(path string) (types.InsightDiagnostics, bool) {
+// FileDiagnostics returns the diagnostics of one file.
+func (m *LSPManager) FileDiagnostics(path string) (insight.Diagnostics, bool) {
 	m.mu.Lock()
 	sources := m.sources
 	m.mu.Unlock()
 	if sources == nil || sources.Insight == nil {
-		return types.InsightDiagnostics{}, false
+		return insight.Diagnostics{}, false
 	}
 	return sources.Insight.diagnostics.SnapshotPath(filepath.Clean(path))
 }
 
 // One derived summary per fact generation and display policy. Status reads and
 // paint never re-export the entire diagnostic store while nothing has changed.
-func (s *InsightService) diagnosticSummaryFor(settings types.LSPSettings) types.ProjectInsights {
+func (s *InsightService) diagnosticSummaryFor(settings setting.LSP) insight.ProjectInsights {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	version := s.diagnostics.Version()
 	if !s.diagnosticSummaryCached || s.diagnosticSummaryVersion != version ||
 		s.diagnosticSummaryEnabled != settings.Diagnostics || s.diagnosticSummaryFloor != settings.MinSeverity {
-		s.diagnosticSummary = types.ProjectInsights{}
+		s.diagnosticSummary = insight.ProjectInsights{}
 		summarizeDiagnosticFacts(&s.diagnosticSummary, s.DiagnosticSnapshot(), settings)
 		s.diagnosticSummaryVersion, s.diagnosticSummaryEnabled = version, settings.Diagnostics
 		s.diagnosticSummaryFloor, s.diagnosticSummaryCached = settings.MinSeverity, true
@@ -95,30 +99,30 @@ func (m *LSPManager) invalidateDiagnosticsLocked(reason string) {
 func (m *LSPManager) advanceContextLocked(reason string) {
 	m.contextGeneration++
 	if m.sources != nil && m.sources.Insight != nil {
-		m.sources.Insight.diagnostics.InvalidateMatching(func(b types.InsightBoundary) bool { return !isProjectFact(b) }, reason)
+		m.sources.Insight.diagnostics.InvalidateMatching(func(b insight.Boundary) bool { return !isProjectFact(b) }, reason)
 	}
 	m.bumpVersionLocked()
 }
 
-func (m *LSPManager) diagnosticBoundaryLocked(doc *lspDocument, state *lspClientState) types.InsightBoundary {
+func (m *LSPManager) diagnosticBoundaryLocked(doc *lspDocument, state *lspClientState) insight.Boundary {
 	root, err := fileuri.ToPath(state.rootURI)
 	if err != nil {
 		root = "" // Invalid roots cannot claim a native source boundary.
 	}
-	return types.InsightBoundary{Source: doc.source,
-		Context: types.InsightContext{ID: doc.key, Root: root,
+	return insight.Boundary{Source: doc.source,
+		Context: insight.Context{ID: doc.key, Root: root,
 			Generation: m.contextGeneration, UnknownInputs: []string{
 				"Complete dependency and build graph has not been established.",
 				"Inherited environment and toolchain identity are not fully tracked.",
 				"Executable digest is unverified; tool identity describes launch configuration only.",
 			}},
-		Producer: types.InsightProducer{InstanceID: state.instance, Provider: state.cmd, ToolIdentity: "launch-config:" + doc.key}}
+		Producer: insight.Producer{InstanceID: state.instance, Provider: state.cmd, ToolIdentity: "launch-config:" + doc.key}}
 }
 
 // A callback can beat syncDocument's send receipt. Retain one pending envelope
 // for that exact send, then adjudicate it after recording the actual wire version.
 // No unqualified diagnostic answer is installed in the producer.
-func (m *LSPManager) receiveDiagnostics(key string, owner *lspClientState, p types.InsightDiagnosticPublication) {
+func (m *LSPManager) receiveDiagnostics(key string, owner *lspClientState, p insight.DiagnosticPublication) {
 	m.mu.Lock()
 	sources := m.sources
 	doc := m.documents[p.Boundary.Source.Path]
@@ -198,7 +202,7 @@ func (m *LSPManager) receiveDiagnostics(key string, owner *lspClientState, p typ
 
 // Only requested endpoints are retained. Walk source once off authority locks;
 // never allocate an index for every newline in a potentially large document.
-func validDiagnosticSource(text string, diagnostics []types.LSPDiagnostic) bool {
+func validDiagnosticSource(text string, diagnostics []insight.LSPDiagnostic) bool {
 	type point struct{ line, column int }
 	points := make([]point, 0, 2*len(diagnostics))
 	for _, d := range diagnostics {
@@ -245,7 +249,7 @@ func validDiagnosticSource(text string, diagnostics []types.LSPDiagnostic) bool 
 	return true
 }
 
-func summarizeDiagnosticFacts(ins *types.ProjectInsights, batches map[string]types.InsightDiagnostics, settings types.LSPSettings) {
+func summarizeDiagnosticFacts(ins *insight.ProjectInsights, batches map[string]insight.Diagnostics, settings setting.LSP) {
 	ins.CoverageDetail = "Observed units only; project coverage and complete build context are unknown."
 	counts := make(map[string]int)
 	for _, batch := range batches {
@@ -253,11 +257,11 @@ func summarizeDiagnosticFacts(ins *types.ProjectInsights, batches map[string]typ
 			ins.DiagnosticsObserved++
 		}
 		switch batch.State {
-		case types.InsightStale:
+		case insight.Stale:
 			ins.DiagnosticsStale++
-		case types.InsightLimited:
+		case insight.Limited:
 			ins.DiagnosticsLimited++
-		case types.InsightProvisional:
+		case insight.Provisional:
 			ins.DiagnosticsUnverified++
 		}
 		// A project check reports files that are not open. Its batch is bound
@@ -273,11 +277,11 @@ func summarizeDiagnosticFacts(ins *types.ProjectInsights, batches map[string]typ
 			}
 			affected = true
 			switch d.Severity {
-			case types.DiagError:
+			case insight.DiagError:
 				ins.Errors++
-			case types.DiagWarning:
+			case insight.DiagWarning:
 				ins.Warnings++
-			case types.DiagInfo:
+			case insight.DiagInfo:
 				ins.Info++
 			default:
 				ins.Hints++
@@ -300,15 +304,15 @@ func summarizeDiagnosticFacts(ins *types.ProjectInsights, batches map[string]typ
 	}
 }
 
-func (m *LSPManager) probeDiagnosticFacts(source types.InsightSource) (types.InsightDiagnostics, error) {
+func (m *LSPManager) probeDiagnosticFacts(source insight.Source) (insight.Diagnostics, error) {
 	m.mu.Lock()
 	sources := m.sources
 	m.mu.Unlock()
 	if sources == nil {
-		return types.InsightDiagnostics{}, document.ErrOwner
+		return insight.Diagnostics{}, document.ErrOwner
 	}
 	answer, ok := sources.Insight.diagnostics.Snapshot(source.DocumentID)
-	if !ok || answer.ID == "" || answer.Boundary.Source != source || answer.State == types.InsightStale {
+	if !ok || answer.ID == "" || answer.Boundary.Source != source || answer.State == insight.Stale {
 		return answer, fmt.Errorf("no diagnostic publication for the requested immutable source")
 	}
 	return answer, nil

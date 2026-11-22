@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"crude/tui/editor"
-	"crude/types"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -15,7 +15,7 @@ import (
 func TestCancelCloseRearmsAfterDelayAutosave(t *testing.T) {
 	app := newAutosaveTestApp(t)
 	ed := newSaveTestEditor(t, app, "base")
-	app.editorSettings = types.NormalizeEditorSettings(types.EditorSettings{AutoSave: types.AutoSaveAfterDelay})
+	app.editorSettings = setting.NormalizeEditor(setting.Editor{AutoSave: setting.AutoSaveAfterDelay})
 	ed.InsertRune('x')
 	if got := wsOf(app).Documents.PendingDeadlines(); got != 1 {
 		t.Fatalf("typing armed %d deadlines, want 1", got)
@@ -45,7 +45,7 @@ func TestCancelCloseRearmsAfterDelayAutosave(t *testing.T) {
 func TestCancelCloseArmsNothingWhenAutosaveIsOff(t *testing.T) {
 	app := newAutosaveTestApp(t)
 	ed := newSaveTestEditor(t, app, "base")
-	app.editorSettings = types.NormalizeEditorSettings(types.EditorSettings{AutoSave: types.AutoSaveOff})
+	app.editorSettings = setting.NormalizeEditor(setting.Editor{AutoSave: setting.AutoSaveOff})
 	ed.InsertRune('x')
 
 	app.showDirtyClosePrompt(ed.FilePath())

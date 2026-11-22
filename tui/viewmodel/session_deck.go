@@ -5,12 +5,13 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/screens/backgroundjobs"
 	"crude/tui/screens/decision"
 	"crude/tui/screens/sessionsettings"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/setting"
+	"crude/types/statuscenter"
 	"crude/workspace"
 	"crude/workspace/fileio"
 )
@@ -71,7 +72,7 @@ type sessionSettingsModelsResultMsg struct {
 	providerID string
 	accountID  string
 	generation uint64
-	models     []types.ModelEntry
+	models     []setting.ModelEntry
 	err        error
 }
 
@@ -314,7 +315,7 @@ func (m *App) resolveSessionDecision(msg decision.ResultMsg) tea.Cmd {
 // change's transcript row for every shell.
 func (m *App) setAgentYolo(agentID string, enabled bool) {
 	if !m.ws.SetYoloForAgent(agentID, enabled) {
-		m.notifyStatus(types.SeverityError, "safety", "YOLO mode was not changed", "The owning session is no longer available.", types.ResourceRef{Kind: types.ResourceAgent, ID: agentID})
+		m.notifyStatus(statuscenter.SeverityError, "safety", "YOLO mode was not changed", "The owning session is no longer available.", statuscenter.ResourceRef{Kind: statuscenter.ResourceAgent, ID: agentID})
 		return
 	}
 	node := m.ws.AgentMgr().OrchestratorFor(agentID)

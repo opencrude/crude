@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"crude/internal/testsymlink"
-	"crude/types"
+	"crude/types/setting"
 
 	"golang.org/x/sys/windows"
 )
@@ -130,7 +130,7 @@ func TestStartupOwnerWindowsDeniedDirectorySave(t *testing.T) {
 			t.Errorf("restore directory ACL: %v", err)
 		}
 	})
-	if _, err := a.SaveStartup(t.Context(), []types.SettingEdit{startupChoice("introduction_completed", "true")}); err == nil {
+	if _, err := a.SaveStartup(t.Context(), []setting.Edit{startupChoice("introduction_completed", "true")}); err == nil {
 		t.Fatal("denied configuration save reported success")
 	}
 	if a.committedDefaults().Onboarding.IntroductionCompleted {

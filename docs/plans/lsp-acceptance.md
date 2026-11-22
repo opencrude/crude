@@ -27,7 +27,7 @@ required before LSP is accepted as complete.
   propagation. Unix group escape limits are explicit; cross-compiling the
   Windows/macOS owners is not native behavioral acceptance.
 - The catalog covers Go, Rust, Python, TypeScript/JavaScript, HTML, CSS, C/C++,
-  C# and Zig plus custom stdio servers (`types/language_servers.go`).
+  C# and Zig plus custom stdio servers (`types/setting/language_servers.go`).
 - A dead connection is marked failed and needs an explicit restart.
 - Agent code intelligence: the session-bound `lsp` tool and post-edit
   diagnostics notice, editor/probe document holders, progress-settled

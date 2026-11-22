@@ -1,6 +1,6 @@
 package app
 
-import "crude/buildinfo"
+import "crude/internal/buildinfo"
 
 // BuildID identifies the exact executable, so a shell never talks to a core
 // built from different code (every `go run .` produces a new build).

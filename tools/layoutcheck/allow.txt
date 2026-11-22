@@ -1,0 +1,8 @@
+# Reviewed exceptions for the layout gate: RULE<TAB>path<TAB>name<TAB>reason.
+# The name is "-" when the rule is about a path. Each line needs a reason, and
+# a line that no longer matches anything fails the gate.
+FILE-PLATFORM	tui/desktopnotify/icon.go	-	Shared by the Linux and Windows backends; a platform suffix would limit it to one of them.
+NAME-ALIAS	tui/rendering/markdown_reflow.go	ParagraphWrapRange	Keeps the ANSI library import inside tui/rendering, the only package allowed to handle raw ANSI (AGENTS.md theme rule).
+NAME-GETTER	agent/capability/host.go	routedClient.GetPrompt	Implements the MCP prompts/get request, whose concept is a get.
+NAME-GETTER	agent/capability/service.go	Service.GetPrompt	Implements the MCP prompts/get request, whose concept is a get.
+NAME-GETTER	agent/mcpclient/client.go	Manager.GetPrompt	Implements the MCP prompts/get request, whose concept is a get.

@@ -7,14 +7,14 @@ import (
 	"strings"
 	"time"
 
-	"crude/metrics"
-	"crude/perfdata"
+	"crude/internal/metrics"
+	"crude/internal/perfdata"
 )
 
 type resourceView = perfdata.ResourceView
 
-func resources(d Data) []resourceView   { return perfdata.ResourceViews(perfdata.Data(d)) }
-func resourceFindings(d Data) []Finding { return perfdata.ResourceFindings(perfdata.Data(d)) }
+func resources(d Data) []resourceView            { return perfdata.ResourceViews(perfdata.Data(d)) }
+func resourceFindings(d Data) []perfdata.Finding { return perfdata.ResourceFindings(perfdata.Data(d)) }
 
 func resourceTiles(v resourceView) []tile { return tilesFrom(perfdata.ResourceHeadlines(v)) }
 func tilesFrom(headlines []perfdata.Headline) []tile {
@@ -34,7 +34,7 @@ type resourceRow struct {
 	share float64
 	value string
 	extra string
-	sev   Severity
+	sev   perfdata.Severity
 }
 
 func processRows(v resourceView) []resourceRow {

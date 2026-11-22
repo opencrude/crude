@@ -10,13 +10,13 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"crude/core"
-	"crude/core/port"
-	"crude/core/protocol"
-	"crude/internal/wiretest"
-	settingsui "crude/tui/settings"
+	"crude/core/coreprotocol"
+	"crude/core/shellport"
+	"crude/core/wiretest"
+	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/types/control"
+	"crude/types/setting"
 )
 
 // Exercise the authenticated connected gateway, not only the shell's metadata
@@ -129,7 +129,7 @@ func TestConnectedAnalysisTrustGenericControlsCannotAuthorizeOrDiscard(t *testin
 	}
 	navigate("Code Intelligence")
 	body := one.app.settingsSurface(one.app.overlayHost.Window(ui.OverlayWorkspaceSettings))
-	if body == nil || body.Model().AppSettings().Analysis.Trust != types.AnalysisUndecided {
+	if body == nil || body.Model().AppSettings().Analysis.Trust != setting.AnalysisUndecided {
 		t.Fatal("opening the mounted form acquired Trust")
 	}
 	if paint := ansi.Strip(one.app.View().RenderContent()); !strings.Contains(paint, "Trust") || !strings.Contains(paint, "Ask when the") {
@@ -161,10 +161,10 @@ func TestConnectedAnalysisTrustGenericControlsCannotAuthorizeOrDiscard(t *testin
 			}
 		}
 	}
-	if len(body.Model().Edits()) != 0 || one.app.ws.LoadAppSettings().Analysis.Trust != types.AnalysisUndecided {
+	if len(body.Model().Edits()) != 0 || one.app.ws.LoadAppSettings().Analysis.Trust != setting.AnalysisUndecided {
 		t.Fatal("denied generic input changed a draft or committed trust")
 	}
-	nativeChoice := func(code rune, want types.WorkspaceAnalysisTrust) {
+	nativeChoice := func(code rune, want setting.WorkspaceAnalysisTrust) {
 		t.Helper()
 		for _, child := range body.Children() {
 			if form, ok := child.(*ui.Form); ok && form.ID() == settingsui.WorkspaceSettingsFormID {
@@ -178,14 +178,14 @@ func TestConnectedAnalysisTrustGenericControlsCannotAuthorizeOrDiscard(t *testin
 			t.Fatalf("human native keyboard cannot choose Trust: %+v", body.Model().Edits())
 		}
 	}
-	nativeChoice(tea.KeyRight, types.AnalysisRestricted)
-	nativeChoice(tea.KeyRight, types.AnalysisTrusted)
+	nativeChoice(tea.KeyRight, setting.AnalysisRestricted)
+	nativeChoice(tea.KeyRight, setting.AnalysisTrusted)
 	save := ui.ControlOperation{Verb: "activate"}
 	for _, id := range []ui.ComponentID{settingsui.WorkspaceSettingsSaveID, settingsui.WorkspaceSettingsResetID} {
 		desc, node := describe(string(id), save, true)
 		denied(writer(node, save, desc.ID))
 	}
-	if one.app.ws.LoadAppSettings().Analysis.Trust != types.AnalysisUndecided {
+	if one.app.ws.LoadAppSettings().Analysis.Trust != setting.AnalysisUndecided {
 		t.Fatal("generic Save committed the human's pending grant")
 	}
 	// The native focused footer + Enter is a human save and owns the durable
@@ -194,12 +194,12 @@ func TestConnectedAnalysisTrustGenericControlsCannotAuthorizeOrDiscard(t *testin
 	_, cmd := one.app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	runAppCommand(t, one.app, cmd)
 	body = one.app.settingsSurface(one.app.overlayHost.Window(ui.OverlayWorkspaceSettings))
-	if one.app.ws.LoadAppSettings().Analysis.Trust != types.AnalysisTrusted || len(body.Model().Edits()) != 0 ||
+	if one.app.ws.LoadAppSettings().Analysis.Trust != setting.AnalysisTrusted || len(body.Model().Edits()) != 0 ||
 		one.app.ws.LoadWorkspaceOverrides().AnalysisRootIdentity == "" {
 		t.Fatal("native Save did not persist and rebase the root-bound grant")
 	}
-	nativeChoice(tea.KeyLeft, types.AnalysisRestricted)
-	nativeChoice(tea.KeyLeft, types.AnalysisUndecided)
+	nativeChoice(tea.KeyLeft, setting.AnalysisRestricted)
+	nativeChoice(tea.KeyLeft, setting.AnalysisUndecided)
 	navigate("Editor")
 	if paint := ansi.Strip(one.app.View().RenderContent()); strings.Contains(paint, "Ask when the folder opens") || !strings.Contains(paint, "Word wrap") {
 		t.Fatalf("Trust draft did not leave the visible page:\n%s", paint)
@@ -222,8 +222,8 @@ func TestConnectedAnalysisTrustGenericControlsCannotAuthorizeOrDiscard(t *testin
 			}
 		}
 	}
-	if body.Model().AppSettings().Analysis.Trust != types.AnalysisUndecided || len(body.Model().Edits()) < 2 ||
-		one.app.ws.LoadAppSettings().Analysis.Trust != types.AnalysisTrusted {
+	if body.Model().AppSettings().Analysis.Trust != setting.AnalysisUndecided || len(body.Model().Edits()) < 2 ||
+		one.app.ws.LoadAppSettings().Analysis.Trust != setting.AnalysisTrusted {
 		t.Fatalf("generic Save/Reset lost the off-page draft or changed committed trust: edits=%+v draft=%s committed=%s",
 			body.Model().Edits(), body.Model().AppSettings().Analysis.Trust, one.app.ws.LoadAppSettings().Analysis.Trust)
 	}

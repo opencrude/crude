@@ -3,10 +3,10 @@ package viewmodel
 import (
 	tea "charm.land/bubbletea/v2"
 	"context"
-	"crude/core/port"
-	"crude/text/indent"
+	"crude/core/shellport"
+	"crude/text/indentation"
 	"crude/tui/editor"
-	"crude/types"
+	"crude/types/insight"
 	"slices"
 	"time"
 )
@@ -22,11 +22,11 @@ type selectionFormatState struct {
 	cancel               context.CancelFunc
 	loading              bool
 	result               *selectionFormatResult
-	source               types.InsightSource
+	source               insight.Source
 }
 type selectionFormatResult struct {
 	owner  *selectionFormatState
-	result types.LSPFormattingResult
+	result insight.LSPFormattingResult
 	err    error
 }
 
@@ -88,11 +88,11 @@ func (m *App) syncSelectionFormatting() tea.Cmd {
 	} // ordinary edit queue flushes first
 	s.source = source
 	s.loading = true
-	in := types.LSPFormattingRequest{Source: source, Options: types.LSPFormattingOptions{TabSize: s.policy.Size, InsertSpaces: s.policy.Style != indentation.Tabs}}
+	in := insight.LSPFormattingRequest{Source: source, Options: insight.LSPFormattingOptions{TabSize: s.policy.Size, InsertSpaces: s.policy.Style != indentation.Tabs}}
 	for _, r := range s.selections {
 		a, b := min(r.Anchor, r.Cursor), max(r.Anchor, r.Cursor)
 		if a != b {
-			in.Ranges = append(in.Ranges, types.LSPFormattingSpan{Start: a, End: b})
+			in.Ranges = append(in.Ranges, insight.LSPFormattingSpan{Start: a, End: b})
 		}
 	}
 	port := s.workspace.(shellport.SelectionFormatter)

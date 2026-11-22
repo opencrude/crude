@@ -16,10 +16,10 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"crude/agent"
 	"crude/agent/capability"
 	"crude/agent/provider"
 	"crude/agent/tools"
+	"crude/agent/turnloop"
 	captypes "crude/types/capability"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -143,7 +143,7 @@ func TestMCPMediaActualStartedChildUsesOwnSelection(t *testing.T) {
 			}
 			defer owner.Close()
 			owner.SetWorkDir(root)
-			owner.SetCapabilities(runtime, agent.NewFileOwnership())
+			owner.SetCapabilities(runtime, turnloop.NewFileOwnership())
 			owner.SetYolo(true)
 			attachDelegationTestCollaboration(t, owner)
 			runner := NewSubAgentRunner(owner, 1)
@@ -206,7 +206,7 @@ func TestMCPMediaActualRootRequestAndPassiveResume(t *testing.T) {
 	}
 	defer owner.Close()
 	owner.SetWorkDir(root)
-	owner.SetCapabilities(runtime, agent.NewFileOwnership())
+	owner.SetCapabilities(runtime, turnloop.NewFileOwnership())
 	owner.SetYolo(true)
 	sender := newMockEventSender()
 	orch, err := owner.NewOrchestrator(sender)

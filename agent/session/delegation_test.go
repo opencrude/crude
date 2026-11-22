@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"crude/agent"
 	"crude/agent/collaboration"
 	"crude/agent/provider"
+	"crude/agent/turnloop"
 	captypes "crude/types/capability"
 )
 
@@ -229,7 +229,7 @@ func TestConcurrentLazyRunnerAndDisableKeepsChildControl(t *testing.T) {
 	}
 	childCtx, childCancel := context.WithCancel(context.Background())
 	defer childCancel()
-	handle := &agent.SubAgentHandle{Spec: agent.SubAgentSpec{ID: "active-child", Name: "active-child", Category: agent.CatResearcher, ParentTurn: 1}, Agent: &agent.Agent{Ctx: childCtx}, Cancel: childCancel}
+	handle := &turnloop.SubAgentHandle{Spec: turnloop.SubAgentSpec{ID: "active-child", Name: "active-child", Category: turnloop.CatResearcher, ParentTurn: 1}, Agent: &turnloop.Agent{Ctx: childCtx}, Cancel: childCancel}
 	if err := runner.Manager().Register(handle); err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +249,7 @@ func TestConcurrentLazyRunnerAndDisableKeepsChildControl(t *testing.T) {
 		t.Fatal("disable destroyed a running child or its control path")
 	}
 	live := sess.newAgent(sess.provider, true, nil)
-	live.AgentID = agent.AgentID(orch.ID)
+	live.AgentID = turnloop.AgentID(orch.ID)
 	run, err := store.StartRun(t.Context(), collaboration.StartRunRequest{AgentID: orch.ID, RuntimeEpoch: orch.RuntimeEpoch, Origin: collaboration.OriginHuman})
 	if err != nil {
 		t.Fatal(err)
@@ -260,7 +260,7 @@ func TestConcurrentLazyRunnerAndDisableKeepsChildControl(t *testing.T) {
 	}, sess.AgentName())
 	toolFn := live.ToolFn // stale enabled closure must consult live policy
 	result, err := toolFn(t.Context(), "agent_start", map[string]any{"description": "not allowed"})
-	if err != nil || agent.IsToolError(result.Content) || !strings.Contains(result.Content, "disabled_by_user") {
+	if err != nil || turnloop.IsToolError(result.Content) || !strings.Contains(result.Content, "disabled_by_user") {
 		t.Fatalf("disabled launch misreported as failure: %+v %v", result, err)
 	}
 	result, err = toolFn(t.Context(), "agent_list", nil)
@@ -271,5 +271,5 @@ func TestConcurrentLazyRunnerAndDisableKeepsChildControl(t *testing.T) {
 	if childCtx.Err() != context.Canceled {
 		t.Fatal("closing disabled parent did not cancel its child")
 	}
-	runner.Manager().MarkFinished(handle.Spec.ID, agent.SubAgentResult{AgentID: handle.Spec.ID, Status: agent.SubAgentCancelled})
+	runner.Manager().MarkFinished(handle.Spec.ID, turnloop.SubAgentResult{AgentID: handle.Spec.ID, Status: turnloop.SubAgentCancelled})
 }

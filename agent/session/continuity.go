@@ -6,21 +6,21 @@ import (
 	"encoding/json"
 	"maps"
 
-	"crude/agent"
 	rootprompt "crude/agent/prompt"
 	"crude/agent/sessiondb"
-	"crude/types"
+	"crude/agent/turnloop"
+	"crude/types/insight"
 )
 
 // SetWorkingSet binds the document owner before the session accepts inputs.
 // An unavailable or different checkout does not block a provider request.
-func (s *Session) SetWorkingSet(read func(string) *types.WorkingSetEvidence) {
+func (s *Session) SetWorkingSet(read func(string) *insight.WorkingSetEvidence) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.workingSet = read
 }
 
-func (s *Session) bindContinuity(live *agent.Agent, db *sql.DB, sessionID string) {
+func (s *Session) bindContinuity(live *turnloop.Agent, db *sql.DB, sessionID string) {
 	live.LatestHumanTurnState = func(ctx context.Context) (string, bool, error) {
 		_, human, err := sessiondb.LatestTurnStates(ctx, db, sessionID)
 		if err != nil || human == nil {
@@ -38,27 +38,27 @@ func (s *Session) bindContinuity(live *agent.Agent, db *sql.DB, sessionID string
 		s.mu.Lock()
 		var current *Config
 		if s.runtimeProfile != nil {
-			current = s.runtimeProfile.GetEffectiveConfig(string(live.AgentID))
+			current = s.runtimeProfile.EffectiveConfig(string(live.AgentID))
 		} else if s.cfg != nil {
 			current = copyConfig(s.cfg)
 		}
 		readWorkingSet := s.workingSet
 		s.mu.Unlock()
 		state := struct {
-			SessionID       string                    `json:"session_id"`
-			LatestTurn      *sessiondb.TurnState      `json:"latest_turn"`
-			LatestHumanTurn *sessiondb.TurnState      `json:"latest_human_turn"`
-			Model           string                    `json:"model,omitempty"`
-			AccountID       string                    `json:"account_id,omitempty"`
-			MultiAgent      bool                      `json:"multi_agent_enabled"`
-			AllowedTools    []string                  `json:"allowed_tools,omitempty"`
-			DeniedTools     []string                  `json:"denied_tools,omitempty"`
-			SkillModes      map[string]string         `json:"skill_modes,omitempty"`
-			WorkspaceID     string                    `json:"workspace_id,omitempty"`
-			WorkingSet      *types.WorkingSetEvidence `json:"working_set,omitempty"`
+			SessionID       string                      `json:"session_id"`
+			LatestTurn      *sessiondb.TurnState        `json:"latest_turn"`
+			LatestHumanTurn *sessiondb.TurnState        `json:"latest_human_turn"`
+			Model           string                      `json:"model,omitempty"`
+			AccountID       string                      `json:"account_id,omitempty"`
+			MultiAgent      bool                        `json:"multi_agent_enabled"`
+			AllowedTools    []string                    `json:"allowed_tools,omitempty"`
+			DeniedTools     []string                    `json:"denied_tools,omitempty"`
+			SkillModes      map[string]string           `json:"skill_modes,omitempty"`
+			WorkspaceID     string                      `json:"workspace_id,omitempty"`
+			WorkingSet      *insight.WorkingSetEvidence `json:"working_set,omitempty"`
 		}{SessionID: sessionID, LatestTurn: latest, LatestHumanTurn: human}
 		if current != nil {
-			category := current.GetActiveDefaultCategory()
+			category := current.ActiveDefaultCategory()
 			state.Model, state.MultiAgent = live.Model, current.IsMultiAgentEnabled()
 			state.AllowedTools = append([]string(nil), category.AllowedTools...)
 			state.DeniedTools = append([]string(nil), category.DeniedTools...)

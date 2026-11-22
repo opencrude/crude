@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"crude/agent/sessiondb"
-	"crude/types"
+	"crude/types/setting"
 )
 
 // Fork copies this session's conversation into a new saved session id under
@@ -20,7 +20,7 @@ func (s *Session) Fork(dir, id string) error {
 		return errors.New("this session has no saved history to fork")
 	}
 	s.mu.Lock()
-	name := types.AgentNameForRole(s.selectedMainAgent, "")
+	name := setting.AgentNameForRole(s.selectedMainAgent, "")
 	s.mu.Unlock()
 	if name == "" {
 		var err error

@@ -6,13 +6,13 @@ import (
 	"strings"
 	"time"
 
-	"crude/agent"
 	rootprompt "crude/agent/prompt"
 	"crude/agent/provider"
 	"crude/agent/safety"
 	"crude/agent/sessiondb"
 	"crude/agent/tools"
-	"crude/logger"
+	"crude/agent/turnloop"
+	"crude/internal/logger"
 	"crude/types/command"
 )
 
@@ -100,7 +100,7 @@ func planModeAllows(tool string, metadata func(string) (tools.ToolMetadata, bool
 	if metadata != nil {
 		described, known = metadata(tool)
 	}
-	return known && agent.PolicyAllowsMetadata(safety.ReadOnlyPolicy(), described)
+	return known && turnloop.PolicyAllowsMetadata(safety.ReadOnlyPolicy(), described)
 }
 
 func planModeTools(defs []tools.ToolDef, metadata func(string) (tools.ToolMetadata, bool)) []tools.ToolDef {

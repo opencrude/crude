@@ -9,9 +9,9 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"crude/lsp/edit"
-	"crude/lsp/nav"
-	"crude/types"
+	"crude/lsp/lspedit"
+	"crude/lsp/lspnav"
+	"crude/types/insight"
 )
 
 const navigationSourceBytes = 2 << 20
@@ -24,14 +24,14 @@ func validateNavigationPosition(text string, line, col int) error {
 	return err
 }
 
-func navigationRange(in lspnav.Range) types.LSPNavigationRange {
-	return types.LSPNavigationRange{
-		Start: types.LSPNavigationPosition{Line: in.Start.Line, Character: in.Start.Character},
-		End:   types.LSPNavigationPosition{Line: in.End.Line, Character: in.End.Character},
+func navigationRange(in lspnav.Range) insight.LSPNavigationRange {
+	return insight.LSPNavigationRange{
+		Start: insight.LSPNavigationPosition{Line: in.Start.Line, Character: in.Start.Character},
+		End:   insight.LSPNavigationPosition{Line: in.End.Line, Character: in.End.Character},
 	}
 }
 
-func validateNavigationRange(text string, r types.LSPNavigationRange) error {
+func validateNavigationRange(text string, r insight.LSPNavigationRange) error {
 	if err := validateNavigationPosition(text, r.Start.Line, r.Start.Character); err != nil {
 		return err
 	}
@@ -44,34 +44,34 @@ func validateNavigationRange(text string, r types.LSPNavigationRange) error {
 	return nil
 }
 
-func navigationPositionBefore(a, b types.LSPNavigationPosition) bool {
+func navigationPositionBefore(a, b insight.LSPNavigationPosition) bool {
 	return a.Line < b.Line || a.Line == b.Line && a.Character < b.Character
 }
 
-func normalizeNavigation(root, text string, response types.LSPNavigationResponse, line, col int, includeDeclaration bool) (types.LSPNavigation, error) {
-	out := types.LSPNavigation{
+func normalizeNavigation(root, text string, response insight.LSPNavigationResponse, line, col int, includeDeclaration bool) (insight.LSPNavigation, error) {
+	out := insight.LSPNavigation{
 		Boundary: response.Boundary, WireVersion: response.WireVersion, Kind: response.Kind,
 		Line: line, Col: col, IncludeDeclaration: includeDeclaration,
 	}
 	if response.Unsupported {
 		if len(response.JSON) != 0 {
-			return types.LSPNavigation{}, errors.New("unsupported navigation response also contains target data")
+			return insight.LSPNavigation{}, errors.New("unsupported navigation response also contains target data")
 		}
-		out.Answer = types.LSPNavigationUnsupported
+		out.Answer = insight.LSPNavigationUnsupported
 		return out, nil
 	}
 	parsed, err := lspnav.Parse(lspnav.Kind(response.Kind), response.JSON)
 	if err != nil {
-		return types.LSPNavigation{}, err
+		return insight.LSPNavigation{}, err
 	}
 	out.Answer = string(parsed.Answer)
 	for _, target := range parsed.Targets {
-		row := types.LSPNavigationTarget{URI: target.URI, Range: navigationRange(target.Range),
+		row := insight.LSPNavigationTarget{URI: target.URI, Range: navigationRange(target.Range),
 			Selection: navigationRange(target.Selection), Link: target.Link}
 		if target.Origin != nil {
 			origin := navigationRange(*target.Origin)
 			if err := validateNavigationRange(text, origin); err != nil {
-				return types.LSPNavigation{}, errors.New("navigation origin does not fit the exact original source")
+				return insight.LSPNavigation{}, errors.New("navigation origin does not fit the exact original source")
 			}
 			row.Origin = &origin
 		}

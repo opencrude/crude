@@ -9,7 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/screens/activitylist"
 	"crude/tui/screens/launcher"
 	"crude/tui/ui"
@@ -19,7 +19,7 @@ import (
 type workspaceActivityTestPort struct {
 	shellport.Workspace
 	root, namespace string
-	read            map[string]workspace.WorkspaceActivity
+	read            map[string]workspace.Activity
 	readErr         error
 	reads           int
 }
@@ -32,7 +32,7 @@ func (p *workspaceActivityTestPort) Close() error                      { return 
 func (p *workspaceActivityTestPort) AttachWorkspace(context.Context, string) (shellport.Workspace, error) {
 	return nil, errors.New("unexpected attachment")
 }
-func (p *workspaceActivityTestPort) ReadWorkspaceActivity(context.Context) (map[string]workspace.WorkspaceActivity, error) {
+func (p *workspaceActivityTestPort) ReadWorkspaceActivity(context.Context) (map[string]workspace.Activity, error) {
 	p.reads++
 	if p.readErr != nil {
 		return nil, p.readErr
@@ -40,8 +40,8 @@ func (p *workspaceActivityTestPort) ReadWorkspaceActivity(context.Context) (map[
 	return p.read, nil
 }
 
-func observedActivity(agents, terminals, files int) workspace.WorkspaceActivity {
-	return workspace.WorkspaceActivity{
+func observedActivity(agents, terminals, files int) workspace.Activity {
+	return workspace.Activity{
 		Agents:    workspace.ActivityCount{Value: agents, Observed: true},
 		Terminals: workspace.ActivityCount{Value: terminals, Observed: true},
 		Unsaved:   workspace.ActivityCount{Value: files, Observed: true},
@@ -53,12 +53,12 @@ func TestWorkspaceActivityPaintsSharedViewsAndDoesNotMoveBrowseSelection(t *test
 	const root = "/srv/user/deep/project"
 	const peer = "/srv/user/deep/Project"
 	port := &workspaceActivityTestPort{Workspace: app.ws, root: root, namespace: "ssh:dev",
-		read: map[string]workspace.WorkspaceActivity{
+		read: map[string]workspace.Activity{
 			"mine": observedActivity(1, 0, 0), "peer": observedActivity(2, 1, 3),
 		}}
 	app.ws = port
 	app.Update(tea.WindowSizeMsg{Width: 144, Height: 38})
-	app.workspaceInfos = []workspace.WorkspaceInfo{
+	app.workspaceInfos = []workspace.Info{
 		{ID: "peer", ProjectName: "Project", ProjectDir: peer, DisplayPath: "~/deep/Project"},
 		{ID: "mine", ProjectName: "project", ProjectDir: root, DisplayPath: "~/deep/project"},
 		{ID: "cold", ProjectName: "cold", ProjectDir: "/srv/user/deep/cold", DisplayPath: "~/deep/cold"},
@@ -127,7 +127,7 @@ func TestWorkspaceActivityPaintsSharedViewsAndDoesNotMoveBrowseSelection(t *test
 	if entry, _ := list.Selected(); entry.Label != "Project" || entry.Trailing[2] != "✎3" {
 		t.Fatalf("header did not share the retained snapshot: %+v", entry)
 	}
-	port.read = map[string]workspace.WorkspaceActivity{"mine": observedActivity(0, 0, 0), "peer": observedActivity(0, 0, 0)}
+	port.read = map[string]workspace.Activity{"mine": observedActivity(0, 0, 0), "peer": observedActivity(0, 0, 0)}
 	read = app.workspaceActivityCmd(now.Add(time.Second))
 	if read == nil {
 		t.Fatal("open header switcher stopped refreshing its activity")
@@ -148,12 +148,12 @@ func TestWorkspaceActivityFencesSwitchesAndDoesNotReadWhileHidden(t *testing.T) 
 	const samePath = "/srv/user/repo"
 	const stableID = "shared-id"
 	local := &workspaceActivityTestPort{Workspace: app.ws, root: samePath, namespace: "",
-		read: map[string]workspace.WorkspaceActivity{stableID: observedActivity(7, 4, 2)}}
+		read: map[string]workspace.Activity{stableID: observedActivity(7, 4, 2)}}
 	foreign := &workspaceActivityTestPort{Workspace: app.ws, root: samePath, namespace: "ssh:distinct-host",
-		read: map[string]workspace.WorkspaceActivity{stableID: observedActivity(1, 0, 0)}}
+		read: map[string]workspace.Activity{stableID: observedActivity(1, 0, 0)}}
 	app.ws = local
 	app.bindWorkspaceCatalogOwner()
-	app.workspaceInfos = []workspace.WorkspaceInfo{{ID: stableID, ProjectDir: samePath, DisplayPath: "~/local/repo"}}
+	app.workspaceInfos = []workspace.Info{{ID: stableID, ProjectDir: samePath, DisplayPath: "~/local/repo"}}
 	app.launcherScreen = nil
 	app.Tree.Visible = false
 	now := time.Now()
@@ -172,7 +172,7 @@ func TestWorkspaceActivityFencesSwitchesAndDoesNotReadWhileHidden(t *testing.T) 
 	if len(app.workspaceInfos) != 0 {
 		t.Fatal("a backend switch let the previous host's catalog remain actionable")
 	}
-	app.Update(launcherWorkspacesMsg{Gen: app.launcherLoadGen.Load(), Infos: []workspace.WorkspaceInfo{
+	app.Update(launcherWorkspacesMsg{Gen: app.launcherLoadGen.Load(), Infos: []workspace.Info{
 		{ID: stableID, ProjectDir: samePath, DisplayPath: "~/remote/repo"},
 	}})
 	read := app.workspaceActivityCmd(now)
@@ -197,10 +197,10 @@ func TestWorkspaceActivityKeepsBadgesWhenAReadFails(t *testing.T) {
 	app := newFullTestApp(t)
 	const root = "/srv/user/repo"
 	port := &workspaceActivityTestPort{Workspace: app.ws, root: root,
-		read: map[string]workspace.WorkspaceActivity{"repo": observedActivity(2, 1, 0)}}
+		read: map[string]workspace.Activity{"repo": observedActivity(2, 1, 0)}}
 	app.ws = port
 	app.bindWorkspaceCatalogOwner()
-	app.workspaceInfos = []workspace.WorkspaceInfo{{ID: "repo", ProjectDir: root, DisplayPath: "~/repo"}}
+	app.workspaceInfos = []workspace.Info{{ID: "repo", ProjectDir: root, DisplayPath: "~/repo"}}
 	app.setActivity(activityWorkspaces, true)
 	now := time.Now()
 	app.Update(app.workspaceActivityCmd(now)())
@@ -219,7 +219,7 @@ func TestWorkspaceActivityKeepsBadgesWhenAReadFails(t *testing.T) {
 	if app.workspaceActivity.cancel != nil {
 		t.Fatal("a failed read left its slot busy, so the next poll cannot start")
 	}
-	port.readErr, port.read = nil, map[string]workspace.WorkspaceActivity{"repo": observedActivity(0, 0, 0)}
+	port.readErr, port.read = nil, map[string]workspace.Activity{"repo": observedActivity(0, 0, 0)}
 	app.Update(app.workspaceActivityCmd(now.Add(2 * time.Second))())
 	if seen := app.workspaceSidebarItems()[1]; seen.Trailing != (ui.RowBadges{}) {
 		t.Fatalf("the next completed read did not replace the kept badges: %+v", seen)

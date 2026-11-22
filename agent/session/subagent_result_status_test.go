@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/agent"
 	"crude/agent/provider"
+	"crude/agent/turnloop"
 )
 
 func TestSubAgentTerminalResultNeedsDeliverable(t *testing.T) {
@@ -16,31 +16,31 @@ func TestSubAgentTerminalResultNeedsDeliverable(t *testing.T) {
 		authored     bool
 		errors       bool
 		cancelled    bool
-		want         agent.SubAgentStatus
+		want         turnloop.SubAgentStatus
 	}{
-		{name: "only assignment", want: agent.SubAgentFailedPolicy},
+		{name: "only assignment", want: turnloop.SubAgentFailedPolicy},
 		{name: "tool calls then terminal stream error", reason: "error", errors: true,
 			messages: []provider.ChatMessage{
 				{Role: "assistant", ToolCalls: []provider.ToolCall{{ID: "read-1", Function: provider.FunctionCall{Name: "read_file"}}}},
 				provider.NewTextMessage("tool", "file contents"),
 				provider.NewTextMessage("assistant", "partial stream output"),
-			}, want: agent.SubAgentFailedError},
+			}, want: turnloop.SubAgentFailedError},
 		{name: "no report and no final answer despite tool success", messages: []provider.ChatMessage{
 			{Role: "assistant", ToolCalls: []provider.ToolCall{{ID: "read-1", Function: provider.FunctionCall{Name: "read_file"}}}},
 			provider.NewTextMessage("tool", "file contents"),
-		}, want: agent.SubAgentFailedPolicy},
+		}, want: turnloop.SubAgentFailedPolicy},
 		{name: "earlier answer does not cover later dangling call", messages: []provider.ChatMessage{
 			provider.NewTextMessage("assistant", "earlier progress"),
 			{Role: "assistant", ToolCalls: []provider.ToolCall{{ID: "read-1", Function: provider.FunctionCall{Name: "read_file"}}}},
-		}, want: agent.SubAgentFailedPolicy},
-		{name: "recovered error with authored report", reason: "completed", errors: true, authored: true, want: agent.SubAgentCompleted},
+		}, want: turnloop.SubAgentFailedPolicy},
+		{name: "recovered error with authored report", reason: "completed", errors: true, authored: true, want: turnloop.SubAgentCompleted},
 		{name: "recovered error with final answer but no report", reason: "completed", errors: true,
-			messages: []provider.ChatMessage{provider.NewTextMessage("assistant", "Final findings and outcome.")}, want: agent.SubAgentFailedPolicy},
+			messages: []provider.ChatMessage{provider.NewTextMessage("assistant", "Final findings and outcome.")}, want: turnloop.SubAgentFailedPolicy},
 		{name: "final answer without report", reason: "completed",
-			messages: []provider.ChatMessage{provider.NewTextMessage("assistant", "Final findings and outcome.")}, want: agent.SubAgentFailedPolicy},
-		{name: "authored report with no final answer", reason: "completed", authored: true, want: agent.SubAgentCompleted},
-		{name: "cancelled dominates missing deliverable", cancelled: true, want: agent.SubAgentCancelled},
-		{name: "quoted quota text does not invent terminal cause", messages: []provider.ChatMessage{provider.NewTextMessage("tool", "Error: 429 quota exceeded")}, want: agent.SubAgentFailedPolicy},
+			messages: []provider.ChatMessage{provider.NewTextMessage("assistant", "Final findings and outcome.")}, want: turnloop.SubAgentFailedPolicy},
+		{name: "authored report with no final answer", reason: "completed", authored: true, want: turnloop.SubAgentCompleted},
+		{name: "cancelled dominates missing deliverable", cancelled: true, want: turnloop.SubAgentCancelled},
+		{name: "quoted quota text does not invent terminal cause", messages: []provider.ChatMessage{provider.NewTextMessage("tool", "Error: 429 quota exceeded")}, want: turnloop.SubAgentFailedPolicy},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -53,7 +53,7 @@ func TestSubAgentTerminalResultNeedsDeliverable(t *testing.T) {
 				ctx, cancel = context.WithCancel(ctx)
 				cancel()
 			}
-			handle := &agent.SubAgentHandle{Spec: agent.SubAgentSpec{ID: "child", Name: "child"}, Agent: &agent.Agent{Ctx: ctx}, StartedAt: time.Now()}
+			handle := &turnloop.SubAgentHandle{Spec: turnloop.SubAgentSpec{ID: "child", Name: "child"}, Agent: &turnloop.Agent{Ctx: ctx}, StartedAt: time.Now()}
 			handle.SetTermReason(tc.reason)
 			if tc.errors {
 				handle.AddError("provider stream failed")

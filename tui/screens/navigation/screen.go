@@ -15,7 +15,7 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
 )
 
 const (
@@ -47,7 +47,7 @@ type Screen struct {
 	list      *ui.List
 	scrollbar *ui.ScrollbarControl
 	text      *reader
-	result    types.LSPNavigation
+	result    insight.LSPNavigation
 	hasResult bool
 	busy      bool
 }
@@ -88,7 +88,7 @@ func (s *Screen) SetTheme(th *theme.Theme) {
 }
 
 func (s *Screen) reset() {
-	s.result = types.LSPNavigation{}
+	s.result = insight.LSPNavigation{}
 	s.hasResult, s.busy = false, false
 	s.list.SetItems(nil)
 }
@@ -113,7 +113,8 @@ func (s *Screen) SetError(message string) {
 	s.setText(message)
 }
 
-func (s *Screen) SetResult(result types.LSPNavigation) {
+// SetResult shows the targets of a result, or an error when the result is invalid.
+func (s *Screen) SetResult(result insight.LSPNavigation) {
 	if !validResult(result) {
 		s.reset()
 		s.SetError("The language server returned an answer that cannot be shown.")
@@ -146,7 +147,7 @@ func (s *Screen) SetResult(result types.LSPNavigation) {
 }
 
 // Keep file and position in primary ink; the native List owns muted detail.
-func rowLabel(target types.LSPNavigationTarget) string {
+func rowLabel(target insight.LSPNavigationTarget) string {
 	place := fmt.Sprintf("%d:%d", target.Selection.Start.Line+1, target.Selection.Start.Character+1)
 	name := target.Path
 	if name == "" {
@@ -155,7 +156,7 @@ func rowLabel(target types.LSPNavigationTarget) string {
 	return filepath.Base(name) + ":" + place
 }
 
-func rowDetail(root string, target types.LSPNavigationTarget) string {
+func rowDetail(root string, target insight.LSPNavigationTarget) string {
 	dir := filepath.Dir(target.Path)
 	if root != "" {
 		if rel, err := filepath.Rel(root, dir); err == nil && !strings.HasPrefix(rel, "..") {
@@ -174,7 +175,7 @@ func rowDetail(root string, target types.LSPNavigationTarget) string {
 
 // rowNote says why a row is special, before the folder, so a long path cannot
 // clip it away.
-func rowNote(target types.LSPNavigationTarget) string {
+func rowNote(target insight.LSPNavigationTarget) string {
 	switch {
 	case target.UnavailableReason != "" || target.Path == "":
 		return "cannot be opened"
@@ -184,16 +185,16 @@ func rowNote(target types.LSPNavigationTarget) string {
 	return ""
 }
 
-func emptyText(result types.LSPNavigation) string {
-	if result.Answer == types.LSPNavigationUnsupported {
+func emptyText(result insight.LSPNavigation) string {
+	if result.Answer == insight.LSPNavigationUnsupported {
 		return "This language server cannot do that for this file."
 	}
 	switch result.Kind {
-	case types.LSPNavigationReferences:
+	case insight.LSPNavigationReferences:
 		return "No references found."
-	case types.LSPNavigationImplementation:
+	case insight.LSPNavigationImplementation:
 		return "No implementation found."
-	case types.LSPNavigationTypeDefinition:
+	case insight.LSPNavigationTypeDefinition:
 		return "No type definition found."
 	}
 	return "No definition found."
@@ -290,7 +291,7 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 	return ui.EventResult{}
 }
 
-func canOpen(target types.LSPNavigationTarget) bool {
+func canOpen(target insight.LSPNavigationTarget) bool {
 	return target.Path != "" && target.UnavailableReason == ""
 }
 
@@ -300,11 +301,11 @@ func (s *Screen) Title() string {
 	}
 	name := "Definitions"
 	switch s.result.Kind {
-	case types.LSPNavigationReferences:
+	case insight.LSPNavigationReferences:
 		name = "References"
-	case types.LSPNavigationImplementation:
+	case insight.LSPNavigationImplementation:
 		name = "Implementations"
-	case types.LSPNavigationTypeDefinition:
+	case insight.LSPNavigationTypeDefinition:
 		name = "Type definitions"
 	}
 	return fmt.Sprintf("%s · %d", name, len(s.result.Targets))
@@ -329,7 +330,7 @@ func validString(value string) bool {
 	return len(value) <= maxFieldBytes && utf8.ValidString(value)
 }
 
-func validRange(r types.LSPNavigationRange) bool {
+func validRange(r insight.LSPNavigationRange) bool {
 	a, b := r.Start, r.End
 	return a.Line >= 0 && a.Character >= 0 && b.Line >= 0 && b.Character >= 0 &&
 		(a.Line < b.Line || a.Line == b.Line && a.Character <= b.Character)
@@ -337,19 +338,19 @@ func validRange(r types.LSPNavigationRange) bool {
 
 // Bounds are checked before serialization/cloning. Display validation neither
 // reads files nor confers authenticity or semantic freshness on the answer.
-func validResult(result types.LSPNavigation) bool {
+func validResult(result insight.LSPNavigation) bool {
 	switch result.Kind {
-	case types.LSPNavigationDefinition, types.LSPNavigationTypeDefinition,
-		types.LSPNavigationImplementation, types.LSPNavigationReferences:
+	case insight.LSPNavigationDefinition, insight.LSPNavigationTypeDefinition,
+		insight.LSPNavigationImplementation, insight.LSPNavigationReferences:
 	default:
 		return false
 	}
 	switch result.Answer {
-	case types.LSPNavigationTargets:
+	case insight.LSPNavigationTargets:
 		if len(result.Targets) == 0 {
 			return false
 		}
-	case types.LSPNavigationEmpty, types.LSPNavigationNull, types.LSPNavigationUnsupported:
+	case insight.LSPNavigationEmpty, insight.LSPNavigationNull, insight.LSPNavigationUnsupported:
 		if len(result.Targets) != 0 {
 			return false
 		}

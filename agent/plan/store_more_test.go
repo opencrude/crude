@@ -11,13 +11,13 @@ func TestStore_SkipAndReopenStep(t *testing.T) {
 	ctx := context.Background()
 	_, _, _ = s.Update(ctx, UpdateRequest{
 		PlanID: "p1", Objective: "O", Status: StatusActive,
-		Steps: []PlanStep{{ID: "a", Description: "A", Status: StepPending}},
+		Steps: []Step{{ID: "a", Description: "A", Status: StepPending}},
 	})
 
 	// Skip requires a reason.
 	_, _, err := s.Update(ctx, UpdateRequest{
 		PlanID: "p1", Revision: 1, Objective: "O", Status: StatusActive,
-		Steps: []PlanStep{{ID: "a", Description: "A", Status: StepSkipped, Reason: "not needed"}},
+		Steps: []Step{{ID: "a", Description: "A", Status: StepSkipped, Reason: "not needed"}},
 	})
 	if err != nil {
 		t.Fatalf("skip: %v", err)
@@ -26,7 +26,7 @@ func TestStore_SkipAndReopenStep(t *testing.T) {
 	// Reopen directly: lifecycle transitions are declarative and need no reason.
 	_, _, err = s.Update(ctx, UpdateRequest{
 		PlanID: "p1", Revision: 2, Objective: "O", Status: StatusActive,
-		Steps: []PlanStep{{ID: "a", Description: "A", Status: StepInProgress}},
+		Steps: []Step{{ID: "a", Description: "A", Status: StepInProgress}},
 	})
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
@@ -45,14 +45,14 @@ func TestStore_RejectsSecondActivePlan(t *testing.T) {
 	ctx := context.Background()
 	_, _, err := s.Update(ctx, UpdateRequest{
 		PlanID: "p1", Objective: "One", Status: StatusActive,
-		Steps: []PlanStep{{ID: "a", Description: "A", Status: StepPending}},
+		Steps: []Step{{ID: "a", Description: "A", Status: StepPending}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, _, err = s.Update(ctx, UpdateRequest{
 		PlanID: "p2", Objective: "Two", Status: StatusActive,
-		Steps: []PlanStep{{ID: "b", Description: "B", Status: StepPending}},
+		Steps: []Step{{ID: "b", Description: "B", Status: StepPending}},
 	})
 	if err == nil {
 		t.Fatal("expected second active plan rejection")
@@ -64,7 +64,7 @@ func TestStore_ConcurrentRevisionCAS(t *testing.T) {
 	ctx := context.Background()
 	_, _, err := s.Update(ctx, UpdateRequest{
 		PlanID: "p1", Objective: "O", Status: StatusActive,
-		Steps: []PlanStep{{ID: "a", Description: "A", Status: StepPending}},
+		Steps: []Step{{ID: "a", Description: "A", Status: StepPending}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -78,7 +78,7 @@ func TestStore_ConcurrentRevisionCAS(t *testing.T) {
 			defer wg.Done()
 			_, _, updateErr := s.Update(ctx, UpdateRequest{
 				PlanID: "p1", Revision: 1, Objective: objective, Status: StatusActive,
-				Steps: []PlanStep{{ID: "a", Description: "A", Status: StepPending}},
+				Steps: []Step{{ID: "a", Description: "A", Status: StepPending}},
 			})
 			errs <- updateErr
 		}()
@@ -111,11 +111,11 @@ func TestStore_EventsRetainCanonicalSnapshots(t *testing.T) {
 	ctx := context.Background()
 	_, _, _ = s.Update(ctx, UpdateRequest{
 		PlanID: "p1", Objective: "O", Status: StatusActive,
-		Steps: []PlanStep{{ID: "a", Description: "A", Status: StepPending}},
+		Steps: []Step{{ID: "a", Description: "A", Status: StepPending}},
 	})
 	_, _, err := s.Update(ctx, UpdateRequest{
 		PlanID: "p1", Revision: 1, Objective: "O", Status: StatusActive,
-		Steps: []PlanStep{{ID: "a", Description: "A", Status: StepCompleted}},
+		Steps: []Step{{ID: "a", Description: "A", Status: StepCompleted}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -134,7 +134,7 @@ func TestStore_UpdatePreservesOmittedTopLevelFields(t *testing.T) {
 	ctx := context.Background()
 	created, _, err := s.Update(ctx, UpdateRequest{
 		PlanID: "p1", Objective: "Original objective", Status: StatusPaused,
-		Steps: []PlanStep{{ID: "a", Description: "A", Status: StepPending}},
+		Steps: []Step{{ID: "a", Description: "A", Status: StepPending}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -155,12 +155,12 @@ func TestStore_PauseResumeCancelPlan(t *testing.T) {
 	ctx := context.Background()
 	_, _, _ = s.Update(ctx, UpdateRequest{
 		PlanID: "p1", Objective: "O", Status: StatusActive,
-		Steps: []PlanStep{{ID: "a", Description: "A", Status: StepPending}},
+		Steps: []Step{{ID: "a", Description: "A", Status: StepPending}},
 	})
 
 	_, _, err := s.Update(ctx, UpdateRequest{
 		PlanID: "p1", Revision: 1, Objective: "O", Status: StatusPaused,
-		Steps: []PlanStep{{ID: "a", Description: "A", Status: StepPending}},
+		Steps: []Step{{ID: "a", Description: "A", Status: StepPending}},
 	})
 	if err != nil {
 		t.Fatalf("pause: %v", err)
@@ -174,7 +174,7 @@ func TestStore_PauseResumeCancelPlan(t *testing.T) {
 
 	cancelled, _, err := s.Update(ctx, UpdateRequest{
 		PlanID: "p1", Revision: 2, Objective: "O", Status: StatusCancelled, Explanation: "abandoned",
-		Steps: []PlanStep{{ID: "a", Description: "A", Status: StepPending}},
+		Steps: []Step{{ID: "a", Description: "A", Status: StepPending}},
 	})
 	if err != nil {
 		t.Fatalf("cancel: %v", err)
@@ -185,7 +185,7 @@ func TestStore_PauseResumeCancelPlan(t *testing.T) {
 	// A cancelled plan may be reopened directly when reality changes.
 	reopened, _, err := s.Update(ctx, UpdateRequest{
 		PlanID: "p1", Revision: 3, Objective: "O", Status: StatusActive,
-		Steps: []PlanStep{{ID: "a", Description: "A", Status: StepInProgress}},
+		Steps: []Step{{ID: "a", Description: "A", Status: StepInProgress}},
 	})
 	if err != nil || reopened.Status != StatusActive || reopened.Steps[0].Status != StepInProgress {
 		t.Fatalf("reopen cancelled plan = %+v err=%v", reopened, err)
@@ -197,7 +197,7 @@ func TestStoreAcceptsOutOfOrderDependencyStatus(t *testing.T) {
 	ctx := context.Background()
 	created, _, err := s.Update(ctx, UpdateRequest{
 		PlanID: "p1", Objective: "O", Status: StatusActive,
-		Steps: []PlanStep{
+		Steps: []Step{
 			{ID: "a", Description: "A", Status: StepPending},
 			{ID: "b", Description: "B", Status: StepInProgress, DependsOn: []string{"a"}},
 		},
@@ -212,7 +212,7 @@ func TestStoreCancellationPreservesSettledExceptionsAndCancelsLiveWork(t *testin
 	ctx := context.Background()
 	created, _, err := s.Update(ctx, UpdateRequest{
 		PlanID: "p1", Objective: "O", Status: StatusActive,
-		Steps: []PlanStep{
+		Steps: []Step{
 			{ID: "done", Description: "Done", Status: StepCompleted},
 			{ID: "skip", Description: "Skip", Status: StepSkipped, Reason: "not needed"},
 			{ID: "fail", Description: "Fail", Status: StepFailed, Reason: "boom"},
@@ -249,7 +249,7 @@ func TestStoreCancellationEventAndHydrationSnapshotAgree(t *testing.T) {
 	ctx := context.Background()
 	_, _, err := s.Update(ctx, UpdateRequest{
 		PlanID: "p1", Objective: "O", Status: StatusActive,
-		Steps: []PlanStep{{ID: "a", Description: "A", Status: StepInProgress}, {ID: "b", Description: "B", Status: StepPending}},
+		Steps: []Step{{ID: "a", Description: "A", Status: StepInProgress}, {ID: "b", Description: "B", Status: StepPending}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -285,7 +285,7 @@ func TestStore_DuplicateStepIDRejected(t *testing.T) {
 	s := newTestStore(t)
 	_, _, err := s.Update(context.Background(), UpdateRequest{
 		PlanID: "p1", Objective: "O", Status: StatusActive,
-		Steps: []PlanStep{
+		Steps: []Step{
 			{ID: "a", Description: "A", Status: StepPending},
 			{ID: "a", Description: "A dup", Status: StepPending},
 		},
@@ -300,11 +300,11 @@ func TestStore_CompleteThenReopenPlan(t *testing.T) {
 	ctx := context.Background()
 	_, _, _ = s.Update(ctx, UpdateRequest{
 		PlanID: "p1", Objective: "O", Status: StatusActive,
-		Steps: []PlanStep{{ID: "a", Description: "A", Status: StepPending}},
+		Steps: []Step{{ID: "a", Description: "A", Status: StepPending}},
 	})
 	_, _, err := s.Update(ctx, UpdateRequest{
 		PlanID: "p1", Revision: 1, Objective: "O", Status: StatusCompleted,
-		Steps: []PlanStep{{ID: "a", Description: "A", Status: StepCompleted}},
+		Steps: []Step{{ID: "a", Description: "A", Status: StepCompleted}},
 	})
 	if err != nil {
 		t.Fatalf("complete: %v", err)
@@ -315,7 +315,7 @@ func TestStore_CompleteThenReopenPlan(t *testing.T) {
 	}
 	reopened, _, err := s.Update(ctx, UpdateRequest{
 		PlanID: "p1", Revision: 2, Objective: "O", Status: StatusActive,
-		Steps: []PlanStep{{
+		Steps: []Step{{
 			ID: "a", Description: "A", Status: StepInProgress,
 		}},
 	})

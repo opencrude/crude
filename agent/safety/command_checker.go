@@ -10,7 +10,7 @@ import (
 	"runtime"
 	"strings"
 
-	"crude/logger"
+	"crude/internal/logger"
 	"crude/types/command"
 
 	"github.com/mattn/go-shellwords"

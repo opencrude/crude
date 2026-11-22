@@ -7,17 +7,17 @@ import (
 	"strings"
 	"testing"
 
-	"crude/core/client"
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
 	"crude/types/control"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
 func TestControlGatewayProjectToolDecisionAuthority(t *testing.T) {
 	setCoreTestHome(t, t.TempDir())
 	r, err := New(func(root string) (*workspace.Workspace, error) {
-		return workspace.NewWorkspace(root, "", "tester", types.Settings{}, coreTestLogger{}), nil
+		return workspace.NewWorkspace(root, "", "tester", setting.Settings{}, coreTestLogger{}), nil
 	}, filepath.Join(t.TempDir(), "receipts.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -96,13 +96,13 @@ func TestControlGatewayProjectToolDecisionAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertDecision()
-	for _, scope := range []types.SettingsScope{types.SettingsScopeApplication, types.SettingsScopeWorkspace} {
-		for _, edit := range []types.SettingEdit{
+	for _, scope := range []setting.Scope{setting.ScopeApplication, setting.ScopeWorkspace} {
+		for _, edit := range []setting.Edit{
 			{Path: []string{"capabilities"}, After: json.RawMessage(`{}`)},
 			{Path: []string{"capabilities", "project_tool_decisions"}},
 			{Path: []string{"capabilities", "project_tool_decisions", "grant"}, After: json.RawMessage(`true`)},
 		} {
-			result := ws.PreparePreferencesSave(scope, []types.SettingEdit{edit})()
+			result := ws.PreparePreferencesSave(scope, []setting.Edit{edit})()
 			if result.Err == nil || (len(edit.Path) < 3 && !strings.Contains(result.Err.Error(), "project tool decisions")) {
 				t.Errorf("%s %v: expected rejection, got %v", scope, edit.Path, result.Err)
 			}

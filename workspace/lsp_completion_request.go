@@ -7,10 +7,11 @@ import (
 	"path/filepath"
 	"slices"
 
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 )
 
-func completionsEnabled(s types.LSPSettings) bool { return s.Completions }
+func completionsEnabled(s setting.LSP) bool { return s.Completions }
 
 // CompletionsState revokes old invocations across feature off/on cycles without
 // restarting a producer or changing the context of unrelated semantic facts.
@@ -22,14 +23,14 @@ func (m *LSPManager) CompletionsState() (bool, uint64) {
 
 // completionRequest qualifies every outcome, including null/empty/unsupported,
 // with the same canonical source, producer instance and original context.
-func (m *LSPManager) completionRequest(ctx context.Context, path string, call func(context.Context, LSPClient, types.InsightBoundary, int) (types.LSPCompletionResponse, error)) (types.LSPCompletionResponse, error) {
+func (m *LSPManager) completionRequest(ctx context.Context, path string, call func(context.Context, LSPClient, insight.Boundary, int) (insight.LSPCompletionResponse, error)) (insight.LSPCompletionResponse, error) {
 	if err := ctx.Err(); err != nil {
-		return types.LSPCompletionResponse{}, err
+		return insight.LSPCompletionResponse{}, err
 	}
 	if !m.featureOn(completionsEnabled) {
-		return types.LSPCompletionResponse{}, errors.New("completions are off or blocked in Code Intelligence settings")
+		return insight.LSPCompletionResponse{}, errors.New("completions are off or blocked in Code Intelligence settings")
 	}
-	var out types.LSPCompletionResponse
+	var out insight.LSPCompletionResponse
 	err := m.trackInflight(func() error {
 		client, requestCtx, valid, cancel := m.requestClient(ctx, path)
 		defer cancel()
@@ -38,7 +39,7 @@ func (m *LSPManager) completionRequest(ctx context.Context, path string, call fu
 		}
 		m.mu.Lock()
 		doc := m.documents[filepath.Clean(path)]
-		var boundary types.InsightBoundary
+		var boundary insight.Boundary
 		wire := 0
 		feature := m.completionGeneration
 		if doc != nil && doc.opened && !doc.syncPending {
@@ -71,32 +72,34 @@ func (m *LSPManager) completionRequest(ctx context.Context, path string, call fu
 		return nil
 	})
 	if err != nil {
-		return types.LSPCompletionResponse{}, err
+		return insight.LSPCompletionResponse{}, err
 	}
 	return out, nil
 }
 
-func (m *LSPManager) RequestCompletions(ctx context.Context, path string, line, col int, trigger types.LSPCompletionContext) (types.LSPCompletionResponse, error) {
-	return m.completionRequest(ctx, path, func(ctx context.Context, client LSPClient, boundary types.InsightBoundary, _ int) (types.LSPCompletionResponse, error) {
+// RequestCompletions asks the language server for completions at a position.
+func (m *LSPManager) RequestCompletions(ctx context.Context, path string, line, col int, trigger insight.LSPCompletionContext) (insight.LSPCompletionResponse, error) {
+	return m.completionRequest(ctx, path, func(ctx context.Context, client LSPClient, boundary insight.Boundary, _ int) (insight.LSPCompletionResponse, error) {
 		if trigger.Producer.InstanceID != "" && trigger.Producer != boundary.Producer {
-			return types.LSPCompletionResponse{}, errors.New("language server changed; request suggestions again")
+			return insight.LSPCompletionResponse{}, errors.New("language server changed; request suggestions again")
 		}
 		return client.RequestCompletions(ctx, path, line, col, trigger)
 	})
 }
 
-func (m *LSPManager) ResolveCompletion(ctx context.Context, expected types.InsightBoundary, wire int, original []byte) (types.LSPCompletionResponse, error) {
+// ResolveCompletion resolves one completion only if its provider and source still match.
+func (m *LSPManager) ResolveCompletion(ctx context.Context, expected insight.Boundary, wire int, original []byte) (insight.LSPCompletionResponse, error) {
 	original = bytes.Clone(original)
-	return m.completionRequest(ctx, expected.Source.Path, func(ctx context.Context, client LSPClient, boundary types.InsightBoundary, version int) (types.LSPCompletionResponse, error) {
+	return m.completionRequest(ctx, expected.Source.Path, func(ctx context.Context, client LSPClient, boundary insight.Boundary, version int) (insight.LSPCompletionResponse, error) {
 		if wire != version || !sameInsightBoundary(boundary, expected) {
-			return types.LSPCompletionResponse{}, errors.New("the original completion provider, source or context is no longer synchronized")
+			return insight.LSPCompletionResponse{}, errors.New("the original completion provider, source or context is no longer synchronized")
 		}
 		return client.ResolveCompletion(ctx, expected.Source.Path, wire, original)
 	})
 }
 
 // The returned guard is memory-only and may run under DocumentService.mu.
-func (m *LSPManager) completionFence(boundary types.InsightBoundary, wire int, feature uint64) (func() error, error) {
+func (m *LSPManager) completionFence(boundary insight.Boundary, wire int, feature uint64) (func() error, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	doc := m.documents[filepath.Clean(boundary.Source.Path)]

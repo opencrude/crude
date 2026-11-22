@@ -105,8 +105,8 @@ cannot revive a removed/reconnected account. Accounts remain application-only.
 
 **Removing an account cleans up application settings.** Before you confirm, the
 dialog shows which application settings change
-(`types.AccountUses`). Confirming removes the account and, in the same file
-write, releases those settings (`types.ReleaseAccount`): Researcher, Crafter,
+(`setting.AccountUses`). Confirming removes the account and, in the same file
+write, releases those settings (`setting.ReleaseAccount`): Researcher, Crafter,
 Errand, named agents, Memory Agent and editor suggestions go back to their
 parent's account and model; Main Agent has no account until you choose one;
 Memory ranking and Auto Review turn off if they use the removed account;
@@ -680,7 +680,7 @@ be bypassed by a model-supplied delegation allow list.
 **Apply agent** stages the entity in the preferences draft; **Save** persists
 settings. Invalid names stay in the editor, and closing or changing scopes
 requires an explicit choice before discarding a changed draft. Named profiles
-round-trip through `types.AgentProfileSettings` and session configuration; the
+round-trip through `setting.AgentProfile` and session configuration; the
 orchestrator advertises their names/purposes, and delegation resolves their
 role, model/account, instructions and restrictions.
 
@@ -926,7 +926,7 @@ orchestrator startup, backend lookup and hydration name the session rather than
 reading a globally selected one. The TUI owns its selected session, model display
 alias and focus stack. Opening an already-live session reuses its runtime and
 does not replay provider work. Normal CLI startup always attaches to the user core through `ConnectCore` and
-`core/port/remote`; shell exit detaches rather than closing sessions. Remaining
+`core/shellport/remote`; shell exit detaches rather than closing sessions. Remaining
 release gates are in [core and shell separation](../plans/core-shell-separation.md).
 
 Agent tab selection/visibility, focus and reasoning geometry are shell-local.
@@ -969,7 +969,7 @@ stored overlay is loaded as is. **Reset section** returns that category to full
 inheritance. New format alignment is manual outside product code, never an
 automatic migration or guessed configuration repair.
 
-Each preference page has exactly one reset, owned by `tui/settings/page_reset.go`:
+Each preference page has exactly one reset, owned by `tui/screens/settingspages/page_reset.go`:
 **Use Application settings** in Workspace scope (removes the page's stored
 workspace leaves) and **Restore defaults** in Application scope. A reset removes
 only the paths that page owns; pages sharing a stored section (Memory and the
@@ -1553,7 +1553,7 @@ tool may read home/configuration files, and explicitly configured values may
 deliberately expose sensitive data. MCP and terminal environment contracts are
 unchanged.
 
-The default subprocess transport is `lsp/client/`, independent of the editor/TUI.
+The default subprocess transport is `lsp/lspclient/`, independent of the editor/TUI.
 The workspace supplies it by default; merely constructing a manager launches no
 server. Test transports may override that factory. Connected LSP has typed worker requests, replicated diagnostics/health and
 per-client diagnostic consumers; rename returns `*protocol.WorkspaceEdit`. Shell
@@ -1564,7 +1564,7 @@ views; final native and distinct-host runtime acceptance remains separate.
 Resource fields default to six servers, a 300-second idle timeout and a 2 MiB
 document limit, edited on Code Intelligence (the document limit in MB). A single
 core-owned governor admits all retained workspaces' LSP processes. Its global
-ceiling is 32 (`types.MaxLanguageServers`), matching the maximum workspace
+ceiling is 32 (`setting.MaxLanguageServers`), matching the maximum workspace
 quota permitted by Settings, with at most
 256 queued lifetimes. The ceiling is a backstop against a runaway process count,
 not CPU containment: a language server is idle between requests, and a small
@@ -1707,22 +1707,22 @@ UI remains a limitation, not a promised automatic host selection.
 
 Layer coverage lives next to the code:
 
-- `types/settings_test.go` — field-level merge/diff, inheriting untouched
+- `types/setting/settings_test.go` — field-level merge/diff, inheriting untouched
   fields, explicit `false` overrides, round-trip stability, credential
   stripping, LSP language/severity
 - `workspace/settings_test.go` — overlay persistence vs app defaults, live
   inheritance of untouched fields and explicit autosave Off
-- `types/settings_edits_test.go` — addressed writes, last-write-wins and inert
+- `types/setting/settings_edits_test.go` — addressed writes, last-write-wins and inert
   wrong-type stored leaves
 - `app/settings_layers_acceptance_test.go` and `app/settings_mixed_journey_test.go`
   — real file owner, framed core RPC, SQLite, interleaved session/agent/delegation/
   proxy/MCP/IDE preferences, restart, scope isolation and invalid trust rejection
-- `tui/settings/explicit_layers_test.go` — one-field collectors across page
+- `tui/screens/settingspages/explicit_layers_test.go` — one-field collectors across page
   families, quiet marker at desktop/constrained sizes and parent-relative reset
 - `tui/viewmodel/save_workspace_test.go`, `agent/session/explicit_layers_test.go` and
   `agent/sessiondb/flags_test.go` — promotion with retained draft, reset/removal,
   live parent changes, stored-leaf tolerance and atomic session flags
-- `tui/settings/autosave_test.go` and `tui/viewmodel/editor_save_test.go` —
+- `tui/screens/settingspages/autosave_test.go` and `tui/viewmodel/editor_save_test.go` —
   autosave defaults/round-trip, stale revisions, formatting separation,
   conflicts, disable, discard, watcher reconciliation, and committed save
   acknowledgements that must survive a mid-flight rename
@@ -1732,14 +1732,14 @@ Layer coverage lives next to the code:
 - `workspace/lsp_manager_test.go` — feature gates and diagnostic filtering
 - `tui/ui/form_select_test.go` — overlay height and paint/hit-testing
 - `tui/ui/scrollbar_paint_test.go` — on-demand scrollbar
-- `tui/settings/settings_scope_test.go` — workspace save payload and overflow scrollbars
-- `tui/settings/account_connections_test.go` — unified account connection, presets, clone and protocol isolation
-- `tui/settings/dialer_test.go`, `agent/provider/client_test.go`, and
+- `tui/screens/settingspages/settings_scope_test.go` — workspace save payload and overflow scrollbars
+- `tui/screens/settingspages/account_connections_test.go` — unified account connection, presets, clone and protocol isolation
+- `tui/screens/settingspages/dialer_test.go`, `agent/provider/client_test.go`, and
   `agent/provider/stall_test.go` cover shared provider/account controls, invalid limits,
   real HTTP header/body stalls, streaming request deadlines, and timer cleanup.
 - `agent/session/account_routing_test.go` and `app/config_test.go` cover live transport
   edits, account override isolation, persistence, and resumed account routing.
-- `tui/settings/layered_prompt_test.go` and `accounts_regression_test.go` —
+- `tui/screens/settingspages/layered_prompt_test.go` and `accounts_regression_test.go` —
   owner-bound prompts, explicit discard/removal decisions, retained painted
   settings tables/editors at desktop and constrained terminal sizes
 - `tui/screens/sessionsettings/session_settings_test.go` — account selection and multi-agent toggle

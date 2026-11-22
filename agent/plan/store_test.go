@@ -11,19 +11,19 @@ import (
 func TestStoreCleanSnapshotsAndAtomicReplacement(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
-	p, _, err := s.Update(ctx, UpdateRequest{PlanID: "p", Objective: "Old goal", Steps: []PlanStep{{ID: "keep", Description: "Keep", Status: StepInProgress}, {ID: "obsolete", Description: "Obsolete", Status: StepPending}}})
+	p, _, err := s.Update(ctx, UpdateRequest{PlanID: "p", Objective: "Old goal", Steps: []Step{{ID: "keep", Description: "Keep", Status: StepInProgress}, {ID: "obsolete", Description: "Obsolete", Status: StepPending}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, _, err = s.Update(ctx, UpdateRequest{PlanID: p.ID, Revision: p.Revision, Steps: []PlanStep{{ID: "keep", Description: "Keep", Status: StepCompleted}}})
+	p, _, err = s.Update(ctx, UpdateRequest{PlanID: p.ID, Revision: p.Revision, Steps: []Step{{ID: "keep", Description: "Keep", Status: StepCompleted}}})
 	if err != nil || len(p.Steps) != 1 {
 		t.Fatalf("removal: %+v %v", p, err)
 	}
 	prior := s.ActivitySnapshot()
 	for _, req := range []UpdateRequest{
-		{PlanID: p.ID, Revision: 1, Replace: true, Objective: "New goal", Steps: []PlanStep{{ID: "new", Description: "New", Status: StepPending}}},
+		{PlanID: p.ID, Revision: 1, Replace: true, Objective: "New goal", Steps: []Step{{ID: "new", Description: "New", Status: StepPending}}},
 		{PlanID: p.ID, Revision: p.Revision, Replace: true},
-		{PlanID: p.ID, Revision: p.Revision, Replace: true, Objective: "New goal", Steps: []PlanStep{{ID: "new", Description: "New", Status: StepPending, DependsOn: []string{"obsolete"}}}},
+		{PlanID: p.ID, Revision: p.Revision, Replace: true, Objective: "New goal", Steps: []Step{{ID: "new", Description: "New", Status: StepPending, DependsOn: []string{"obsolete"}}}},
 	} {
 		if _, _, err := s.Update(ctx, req); err == nil {
 			t.Fatal("invalid/stale replacement succeeded")
@@ -37,7 +37,7 @@ func TestStoreCleanSnapshotsAndAtomicReplacement(t *testing.T) {
 	if _, err := s.DB().Exec(`CREATE TRIGGER fail_replace BEFORE INSERT ON plan_events WHEN NEW.event_type = 'plan_replaced' BEGIN SELECT RAISE(ABORT, 'injected'); END`); err != nil {
 		t.Fatal(err)
 	}
-	req := UpdateRequest{PlanID: p.ID, Revision: p.Revision, Replace: true, Objective: "New goal", Steps: []PlanStep{{ID: "keep", Description: "New work", Status: StepPending}}}
+	req := UpdateRequest{PlanID: p.ID, Revision: p.Revision, Replace: true, Objective: "New goal", Steps: []Step{{ID: "keep", Description: "New work", Status: StepPending}}}
 	if _, _, err := s.Update(ctx, req); err == nil {
 		t.Fatal("injected transaction failure succeeded")
 	}
@@ -90,7 +90,7 @@ func TestStore_CreateRoundTrip(t *testing.T) {
 		PlanID:    "plan-123",
 		Objective: "Fix persistence",
 		Status:    StatusActive,
-		Steps: []PlanStep{
+		Steps: []Step{
 			{ID: "audit", Description: "Audit", Status: StepPending},
 			{ID: "verify", Description: "Verify", Status: StepPending, DependsOn: []string{"audit"}},
 		},
@@ -123,7 +123,7 @@ func TestStore_UpdateIncrementsRevision(t *testing.T) {
 
 	_, _, err := s.Update(ctx, UpdateRequest{
 		PlanID: "p1", Objective: "O", Status: StatusActive,
-		Steps: []PlanStep{{ID: "a", Description: "A", Status: StepPending}},
+		Steps: []Step{{ID: "a", Description: "A", Status: StepPending}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -131,7 +131,7 @@ func TestStore_UpdateIncrementsRevision(t *testing.T) {
 
 	plan2, cs, err := s.Update(ctx, UpdateRequest{
 		PlanID: "p1", Revision: 1, Objective: "O2", Status: StatusActive,
-		Steps: []PlanStep{{ID: "a", Description: "A", Status: StepCompleted}},
+		Steps: []Step{{ID: "a", Description: "A", Status: StepCompleted}},
 	})
 	if err != nil {
 		t.Fatalf("Update existing: %v", err)
@@ -152,12 +152,12 @@ func TestStore_StaleRevisionConflict(t *testing.T) {
 	ctx := context.Background()
 	_, _, _ = s.Update(ctx, UpdateRequest{
 		PlanID: "p1", Objective: "O", Status: StatusActive,
-		Steps: []PlanStep{{ID: "a", Description: "A", Status: StepPending}},
+		Steps: []Step{{ID: "a", Description: "A", Status: StepPending}},
 	})
 
 	_, _, err := s.Update(ctx, UpdateRequest{
 		PlanID: "p1", Revision: 99, Objective: "O3", Status: StatusActive,
-		Steps: []PlanStep{{ID: "a", Description: "A", Status: StepPending}},
+		Steps: []Step{{ID: "a", Description: "A", Status: StepPending}},
 	})
 	if err == nil {
 		t.Fatal("expected stale revision conflict")
@@ -169,13 +169,13 @@ func TestStore_InvalidUpdateRollsBack(t *testing.T) {
 	ctx := context.Background()
 	_, _, _ = s.Update(ctx, UpdateRequest{
 		PlanID: "p1", Objective: "O", Status: StatusActive,
-		Steps: []PlanStep{{ID: "a", Description: "A", Status: StepPending}},
+		Steps: []Step{{ID: "a", Description: "A", Status: StepPending}},
 	})
 
 	// A cycle must fail and leave revision 1 intact.
 	_, _, err := s.Update(ctx, UpdateRequest{
 		PlanID: "p1", Revision: 1, Objective: "O", Status: StatusActive,
-		Steps: []PlanStep{
+		Steps: []Step{
 			{ID: "a", Description: "A", Status: StepPending, DependsOn: []string{"b"}},
 			{ID: "b", Description: "B", Status: StepPending, DependsOn: []string{"a"}},
 		},
@@ -198,7 +198,7 @@ func TestStore_ActiveAndList(t *testing.T) {
 	ctx := context.Background()
 	_, _, _ = s.Update(ctx, UpdateRequest{
 		PlanID: "p1", Objective: "O", Status: StatusActive,
-		Steps: []PlanStep{{ID: "a", Description: "A", Status: StepPending}},
+		Steps: []Step{{ID: "a", Description: "A", Status: StepPending}},
 	})
 
 	active, err := s.Active(ctx, "sess-1")
@@ -223,11 +223,11 @@ func TestStore_CompletedPlanIsNotActive(t *testing.T) {
 	ctx := context.Background()
 	_, _, _ = s.Update(ctx, UpdateRequest{
 		PlanID: "p1", Objective: "O", Status: StatusActive,
-		Steps: []PlanStep{{ID: "a", Description: "A", Status: StepPending}},
+		Steps: []Step{{ID: "a", Description: "A", Status: StepPending}},
 	})
 	_, _, err := s.Update(ctx, UpdateRequest{
 		PlanID: "p1", Revision: 1, Objective: "O", Status: StatusCompleted,
-		Steps: []PlanStep{{ID: "a", Description: "A", Status: StepCompleted}},
+		Steps: []Step{{ID: "a", Description: "A", Status: StepCompleted}},
 	})
 	if err != nil {
 		t.Fatal(err)

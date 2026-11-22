@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"crude/agent/provider"
-	ttypes "crude/types"
+	"crude/types/setting"
 )
 
 func TestAllWireTransitionsResumeAndContinueTheToolLoop(t *testing.T) {
@@ -107,7 +107,7 @@ func TestAllWireTransitionsResumeAndContinueTheToolLoop(t *testing.T) {
 				account := cfg.Accounts["account"]
 				account.Connection = pc
 				cfg.Accounts["account"] = account
-				resumed.UpdateWorkspaceDefaults(ttypes.AppSettings{Accounts: cfg.Accounts})
+				resumed.UpdateWorkspaceDefaults(setting.App{Accounts: cfg.Accounts})
 				sender = newMockEventSender()
 				orch, err = resumed.NewOrchestrator(sender)
 				if err != nil {
@@ -128,9 +128,9 @@ func TestAllWireTransitionsResumeAndContinueTheToolLoop(t *testing.T) {
 				account.ID, account.APIKey = "other-account", "other-test-key"
 				accounts := provider.CloneAccounts(cfg.Accounts)
 				accounts[account.ID] = account
-				resumed.UpdateWorkspaceDefaults(ttypes.AppSettings{Accounts: accounts})
+				resumed.UpdateWorkspaceDefaults(setting.App{Accounts: accounts})
 				settings := resumed.SettingsSnapshot()
-				settings.SessionOverrides = map[string]ttypes.CategorySettings{CategoryDefault: {AccountID: account.ID, Model: changedModel, ThinkingEffort: "none"}}
+				settings.SessionOverrides = map[string]setting.Category{CategoryDefault: {AccountID: account.ID, Model: changedModel, ThinkingEffort: "none"}}
 				if err := resumed.HandleSettingsSave(settings); err != nil {
 					t.Fatal(err)
 				}

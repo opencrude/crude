@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"crude/types/insight"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -64,7 +65,7 @@ func TestLSPUnverifiedTeardownNeverReleasesProcessAdmission(t *testing.T) {
 				t.Error("failed exact owner was replaced or forgotten")
 			}
 			m.mu.Unlock()
-			r.snapshot()[0].emit(r.snapshot()[0].publication(first, []LSPDiagnostic{{Severity: DiagError, Message: "late after failed stop"}}))
+			r.snapshot()[0].emit(r.snapshot()[0].publication(first, []insight.LSPDiagnostic{{Severity: DiagError, Message: "late after failed stop"}}))
 			for _, batch := range m.AllDiagnostics() {
 				if batch.ID != "" || batch.HasExactSource() {
 					t.Fatalf("retired provider resurrected findings: %+v", batch)

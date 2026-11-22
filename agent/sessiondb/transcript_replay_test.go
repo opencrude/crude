@@ -21,7 +21,7 @@ func TestCompactionRetainsLiveProviderItems(t *testing.T) {
 			}
 			message := provider.NewTextMessage("assistant", "")
 			message.InternalID = "live-assistant"
-			message.ProviderItems = []provider.ProviderItem{{
+			message.ProviderItems = []provider.Item{{
 				Standard: standard, Type: "reasoning",
 				Data:        json.RawMessage(`{ "type": "reasoning", "summary": [], "encrypted_content": "opaque<&>signature" }`),
 				ReplayScope: "connection", SourceModel: "model", PrefixHash: "prefix",
@@ -60,17 +60,17 @@ func TestCompactionRetainsLiveProviderItems(t *testing.T) {
 				t.Fatalf("exact transcript replay rejected: %v", err)
 			}
 			before := publicationBytes(t, db)
-			for _, mutate := range []func(*provider.ProviderItem){
-				func(item *provider.ProviderItem) {
+			for _, mutate := range []func(*provider.Item){
+				func(item *provider.Item) {
 					item.Data = json.RawMessage(`{"type":"reasoning","encrypted_content":"changed"}`)
 				},
-				func(item *provider.ProviderItem) { item.ReplayScope = "other-connection" },
-				func(item *provider.ProviderItem) { item.SourceModel = "other-model" },
-				func(item *provider.ProviderItem) { item.PrefixHash = "other-prefix" },
-				func(item *provider.ProviderItem) { item.Standard = "other-protocol" },
+				func(item *provider.Item) { item.ReplayScope = "other-connection" },
+				func(item *provider.Item) { item.SourceModel = "other-model" },
+				func(item *provider.Item) { item.PrefixHash = "other-prefix" },
+				func(item *provider.Item) { item.Standard = "other-protocol" },
 			} {
 				changed := message
-				changed.ProviderItems = append([]provider.ProviderItem(nil), message.ProviderItems...)
+				changed.ProviderItems = append([]provider.Item(nil), message.ProviderItems...)
 				mutate(&changed.ProviderItems[0])
 				_, err := PublishContext(db, ContextPublication{
 					SessionID: "session", AgentID: "root", ExpectedRevision: next.Revision,
@@ -95,12 +95,12 @@ func TestCompactionRetainsLiveProviderItems(t *testing.T) {
 func TestPersistedMessageEqualPreservesNonFormattingDifferences(t *testing.T) {
 	base := persistedMessage{
 		Message: provider.ChatMessage{InternalID: "message", Role: "assistant",
-			ProviderItems: []provider.ProviderItem{{Standard: "openai-responses", Type: "reasoning", Data: json.RawMessage(`{ "signature": "<opaque>", "n": 9007199254740993 }`)}},
+			ProviderItems: []provider.Item{{Standard: "openai-responses", Type: "reasoning", Data: json.RawMessage(`{ "signature": "<opaque>", "n": 9007199254740993 }`)}},
 		},
 		Meta: DisplayMeta{ProviderID: "provider"}, Turn: 3, CreatedAt: 77, AgentID: "producer",
 	}
 	canonical := base
-	canonical.Message.ProviderItems = []provider.ProviderItem{{Standard: "openai-responses", Type: "reasoning", Data: json.RawMessage(`{"signature":"\u003copaque\u003e","n":9007199254740993}`)}}
+	canonical.Message.ProviderItems = []provider.Item{{Standard: "openai-responses", Type: "reasoning", Data: json.RawMessage(`{"signature":"\u003copaque\u003e","n":9007199254740993}`)}}
 	if !persistedMessageEqual(base, canonical) {
 		t.Fatal("equivalent stored JSON representations differed")
 	}
@@ -120,7 +120,7 @@ func TestPersistedMessageEqualPreservesNonFormattingDifferences(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			changed := canonical
-			changed.Message.ProviderItems = append([]provider.ProviderItem(nil), canonical.Message.ProviderItems...)
+			changed.Message.ProviderItems = append([]provider.Item(nil), canonical.Message.ProviderItems...)
 			mutate(&changed)
 			if persistedMessageEqual(base, changed) {
 				t.Fatal("non-formatting change compared equal")

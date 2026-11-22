@@ -14,10 +14,10 @@ import (
 	"time"
 
 	"crude/agent/sessiondb"
-	"crude/core/client"
-	"crude/core/protocol"
-	"crude/core/wire"
-	"crude/types"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
+	"crude/core/corewire"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -164,7 +164,7 @@ func FuzzCoreBulkLifecycle(f *testing.F) {
 		t.Setenv("CRUDE_HOME", t.TempDir())
 		root := t.TempDir()
 		r, err := New(func(root string) (*workspace.Workspace, error) {
-			ws := workspace.NewWorkspace(root, "", "semantic-bulk", types.Settings{}, coreTestLogger{})
+			ws := workspace.NewWorkspace(root, "", "semantic-bulk", setting.Settings{}, coreTestLogger{})
 			ws.Sessions = append(ws.Sessions, &workspace.Session{SessionID: "bulk-session", RefStore: workspace.NewReferenceStore("bulk-session", t.TempDir(), nil)})
 			return ws, nil
 		}, filepath.Join(t.TempDir(), "receipts.db"))

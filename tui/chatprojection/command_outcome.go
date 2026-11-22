@@ -8,28 +8,28 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/tools"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/types/command"
+	"crude/types/conversation"
 )
 
-func isCommandOutcome(msg *types.ChatMessage) bool {
+func isCommandOutcome(msg *conversation.ChatMessage) bool {
 	return msg != nil && msg.Collaboration != nil && msg.Collaboration.Kind == "command_outcome"
 }
 
-func renderCommandOutcome(msg types.ChatMessage, ctx renderContext) messageLines {
+func renderCommandOutcome(msg conversation.ChatMessage, ctx renderContext) messageLines {
 	title := tools.ToolTitle{Action: "Background command settled"}
-	status := types.ToolStatusSuccess
+	status := conversation.ToolStatusSuccess
 	info := msg.Collaboration.Command
 	if info != nil {
 		title.Action, title.Operand = "Completed command", info.Handle
 		if info.Uncertain {
-			title.Action, title.Warning, status = "Command outcome unknown", true, types.ToolStatusError
+			title.Action, title.Warning, status = "Command outcome unknown", true, conversation.ToolStatusError
 		} else if info.TimedOut {
-			title.Action, title.Failed, status = "Command timed out", true, types.ToolStatusError
+			title.Action, title.Failed, status = "Command timed out", true, conversation.ToolStatusError
 		} else if info.Status == "failed" || info.ExitKnown && info.ExitCode != 0 {
-			title.Action, title.Failed, status = "Command failed", true, types.ToolStatusError
+			title.Action, title.Failed, status = "Command failed", true, conversation.ToolStatusError
 		} else if info.Status == "killed" {
-			title.Action, status = "Command stopped", types.ToolStatusCancelled
+			title.Action, status = "Command stopped", conversation.ToolStatusCancelled
 		}
 		if info.ExitKnown && info.ExitCode != 0 {
 			title.Metadata = fmt.Sprintf("(exit %d)", info.ExitCode)

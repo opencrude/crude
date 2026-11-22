@@ -2,6 +2,9 @@ package viewmodel
 
 import (
 	"crude/tui/screens/gitpanel"
+	"crude/types/conversation"
+	"crude/types/insight"
+	"crude/types/setting"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -15,7 +18,6 @@ import (
 	"crude/tui/theme"
 	"crude/tui/ui"
 	"crude/tui/wm"
-	"crude/types"
 )
 
 // paletteCategories orders the palette's groups. Every palette entry belongs
@@ -447,9 +449,9 @@ func (m *App) cycleNextThemePreset() tea.Cmd {
 	}
 	next := names[(idx+1)%len(names)]
 	before := m.ws.AppDefaults()
-	s := types.CloneAppSettings(before)
+	s := setting.CloneApp(before)
 	s.Theme.Preset = next
-	return m.saveSettingsShortcut(types.SettingsScopeApplication, types.SettingsEdits(before, s), "Theme: "+next, nil, 0)
+	return m.saveSettingsShortcut(setting.ScopeApplication, setting.Edits(before, s), "Theme: "+next, nil, 0)
 }
 
 func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
@@ -468,9 +470,9 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 	case "plan.review":
 		return m.reviewLatestPlan()
 	case "plan.send":
-		return m.settleActivePlan(types.PlanReviewFeedback)
+		return m.settleActivePlan(conversation.PlanReviewFeedback)
 	case "plan.implement":
-		return m.settleActivePlan(types.PlanReviewImplement)
+		return m.settleActivePlan(conversation.PlanReviewImplement)
 	case "plan.addComment":
 		return m.editPlanCommentAtCaret()
 	case "plan.nextComment":
@@ -586,13 +588,13 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 	case "lsp.outline":
 		return m.requestDocumentSymbolsCmd()
 	case "lsp.definition":
-		return m.requestNavigationCmd(types.LSPNavigationDefinition)
+		return m.requestNavigationCmd(insight.LSPNavigationDefinition)
 	case "lsp.typeDefinition":
-		return m.requestNavigationCmd(types.LSPNavigationTypeDefinition)
+		return m.requestNavigationCmd(insight.LSPNavigationTypeDefinition)
 	case "lsp.implementation":
-		return m.requestNavigationCmd(types.LSPNavigationImplementation)
+		return m.requestNavigationCmd(insight.LSPNavigationImplementation)
 	case "lsp.references":
-		return m.requestNavigationCmd(types.LSPNavigationReferences)
+		return m.requestNavigationCmd(insight.LSPNavigationReferences)
 	case "lsp.inlayInspect":
 		return m.openInlayInspectorCmd()
 	case "lsp.inlayShow", "lsp.inlayRefresh":

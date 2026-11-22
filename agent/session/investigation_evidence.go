@@ -21,8 +21,8 @@ import (
 	"crude/agent/prompt"
 	"crude/agent/sessiondb"
 	"crude/agent/worktree"
-	"crude/types"
 	"crude/types/command"
+	"crude/types/conversation"
 	"crude/workspace/fileio"
 )
 
@@ -53,9 +53,9 @@ type investigationEvidenceJournal struct {
 }
 
 type investigationEvidenceEntry struct {
-	CheckoutID string                `json:"checkout_id"`
-	Generation uint64                `json:"generation"`
-	Ref        types.PlanEvidenceRef `json:"ref"`
+	CheckoutID string                       `json:"checkout_id"`
+	Generation uint64                       `json:"generation"`
+	Ref        conversation.PlanEvidenceRef `json:"ref"`
 }
 
 func (s *Session) loadInvestigationEvidenceJournal(ctx context.Context) (investigationEvidenceJournal, error) {
@@ -123,7 +123,7 @@ func (s *Session) beginInvestigationEvidence(ctx context.Context, generation uin
 		ID: newMessageID(), Generation: generation,
 		Baseline: before.BaselineDigest, BaseCommit: checkout.BaseCommit,
 		CWD: strconv.Quote(cwd), Args: strings.Join(args, " "), Source: source, Before: delta,
-		Started: time.Now().UTC(), Status: types.PlanEvidenceInconclusive,
+		Started: time.Now().UTC(), Status: conversation.PlanEvidenceInconclusive,
 		Note: "No terminal process result was recorded.",
 	}
 	label := evidenceCommandLabel(strings.Join(argv, " "))
@@ -149,21 +149,21 @@ func (s *Session) beginInvestigationEvidence(ctx context.Context, generation uin
 // The lifetime owner may retain an active turn's exact binding after the user
 // changes Plan mode for future turns. Locate the exact checkout, not the
 // settings projection for the next turn.
-func (s *Session) stageInvestigationEvidence(ctx context.Context, checkout worktree.Context, record investigationEvidenceRecord, label string) (types.PlanEvidenceRef, error) {
+func (s *Session) stageInvestigationEvidence(ctx context.Context, checkout worktree.Context, record investigationEvidenceRecord, label string) (conversation.PlanEvidenceRef, error) {
 	bindings, err := readPlanInvestigations(ctx, s.db)
 	if err != nil {
-		return types.PlanEvidenceRef{}, err
+		return conversation.PlanEvidenceRef{}, err
 	}
 	i := slices.IndexFunc(bindings, func(b planInvestigationBinding) bool {
 		return b.ID == checkout.ID && b.SourceID == checkout.SourceContextID && b.Cycle == checkout.Investigation.Cycle
 	})
 	if i < 0 {
-		return types.PlanEvidenceRef{}, errPlanEvidenceUnavailable
+		return conversation.PlanEvidenceRef{}, errPlanEvidenceUnavailable
 	}
 	cycle := bindings[i].Cycle
 	journal, err := s.loadInvestigationEvidenceJournal(ctx)
 	if err != nil {
-		return types.PlanEvidenceRef{}, err
+		return conversation.PlanEvidenceRef{}, err
 	}
 	var retired []string
 	if journal.SessionID != s.sessionID || journal.Cycle != cycle {
@@ -182,7 +182,7 @@ func (s *Session) stageInvestigationEvidence(ctx context.Context, checkout workt
 	return ref, s.saveInvestigationEvidence(ctx, journal, ref, blob, retired)
 }
 
-func (s *Session) finishInvestigationEvidence(service ExecutionService, checkoutID string, pending types.PlanEvidenceRef, record investigationEvidenceRecord, label string, result command.Result) error {
+func (s *Session) finishInvestigationEvidence(service ExecutionService, checkoutID string, pending conversation.PlanEvidenceRef, record investigationEvidenceRecord, label string, result command.Result) error {
 	now := time.Now().UTC()
 	record.Finished = &now
 	record.Status, record.Note = investigationEvidenceOutcome(result)
@@ -196,20 +196,20 @@ func (s *Session) finishInvestigationEvidence(service ExecutionService, checkout
 		if err != nil || after.ContextID != checkoutID || after.BaselineDigest != record.Baseline || !validEvidenceDigest(after.Digest) {
 			record.After.note = "Could not verify files after the command."
 			if evidenceExitDetermined(record.Status) {
-				record.Status = types.PlanEvidenceInconclusive
+				record.Status = conversation.PlanEvidenceInconclusive
 				record.Note = record.After.note
 			}
 		} else if after.Digest == record.Before.digest {
 			record.After.digest = after.Digest
 			record.After.note = "The measured files match the before snapshot."
 			if !record.Before.exact && evidenceExitDetermined(record.Status) {
-				record.Status = types.PlanEvidenceInconclusive
+				record.Status = conversation.PlanEvidenceInconclusive
 				record.Note = "The file changes exceed the evidence limit. The exact inputs were not saved."
 			}
 		} else {
 			record.After = investigationEvidenceDelta(after)
 			if evidenceExitDetermined(record.Status) {
-				record.Status = types.PlanEvidenceInconclusive
+				record.Status = conversation.PlanEvidenceInconclusive
 				record.Note = "The measured files changed during the command."
 			}
 		}
@@ -235,32 +235,32 @@ func (s *Session) finishInvestigationEvidence(service ExecutionService, checkout
 	if err := s.saveInvestigationEvidence(ctx, journal, ref, blob, []string{pending.Digest}); err != nil {
 		return err
 	}
-	if (result.OutputDescriptor.Status == command.Completed || result.OutputDescriptor.Status == command.Failed) && record.Status == types.PlanEvidenceInconclusive {
+	if (result.OutputDescriptor.Status == command.Completed || result.OutputDescriptor.Status == command.Failed) && record.Status == conversation.PlanEvidenceInconclusive {
 		return PlanReviewError("This command did not establish a result for the measured files. " + record.Note)
 	}
 	return nil
 }
 
-func evidenceExitDetermined(status types.PlanEvidenceStatus) bool {
-	return status == types.PlanEvidencePassed || status == types.PlanEvidenceFailed
+func evidenceExitDetermined(status conversation.PlanEvidenceStatus) bool {
+	return status == conversation.PlanEvidencePassed || status == conversation.PlanEvidenceFailed
 }
 
-func investigationEvidenceOutcome(r command.Result) (types.PlanEvidenceStatus, string) {
+func investigationEvidenceOutcome(r command.Result) (conversation.PlanEvidenceStatus, string) {
 	switch {
 	case r.Cancelled || r.TimedOut || r.OutputDescriptor.Status == command.Killed:
-		return types.PlanEvidenceInterrupted, "The command was stopped or timed out."
+		return conversation.PlanEvidenceInterrupted, "The command was stopped or timed out."
 	case r.Uncertain || r.ExitCode == nil || *r.ExitCode < 0:
-		return types.PlanEvidenceInconclusive, "No confirmed process exit code was recorded."
+		return conversation.PlanEvidenceInconclusive, "No confirmed process exit code was recorded."
 	case r.OutputDescriptor.Status == command.Failed && *r.ExitCode != 0:
-		return types.PlanEvidenceFailed, "The command exited with a nonzero code."
+		return conversation.PlanEvidenceFailed, "The command exited with a nonzero code."
 	case r.OutputDescriptor.Status == command.Completed && *r.ExitCode == 0 && r.Error == "":
-		return types.PlanEvidencePassed, "The command exited with code 0."
+		return conversation.PlanEvidencePassed, "The command exited with code 0."
 	default:
-		return types.PlanEvidenceInconclusive, "The process result did not establish a pass or failure."
+		return conversation.PlanEvidenceInconclusive, "The process result did not establish a pass or failure."
 	}
 }
 
-func (s *Session) saveInvestigationEvidence(ctx context.Context, journal investigationEvidenceJournal, ref types.PlanEvidenceRef, blob []byte, retire []string) error {
+func (s *Session) saveInvestigationEvidence(ctx context.Context, journal investigationEvidenceJournal, ref conversation.PlanEvidenceRef, blob []byte, retire []string) error {
 	if len(blob) > maxEvidenceRecordBytes {
 		return errors.New("investigation record exceeds the evidence limit")
 	}
@@ -302,7 +302,7 @@ func evidenceRetiredKeys(review *planReviewRecord, journal investigationEvidence
 
 // proposedPlanEvidence binds only the planning cycle and input source of this
 // completed turn. A fork keeps its saved revisions, not the source's journal.
-func (s *Session) proposedPlanEvidence(ctx context.Context, journal investigationEvidenceJournal, generation uint64, cycle, sourceID string) ([]types.PlanEvidenceRef, int, error) {
+func (s *Session) proposedPlanEvidence(ctx context.Context, journal investigationEvidenceJournal, generation uint64, cycle, sourceID string) ([]conversation.PlanEvidenceRef, int, error) {
 	if cycle == "" || journal.Cycle != cycle || journal.SessionID != s.sessionID {
 		return nil, 0, nil
 	}
@@ -314,7 +314,7 @@ func (s *Session) proposedPlanEvidence(ctx context.Context, journal investigatio
 	if i < 0 {
 		return nil, 0, nil
 	}
-	var refs []types.PlanEvidenceRef
+	var refs []conversation.PlanEvidenceRef
 	for _, entry := range journal.Entries {
 		if entry.CheckoutID == bindings[i].ID && entry.Generation <= generation {
 			if _, err := s.loadPlanEvidence(ctx, entry.Ref.Digest); err != nil {
@@ -444,14 +444,14 @@ type investigationEvidenceRecord struct {
 	Source     string
 	Started    time.Time
 	Finished   *time.Time
-	Status     types.PlanEvidenceStatus
+	Status     conversation.PlanEvidenceStatus
 	Note       string
 	Before     investigationDelta
 	After      investigationDelta
 	Result     *command.Result
 }
 
-func (r investigationEvidenceRecord) blob(label string) (types.PlanEvidenceRef, []byte) {
+func (r investigationEvidenceRecord) blob(label string) (conversation.PlanEvidenceRef, []byte) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Investigation command\n\nResult: **%s**. %s\n", r.Status, r.Note)
 	fmt.Fprintf(&b, "\n    Record: %s\n    Turn: %d\n    Started: %s\n", r.ID, r.Generation, r.Started.Format(time.RFC3339Nano))
@@ -491,7 +491,7 @@ func (r investigationEvidenceRecord) blob(label string) (types.PlanEvidenceRef, 
 	writeEvidenceArchive(&b, "Before", r.Before)
 	writeEvidenceArchive(&b, "After", r.After)
 	body := []byte(b.String())
-	return types.PlanEvidenceRef{Digest: evidenceDigest(body), Command: label, Status: r.Status}, body
+	return conversation.PlanEvidenceRef{Digest: evidenceDigest(body), Command: label, Status: r.Status}, body
 }
 
 func writeEvidenceDelta(b *strings.Builder, heading string, delta investigationDelta) {
@@ -570,7 +570,7 @@ func (s *Session) loadPlanEvidence(ctx context.Context, digest string) ([]byte, 
 
 func (s *Session) planEvidenceRevision(number int, digest string) (*planReviewRecord, error) {
 	record, i := s.findPlanRevision(number)
-	if i < 0 || !slices.ContainsFunc(record.Revisions[i].Evidence, func(ref types.PlanEvidenceRef) bool { return ref.Digest == digest }) {
+	if i < 0 || !slices.ContainsFunc(record.Revisions[i].Evidence, func(ref conversation.PlanEvidenceRef) bool { return ref.Digest == digest }) {
 		return nil, errPlanEvidenceUnavailable
 	}
 	return record, nil

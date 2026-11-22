@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/theme"
 	"crude/tui/ui"
 	"crude/tui/window"

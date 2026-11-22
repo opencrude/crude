@@ -12,11 +12,11 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/agent"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
-	"crude/core/port"
-	"crude/core/protocol"
+	"crude/agent/turnloop"
+	"crude/core/coreprotocol"
+	"crude/core/shellport"
 	"crude/tui/editor"
 	"crude/tui/filetree"
 	"crude/tui/perf"
@@ -29,27 +29,29 @@ import (
 	"crude/tui/screens/diffview"
 	"crude/tui/screens/editorchanges"
 	filepickerscreen "crude/tui/screens/filepicker"
-	findinfiles "crude/tui/screens/findinfiles"
+	"crude/tui/screens/findinfiles"
 	"crude/tui/screens/inlay"
 	"crude/tui/screens/launcher"
 	historyscreen "crude/tui/screens/localhistory"
-	memorybrowser "crude/tui/screens/memorybrowser"
+	"crude/tui/screens/memorybrowser"
 	"crude/tui/screens/navigation"
 	"crude/tui/screens/operationissue"
 	"crude/tui/screens/problems"
 	"crude/tui/screens/question"
-	sessionpicker "crude/tui/screens/sessionpicker"
+	"crude/tui/screens/sessionpicker"
 	"crude/tui/screens/sessionsettings"
+	settingsui "crude/tui/screens/settingspages"
+	"crude/tui/screens/shellchat"
 	"crude/tui/screens/shellfooter"
 	"crude/tui/screens/shellheader"
-	statusoverview "crude/tui/screens/statusoverview"
+	"crude/tui/screens/statusoverview"
 	"crude/tui/screens/termdock"
-	textoverlay "crude/tui/screens/textoverlay"
-	settingsui "crude/tui/settings"
+	"crude/tui/screens/textoverlay"
 	"crude/tui/ui"
 	"crude/tui/window"
 	"crude/tui/wm"
-	"crude/types"
+	"crude/types/setting"
+	"crude/types/statuscenter"
 	"crude/workspace"
 )
 
@@ -86,7 +88,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg, tea.MouseClickMsg, tea.MouseWheelMsg, tea.MouseReleaseMsg, tea.PasteMsg, tea.FocusMsg:
 		// Input and a return to the window are presence.
 		m.observeDesktopPresence(time.Now(), true)
-	case tea.BlurMsg, types.TickMsg:
+	case tea.BlurMsg, TickMsg:
 		m.observeDesktopPresence(time.Now(), false)
 	}
 	m.syncEditorGhost()
@@ -149,7 +151,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	command = tea.Batch(command, m.noteViewMemoryChange())
 	m.updateSettingsWindowTitle()
 	m.showNextOperationIssue()
-	if previousMode == types.AutoSaveEditorFocusChange && m.editorSettings.AutoSave == previousMode && previousEditor != nil &&
+	if previousMode == setting.AutoSaveEditorFocusChange && m.editorSettings.AutoSave == previousMode && previousEditor != nil &&
 		previousEditor.IsOpen() && previousEditor != m.logicalEditorFocus() && m.DirtyPromptPath == "" {
 		command = tea.Batch(command, m.requestEditorSave(previousEditor, workspace.DocumentSaveFocusOut, false))
 	}
@@ -237,8 +239,8 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	coalescePresentation := false
 	switch msg.(type) {
-	case tea.MouseMotionMsg, interactiveFrameMsg, types.TickMsg:
-	case types.AgentMsg, agent.AgentEvent, workspace.TerminalChangedMsg, terminalProjectionMsg, shellport.TerminalFrameMsg:
+	case tea.MouseMotionMsg, interactiveFrameMsg, TickMsg:
+	case AgentMsg, turnloop.AgentEvent, workspace.TerminalChangedMsg, terminalProjectionMsg, shellport.TerminalFrameMsg:
 		coalescePresentation = true
 	default:
 		m.presentImmediateFrame()
@@ -412,12 +414,12 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.applyRemoteSession(msg)
 	case askReferenceMsg:
 		return m, m.applyAskReference(msg)
-	case types.OperationIssueMsg:
+	case statuscenter.OperationIssueMsg:
 		m.presentOperationIssue(msg.Issue)
 		return m, nil
-	case agent.AgentEvent:
+	case turnloop.AgentEvent:
 		return m, m.handleAgentEnvelope(msg)
-	case types.ResumeStartupMsg:
+	case statuscenter.ResumeStartupMsg:
 		return m, m.launcherResumeSession(msg.SessionID, nil)
 	case operationissue.ActionMsg:
 		return m, m.handleOperationIssueAction(msg)
@@ -434,7 +436,7 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case referenceContentSavedMsg:
 		m.applyReferenceSave(msg)
 	case statusHydrateErrMsg:
-		m.notifyStatus(types.SeverityWarning, "status", "Notification history unavailable", msg.Err.Error(), types.ResourceRef{Kind: types.ResourceWorkspace, ID: m.ws.RootPath()})
+		m.notifyStatus(statuscenter.SeverityWarning, "status", "Notification history unavailable", msg.Err.Error(), statuscenter.ResourceRef{Kind: statuscenter.ResourceWorkspace, ID: m.ws.RootPath()})
 		return m, nil
 	case workspace.StatusCenterHydratedMsg:
 		m.syncWorkspacePanels()
@@ -641,7 +643,7 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.applyLocalDiffRefresh(msg)
 	case tea.BlurMsg:
 		m.cancelPointerCaptures()
-		if m.editorSettings.AutoSave == types.AutoSaveTerminalFocusLoss && m.DirtyPromptPath == "" {
+		if m.editorSettings.AutoSave == setting.AutoSaveTerminalFocusLoss && m.DirtyPromptPath == "" {
 			var saves []tea.Cmd
 			for _, tab := range m.EditorState.Tabs {
 				if tab != nil && tab.Editor != nil && tab.Editor.Modified() {
@@ -652,7 +654,7 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case types.TickMsg:
+	case TickMsg:
 		model, cmd := m.handleTick(msg)
 		return model, tea.Batch(cmd, onboardingCmd, projectToolsCmd)
 	case editor.PointerScrollMsg:
@@ -724,7 +726,7 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.forceFrame()
 		return m.dispatchMouseRelease(msg)
 
-	case types.SelectionTickMsg:
+	case shellchat.SelectionTickMsg:
 		if m.chatScreen != nil && m.rootHost != nil {
 			host := m.hostFor(m.chatScreen.ID())
 			host.Focus(m.chatScreen.ID())
@@ -790,7 +792,7 @@ func (m *App) invalidateMessageRegions(msg tea.Msg) {
 		}
 	case workspace.TerminalChangedMsg:
 		// Only schedules the projection read; the result owns paint damage.
-	case types.TickMsg:
+	case TickMsg:
 		// Focused text controls (including the file-tree filter) own cursor
 		// blink even when their surrounding slot has no clock-driven content.
 		m.invalidateClockContent()
@@ -808,7 +810,7 @@ func (m *App) invalidateMessageRegions(msg tea.Msg) {
 	}
 }
 
-func (m *App) handleTick(msg types.TickMsg) (tea.Model, tea.Cmd) {
+func (m *App) handleTick(msg TickMsg) (tea.Model, tea.Cmd) {
 	var diskSyncCmd tea.Cmd
 	now := time.Now()
 	spinFrame := int(now.UnixMilli())
@@ -975,8 +977,8 @@ func (m *App) wantsFastTick() bool {
 func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	var cmds []tea.Cmd
 
-	if msg, ok := msg.(types.AgentMsg); ok {
-		cmds = append(cmds, m.handleAgentEvent(types.AgentEventMsg(msg)))
+	if msg, ok := msg.(AgentMsg); ok {
+		cmds = append(cmds, m.handleAgentEvent(AgentEventMsg(msg)))
 	}
 
 	switch msg := msg.(type) {
@@ -1154,7 +1156,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		cmds = append(cmds, m.applyMemoryBrowserMutation(msg))
 	case memorybrowser.CancelMsg:
 		m.handleMemoryBrowserCancel(msg)
-	case types.ConfigReloadedMsg:
+	case ConfigReloadedMsg:
 		if msg.ThemePreset != "" {
 			m.applyThemePreset(msg.ThemePreset)
 		}
@@ -1259,15 +1261,15 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			m.completion == nil {
 			m.Feedback.NotifyInfo("Completion view release was not confirmed; retained evidence expires automatically")
 		}
-	case types.ErrorMsg:
+	case ErrorMsg:
 		m.ws.Logger().Debug("UI", "error", "msg", string(msg))
 		m.Feedback.NotifyError(string(msg))
 	case slashBackendResultMsg:
 		m.handleSlashBackendResult(msg)
-	case types.UpdateModelMsg:
+	case UpdateModelMsg:
 		m.ModelName = string(msg)
 		m.ws.Logger().Debug("UI", "model_update", "model", string(msg))
-	case types.OpenSettingsMsg:
+	case OpenSettingsMsg:
 		m.ws.Logger().Info("UI", "open_session_settings")
 		m.openSessionSettings()
 	case selectedSessionSettingsResult:
@@ -1278,7 +1280,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		if m.ownsClipboardTargetEditor(msg.Editor) {
 			cmds = append(cmds, m.beginEditorClipboardPaste(msg.Editor))
 		}
-	case types.HistoryMessagesMsg:
+	case HistoryMessagesMsg:
 		m.hydrateActiveMessages(msg)
 	case pickerPathSearchResultMsg:
 		if cmd := m.applyPickerPathSearchResult(msg); cmd != nil {
@@ -1390,11 +1392,11 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		generation := m.workspaceSwitchGen.Load()
 		cmds = append(cmds, func() tea.Msg {
 			err := owner.SaveAccountChange(request.Change)
-			var settings types.AppSettings
+			var settings setting.App
 			var refreshErr error
 			if err == nil {
 				if reader, ok := owner.(interface {
-					RefreshOnboarding(context.Context) (types.AppSettings, error)
+					RefreshOnboarding(context.Context) (setting.App, error)
 				}); ok {
 					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 					settings, refreshErr = reader.RefreshOnboarding(ctx)
@@ -1403,7 +1405,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 					settings = owner.AppDefaults()
 				}
 				if refreshErr != nil {
-					settings = types.CloneAppSettings(owner.AppDefaults())
+					settings = setting.CloneApp(owner.AppDefaults())
 					if settings.Accounts == nil {
 						settings.Accounts = make(map[string]provider.Account)
 					}
@@ -1496,7 +1498,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		if msg.Err != nil {
 			m.Feedback.NotifyError("Account not saved: " + msg.Err.Error())
 		} else {
-			if installer, ok := m.ws.(interface{ ApplyOnboarding(types.AppSettings) }); ok {
+			if installer, ok := m.ws.(interface{ ApplyOnboarding(setting.App) }); ok {
 				installer.ApplyOnboarding(msg.Settings)
 			}
 			m.refreshAllSessionSettingsProjections()
@@ -1546,7 +1548,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			break
 		}
 		label := "Page restored to built-in defaults"
-		if msg.Scope == types.SettingsScopeWorkspace {
+		if msg.Scope == setting.ScopeWorkspace {
 			label = "Workspace page choices cleared"
 		}
 		cmds = append(cmds, m.saveSettingsShortcut(msg.Scope, msg.Edits, label, msg.Target, msg.Category))
@@ -1576,7 +1578,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			}
 			return settingsui.ModelsMsg{ProviderID: request.ProviderID, AccountID: request.AccountID, Generation: request.Generation, Models: models}
 		})
-	case settingsui.ModelsMsg, settingsui.ModelsErrorMsg, types.ModelCatalogUpdatedMsg:
+	case settingsui.ModelsMsg, settingsui.ModelsErrorMsg, setting.ModelCatalogUpdatedMsg:
 		if fw := m.overlayHost.Window(ui.OverlayWorkspaceSettings); fw != nil {
 			if body := m.settingsSurface(fw); body != nil {
 				// Results belong to the retained Settings model, not the field
@@ -1685,7 +1687,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		// future agent (and new session) inherits them.
 		m.ws.Logger().Info("CONFIG", "session_settings_save_as_workspace")
 		edits := promotedSessionEdits(msg.Settings)
-		cmds = append(cmds, m.saveSettingsShortcut(types.SettingsScopeWorkspace, edits, "Agent settings saved as workspace defaults", nil, 0))
+		cmds = append(cmds, m.saveSettingsShortcut(setting.ScopeWorkspace, edits, "Agent settings saved as workspace defaults", nil, 0))
 	case sessionSettingsSaveResultMsg:
 		if msg.workspace != m.ws || msg.generation != m.workspaceSwitchGen.Load() {
 			break
@@ -2232,11 +2234,11 @@ func (m *App) workingDir() (string, error) {
 }
 
 func tickCmd() tea.Cmd {
-	return tea.Tick(workspace.IdleTickInterval, func(at time.Time) tea.Msg { return types.TickMsg(at) })
+	return tea.Tick(workspace.IdleTickInterval, func(at time.Time) tea.Msg { return TickMsg(at) })
 }
 
 func streamingTickCmd() tea.Cmd {
-	return tea.Tick(16*time.Millisecond, func(at time.Time) tea.Msg { return types.TickMsg(at) })
+	return tea.Tick(16*time.Millisecond, func(at time.Time) tea.Msg { return TickMsg(at) })
 }
 
 // Model pickers show the core's explanation, not its protocol fault code.

@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"crude/buildinfo"
 	"crude/core"
-	"crude/core/protocol"
-	"crude/core/wire"
+	"crude/core/coreprotocol"
+	"crude/core/corewire"
+	"crude/internal/buildinfo"
 )
 
 // Re-execute the test image as the fixed remote stdio command so this journey

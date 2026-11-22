@@ -18,7 +18,7 @@ package app
 
 import (
 	"context"
-	"crude/buildinfo"
+	"crude/internal/buildinfo"
 	"crude/internal/fileuri"
 	"database/sql"
 	"encoding/json"
@@ -32,10 +32,10 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
-	"crude/network"
-	"crude/tui"
-	ttypes "crude/types"
+	"crude/internal/network"
 	captypes "crude/types/capability"
+	"crude/types/setting"
+	"crude/types/statuscenter"
 	"crude/workspace"
 )
 
@@ -70,7 +70,7 @@ type App struct {
 	clientProfile string
 	invocation    CLIFlags
 
-	startupIssues []ttypes.OperationIssue
+	startupIssues []statuscenter.OperationIssue
 
 	// defaultsChanged is installed by the core host to republish committed
 	// application defaults to every retained workspace.
@@ -87,18 +87,18 @@ type Opts struct {
 	ResumeID      string // optional session to resume at startup
 	ClientProfile string
 	Invocation    CLIFlags
-	StartupIssues []ttypes.OperationIssue
+	StartupIssues []statuscenter.OperationIssue
 }
 
 // New creates the IDE shell. Resolves paths and stores config.
 // Does NOT create sessions or start the TUI; Run() does that.
 func New(opts Opts) (*App, error) {
-	issues := append([]ttypes.OperationIssue(nil), opts.StartupIssues...)
+	issues := append([]statuscenter.OperationIssue(nil), opts.StartupIssues...)
 	if err := network.ConfigureStartupDefault(FileConfigToAppSettings(opts.FC).Network); err != nil {
 		issues = append(issues, networkStartupIssue(err))
 	}
 	for _, issue := range issues {
-		if issue.Target == ttypes.RepairConfigFile {
+		if issue.Target == statuscenter.RepairConfigFile {
 			network.BlockStartupDefault(fmt.Errorf("saved configuration needs repair: %s", issue.Detail))
 			break
 		}
@@ -159,14 +159,14 @@ func (a *App) configureWorkspace(ws *workspace.Workspace) {
 	sessCfg.AccountManager = a.accounts
 	ws.SetBackendConfig(sessCfg, a.home)
 
-	ws.OnAppSettingsSave = func(s ttypes.AppSettings) (ttypes.AppSettings, error) {
+	ws.OnAppSettingsSave = func(s setting.App) (setting.App, error) {
 		before := a.committedDefaults()
 		s.Accounts = nil
-		return a.commitCorePreferences(ttypes.SettingsEdits(before, s))
+		return a.commitCorePreferences(setting.Edits(before, s))
 	}
 	ws.OnAppAccountCommit = a.commitCoreAccount
 	ws.OnAppPreferencesCommit = a.commitCorePreferences
-	ws.OnAppAccountChange = func(change ttypes.AccountChange) error {
+	ws.OnAppAccountChange = func(change setting.AccountChange) error {
 		updated, err := a.commitCoreAccount(change)
 		if err != nil {
 			return err
@@ -223,10 +223,10 @@ func mergeCapabilityRegistration(current *FileConfig, change captypes.Registrati
 	return nil
 }
 
-func providerPresets() []tui.ProviderPreset {
-	out := make([]tui.ProviderPreset, 0, len(provider.PresetList()))
+func providerPresets() []setting.ProviderPreset {
+	out := make([]setting.ProviderPreset, 0, len(provider.PresetList()))
 	for _, p := range provider.PresetList() {
-		out = append(out, tui.ProviderPreset{
+		out = append(out, setting.ProviderPreset{
 			ID: p.ID, Name: p.Name, HelpText: p.HelpText,
 			BaseURL: p.BaseURL, StandardID: p.StandardID,
 		})
@@ -235,15 +235,15 @@ func providerPresets() []tui.ProviderPreset {
 }
 
 // initialSettings builds the initial settings snapshot from the app config.
-func (a *App) initialSettings() ttypes.Settings { return a.initialSettingsFrom(a.fc) }
+func (a *App) initialSettings() setting.Settings { return a.initialSettingsFrom(a.fc) }
 
 // initialSettingsFrom builds a workspace's initial settings from one config
 // snapshot, so the core can build workspaces from its latest committed config.
-func (a *App) initialSettingsFrom(fc FileConfig) ttypes.Settings {
-	settings := ttypes.Settings{
+func (a *App) initialSettingsFrom(fc FileConfig) setting.Settings {
+	settings := setting.Settings{
 		TurnLogsEnabled: boolStr(fc.IsTurnLogsEnabled()),
 	}
-	main := FileConfigToSession(fc).GetActiveDefaultCategory()
+	main := FileConfigToSession(fc).ActiveDefaultCategory()
 	settings.AccountID, settings.Model, settings.ThinkingEffort = main.AccountID, main.Model, main.ThinkingEffort
 	if account, ok := fc.Accounts[main.AccountID]; ok {
 		settings.ProviderID = account.ProviderID
@@ -281,7 +281,7 @@ func resolveCLISessionStore(home, projectDir string) (cliSessionStore, error) {
 	if err != nil {
 		return cliSessionStore{}, fmt.Errorf("resolve workspace path: %w", err)
 	}
-	dir := filepath.Join(DataDir(home), "workspaces", workspace.WorkspaceID(abs))
+	dir := filepath.Join(DataDir(home), "workspaces", workspace.ID(abs))
 	return cliSessionStore{workspaceDB: filepath.Join(dir, "workspace.db"), sessionsDir: filepath.Join(dir, "sessions")}, nil
 }
 

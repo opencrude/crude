@@ -4,7 +4,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/agent/sessiondb"
-	sessionpicker "crude/tui/screens/sessionpicker"
+	"crude/tui/screens/sessionpicker"
 	"crude/tui/ui"
 	"crude/tui/wm"
 	"crude/workspace"

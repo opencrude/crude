@@ -2,12 +2,12 @@ package session
 
 import (
 	captypes "crude/types/capability"
+	"crude/types/setting"
 	"maps"
 	"slices"
 	"sync"
 
 	"crude/agent/provider"
-	ttypes "crude/types"
 )
 
 // RuntimeProfile provides ephemeral per-orchestrator config overrides
@@ -53,9 +53,9 @@ func NewRuntimeProfile(base *Config) *RuntimeProfile {
 	}
 }
 
-// GetOrCreateOverride returns the override state for an orchestrator,
+// EnsureOverride returns the override state for an orchestrator,
 // creating a default one if it doesn't exist.
-func (rp *RuntimeProfile) GetOrCreateOverride(orchID string) *OrchestratorOverride {
+func (rp *RuntimeProfile) EnsureOverride(orchID string) *OrchestratorOverride {
 	rp.mu.Lock()
 	defer rp.mu.Unlock()
 	if oo, ok := rp.overrides[orchID]; ok {
@@ -68,8 +68,8 @@ func (rp *RuntimeProfile) GetOrCreateOverride(orchID string) *OrchestratorOverri
 	return oo
 }
 
-// GetOverride returns the override state for an orchestrator, or nil.
-func (rp *RuntimeProfile) GetOverride(orchID string) *OrchestratorOverride {
+// Override returns the override state for an orchestrator, or nil.
+func (rp *RuntimeProfile) Override(orchID string) *OrchestratorOverride {
 	rp.mu.RLock()
 	defer rp.mu.RUnlock()
 	return rp.overrides[orchID]
@@ -99,7 +99,7 @@ func (rp *RuntimeProfile) HasOverride(orchID string) bool {
 // SetCategoryOverride sets a category config override for an orchestrator.
 // Pass an empty CategoryConfig to clear the override for that category.
 func (rp *RuntimeProfile) SetCategoryOverride(orchID, category string, cat CategoryConfig) {
-	oo := rp.GetOrCreateOverride(orchID)
+	oo := rp.EnsureOverride(orchID)
 	rp.mu.Lock()
 	if cat.Model == "" && cat.AccountID == "" && cat.ThinkingEffort == "" && cat.ContextCompactionPercent == nil && cat.ContextRetentionTokens == nil {
 		delete(oo.CategoryOverrides, category)
@@ -115,7 +115,7 @@ func (rp *RuntimeProfile) SetCategoryOverride(orchID, category string, cat Categ
 // SetOrchestratorModel is a convenience method to set the model for the
 // default category of a specific orchestrator.
 func (rp *RuntimeProfile) SetOrchestratorModel(orchID, model string) {
-	oo := rp.GetOrCreateOverride(orchID)
+	oo := rp.EnsureOverride(orchID)
 	rp.mu.Lock()
 	if oo.CategoryOverrides == nil {
 		oo.CategoryOverrides = make(map[string]CategoryConfig)
@@ -128,7 +128,7 @@ func (rp *RuntimeProfile) SetOrchestratorModel(orchID, model string) {
 
 // SetOrchestratorAccount selects the account for one orchestrator's main role.
 func (rp *RuntimeProfile) SetOrchestratorAccount(orchID, accountID string) {
-	oo := rp.GetOrCreateOverride(orchID)
+	oo := rp.EnsureOverride(orchID)
 	rp.mu.Lock()
 	if oo.CategoryOverrides == nil {
 		oo.CategoryOverrides = make(map[string]CategoryConfig)
@@ -139,10 +139,10 @@ func (rp *RuntimeProfile) SetOrchestratorAccount(orchID, accountID string) {
 	rp.mu.Unlock()
 }
 
-// GetEffectiveConfig returns a merged Config for a given orchestrator.
+// EffectiveConfig returns a merged Config for a given orchestrator.
 // The base config is deep-copied, then any orchestrator overrides are applied.
 // The returned Config is safe to use for a single turn.
-func (rp *RuntimeProfile) GetEffectiveConfig(orchID string) *Config {
+func (rp *RuntimeProfile) EffectiveConfig(orchID string) *Config {
 	rp.mu.RLock()
 	base := rp.base
 	oo := rp.overrides[orchID]
@@ -301,7 +301,7 @@ func copyConfig(src *Config) *Config {
 			dst.Accounts[id] = provider.CloneAccount(account)
 		}
 	}
-	dst.Safety.CommandRules = append([]ttypes.CommandSeverityRule(nil), src.Safety.CommandRules...)
+	dst.Safety.CommandRules = append([]setting.CommandSeverityRule(nil), src.Safety.CommandRules...)
 	dst.Memory.MemoryCategory.ContextCompactionPercent = cloneIntPtr(src.Memory.MemoryCategory.ContextCompactionPercent)
 	dst.Memory.MemoryCategory.ContextRetentionTokens = cloneIntPtr(src.Memory.MemoryCategory.ContextRetentionTokens)
 
@@ -338,7 +338,7 @@ func copyConfig(src *Config) *Config {
 			agents.Profiles[name] = profCopy
 		}
 	}
-	agents.AgentProfiles = ttypes.CloneAgentProfiles(src.Agents.AgentProfiles)
+	agents.AgentProfiles = setting.CloneAgentProfiles(src.Agents.AgentProfiles)
 	dst.Agents = agents
 
 	return dst

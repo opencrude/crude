@@ -11,16 +11,17 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"crude/tui/editor"
-	settingsui "crude/tui/settings"
+	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
 type typingCompletionCall struct {
 	text      string
 	line, col int
-	trigger   types.LSPCompletionContext
+	trigger   insight.LSPCompletionContext
 }
 
 type typingCompletionRuntime struct {
@@ -35,11 +36,11 @@ type typingCompletionClient struct {
 	owner *typingCompletionRuntime
 }
 
-func (r *typingCompletionRuntime) NewClient(spec types.LSPServerSpec, root string, admit func() error) workspace.LSPClient {
+func (r *typingCompletionRuntime) NewClient(spec setting.LSPServerSpec, root string, admit func() error) workspace.LSPClient {
 	return &typingCompletionClient{r.base.NewClient(spec, root, admit).(*renameConnectedClient), r}
 }
 
-func (c *typingCompletionClient) RequestCompletions(_ context.Context, path string, line, col int, trigger types.LSPCompletionContext) (types.LSPCompletionResponse, error) {
+func (c *typingCompletionClient) RequestCompletions(_ context.Context, path string, line, col int, trigger insight.LSPCompletionContext) (insight.LSPCompletionResponse, error) {
 	r := c.owner
 	r.base.mu.Lock()
 	defer r.base.mu.Unlock()
@@ -62,7 +63,7 @@ func (c *typingCompletionClient) RequestCompletions(_ context.Context, path stri
 	if r.incomplete {
 		raw = `{"isIncomplete":true,"items":` + raw + `}`
 	}
-	return types.LSPCompletionResponse{WireVersion: d.version, JSON: []byte(raw)}, nil
+	return insight.LSPCompletionResponse{WireVersion: d.version, JSON: []byte(raw)}, nil
 }
 
 func newTypingCompletionFixture(t *testing.T, initial string) ([]remoteJourneyShell, []*editor.Editor, *workspace.Workspace, *typingCompletionRuntime, string) {
@@ -90,9 +91,9 @@ func newTypingCompletionFixtureWithRuntime(t *testing.T, initial string, engine 
 		owned = w
 		w.LSPMgr.SetRuntime(engine)
 		settings := w.AppDefaults()
-		settings.LSP = types.DefaultLSPSettings()
+		settings.LSP = setting.DefaultLSP()
 		settings.LSP.AutoDetect = false
-		settings.LSP.Languages = map[string]types.LSPLanguageSettings{"go": {Enabled: true, Command: executable, RootMarkers: []string{"go.mod"}}}
+		settings.LSP.Languages = map[string]setting.LSPLanguage{"go": {Enabled: true, Command: executable, RootMarkers: []string{"go.mod"}}}
 		w.SetAppDefaults(settings)
 		grantSemanticFixture(t, w)
 	})
@@ -100,7 +101,7 @@ func newTypingCompletionFixtureWithRuntime(t *testing.T, initial string, engine 
 	eds := []*editor.Editor{liveTestOpen(t, shells[0].app, path), liveTestOpen(t, shells[1].app, path)}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	if _, _, err := owned.LSPMgr.ProbeHover(ctx, path, types.LSPSourcePosition{Line: 1, Column: 1}); err != nil {
+	if _, _, err := owned.LSPMgr.ProbeHover(ctx, path, insight.LSPSourcePosition{Line: 1, Column: 1}); err != nil {
 		t.Fatal(err)
 	}
 	remoteJourneyUntil(t, shells, func() bool {
@@ -328,8 +329,8 @@ func TestConnectedAutomaticCompletionKeepsShortSuggestionsCompact(t *testing.T) 
 	remoteJourneyUntil(t, shells, func() bool { return eds[0].Value() == "privateValue" && eds[1].Value() == "privateValue" })
 }
 
-func (c *typingCompletionClient) AssistanceCapabilities() types.LSPAssistanceCapabilities {
-	return types.LSPAssistanceCapabilities{Completion: true, CompletionTriggers: []string{".", ":", "@"}, SignatureHelp: true, SignatureTriggers: []string{"(", ","}}
+func (c *typingCompletionClient) AssistanceCapabilities() insight.LSPAssistanceCapabilities {
+	return insight.LSPAssistanceCapabilities{Completion: true, CompletionTriggers: []string{".", ":", "@"}, SignatureHelp: true, SignatureTriggers: []string{"(", ","}}
 }
 
 func TestConnectedCompletionTriggerAndIncompleteContexts(t *testing.T) {
@@ -354,12 +355,12 @@ func TestConnectedCompletionTriggerAndIncompleteContexts(t *testing.T) {
 		if len(calls) != i+1 {
 			t.Fatalf("one request per edit: %+v", calls)
 		}
-		wantKind, wantChar := types.LSPCompletionTriggerIncomplete, ""
+		wantKind, wantChar := insight.LSPCompletionTriggerIncomplete, ""
 		if i == 0 {
-			wantKind, wantChar = types.LSPCompletionTriggerCharacter, ":"
+			wantKind, wantChar = insight.LSPCompletionTriggerCharacter, ":"
 		}
 		if i == 3 {
-			wantKind = types.LSPCompletionInvoked
+			wantKind = insight.LSPCompletionInvoked
 		}
 		call := calls[i]
 		if call.trigger.TriggerKind != wantKind || call.trigger.TriggerCharacter != wantChar || call.text != eds[0].Value() || call.trigger.Producer.InstanceID == "" {

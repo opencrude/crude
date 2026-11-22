@@ -5,9 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	"crude/syntax"
+	"crude/insight/syntax"
 	"crude/tui/theme"
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/syntaxdata"
 	"crude/workspace/document"
 )
 
@@ -29,11 +30,11 @@ func sharedSyntaxEditor(t *testing.T, source string) (*Editor, document.Snapshot
 	return ed, snapshot
 }
 
-func syntaxPublication(snapshot document.Snapshot, version uint64, kind syntax.Kind) types.DocumentInsight {
-	return types.DocumentInsight{
+func syntaxPublication(snapshot document.Snapshot, version uint64, kind syntaxdata.Kind) insight.DocumentInsight {
+	return insight.DocumentInsight{
 		DocumentID: snapshot.ID, Path: snapshot.Path, Revision: snapshot.Revision,
-		Generation: "core-generation-one", Version: version, State: types.InsightCurrent,
-		Syntax: &syntax.Result{Revision: snapshot.Revision, Spans: []syntax.Span{
+		Generation: "core-generation-one", Version: version, State: insight.Current,
+		Syntax: &syntaxdata.Result{Revision: snapshot.Revision, Spans: []syntaxdata.Span{
 			{Start: 0, End: uint32(len(snapshot.Text)), Kind: kind},
 		}},
 	}
@@ -83,7 +84,7 @@ func TestInsightFuturePublicationDoesNotErasePrivateParseOrDraft(t *testing.T) {
 		t.Fatal("canonical push cancelled the private parse or replaced its draft")
 	}
 	command().(SyntaxReadyMsg).Apply()
-	if status, detail := ed.InsightStatus(); status != types.InsightProvisional || !strings.Contains(detail, "Provisional") {
+	if status, detail := ed.InsightStatus(); status != insight.Provisional || !strings.Contains(detail, "Provisional") {
 		t.Fatalf("private text claimed canonical currency: %q %q", status, detail)
 	}
 	if got := paintEditor(ed, 80, 8).Get(ed.gutterWidth(), 0); !got.FG.Equal(ed.cellColor(ed.th.Colors.Code.Comment)) {
@@ -141,15 +142,15 @@ func TestInsightPendingAfterEditReceiptKeepsExactProvisionalPresentation(t *test
 	}); err != nil {
 		t.Fatal(err)
 	}
-	ed.InstallDocumentInsight(types.DocumentInsight{
+	ed.InstallDocumentInsight(insight.DocumentInsight{
 		DocumentID: snapshot.ID, Path: snapshot.Path, Revision: 2, Generation: "core-generation-one",
-		Version: 2, State: types.InsightPending,
+		Version: 2, State: insight.Pending,
 	})
 	ready.Apply()
 	if got := paintEditor(ed, 80, 8).Get(ed.gutterWidth()+2, 0); !got.FG.Equal(ed.cellColor(ed.th.Colors.Code.Comment)) {
 		t.Fatalf("receipt followed by shared pending blanked unrelated exact source: %+v", got)
 	}
-	if state, _ := ed.InsightStatus(); state != types.InsightPending || ed.SyntaxCommand() != nil {
+	if state, _ := ed.InsightStatus(); state != insight.Pending || ed.SyntaxCommand() != nil {
 		t.Fatal("retained provisional ink became a new canonical analysis authority")
 	}
 }

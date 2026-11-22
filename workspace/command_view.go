@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"crude/terminalvt"
+	"crude/internal/terminalvt"
 	"crude/workspace/fileio"
 )
 

@@ -12,8 +12,8 @@ import (
 	"crude/agent/collaboration"
 	"crude/agent/provider"
 	"crude/agent/session"
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -38,8 +38,8 @@ func TestSubmitInputSteeringReceiptReplaysWithoutPublishingAnotherInput(t *testi
 	t.Cleanup(server.Close)
 	var store *collaboration.Store
 	runtime, err := New(func(root string) (*workspace.Workspace, error) {
-		ws := workspace.NewWorkspace(root, "routing-model", "tester", types.Settings{}, coreTestLogger{})
-		ws.SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
+		ws := workspace.NewWorkspace(root, "routing-model", "tester", setting.Settings{}, coreTestLogger{})
+		ws.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}})
 		agents := session.DefaultAgentsConfig()
 		profile := agents.Profiles["default"]
 		off := false

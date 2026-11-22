@@ -18,7 +18,7 @@ import (
 	"crude/agent/provider"
 	"crude/agent/session"
 	"crude/agent/worktree"
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
 	"crude/types/control"
 	"crude/workspace"
 	"crude/workspace/document"

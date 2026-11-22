@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
 	"crude/types/control"
 )
 

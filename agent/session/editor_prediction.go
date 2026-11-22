@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"crude/agent/provider"
-	ttypes "crude/types"
+	"crude/types/setting"
 )
 
 // EditorPredictionCompleter is the bound connection for Errand's editor
@@ -49,7 +49,7 @@ func (c *Config) SuggestionCompleter() (EditorPredictionCompleter, error) {
 	settings := c.Agents.Suggestions.Normalized()
 	profile, _ := activeProfileCfg(c)
 	stored := profile.Categories[CategoryErrand]
-	errand := c.GetCategoryConfig(CategoryErrand)
+	errand := c.CategoryConfig(CategoryErrand)
 	if (stored.Enabled != nil && !*stored.Enabled) || (errand.Enabled != nil && !*errand.Enabled) {
 		return EditorPredictionCompleter{}, errors.New("the Errand agent is turned off in Settings, Agents")
 	}
@@ -63,7 +63,7 @@ func (c *Config) SuggestionCompleter() (EditorPredictionCompleter, error) {
 	if settings.ServiceTier != "" {
 		role.ServiceTier = settings.ServiceTier
 	}
-	if settings.Format == ttypes.SuggestionFormatChat {
+	if settings.Format == setting.SuggestionFormatChat {
 		// Chat suggestions never think: a reasoning pass costs more time
 		// than the user waits between keystrokes.
 		role.ThinkingEffort = "none"
@@ -80,10 +80,10 @@ func (c *Config) SuggestionCompleter() (EditorPredictionCompleter, error) {
 		return EditorPredictionCompleter{}, errors.New("the account for Errand suggestions is not available")
 	}
 	oauth := account.OAuth != nil || account.Connection.AuthType == provider.AuthChatGPT
-	if oauth && settings.Format != ttypes.SuggestionFormatChat {
+	if oauth && settings.Format != setting.SuggestionFormatChat {
 		return EditorPredictionCompleter{}, errors.New("fill-in-the-middle formats need an API key account; choose Chat")
 	}
-	if settings.Format != ttypes.SuggestionFormatChat && settings.EndpointPath == "" {
+	if settings.Format != setting.SuggestionFormatChat && settings.EndpointPath == "" {
 		return EditorPredictionCompleter{}, errors.New("enter the endpoint path for the fill-in-the-middle format")
 	}
 	accounts := map[string]provider.Account{account.ID: provider.CloneAccount(account)}
@@ -125,7 +125,7 @@ func (c *Config) SuggestionCompleter() (EditorPredictionCompleter, error) {
 	}, nil
 }
 
-func suggestionConnectionIdentity(account provider.Account, model string, settings ttypes.SuggestionSettings) (string, error) {
+func suggestionConnectionIdentity(account provider.Account, model string, settings setting.Suggestion) (string, error) {
 	connection := provider.CloneTemplate(account.Connection)
 	connection.Name, connection.HelpText = "", ""
 	raw, err := json.Marshal(struct {
@@ -159,7 +159,7 @@ func (t EditorPredictionCompleter) Current() error {
 	if !ok {
 		return errors.New("the account for Errand suggestions was removed")
 	}
-	identity, err := suggestionConnectionIdentity(account, t.Model, ttypes.SuggestionSettings{Format: t.Format, EndpointPath: t.EndpointPath})
+	identity, err := suggestionConnectionIdentity(account, t.Model, setting.Suggestion{Format: t.Format, EndpointPath: t.EndpointPath})
 	if err != nil || identity != t.ConnectionIdentity {
 		return errors.New("the connection for Errand suggestions changed")
 	}

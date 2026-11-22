@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
 )
 
 func TestWorkspacePublicationClockSleepsUntilAcceptedMutation(t *testing.T) {

@@ -557,7 +557,7 @@ func (r *openAIResponse) toChatResponse() (*ChatResponse, error) {
 		if err := json.Unmarshal(raw, &item); err != nil {
 			return nil, fmt.Errorf("decode OpenAI output item %d: %w", index, err)
 		}
-		msg.ProviderItems = append(msg.ProviderItems, ProviderItem{
+		msg.ProviderItems = append(msg.ProviderItems, Item{
 			Standard: "openai-responses",
 			Type:     item.Type,
 			Data:     bytes.Clone(raw),
@@ -798,7 +798,7 @@ func (d *openAIResponsesStreamDecoder) decodeOutputItem(index int, raw json.RawM
 		}
 		if _, exists := d.seenProviderItems[itemID]; !exists {
 			d.seenProviderItems[itemID] = struct{}{}
-			update.ProviderItems = append(update.ProviderItems, ProviderItem{
+			update.ProviderItems = append(update.ProviderItems, Item{
 				Standard: "openai-responses",
 				Type:     item.Type,
 				Data:     bytes.Clone(raw),
@@ -904,7 +904,7 @@ func (d *openAIResponsesStreamDecoder) decodeTerminalResponse(response *openAIRe
 		}
 		if _, exists := d.seenProviderItems[itemID]; !exists {
 			d.seenProviderItems[itemID] = struct{}{}
-			update.ProviderItems = append(update.ProviderItems, ProviderItem{
+			update.ProviderItems = append(update.ProviderItems, Item{
 				Standard: "openai-responses",
 				Type:     item.Type,
 				Data:     bytes.Clone(raw),

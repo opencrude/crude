@@ -5,11 +5,11 @@ import (
 	"reflect"
 	"testing"
 
-	"crude/types"
+	"crude/types/setting"
 )
 
 func TestApplicationPreferenceOwnerRejectsWorkspaceAnalysisWrites(t *testing.T) {
-	for _, edit := range []types.SettingEdit{
+	for _, edit := range []setting.Edit{
 		{Path: []string{"analysis", "trust"}, After: json.RawMessage(`"trusted"`)},
 		{Path: []string{"analysis"}, After: json.RawMessage(`{"trust":"trusted"}`)},
 		{Path: []string{"analysis", "trust"}},
@@ -17,8 +17,8 @@ func TestApplicationPreferenceOwnerRejectsWorkspaceAnalysisWrites(t *testing.T) 
 	} {
 		current := FileConfig{}
 		before := current
-		desired := types.AppSettings{Analysis: types.WorkspaceAnalysisSettings{Trust: types.AnalysisTrusted}}
-		if err := applyPreferenceEdits(&current, desired, []types.SettingEdit{edit}); err == nil {
+		desired := setting.App{Analysis: setting.WorkspaceAnalysis{Trust: setting.AnalysisTrusted}}
+		if err := applyPreferenceEdits(&current, desired, []setting.Edit{edit}); err == nil {
 			t.Fatal("application config owner accepted workspace trust", edit.Path)
 		}
 		if !reflect.DeepEqual(current, before) {

@@ -7,7 +7,7 @@ import (
 
 	"crude/tui/rendering"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 	"crude/types/recovery"
 )
 
@@ -20,7 +20,7 @@ func recoveryEqual(left, right *recovery.Status) bool {
 
 // A recovery is a compact ordinary transcript item, with diagnostic evidence
 // behind the same disclosure contract as other chat projections.
-func renderRecoveryMessage(message types.ChatMessage, ctx renderContext) messageLines {
+func renderRecoveryMessage(message conversation.ChatMessage, ctx renderContext) messageLines {
 	status := message.Recovery
 	header := recoveryHeader(message, ctx)
 	rows := messageLines{lines: []string{header.PlainText()}, native: []PaintLine{header},
@@ -51,7 +51,7 @@ func renderRecoveryMessage(message types.ChatMessage, ctx renderContext) message
 	return rows
 }
 
-func recoveryHeader(message types.ChatMessage, ctx renderContext) PaintLine {
+func recoveryHeader(message conversation.ChatMessage, ctx renderContext) PaintLine {
 	status := message.Recovery
 	label, role, marker := "Recovering", ui.ColorError, "■"
 	switch status.State {

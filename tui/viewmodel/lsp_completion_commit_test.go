@@ -7,7 +7,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace/document"
 )
 
@@ -28,14 +29,14 @@ func completionAcknowledge(t *testing.T, app *App) {
 	ed.DrainDocumentUndo()
 }
 
-func committing(row types.LSPCompletionEntry, characters ...string) types.LSPCompletionEntry {
+func committing(row insight.LSPCompletionEntry, characters ...string) insight.LSPCompletionEntry {
 	row.CommitCharacters = characters
 	return row
 }
 
 // renderRow is a sole visible row that is not a literal continuation, so the
 // list is shown instead of inline text.
-func renderRow(characters ...string) types.LSPCompletionEntry {
+func renderRow(characters ...string) insight.LSPCompletionEntry {
 	row := committing(lowProfileEntry("render", "printValue", "a"), characters...)
 	row.Insertion.TextEdit.NewText = "renderValue()"
 	return row
@@ -87,21 +88,21 @@ func TestFailedCommitAcceptanceStillTypesTheCharacter(t *testing.T) {
 func TestCommitCharactersStayOrdinaryTypingWithoutAClearRow(t *testing.T) {
 	typedRow := lowProfileEntry("typed", "pri", "z")
 	for name, setup := range map[string]struct {
-		rows   []types.LSPCompletionEntry
+		rows   []insight.LSPCompletionEntry
 		accept string
 		key    string
 	}{
-		"not a commit character":     {rows: []types.LSPCompletionEntry{renderRow(".")}, key: ","},
-		"no commit characters":       {rows: []types.LSPCompletionEntry{renderRow()}, key: "."},
-		"enter-only preference":      {rows: []types.LSPCompletionEntry{renderRow(".")}, accept: "enter", key: "."},
-		"typed word is a suggestion": {rows: []types.LSPCompletionEntry{renderRow("."), committing(typedRow, ".")}, key: "."},
-		"several unchosen rows": {rows: []types.LSPCompletionEntry{renderRow("."),
+		"not a commit character":     {rows: []insight.LSPCompletionEntry{renderRow(".")}, key: ","},
+		"no commit characters":       {rows: []insight.LSPCompletionEntry{renderRow()}, key: "."},
+		"enter-only preference":      {rows: []insight.LSPCompletionEntry{renderRow(".")}, accept: "enter", key: "."},
+		"typed word is a suggestion": {rows: []insight.LSPCompletionEntry{renderRow("."), committing(typedRow, ".")}, key: "."},
+		"several unchosen rows": {rows: []insight.LSPCompletionEntry{renderRow("."),
 			committing(lowProfileEntry("private", "privateValue", "b"), ".")}, key: "."},
 	} {
 		t.Run(name, func(t *testing.T) {
 			app, port := automaticCompletionAfterTyping(t, setup.rows...)
 			if setup.accept != "" {
-				settings := types.DefaultLSPSettings()
+				settings := setting.DefaultLSP()
 				settings.CompletionAccept = setup.accept
 				port.service.settings = &settings
 			}

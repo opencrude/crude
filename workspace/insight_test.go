@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/syntax"
-	"crude/types"
+	"crude/insight/syntax"
+	"crude/types/insight"
 	"crude/workspace/document"
 )
 
@@ -33,7 +33,7 @@ func insightFixture(t *testing.T, name, source string) (*DocumentService, docume
 	return s, snapshot, owner
 }
 
-func awaitInsight(t *testing.T, s *DocumentService, owner document.Owner, id string, revision uint64, state types.InsightState) types.DocumentInsight {
+func awaitInsight(t *testing.T, s *DocumentService, owner document.Owner, id string, revision uint64, state insight.State) insight.DocumentInsight {
 	t.Helper()
 	wake, unsubscribe, err := s.Insight.Subscribe(owner, id)
 	if err != nil {
@@ -50,7 +50,7 @@ func awaitInsight(t *testing.T, s *DocumentService, owner document.Owner, id str
 		if view.Revision == revision && view.State == state {
 			return view
 		}
-		if view.Revision > revision || (view.Revision == revision && view.State != types.InsightPending) {
+		if view.Revision > revision || (view.Revision == revision && view.State != insight.Pending) {
 			t.Fatalf("unexpected insight: %+v; want revision %d state %s", view, revision, state)
 		}
 		select {
@@ -86,7 +86,7 @@ func holdInsightAdmission(t *testing.T) func() {
 
 func TestInsightCanonicalRevisionSharedAndDetachedSnapshots(t *testing.T) {
 	s, snapshot, author := insightFixture(t, "main.go", "package main\nfunc main() {}\n")
-	first := awaitInsight(t, s, author, snapshot.ID, 1, types.InsightCurrent)
+	first := awaitInsight(t, s, author, snapshot.ID, 1, insight.Current)
 	if first.Generation == "" || first.Syntax == nil || first.Syntax.HasError || len(first.Syntax.Problems) != 0 || first.Syntax.Identity.Language != syntax.Go {
 		t.Fatalf("valid Go was not a completed clean native result: %+v", first)
 	}
@@ -96,7 +96,7 @@ func TestInsightCanonicalRevisionSharedAndDetachedSnapshots(t *testing.T) {
 		if err != nil || opened.ID != snapshot.ID {
 			t.Fatalf("shared open=%+v err=%v", opened, err)
 		}
-		got := awaitInsight(t, s, owner, snapshot.ID, 1, types.InsightCurrent)
+		got := awaitInsight(t, s, owner, snapshot.ID, 1, insight.Current)
 		if !reflect.DeepEqual(first, got) {
 			t.Fatal("opening a peer recomputed or changed the canonical analysis")
 		}
@@ -116,7 +116,7 @@ func TestInsightCanonicalRevisionSharedAndDetachedSnapshots(t *testing.T) {
 	if !receipt.Accepted {
 		t.Fatal(receipt)
 	}
-	broken := awaitInsight(t, s, author, snapshot.ID, receipt.Revision, types.InsightCurrent)
+	broken := awaitInsight(t, s, author, snapshot.ID, receipt.Revision, insight.Current)
 	if broken.Syntax == nil || !broken.Syntax.HasError || len(broken.Syntax.Problems) == 0 {
 		t.Fatal("malformed syntax was presented as a zero-error result")
 	}
@@ -129,7 +129,7 @@ func TestInsightCanonicalRevisionSharedAndDetachedSnapshots(t *testing.T) {
 
 func TestInsightReplacementServiceHasDistinctPublicationGeneration(t *testing.T) {
 	s, snapshot, owner := insightFixture(t, "main.go", "package main\n")
-	first := awaitInsight(t, s, owner, snapshot.ID, 1, types.InsightCurrent)
+	first := awaitInsight(t, s, owner, snapshot.ID, 1, insight.Current)
 	s.Close()
 	replacement := NewDocumentService(filepath.Dir(snapshot.Path), nil, nil)
 	defer replacement.Close()
@@ -138,7 +138,7 @@ func TestInsightReplacementServiceHasDistinctPublicationGeneration(t *testing.T)
 	if err != nil || reopened.ID != snapshot.ID || reopened.Revision != snapshot.Revision {
 		t.Fatalf("replacement source=%+v err=%v", reopened, err)
 	}
-	second := awaitInsight(t, replacement, owner, reopened.ID, 1, types.InsightCurrent)
+	second := awaitInsight(t, replacement, owner, reopened.ID, 1, insight.Current)
 	if first.Generation == "" || second.Generation == "" || first.Generation == second.Generation {
 		t.Fatalf("fresh service reused publication identity: %q -> %q", first.Generation, second.Generation)
 	}
@@ -153,7 +153,7 @@ func TestInsightPendingEditsCloseReopenAndDetach(t *testing.T) {
 			t.Fatal(r)
 		}
 	}
-	pending := awaitInsight(t, s, owner, snapshot.ID, 41, types.InsightPending)
+	pending := awaitInsight(t, s, owner, snapshot.ID, 41, insight.Pending)
 	if pending.Syntax != nil {
 		t.Fatal("pending analysis retained obsolete clean/error evidence")
 	}
@@ -174,7 +174,7 @@ func TestInsightPendingEditsCloseReopenAndDetach(t *testing.T) {
 	if queued > 1 {
 		t.Fatalf("one live document retained %d queued analyses", queued)
 	}
-	reopened := awaitInsight(t, s, owner, snapshot.ID, 41, types.InsightPending)
+	reopened := awaitInsight(t, s, owner, snapshot.ID, 41, insight.Pending)
 	if reopened.Version <= pending.Version {
 		t.Fatal("same-revision reopen reused a closed analysis generation")
 	}
@@ -188,7 +188,7 @@ func TestInsightPendingEditsCloseReopenAndDetach(t *testing.T) {
 		t.Fatal(err)
 	}
 	release()
-	current := awaitInsight(t, s, owner, snapshot.ID, 41, types.InsightCurrent)
+	current := awaitInsight(t, s, owner, snapshot.ID, 41, insight.Current)
 	if current.Version <= reopened.Version || current.Syntax == nil || current.Syntax.Revision != 41 || current.Syntax.HasError {
 		t.Fatalf("late queued generation replaced reopened source: %+v", current)
 	}
@@ -214,14 +214,14 @@ func TestInsightRenameChangesLanguageWithoutSourceRevision(t *testing.T) {
 		}
 	}
 	rename("source.txt")
-	unavailable := awaitInsight(t, s, owner, snapshot.ID, 1, types.InsightUnsupported)
+	unavailable := awaitInsight(t, s, owner, snapshot.ID, 1, insight.Unsupported)
 	if unavailable.Syntax != nil || unavailable.Detail == "" || unavailable.Path != snapshot.Path {
 		t.Fatal("unsupported language masquerades as clean native analysis")
 	}
 	rename("source.py")
-	awaitInsight(t, s, owner, snapshot.ID, 1, types.InsightPending)
+	awaitInsight(t, s, owner, snapshot.ID, 1, insight.Pending)
 	release()
-	current := awaitInsight(t, s, owner, snapshot.ID, 1, types.InsightCurrent)
+	current := awaitInsight(t, s, owner, snapshot.ID, 1, insight.Current)
 	if current.Path != snapshot.Path || current.Syntax == nil || current.Syntax.Identity.Language != syntax.Python || current.Syntax.HasError {
 		t.Fatalf("pre-rename Go analysis escaped the path/language fence: %+v", current)
 	}
@@ -230,7 +230,7 @@ func TestInsightRenameChangesLanguageWithoutSourceRevision(t *testing.T) {
 func TestInsightShutdownCancelsWaitingNativeWork(t *testing.T) {
 	holdInsightAdmission(t)
 	s, snapshot, owner := insightFixture(t, "main.go", "package main\n")
-	awaitInsight(t, s, owner, snapshot.ID, 1, types.InsightPending)
+	awaitInsight(t, s, owner, snapshot.ID, 1, insight.Pending)
 	done := make(chan struct{})
 	go func() { s.Close(); close(done) }()
 	select {
@@ -248,7 +248,7 @@ func TestInsightOversizedProjectionIsExplicitAndRecovers(t *testing.T) {
 	// roles exceed the derived-view budget. No partial result may look clean.
 	source := "package main\n" + strings.Repeat("var value = 123\n", 20000)
 	s, snapshot, owner := insightFixture(t, "large.go", source)
-	limited := awaitInsight(t, s, owner, snapshot.ID, 1, types.InsightLimited)
+	limited := awaitInsight(t, s, owner, snapshot.ID, 1, insight.Limited)
 	if limited.Syntax != nil || limited.Detail == "" {
 		t.Fatalf("limited result lost its explicit unavailable state: %+v", limited)
 	}
@@ -257,7 +257,7 @@ func TestInsightOversizedProjectionIsExplicitAndRecovers(t *testing.T) {
 	if !receipt.Accepted {
 		t.Fatal(receipt)
 	}
-	pending := awaitInsight(t, s, owner, snapshot.ID, receipt.Revision, types.InsightPending)
+	pending := awaitInsight(t, s, owner, snapshot.ID, receipt.Revision, insight.Pending)
 	if pending.Syntax != nil || pending.Detail != "" {
 		t.Fatal("new source inherited prior revision's limitation")
 	}
@@ -268,7 +268,7 @@ func TestInsightOversizedProjectionIsExplicitAndRecovers(t *testing.T) {
 	s.Detach(owner)
 	s.ReleaseDetached(owner)
 	release()
-	current := awaitInsight(t, s, peer, snapshot.ID, receipt.Revision, types.InsightCurrent)
+	current := awaitInsight(t, s, peer, snapshot.ID, receipt.Revision, insight.Current)
 	if current.Syntax == nil || current.Syntax.HasError || current.Detail != "" {
 		t.Fatalf("remaining peer did not recover current analysis: %+v", current)
 	}
@@ -276,7 +276,7 @@ func TestInsightOversizedProjectionIsExplicitAndRecovers(t *testing.T) {
 
 func TestInsightMetadataDoesNotReparseAndLastViewWakesRawSubscriber(t *testing.T) {
 	s, snapshot, owner := insightFixture(t, "main.go", "package main\n")
-	first := awaitInsight(t, s, owner, snapshot.ID, 1, types.InsightCurrent)
+	first := awaitInsight(t, s, owner, snapshot.ID, 1, insight.Current)
 	wake, unsubscribe, err := s.Insight.Subscribe(owner, snapshot.ID)
 	if err != nil {
 		t.Fatal(err)

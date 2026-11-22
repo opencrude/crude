@@ -5,15 +5,15 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/session"
-	"crude/types"
+	"crude/types/setting"
 )
 
 func TestAutoPermissionSettingsReachExistingAndFutureSessions(t *testing.T) {
 	setTestHome(t)
 	root := t.TempDir()
-	w := NewWorkspace(root, "model", "tester", types.Settings{}, &testLogger{})
+	w := NewWorkspace(root, "model", "tester", setting.Settings{}, &testLogger{})
 	t.Cleanup(w.Close)
-	w.SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
+	w.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}})
 	cfg := &session.Config{Accounts: map[string]provider.Account{"test-account": {ID: "test-account", ProviderID: "openai", Label: "Test", APIKey: "test", Connection: provider.DefaultTemplates()["openai"]}}, Agents: session.DefaultAgentsConfig()}
 	profile := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
 	main := profile.Categories[session.CategoryDefault]
@@ -26,7 +26,7 @@ func TestAutoPermissionSettingsReachExistingAndFutureSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 	app := w.AppDefaults()
-	app.Safety.AutoPermission = types.AutoPermissionSettings{Enabled: "on", Provider: "openai", Model: "cheap-model"}
+	app.Safety.AutoPermission = setting.AutoPermission{Enabled: "on", Provider: "openai", Model: "cheap-model"}
 	w.SetAppDefaults(app)
 	if got := frontend.backend.SettingsSnapshot().Safety.AutoPermission; got.Enabled != "on" || got.Model != "cheap-model" {
 		t.Fatalf("existing session ignored enabled reviewer: %+v", got)
@@ -36,7 +36,7 @@ func TestAutoPermissionSettingsReachExistingAndFutureSessions(t *testing.T) {
 	}
 	working := w.EffectiveAppSettings()
 	working.Safety.AutoPermission.Enabled = "off"
-	if err := w.SaveWorkspaceSettings(types.OverridesFromDiff(app, working)); err != nil {
+	if err := w.SaveWorkspaceSettings(setting.OverridesFromDiff(app, working)); err != nil {
 		t.Fatal(err)
 	}
 	if got := frontend.backend.SettingsSnapshot().Safety.AutoPermission; got.Enabled != "off" || got.Model != "cheap-model" {

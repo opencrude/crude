@@ -13,11 +13,11 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"crude/agent"
 	"crude/agent/capability"
 	"crude/agent/collaboration"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
+	"crude/agent/turnloop"
 	captypes "crude/types/capability"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -118,7 +118,7 @@ func TestSessionCapabilityGateAppliesToRunningAgent(test *testing.T) {
 	}
 	defer owner.Close()
 	owner.SetWorkDir(root)
-	owner.SetCapabilities(runtime, agent.NewFileOwnership())
+	owner.SetCapabilities(runtime, turnloop.NewFileOwnership())
 	store, err := collaboration.Attach(database, root, filepath.Join(home, "locks"))
 	if err != nil {
 		test.Fatal(err)

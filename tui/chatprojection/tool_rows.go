@@ -10,19 +10,19 @@ import (
 	"crude/tui/theme"
 	"crude/tui/tools"
 	"crude/tui/ui"
-	"crude/types"
 	captypes "crude/types/capability"
+	"crude/types/conversation"
 )
 
-func toolRowFrameSensitive(msg types.ChatMessage) bool {
-	return (msg.ToolStatus == "streaming" || msg.ToolStatus == "calling") && msg.ToolPreviewPhase != types.ToolPreviewDone && msg.ToolPreviewPhase != types.ToolPreviewError
+func toolRowFrameSensitive(msg conversation.ChatMessage) bool {
+	return (msg.ToolStatus == "streaming" || msg.ToolStatus == "calling") && msg.ToolPreviewPhase != conversation.ToolPreviewDone && msg.ToolPreviewPhase != conversation.ToolPreviewError
 }
 
-func buildProjectToolTitleLine(msg types.ChatMessage, titlePhase string, spinFrame int, paths *tools.ProjectPaths) PaintLine {
+func buildProjectToolTitleLine(msg conversation.ChatMessage, titlePhase string, spinFrame int, paths *tools.ProjectPaths) PaintLine {
 	title := tools.BuildToolTitle(msg, titlePhase)
 	title.Operand = paths.ToolOperand(&msg, title.Operand)
 	isActive := toolRowFrameSensitive(msg)
-	settled := msg.ToolPreviewPhase == types.ToolPreviewDone || msg.ToolPreviewPhase == types.ToolPreviewError
+	settled := msg.ToolPreviewPhase == conversation.ToolPreviewDone || msg.ToolPreviewPhase == conversation.ToolPreviewError
 	return paintToolTitle(title, msg.ToolStatus, isActive, settled, spinFrame, tools.PermTagSuffix(msg.PermTag))
 }
 
@@ -32,17 +32,17 @@ func paintToolTitle(title tools.ToolTitle, status string, active, settled bool, 
 	dot := "● "
 	if title.Failed {
 		dot = "× "
-	} else if status == types.ToolStatusCancelled || status == "interrupted" {
+	} else if status == conversation.ToolStatusCancelled || status == "interrupted" {
 		dot = "○ "
 	} else if active {
 		dot = ui.ActivityDot(spinFrame) + " "
-	} else if !settled && status != types.ToolStatusSuccess && status != types.ToolStatusError {
+	} else if !settled && status != conversation.ToolStatusSuccess && status != conversation.ToolStatusError {
 		dot = "○ "
 	}
 
 	titleRole := ui.ColorToolTitle
 	iconRole := ui.ColorToolTitle
-	if status == types.ToolStatusCancelled || status == "interrupted" {
+	if status == conversation.ToolStatusCancelled || status == "interrupted" {
 		iconRole = ui.ColorMuted
 	}
 	if title.Failed {
@@ -68,7 +68,7 @@ func paintToolTitle(title tools.ToolTitle, status string, active, settled bool, 
 	return PaintLine{Spans: spans}
 }
 
-func buildProjectToolTitleLines(msg types.ChatMessage, phase string, frame, width int, disclosure DisclosureState, paths *tools.ProjectPaths) []PaintLine {
+func buildProjectToolTitleLines(msg conversation.ChatMessage, phase string, frame, width int, disclosure DisclosureState, paths *tools.ProjectPaths) []PaintLine {
 	titleMessage := msg
 	if disclosure == DisclosureExpanded && proseFailure(msg) {
 		titleMessage.Content = ""
@@ -90,7 +90,7 @@ func buildProjectToolTitleLines(msg types.ChatMessage, phase string, frame, widt
 		header.Spans = append(header.Spans, suffix...)
 		lines = wrapToolTitle(header, width)
 	}
-	if msg.ToolName == "web_search" && msg.ToolStatus == types.ToolStatusError && msg.ToolOutcome.Code == captypes.WebSearchOutage {
+	if msg.ToolName == "web_search" && msg.ToolStatus == conversation.ToolStatusError && msg.ToolOutcome.Code == captypes.WebSearchOutage {
 		label := "Set up search methods"
 		if rendering.VisibleWidth(label)+2 > width {
 			label = "Search settings"
@@ -216,20 +216,20 @@ func buildToolTruncationLine(remaining, width int) PaintLine {
 // literal would be painted in the patch gutter, and a tool name alone
 // misroutes prose: a no-change edit whose body is only the result's own
 // summary sentence would become a fake hunk row through the lenient parser.
-func isToolRichBody(msg types.ChatMessage, resultContent string) bool {
+func isToolRichBody(msg conversation.ChatMessage, resultContent string) bool {
 	if tools.IsPlanTool(msg.ToolName) {
 		return true
 	}
 	return tools.IsPatchCardTool(msg.ToolName) && tools.IsDiffContent(resultContent)
 }
 
-func renderProjectToolMessageLines(msg types.ChatMessage, th *theme.Theme, contentWidth, innerW, width, spinFrame, height int, phase string, disclosure DisclosureState, paths *tools.ProjectPaths) messageLines {
+func renderProjectToolMessageLines(msg conversation.ChatMessage, th *theme.Theme, contentWidth, innerW, width, spinFrame, height int, phase string, disclosure DisclosureState, paths *tools.ProjectPaths) messageLines {
 	commandResult, commandOK := toolargs.ParseCommandResult(msg.ToolName, msg.Content)
 	if commandOK {
 		if commandResult.Cancelled {
-			msg.ToolStatus, msg.ToolPreviewPhase = types.ToolStatusCancelled, types.ToolPreviewDone
+			msg.ToolStatus, msg.ToolPreviewPhase = conversation.ToolStatusCancelled, conversation.ToolPreviewDone
 		} else if commandResult.Failed() {
-			msg.ToolStatus, msg.ToolPreviewPhase = types.ToolStatusError, types.ToolPreviewError
+			msg.ToolStatus, msg.ToolPreviewPhase = conversation.ToolStatusError, conversation.ToolPreviewError
 		}
 	}
 	titlePhase := msg.ToolPreviewPhase
@@ -237,13 +237,13 @@ func renderProjectToolMessageLines(msg types.ChatMessage, th *theme.Theme, conte
 		titlePhase = phase
 	}
 	switch msg.ToolStatus {
-	case types.ToolStatusSuccess:
-		titlePhase = types.ToolPreviewDone
-	case types.ToolStatusError:
-		titlePhase = types.ToolPreviewError
-	case types.ToolStatusCalling, types.ToolStatusStreaming:
+	case conversation.ToolStatusSuccess:
+		titlePhase = conversation.ToolPreviewDone
+	case conversation.ToolStatusError:
+		titlePhase = conversation.ToolPreviewError
+	case conversation.ToolStatusCalling, conversation.ToolStatusStreaming:
 		if titlePhase == "" {
-			titlePhase = types.ToolPreviewStreaming
+			titlePhase = conversation.ToolPreviewStreaming
 		}
 	}
 
@@ -254,14 +254,14 @@ func renderProjectToolMessageLines(msg types.ChatMessage, th *theme.Theme, conte
 		out.lines = append(out.lines, line.PlainText())
 		out.native = append(out.native, line)
 	}
-	if !expanded && msg.ToolStatus != types.ToolStatusCalling && msg.ToolStatus != types.ToolStatusStreaming {
+	if !expanded && msg.ToolStatus != conversation.ToolStatusCalling && msg.ToolStatus != conversation.ToolStatusStreaming {
 		return out
 	}
 	if isCommandEvidenceTool(msg.ToolName) && !expanded {
 		return out
 	}
 	if tools.IsStructuredTool(msg.ToolName) {
-		if msg.ToolStatus == types.ToolStatusSuccess {
+		if msg.ToolStatus == conversation.ToolStatusSuccess {
 			out.appendStructuredToolBody(tools.BuildStructuredResult(msg.ToolName, msg.Content, msg.ToolInput), msg.ToolInput, innerW, height, expanded)
 		} else if expanded {
 			out.appendStructuredToolBody(tools.BuildReadableResult(msg.Content), msg.ToolInput, innerW, height, expanded)
@@ -293,7 +293,7 @@ func renderProjectToolMessageLines(msg types.ChatMessage, th *theme.Theme, conte
 		out.appendPlainToolBody(msg.ToolName, output, innerW, height, false, expanded)
 		return out
 	}
-	if isCommandEvidenceTool(msg.ToolName) && (msg.ToolStatus == types.ToolStatusSuccess || msg.ToolStatus == types.ToolStatusError || expanded && msg.ToolStatus == types.ToolStatusCancelled) {
+	if isCommandEvidenceTool(msg.ToolName) && (msg.ToolStatus == conversation.ToolStatusSuccess || msg.ToolStatus == conversation.ToolStatusError || expanded && msg.ToolStatus == conversation.ToolStatusCancelled) {
 		// Plain failures and retained historical output use the same literal
 		// body, without guessing headers, stripping paths or trimming indentation.
 		out.appendPlainToolBody(msg.ToolName, msg.Content, innerW, height, false, expanded)
@@ -326,7 +326,7 @@ func renderProjectToolMessageLines(msg types.ChatMessage, th *theme.Theme, conte
 				out.appendPlainToolBody(msg.ToolName, body, innerW, height, false, expanded)
 			}
 		}
-	} else if msg.ToolStatus != types.ToolStatusCalling && msg.ToolStatus != types.ToolStatusStreaming {
+	} else if msg.ToolStatus != conversation.ToolStatusCalling && msg.ToolStatus != conversation.ToolStatusStreaming {
 		if msg.ToolName == "apply_patch" && tools.IsDiffContent(msg.Content) {
 			prefix, _, _ := strings.Cut(msg.Content, "```diff")
 			prose := msg
@@ -350,9 +350,9 @@ func toolSupportsDisclosure(toolName string) bool {
 	return toolName != "" && toolName != "reply"
 }
 
-func proseFailure(message types.ChatMessage) bool {
-	return message.Content != "" && message.ToolStatus != types.ToolStatusSuccess &&
-		message.ToolStatus != types.ToolStatusCalling && message.ToolStatus != types.ToolStatusStreaming &&
+func proseFailure(message conversation.ChatMessage) bool {
+	return message.Content != "" && message.ToolStatus != conversation.ToolStatusSuccess &&
+		message.ToolStatus != conversation.ToolStatusCalling && message.ToolStatus != conversation.ToolStatusStreaming &&
 		!toolargs.IsCommandTool(message.ToolName) && !tools.IsStructuredTool(message.ToolName) && !tools.IsPlanTool(message.ToolName)
 }
 
@@ -555,7 +555,7 @@ func buildPlainToolResultLine(text string) PaintLine {
 	}}
 }
 
-func (ml *messageLines) appendRichToolBody(msg types.ChatMessage, resultContent string, th *theme.Theme, contentWidth, innerW, height int, expanded bool) {
+func (ml *messageLines) appendRichToolBody(msg conversation.ChatMessage, resultContent string, th *theme.Theme, contentWidth, innerW, height int, expanded bool) {
 	_ = th
 	if tools.IsPlanTool(msg.ToolName) {
 		// Collapsed renders the windowed card around the live step; expanding

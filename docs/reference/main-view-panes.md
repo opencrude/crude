@@ -508,7 +508,7 @@ reads or changes them, so concurrent users do not disturb each other.
   terminal does not reopen everything; the copy is never written back.
 - **Settings stay explicit.** Changing **Show hidden files** in Settings
   replaces this client's quick toggle; other settings are not view memory.
-- Guarded by `clientstate/view_memory_test.go`,
+- Guarded by `internal/clientstate/view_memory_test.go`,
   `tui/viewmodel/client_view_memory_test.go` and
   `tui/viewmodel/client_view_memory_panes_test.go`.
 

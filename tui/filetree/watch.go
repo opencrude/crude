@@ -1,7 +1,6 @@
-// Package filetree provides the file tree sidebar widget for the Crude CLI.
-//
 // This file implements the file system watcher using fsnotify,
 // providing debounced file change events for the tree model.
+
 package filetree
 
 import (

@@ -13,7 +13,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"crude/buildinfo"
+	"crude/internal/buildinfo"
 )
 
 const Local = "local"

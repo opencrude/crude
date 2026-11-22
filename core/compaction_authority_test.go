@@ -14,8 +14,9 @@ import (
 	"crude/agent/provider"
 	"crude/agent/session"
 	"crude/agent/sessiondb"
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/types/conversation"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -77,8 +78,8 @@ func newCompactionAuthorityFixture(t *testing.T, turns []string) *compactionAuth
 	}))
 	t.Cleanup(server.Close)
 	runtime, err := New(func(root string) (*workspace.Workspace, error) {
-		w := workspace.NewWorkspace(root, "model", "tester", types.Settings{}, coreTestLogger{})
-		w.SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}, Memory: types.MemorySettings{AutoRecall: "off", AutoExtract: "off", Consolidation: "off"}})
+		w := workspace.NewWorkspace(root, "model", "tester", setting.Settings{}, coreTestLogger{})
+		w.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}, Memory: setting.Memory{AutoRecall: "off", AutoExtract: "off", Consolidation: "off"}})
 		off := false
 		cfg := &session.Config{Agents: session.AgentsConfig{ActiveProfile: "default", Profiles: map[string]session.ProfileConfig{"default": {MultiAgent: &off, Categories: map[string]session.CategoryConfig{
 			session.CategoryDefault: {AccountID: "test", Model: "model", ModelContextWindow: 200_000, ModelSupportsTools: true},
@@ -130,9 +131,9 @@ func (f *compactionAuthorityFixture) requestKinds() string {
 	return strings.Join(f.kinds, ",")
 }
 
-func (f *compactionAuthorityFixture) compact(id string) types.CompactResultMsg {
+func (f *compactionAuthorityFixture) compact(id string) conversation.CompactResultMsg {
 	f.t.Helper()
-	var result types.CompactResultMsg
+	var result conversation.CompactResultMsg
 	if err := coreprotocol.Decode(callCore(f.t, f.c, id, f.wsID, coreprotocol.AgentCompact, coreprotocol.AgentIDRequest{AgentID: f.created.OrchID}).Payload, &result); err != nil {
 		f.t.Fatal(err)
 	}

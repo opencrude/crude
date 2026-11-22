@@ -7,23 +7,23 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/core/port"
-	"crude/core/protocol"
-	"crude/text/indent"
+	"crude/core/coreprotocol"
+	"crude/core/shellport"
+	"crude/text/indentation"
 	"crude/tui/filetree"
 	"crude/workspace"
 )
 
 // newClientFileTree never constructs a client Git resolver or disk watcher for
 // a connected workspace. Sequence state belongs to this exact model lifetime.
-func newClientFileTree(m *App) *filetree.FileTreeModel {
+func newClientFileTree(m *App) *filetree.Model {
 	files, ok := m.ws.(shellport.ClientFiles)
 	if !ok {
 		model := filetree.NewPlaceholderFileTreeModel(m.ws.RootPath())
 		model.SetShowHidden(m.treeShowHidden())
 		return model
 	}
-	var model *filetree.FileTreeModel
+	var model *filetree.Model
 	var mu sync.Mutex
 	sequences := make(map[string]uint64)
 	generation := m.workspaceSwitchGen.Load()
@@ -149,7 +149,7 @@ func (m *App) applyCoreFileChanges(changes []coreprotocol.FileChange) tea.Cmd {
 	return tea.Batch(commands...)
 }
 
-func clientDirectoryListing(path string, entries []shellport.ClientDirectoryEntry) workspace.DirectoryListing {
+func clientDirectoryListing(path string, entries []coreprotocol.ClientDirectoryEntry) workspace.DirectoryListing {
 	listing := workspace.DirectoryListing{Path: path, Entries: make([]workspace.DirectoryEntry, len(entries))}
 	for i, e := range entries {
 		listing.Entries[i] = workspace.DirectoryEntry{Name: e.Name, Path: e.Path, IsDir: e.IsDir}

@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"crude/agent/provider"
-	ttypes "crude/types"
+	"crude/types/conversation"
 )
 
 // DB wraps an open session DB for test fixtures (shared across test files).
@@ -332,7 +332,7 @@ func TestGetMeta(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	meta, err := GetMeta(db)
+	meta, err := LoadMeta(db)
 	if err != nil {
 		t.Fatalf("GetMeta: %v", err)
 	}
@@ -361,7 +361,7 @@ func TestUpdateFirstLastPrompt(t *testing.T) {
 	_ = UpdateFirstPrompt(db, "t", "first prompt text that is very long and should be truncated at 200 characters but this one is short enough")
 	_ = UpdateLastPrompt(db, "t", "last prompt")
 
-	meta, _ := GetMeta(db)
+	meta, _ := LoadMeta(db)
 	if !meta.FirstPrompt.Valid {
 		t.Fatal("first_prompt should be valid")
 	}
@@ -373,7 +373,7 @@ func TestUpdateFirstLastPrompt(t *testing.T) {
 	}
 
 	_ = UpdateFirstPrompt(db, "t", "should not overwrite")
-	meta2, _ := GetMeta(db)
+	meta2, _ := LoadMeta(db)
 	if meta2.FirstPrompt.String == "should not overwrite" {
 		t.Error("UpdateFirstPrompt should not overwrite existing value")
 	}
@@ -697,7 +697,7 @@ func TestGetCumulativeCostEmpty(t *testing.T) {
 	db, _ := OpenAndMigrate(dbPath)
 	defer db.Close()
 
-	got, err := GetCumulativeCost(db)
+	got, err := LoadCumulativeCost(db)
 	if err != nil {
 		t.Fatalf("GetCumulativeCost on empty DB: %v", err)
 	}
@@ -722,7 +722,7 @@ func TestGetCumulativeCostSumsKnownRequests(t *testing.T) {
 		}
 	}
 
-	got, err := GetCumulativeCost(db)
+	got, err := LoadCumulativeCost(db)
 	if err != nil {
 		t.Fatalf("GetCumulativeCost: %v", err)
 	}
@@ -740,7 +740,7 @@ func TestCanonicalConversationSnapshotRoundTripsEveryField(t *testing.T) {
 	}
 	// JSON preserves the instant/offset, not a platform's Local location object.
 	now := time.Now().UTC().Round(0)
-	want := ttypes.ConversationMessage{
+	want := conversation.Message{
 		InternalID: "message-1", Role: "tool", Content: "result", ReferenceLabels: []string{"@one"}, Time: now,
 		ToolName: "agent_start", ToolArgs: "description: inspect", ToolCommand: "go test ./...",
 		ToolInput: "needle", ToolScope: "workspace", ToolID: "call-1", ToolStatus: "success", ToolIndex: 4,
@@ -755,7 +755,7 @@ func TestCanonicalConversationSnapshotRoundTripsEveryField(t *testing.T) {
 	}
 	message := provider.NewTextMessage("tool", "result")
 	message.ToolCallID = "call-1"
-	meta := DisplayMeta{SnapshotVersion: ConversationSnapshotVersion, Snapshots: []ttypes.ConversationMessage{want}}
+	meta := DisplayMeta{SnapshotVersion: ConversationSnapshotVersion, Snapshots: []conversation.Message{want}}
 	if _, err := ReplaceMessagesWithMeta(db, "session", []provider.ChatMessage{message}, []int{1}, []DisplayMeta{meta}); err != nil {
 		t.Fatal(err)
 	}
@@ -778,7 +778,7 @@ func TestContextStateRoundTripsIndependentlyFromDisplayHistory(t *testing.T) {
 		{
 			Role: "user", Origin: provider.OriginCheckpoint, Visibility: provider.VisibilityContextOnly,
 			Content:       provider.TextContent(`<context_checkpoint role="root" version="2">checkpoint</context_checkpoint>`),
-			ProviderItems: []provider.ProviderItem{{Standard: "openai", Type: "reasoning", Data: json.RawMessage(`{"id":"reasoning-1"}`), ReplayScope: "scope", SourceModel: "model", PrefixHash: "prefix"}},
+			ProviderItems: []provider.Item{{Standard: "openai", Type: "reasoning", Data: json.RawMessage(`{"id":"reasoning-1"}`), ReplayScope: "scope", SourceModel: "model", PrefixHash: "prefix"}},
 			ReplayScope:   "scope", ReplaySourceModel: "model", ReplayPrefixHash: "prefix",
 		},
 		provider.NewTextMessage("user", "latest request"),

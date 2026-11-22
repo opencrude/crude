@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"crude/buildinfo"
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
+	"crude/internal/buildinfo"
 	"crude/types/inspect"
 )
 

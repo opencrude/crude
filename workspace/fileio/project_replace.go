@@ -1,8 +1,8 @@
 package fileio
 
 import (
-	"crude/text/encoding"
-	"crude/text/search"
+	"crude/text/textencoding"
+	"crude/text/textsearch"
 	"fmt"
 	"os"
 	"sort"

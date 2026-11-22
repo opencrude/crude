@@ -8,14 +8,16 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/agent/provider"
-	ttypes "crude/types"
 	captypes "crude/types/capability"
+	"crude/types/conversation"
+	"crude/types/setting"
+	"crude/types/statuscenter"
 )
 
 type slashBackendResultMsg struct {
 	agentID string
 	command string
-	compact *ttypes.CompactResultMsg
+	compact *conversation.CompactResultMsg
 }
 
 func (m *App) executeSlashCommand(cmd string) tea.Cmd {
@@ -103,7 +105,7 @@ func (m *App) executeSlashCommandWithRefs(cmd string, referenceIDs []string) tea
 			}
 		}
 		if m.AgentView.ActiveID() != "" {
-			m.appendActiveMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: b.String(), Time: time.Now()})
+			m.appendActiveMessage(conversation.ChatMessage{Role: conversation.RoleAssistant, Content: b.String(), Time: time.Now()})
 		}
 
 	case "/fast":
@@ -164,7 +166,7 @@ func (m *App) handleSlashBackendResult(msg slashBackendResultMsg) {
 // presentCompactResult shows the session's own words for a /compact outcome.
 // The boundary row in the chat carries progress and the final result; this is
 // the immediate answer to the command.
-func (m *App) presentCompactResult(agentID string, result ttypes.CompactResultMsg) {
+func (m *App) presentCompactResult(agentID string, result conversation.CompactResultMsg) {
 	switch {
 	case result.Cancelled:
 		m.ws.Logger().Info("COMPACT", "slash_cancelled", "operation_id", result.OperationID)
@@ -173,7 +175,7 @@ func (m *App) presentCompactResult(agentID string, result ttypes.CompactResultMs
 		m.Feedback.NotifyError(result.Error)
 	case result.Desc != "":
 		m.ws.Logger().Info("COMPACT", "slash_ok", "operation_id", result.OperationID, "before", result.Before, "after", result.After)
-		m.Feedback.NotifyAgentTransient(agentID, result.Desc, ttypes.SeverityInfo)
+		m.Feedback.NotifyAgentTransient(agentID, result.Desc, statuscenter.SeverityInfo)
 	}
 }
 
@@ -188,9 +190,9 @@ func (m *App) toggleSessionFastTier() tea.Cmd {
 		return nil
 	}
 	settings := owner.Settings.Effective
-	before := ttypes.SessionPreferencesOf(settings)
+	before := setting.SessionPreferencesOf(settings)
 	before.Overrides = owner.Settings.Overrides
-	overrides := make(map[string]ttypes.CategorySettings, len(owner.Settings.Overrides)+1)
+	overrides := make(map[string]setting.Category, len(owner.Settings.Overrides)+1)
 	for key, value := range owner.Settings.Overrides {
 		overrides[key] = value
 	}
@@ -206,7 +208,7 @@ func (m *App) toggleSessionFastTier() tea.Cmd {
 	}
 	overrides[key] = current
 	settings.SessionOverrides = overrides
-	settings.SessionEdits = ttypes.SettingsEdits(before, ttypes.SessionPreferencesOf(settings))
+	settings.SessionEdits = setting.Edits(before, setting.SessionPreferencesOf(settings))
 	operation, err := runtime.PrepareSessionSettingsSave(owner.SessionID, settings)
 	if err != nil {
 		m.Feedback.NotifyError(err.Error())
@@ -217,14 +219,14 @@ func (m *App) toggleSessionFastTier() tea.Cmd {
 		result := operation.Run()
 		label := "Fast off · inherited speed"
 		switch result.Snapshot.Effective.FastMode {
-		case ttypes.FastModeOn:
+		case setting.FastModeOn:
 			label = "⚡ Fast on · next request (premium)"
 			if !enable {
 				label = "⚡ Fast still on · inherited speed"
 			}
-		case ttypes.FastModeUnsupported:
+		case setting.FastModeUnsupported:
 			label = "⚡ Fast unsupported"
-		case ttypes.FastModeUnavailable:
+		case setting.FastModeUnavailable:
 			label = "⚡ Fast unavailable"
 		}
 		return selectedSessionSettingsResult{workspace: runtime, generation: generation, owner: owner, result: result, label: label}

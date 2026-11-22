@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"crude/core"
-	"crude/core/protocol"
-	"crude/terminalvt"
+	"crude/core/coreprotocol"
+	"crude/internal/terminalvt"
 	"crude/workspace"
 
 	"golang.org/x/sys/windows"

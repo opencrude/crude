@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"crude/types"
+	"crude/types/setting"
 )
 
 // Settings › Agents › Command shell is stored once in the application config
@@ -13,7 +13,7 @@ func TestAgentShellEditPersistsAndReachesSessions(t *testing.T) {
 	current := FileConfig{}
 	desired := FileConfigToAppSettings(current)
 	desired.Agents.Shell = "git-bash"
-	if err := applyPreferenceEdits(&current, desired, []types.SettingEdit{{Path: []string{"agents", "shell"}, After: json.RawMessage(`"git-bash"`)}}); err != nil {
+	if err := applyPreferenceEdits(&current, desired, []setting.Edit{{Path: []string{"agents", "shell"}, After: json.RawMessage(`"git-bash"`)}}); err != nil {
 		t.Fatal(err)
 	}
 	if got := FileConfigToAppSettings(current).Agents.Shell; got != "git-bash" {
@@ -28,7 +28,7 @@ func TestAgentShellEditPersistsAndReachesSessions(t *testing.T) {
 		t.Fatalf("reloaded shell = %+v, %v", reloaded.Agents, err)
 	}
 	desired.Agents.Shell = ""
-	if err := applyPreferenceEdits(&current, desired, []types.SettingEdit{{Path: []string{"agents", "shell"}}}); err != nil {
+	if err := applyPreferenceEdits(&current, desired, []setting.Edit{{Path: []string{"agents", "shell"}}}); err != nil {
 		t.Fatal(err)
 	}
 	if got := FileConfigToSession(current).Agents.Shell; got != "" {

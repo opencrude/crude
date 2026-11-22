@@ -11,10 +11,10 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/core/client"
-	"crude/core/protocol"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
 	"crude/tui/editor"
-	"crude/types"
+	"crude/types/insight"
 	"crude/workspace/document"
 )
 
@@ -24,9 +24,9 @@ type retryCompletionPort struct {
 	calls atomic.Int32
 }
 
-func (p *retryCompletionPort) RequestLSPCompletions(ctx context.Context, source types.InsightSource, view string, sequence uint64, line, col int, trigger types.LSPCompletionContext) (types.LSPCompletionSet, error) {
+func (p *retryCompletionPort) RequestLSPCompletions(ctx context.Context, source insight.Source, view string, sequence uint64, line, col int, trigger insight.LSPCompletionContext) (insight.LSPCompletionSet, error) {
 	if p.calls.Add(1) == 1 {
-		return types.LSPCompletionSet{}, p.first
+		return insight.LSPCompletionSet{}, p.first
 	}
 	return p.completionTestPort.RequestLSPCompletions(ctx, source, view, sequence, line, col, trigger)
 }
@@ -62,13 +62,13 @@ type retryInlayPort struct {
 	calls atomic.Int32
 }
 
-func (p *retryInlayPort) RequestLSPInlayHints(_ context.Context, source types.InsightSource, view string, seq uint64, span types.LSPInlayRange) (types.LSPInlaySet, error) {
+func (p *retryInlayPort) RequestLSPInlayHints(_ context.Context, source insight.Source, view string, seq uint64, span insight.LSPInlayRange) (insight.LSPInlaySet, error) {
 	if p.calls.Add(1) == 1 {
-		return types.LSPInlaySet{}, p.first
+		return insight.LSPInlaySet{}, p.first
 	}
-	return types.LSPInlaySet{ID: "inlay-result", Digest: strings.Repeat("a", 64), ViewID: view, Sequence: seq, Range: span, WireVersion: 1,
-		Boundary: types.InsightBoundary{Source: source, Context: types.InsightContext{Generation: p.service.cursor}, Producer: types.InsightProducer{InstanceID: "independent-provider"}},
-		Answer:   "hints", ExpiresAt: time.Now().Add(time.Minute), Hints: []types.LSPInlayHint{{Index: 0, SourceByte: 1, Position: types.LSPInlayPosition{Line: 0, Character: 1}, Label: "hint"}}}, nil
+	return insight.LSPInlaySet{ID: "inlay-result", Digest: strings.Repeat("a", 64), ViewID: view, Sequence: seq, Range: span, WireVersion: 1,
+		Boundary: insight.Boundary{Source: source, Context: insight.Context{Generation: p.service.cursor}, Producer: insight.Producer{InstanceID: "independent-provider"}},
+		Answer:   "hints", ExpiresAt: time.Now().Add(time.Minute), Hints: []insight.LSPInlayHint{{Index: 0, SourceByte: 1, Position: insight.LSPInlayPosition{Line: 0, Character: 1}, Label: "hint"}}}, nil
 }
 func inlayRetryFixture(t *testing.T, first error) (*App, *editor.Editor, *retryInlayPort) {
 	t.Helper()

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/types"
+	"crude/types/conversation"
 	"crude/types/reasoning"
 	"crude/workspace"
 )
@@ -44,12 +44,12 @@ func TestThinkingPaneShowsScrollbarOnFirstFrame(t *testing.T) {
 
 	node := app.ws.AgentMgr().Get("probe-agent")
 	agent := node.State
-	app.handleAgentEvent(types.AgentEventMsg{Type: "thinking", AgentID: "probe-agent", Data: reasoning.Delta{Text: thinkingLines(40)}})
+	app.handleAgentEvent(AgentEventMsg{Type: "thinking", AgentID: "probe-agent", Data: reasoning.Delta{Text: thinkingLines(40)}})
 	if app.thinkingPaneID(agent) == "" {
 		t.Fatal("thinking was not promoted")
 	}
 	for i := 0; i < 20; i++ {
-		app.handleAgentEvent(types.AgentEventMsg{Type: "thinking", AgentID: "probe-agent", Data: reasoning.Delta{Text: thinkingLines(5)}})
+		app.handleAgentEvent(AgentEventMsg{Type: "thinking", AgentID: "probe-agent", Data: reasoning.Delta{Text: thinkingLines(5)}})
 	}
 
 	app.paintShellFrame()
@@ -83,8 +83,8 @@ func TestRepeatedThinkingBlocksEachKeepTheirScrollbar(t *testing.T) {
 	seen := make(map[string]bool)
 
 	for cycle := 0; cycle < 4; cycle++ {
-		app.handleAgentEvent(types.AgentEventMsg{Type: "turn_started", AgentID: "repeat-agent", Data: types.TurnIdentity{Generation: uint64(cycle + 1), ModelID: "model"}})
-		app.handleAgentEvent(types.AgentEventMsg{Type: "thinking", AgentID: "repeat-agent", Data: reasoning.Delta{Text: thinkingLines(40)}})
+		app.handleAgentEvent(AgentEventMsg{Type: "turn_started", AgentID: "repeat-agent", Data: conversation.TurnIdentity{Generation: uint64(cycle + 1), ModelID: "model"}})
+		app.handleAgentEvent(AgentEventMsg{Type: "thinking", AgentID: "repeat-agent", Data: reasoning.Delta{Text: thinkingLines(40)}})
 		paneID := app.thinkingPaneID(agent)
 		if paneID == "" {
 			t.Fatalf("cycle %d: thinking was not promoted", cycle)
@@ -94,7 +94,7 @@ func TestRepeatedThinkingBlocksEachKeepTheirScrollbar(t *testing.T) {
 		}
 		seen[paneID] = true
 		for i := 0; i < 4; i++ {
-			app.handleAgentEvent(types.AgentEventMsg{Type: "thinking", AgentID: "repeat-agent", Data: reasoning.Delta{Text: thinkingLines(5)}})
+			app.handleAgentEvent(AgentEventMsg{Type: "thinking", AgentID: "repeat-agent", Data: reasoning.Delta{Text: thinkingLines(5)}})
 		}
 
 		app.paintShellFrame()
@@ -122,8 +122,8 @@ func TestRepeatedThinkingBlocksEachKeepTheirScrollbar(t *testing.T) {
 			t.Fatalf("cycle %d pane %q has state but no painted scrollbar: rows=%d x=%d", cycle, paneID, paneRows, paneScrollbarX)
 		}
 
-		app.handleAgentEvent(types.AgentEventMsg{Type: "stream_token", AgentID: "repeat-agent", Data: "reply"})
-		app.handleAgentEvent(types.AgentEventMsg{Type: "done", AgentID: "repeat-agent", Data: map[string]any{
+		app.handleAgentEvent(AgentEventMsg{Type: "stream_token", AgentID: "repeat-agent", Data: "reply"})
+		app.handleAgentEvent(AgentEventMsg{Type: "done", AgentID: "repeat-agent", Data: map[string]any{
 			"content": "reply",
 			"reason":  "completed",
 		}})
@@ -146,7 +146,7 @@ func TestThinkingScrollbarPaintsOnFirstFrameAfterReturningToActivePane(t *testin
 	mainScroll.SetAutoScroll(false)
 	mainScroll.ScrollTo(0)
 
-	app.handleAgentEvent(types.AgentEventMsg{Type: "thinking", AgentID: "scrolled-agent", Data: reasoning.Delta{Text: thinkingLines(50)}})
+	app.handleAgentEvent(AgentEventMsg{Type: "thinking", AgentID: "scrolled-agent", Data: reasoning.Delta{Text: thinkingLines(50)}})
 	paneID := app.thinkingPaneID(app.ws.AgentMgr().Get("scrolled-agent").State)
 	if paneID == "" {
 		t.Fatal("thinking was not promoted while main chat was scrolled away")
@@ -194,7 +194,7 @@ func TestThinkingPromotionContinuesIntoPane(t *testing.T) {
 	agent := node.State
 
 	// Stream enough thinking to exceed the 5-line threshold.
-	app.handleAgentEvent(types.AgentEventMsg{Type: "thinking", AgentID: "promote-agent", Data: reasoning.Delta{Text: thinkingLines(8)}})
+	app.handleAgentEvent(AgentEventMsg{Type: "thinking", AgentID: "promote-agent", Data: reasoning.Delta{Text: thinkingLines(8)}})
 
 	if app.thinkingPaneID(agent) == "" {
 		t.Fatal("thinking was not promoted to a pane")
@@ -202,7 +202,7 @@ func TestThinkingPromotionContinuesIntoPane(t *testing.T) {
 
 	// After promotion, subsequent thinking must continue into the pane,
 	// not back into the main conversation.
-	app.handleAgentEvent(types.AgentEventMsg{Type: "thinking", AgentID: "promote-agent", Data: reasoning.Delta{Text: "EXTRA-THINKING"}})
+	app.handleAgentEvent(AgentEventMsg{Type: "thinking", AgentID: "promote-agent", Data: reasoning.Delta{Text: "EXTRA-THINKING"}})
 
 	thought, active := agent.Messages.ActiveThinking()
 	if !active || !strings.Contains(thought.Content, "EXTRA-THINKING") {
@@ -242,7 +242,7 @@ func TestThinkingPromotionStartTimeCoversWholeBlock(t *testing.T) {
 	agent := node.State
 
 	// First thinking chunk seeds the block with its start time.
-	app.handleAgentEvent(types.AgentEventMsg{Type: "thinking", AgentID: "promote-time", Data: reasoning.Delta{Text: thinkingLines(8)}})
+	app.handleAgentEvent(AgentEventMsg{Type: "thinking", AgentID: "promote-time", Data: reasoning.Delta{Text: thinkingLines(8)}})
 	if app.thinkingPaneID(agent) == "" {
 		t.Fatal("thinking was not promoted")
 	}
@@ -286,7 +286,7 @@ func TestThinkingPaneIDsAreUniquePerAgent(t *testing.T) {
 	app.ChatAreaHeight = 6
 
 	for _, id := range []string{"promote-a", "promote-b"} {
-		app.handleAgentEvent(types.AgentEventMsg{Type: "thinking", AgentID: id, Data: reasoning.Delta{Text: thinkingLines(8)}})
+		app.handleAgentEvent(AgentEventMsg{Type: "thinking", AgentID: id, Data: reasoning.Delta{Text: thinkingLines(8)}})
 		agent := app.ws.AgentMgr().Get(id).State
 		if app.thinkingPaneID(agent) == "" {
 			t.Fatalf("agent %s: thinking not promoted", id)
@@ -312,20 +312,20 @@ func TestThinkingPaneDemotesToSummary(t *testing.T) {
 	node := app.ws.AgentMgr().Get("promote-done")
 	agent := node.State
 
-	app.handleAgentEvent(types.AgentEventMsg{Type: "thinking", AgentID: "promote-done", Data: reasoning.Delta{Text: thinkingLines(8)}})
+	app.handleAgentEvent(AgentEventMsg{Type: "thinking", AgentID: "promote-done", Data: reasoning.Delta{Text: thinkingLines(8)}})
 	if app.thinkingPaneID(agent) == "" {
 		t.Fatal("thinking was not promoted")
 	}
 	paneID := app.thinkingPaneID(agent)
 	// Thinking finishes: streaming begins.
 	time.Sleep(20 * time.Millisecond)
-	app.handleAgentEvent(types.AgentEventMsg{Type: "stream_token", AgentID: "promote-done", Data: "hello"})
+	app.handleAgentEvent(AgentEventMsg{Type: "stream_token", AgentID: "promote-done", Data: "hello"})
 
 	if app.ws.PaneMgr().Has(paneID) || app.subPaneProjections.Has(paneID) {
 		t.Fatal("completed thinking kept a competing pane owner")
 	}
 	thought := agent.Messages.Messages()[0]
-	if thought.Role != types.RoleThinking || thought.ThinkingActive || thought.ThinkingDuration <= 0 || thought.Content != thinkingLines(8) || thought.SubPaneID != "" {
+	if thought.Role != conversation.RoleThinking || thought.ThinkingActive || thought.ThinkingDuration <= 0 || thought.Content != thinkingLines(8) || thought.SubPaneID != "" {
 		t.Fatalf("thought was not restored: %+v", thought)
 	}
 }
@@ -338,13 +338,13 @@ func TestThinkingPaneDemotesWhenTurnEndsDirectly(t *testing.T) {
 	app.ChatAreaHeight = 6
 
 	agent := app.ws.AgentMgr().Get("direct-done").State
-	app.handleAgentEvent(types.AgentEventMsg{Type: "thinking", AgentID: "direct-done", Data: reasoning.Delta{Text: thinkingLines(8)}})
+	app.handleAgentEvent(AgentEventMsg{Type: "thinking", AgentID: "direct-done", Data: reasoning.Delta{Text: thinkingLines(8)}})
 	paneID := app.thinkingPaneID(agent)
 	if paneID == "" {
 		t.Fatal("thinking was not promoted")
 	}
 
-	app.handleAgentEvent(types.AgentEventMsg{Type: "done", AgentID: "direct-done", Data: map[string]any{
+	app.handleAgentEvent(AgentEventMsg{Type: "done", AgentID: "direct-done", Data: map[string]any{
 		"content": "",
 		"reason":  "completed",
 	}})
@@ -356,7 +356,7 @@ func TestThinkingPaneDemotesWhenTurnEndsDirectly(t *testing.T) {
 		t.Fatalf("active thinking pane ID remained %q after done", app.thinkingPaneID(agent))
 	}
 	thought := agent.Messages.Messages()[0]
-	if thought.Role != types.RoleThinking || thought.ThinkingActive || thought.Content != thinkingLines(8) {
+	if thought.Role != conversation.RoleThinking || thought.ThinkingActive || thought.Content != thinkingLines(8) {
 		t.Fatalf("direct completion lost thought: %+v", thought)
 	}
 }

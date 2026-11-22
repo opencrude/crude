@@ -21,38 +21,38 @@ type boardResultMsg struct {
 	committed  bool
 }
 
-func (app *App) openBoardBrowser() tea.Cmd {
-	if app.termDock == nil {
+func (m *App) openBoardBrowser() tea.Cmd {
+	if m.termDock == nil {
 		return nil
 	}
-	if app.boardBrowser == nil {
-		app.boardBrowser = boardbrowser.New(app.Theme)
-		app.termDock.SetPanel(termdock.PanelBoard, app.boardBrowser)
+	if m.boardBrowser == nil {
+		m.boardBrowser = boardbrowser.New(m.Theme)
+		m.termDock.SetPanel(termdock.PanelBoard, m.boardBrowser)
 	}
-	if app.revealPlacedPanel(termdock.PanelBoard) {
-		return app.boardRequestCmd(app.boardBrowser.Request("refresh"))
+	if m.revealPlacedPanel(termdock.PanelBoard) {
+		return m.boardRequestCmd(m.boardBrowser.Request("refresh"))
 	}
-	app.termDockHeight = defaultWorkspacePanelHeight(termdock.PanelBoard)
-	if height := app.workspacePanelHeights[termdock.PanelBoard]; height > 0 {
-		app.termDockHeight = height
+	m.termDockHeight = defaultWorkspacePanelHeight(termdock.PanelBoard)
+	if height := m.workspacePanelHeights[termdock.PanelBoard]; height > 0 {
+		m.termDockHeight = height
 	}
-	app.termDock.ShowPanel(termdock.PanelBoard)
-	app.setSessionDeckFocused(false)
-	app.setTermDockFocused(true)
-	app.FocusStack.Clear()
-	return app.boardRequestCmd(app.boardBrowser.Request("refresh"))
+	m.termDock.ShowPanel(termdock.PanelBoard)
+	m.setSessionDeckFocused(false)
+	m.setTermDockFocused(true)
+	m.FocusStack.Clear()
+	return m.boardRequestCmd(m.boardBrowser.Request("refresh"))
 }
 
-func (app *App) toggleBoardBrowser() tea.Cmd {
-	if app.termDock != nil && app.placementOf(termdock.PanelBoard) == placeDock && app.termDock.IsOpen() && app.termDock.ActivePanel() == termdock.PanelBoard {
-		app.hideWorkspacePanel()
+func (m *App) toggleBoardBrowser() tea.Cmd {
+	if m.termDock != nil && m.placementOf(termdock.PanelBoard) == placeDock && m.termDock.IsOpen() && m.termDock.ActivePanel() == termdock.PanelBoard {
+		m.hideWorkspacePanel()
 		return nil
 	}
-	return app.openBoardBrowser()
+	return m.openBoardBrowser()
 }
 
-func (app *App) boardRequestCmd(request boardbrowser.Request) tea.Cmd {
-	owner, generation := app.ws, app.workspaceSwitchGen.Load()
+func (m *App) boardRequestCmd(request boardbrowser.Request) tea.Cmd {
+	owner, generation := m.ws, m.workspaceSwitchGen.Load()
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -70,16 +70,16 @@ func (app *App) boardRequestCmd(request boardbrowser.Request) tea.Cmd {
 	}
 }
 
-func (app *App) handleBoardAction(action ui.Action) (tea.Cmd, bool) {
-	if !strings.HasPrefix(action.ID, "board.") || app.boardBrowser == nil {
+func (m *App) handleBoardAction(action ui.Action) (tea.Cmd, bool) {
+	if !strings.HasPrefix(action.ID, "board.") || m.boardBrowser == nil {
 		return nil, false
 	}
-	return app.boardRequestCmd(app.boardBrowser.Request(strings.TrimPrefix(action.ID, "board."))), true
+	return m.boardRequestCmd(m.boardBrowser.Request(strings.TrimPrefix(action.ID, "board."))), true
 }
 
-func (app *App) applyBoardResult(message boardResultMsg) {
-	if message.generation != app.workspaceSwitchGen.Load() || message.request.Target != app.boardBrowser {
+func (m *App) applyBoardResult(message boardResultMsg) {
+	if message.generation != m.workspaceSwitchGen.Load() || message.request.Target != m.boardBrowser {
 		return
 	}
-	app.boardBrowser.Apply(message.request.Sequence, message.snapshot, message.err)
+	m.boardBrowser.Apply(message.request.Sequence, message.snapshot, message.err)
 }

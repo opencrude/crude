@@ -1,19 +1,22 @@
 package workspace
 
-import "crude/types"
+import (
+	"crude/types/conversation"
+	"crude/types/statuscenter"
+)
 
 // AgentActivity projects one owner's lifecycle and conversation without I/O or
 // inferring status from the presence of a rendered leaf.
-func (w *Workspace) AgentActivity(agentID string) types.AgentActivityView {
+func (w *Workspace) AgentActivity(agentID string) statuscenter.AgentActivityView {
 	node := w.AgentMgr.Get(agentID)
 	if node == nil {
-		return types.AgentActivityView{}
+		return statuscenter.AgentActivityView{}
 	}
-	view := types.AgentActivityView{Summary: AgentDisplayLabel(node)}
+	view := statuscenter.AgentActivityView{Summary: AgentDisplayLabel(node)}
 	if w.Status != nil {
 		view.Status, _ = w.Status.Agent(agentID)
 	}
-	view.Status.Ref.Kind, view.Status.Ref.ID = types.ResourceAgent, agentID
+	view.Status.Ref.Kind, view.Status.Ref.ID = statuscenter.ResourceAgent, agentID
 	if node.State != nil {
 		view.Recovery = node.State.RecoveryStatus()
 		if !node.State.Cancelling && view.Recovery.CanRetry() {
@@ -42,13 +45,13 @@ func (w *Workspace) AgentActivity(agentID string) types.AgentActivityView {
 		if brief := node.State.Messages.Brief(); brief != "" {
 			view.Summary = brief
 		}
-		if view.Status.Phase == types.AgentRetrying {
+		if view.Status.Phase == statuscenter.AgentRetrying {
 			if retry := node.State.Messages.lastNonPending(); retry != nil && retry.LifecyclePhase == "retrying" {
 				view.RetryAttempt, view.RetryLimit, view.RetryReason = retry.LifecycleRetryAttempt, retry.LifecycleRetryLimit, retry.Content
 				view.Status.RetryAt = retry.LifecycleRetryAt
 			}
 		}
-		if view.Status.Phase == types.AgentThinking {
+		if view.Status.Phase == statuscenter.AgentThinking {
 			// A promoted body already has its own live surface. Only inline
 			// thoughts need a compact preview in the fixed activity strip.
 			if thought, ok := node.State.Messages.ActiveThinking(); ok && thought.ThinkingDisplay.Kind.HasCompactPreview() {
@@ -59,7 +62,7 @@ func (w *Workspace) AgentActivity(agentID string) types.AgentActivityView {
 			}
 		}
 	}
-	if usage, ok := w.UsageSummary(agentID, types.UsageThisAgent); ok {
+	if usage, ok := w.UsageSummary(agentID, statuscenter.UsageThisAgent); ok {
 		view.SuccessfulCalls, view.CallsKnown = usage.Turns, usage.TurnsKnown
 	} else {
 		view.CallsKnown = true
@@ -79,17 +82,17 @@ func (w *Workspace) AgentActivity(agentID string) types.AgentActivityView {
 
 // AgentModelIdentity is the current configuration for a root and the producing
 // identity for a retained child. It never borrows another tab's active backend.
-func (w *Workspace) AgentModelIdentity(agentID string) types.TurnIdentity {
+func (w *Workspace) AgentModelIdentity(agentID string) conversation.TurnIdentity {
 	node := w.AgentMgr.Get(agentID)
 	if node == nil {
-		return types.TurnIdentity{}
+		return conversation.TurnIdentity{}
 	}
 	if node.Parent == nil {
 		if owner := w.sessionForAgent(agentID); owner != nil && owner.backend != nil {
 			return owner.backend.ModelIdentity()
 		}
 	}
-	identity := types.TurnIdentity{ModelID: node.Model}
+	identity := conversation.TurnIdentity{ModelID: node.Model}
 	if node.State != nil {
 		identity = node.State.TurnIdentity
 		if node.Model != "" {

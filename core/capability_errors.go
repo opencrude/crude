@@ -5,15 +5,15 @@ import (
 	"sort"
 	"strings"
 
-	"crude/types"
 	captypes "crude/types/capability"
+	"crude/types/setting"
 )
 
 // Capability errors are actionable diagnostics, not a generic settings failure.
 // Keep the reason while removing private connection/source/proxy operands. The
 // worker captures these immutable values before execution; no live maps or
 // credentials are consulted from the result's apply phase.
-func publicCapabilityFailure(err error, settings types.AppSettings, action captypes.Action) string {
+func publicCapabilityFailure(err error, settings setting.App, action captypes.Action) string {
 	text := err.Error()
 	private := make(map[string]string)
 	secret := func(value string) {

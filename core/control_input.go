@@ -3,7 +3,7 @@ package core
 import (
 	"context"
 	"crude/agent/provider"
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
 	"crude/types/control"
 	"fmt"
 	"strings"
@@ -113,7 +113,7 @@ func (c *Connection) ControlInputMethod(ctx context.Context, request coreprotoco
 		var labels []string
 		if owner := a.ws.SessionForAgent(input.AgentID); owner.RefStore != nil {
 			for _, id := range input.ReferenceIDs {
-				if ref, exists := owner.RefStore.GetReference(id); exists {
+				if ref, exists := owner.RefStore.Reference(id); exists {
 					labels = append(labels, ref.DisplayName())
 				}
 			}

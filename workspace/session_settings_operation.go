@@ -5,7 +5,7 @@ import (
 	"sync"
 
 	"crude/agent/session"
-	"crude/types"
+	"crude/types/setting"
 )
 
 // SessionSettingsOperation captures an exact backend while the workspace owner
@@ -14,7 +14,7 @@ import (
 type SessionSettingsOperation struct {
 	owner   *Session
 	backend *session.Session
-	form    *types.Settings
+	form    *setting.Settings
 	reset   bool
 	// capability turns one skill/MCP server on or off for the session.
 	capability *sessionCapabilityChange
@@ -30,7 +30,8 @@ type SessionSettingsResult struct {
 	owner    *Session
 }
 
-func (w *Workspace) PrepareSessionSettingsSave(sessionID string, settings types.Settings) (*SessionSettingsOperation, error) {
+// PrepareSessionSettingsSave prepares a session settings save for review.
+func (w *Workspace) PrepareSessionSettingsSave(sessionID string, settings setting.Settings) (*SessionSettingsOperation, error) {
 	operation, err := w.prepareSessionSettings(sessionID)
 	if err != nil {
 		return nil, err
@@ -126,12 +127,12 @@ func (w *Workspace) ApplySessionSettingsResult(result SessionSettingsResult) boo
 	return true
 }
 
-func (owner *Session) installSettings(snapshot session.SettingsSnapshotSet) bool {
-	if owner == nil || snapshot.Revision < owner.settingsRevision {
+func (s *Session) installSettings(snapshot session.SettingsSnapshotSet) bool {
+	if s == nil || snapshot.Revision < s.settingsRevision {
 		return false
 	}
-	owner.Settings = NewSessionSettingsState(snapshot.Effective, snapshot.Base, snapshot.Overrides)
-	owner.settingsRevision = snapshot.Revision
+	s.Settings = NewSessionSettingsState(snapshot.Effective, snapshot.Base, snapshot.Overrides)
+	s.settingsRevision = snapshot.Revision
 	return true
 }
 
@@ -146,22 +147,22 @@ func (result SessionSettingsResult) ResultOwner() *Session { return result.owner
 
 // InstallSettingsSnapshot installs a newer redacted settings set on a replica
 // session; older revisions are rejected.
-func (owner *Session) InstallSettingsSnapshot(snapshot session.SettingsSnapshotSet) bool {
-	return owner.installSettings(snapshot)
+func (s *Session) InstallSettingsSnapshot(snapshot session.SettingsSnapshotSet) bool {
+	return s.installSettings(snapshot)
 }
 
 // SettingsRevision is an observation generation for replica publication.
-func (owner *Session) SettingsRevision() uint64 {
-	if owner == nil {
+func (s *Session) SettingsRevision() uint64 {
+	if s == nil {
 		return 0
 	}
-	return owner.settingsRevision
+	return s.settingsRevision
 }
 
 // ResetReplicaRevision admits a fully validated snapshot from a new core
 // revision domain without discarding the retained session or private UI state.
-func (owner *Session) ResetReplicaRevision() {
-	if owner != nil {
-		owner.settingsRevision = 0
+func (s *Session) ResetReplicaRevision() {
+	if s != nil {
+		s.settingsRevision = 0
 	}
 }

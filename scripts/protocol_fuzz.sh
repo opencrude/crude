@@ -27,13 +27,13 @@ echo "Evidence: $out"
 # One instrumented executable per package, containing every named target in it.
 # FUZZ_TARGETS is an optional space-separated exact-name subset for local work.
 inventory=(
-  './core/protocol:FuzzEveryWireDecoder FuzzWireTimestampMessage'
-  './core/wire:FuzzMessageReader FuzzMessageFragmentation FuzzReaderLimitTransitions FuzzCompressedStream FuzzMuxFrames FuzzMuxStateMachine FuzzQUICStreamClass'
-  './core/client:FuzzBulkReceiver FuzzTerminalInputAdmissionOrdering FuzzWorkspaceTopicReplicaState'
-  './core/port/remote:FuzzRemoteStateTopicFences=64'
+  './core/coreprotocol:FuzzEveryWireDecoder FuzzWireTimestampMessage'
+  './core/corewire:FuzzMessageReader FuzzMessageFragmentation FuzzReaderLimitTransitions FuzzCompressedStream FuzzMuxFrames FuzzMuxStateMachine FuzzQUICStreamClass'
+  './core/coreclient:FuzzBulkReceiver FuzzTerminalInputAdmissionOrdering FuzzWorkspaceTopicReplicaState'
+  './core/shellport/remote:FuzzRemoteStateTopicFences=64'
   './workspace:FuzzConversationStreamReaders FuzzConversationMalformedTextOffset FuzzTerminalLeaseStateMachine=64'
   './tui/editor:FuzzDocumentUpdateAtomicBoundary'
-  './terminalvt:FuzzPackedRow FuzzPackedDictionaryRow'
+  './internal/terminalvt:FuzzPackedRow FuzzPackedDictionaryRow'
   './core:FuzzTerminalGridAuthorityStream=4096 FuzzCoreFeatureDocuments=64 FuzzCoreFeatureFilesHistory=64 FuzzCoreFeatureSettings=64 FuzzCoreFeatureDraftCAS=64 FuzzCoreSessionOwnership=64 FuzzCoreSessionTerminalLifecycle=64 FuzzCoreInputAdmissionReceipts=64 FuzzCoreSessionSettingsReset=64 FuzzCoreGitReviewedMutations=64 FuzzCoreLSPRequests=64 FuzzCoreCapabilities=64 FuzzCoreStartupWorkspaces=64 FuzzCoreRemoteAuthentication=64 FuzzCoreBulkLifecycle=64 FuzzCoreMetricsRequests=64'
   './tui/viewmodel:FuzzAppFrameState=64'
   './tui/compositor:FuzzDirectSurfaceResize'

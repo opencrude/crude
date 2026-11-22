@@ -6,17 +6,17 @@ import (
 	"testing"
 
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 )
 
-func commandRevealFixture(n int) ([]types.ChatMessage, string) {
-	var messages []types.ChatMessage
+func commandRevealFixture(n int) ([]conversation.ChatMessage, string) {
+	var messages []conversation.ChatMessage
 	for i := range n {
 		start, _ := commandIdentityFixture()
 		start.InternalID = fmt.Sprintf("command-%d", i)
 		start.ToolOutcome.ID = fmt.Sprintf("process:%d:1000000000", i+1)
 		start.Content = strings.ReplaceAll(start.Content, "build", fmt.Sprintf("build-%d", i))
-		messages = append(messages, types.ChatMessage{InternalID: fmt.Sprintf("note-%d", i), Role: types.RoleAssistant, Content: "Progress before this command."}, start)
+		messages = append(messages, conversation.ChatMessage{InternalID: fmt.Sprintf("note-%d", i), Role: conversation.RoleAssistant, Content: "Progress before this command."}, start)
 	}
 	return messages, fmt.Sprintf("process:%d:1000000000", n/2+1)
 }
@@ -63,14 +63,14 @@ func TestRevealCommandExpandsAndAnchorsBeforeFirstPaint(t *testing.T) {
 func TestRevealCommandShowsHiddenLeafWithoutRebuildingOtherGroups(t *testing.T) {
 	messages, execution := commandRevealFixture(30)
 	// Remove communication boundaries to group the completed calls.
-	var grouped []types.ChatMessage
+	var grouped []conversation.ChatMessage
 	for _, msg := range messages {
-		if msg.Role == types.RoleTool {
+		if msg.Role == conversation.RoleTool {
 			msg.Content = strings.ReplaceAll(msg.Content, `"status":"running"`, `"status":"completed"`)
 			grouped = append(grouped, msg)
 		}
 	}
-	grouped = append(grouped, types.ChatMessage{InternalID: "next-turn", Role: types.RoleUser, Content: "A new turn"})
+	grouped = append(grouped, conversation.ChatMessage{InternalID: "next-turn", Role: conversation.RoleUser, Content: "A new turn"})
 	r := newActivityRenderer()
 	scroll := ui.NewScrollModel()
 	scroll.SetViewport(15)

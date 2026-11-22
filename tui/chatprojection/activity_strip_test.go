@@ -11,21 +11,21 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/types/activity"
 	"crude/types/reasoning"
+	"crude/types/statuscenter"
 )
 
 func TestActivityStripPinsUploadWaitAndActionsAheadOfOptionalFacts(t *testing.T) {
 	th := theme.DefaultDark()
 	tokens := ui.NewTokenSet(th)
 	var strip ActivityStrip
-	view := types.AgentActivityView{Summary: "do not echo my prompt", Active: true, SuccessfulCalls: 25, CallsKnown: true,
+	view := statuscenter.AgentActivityView{Summary: "do not echo my prompt", Active: true, SuccessfulCalls: 25, CallsKnown: true,
 		Plan:   &activity.Plan{ID: "plan", Total: 3, Current: []activity.Step{{Number: 1, Text: "implement activity"}}},
-		Status: types.AgentStatusSnapshot{Phase: types.AgentUploading, UploadedBytes: 43008, TotalBytes: 102400, PhaseStartedAt: time.UnixMilli(1000)}}
-	for _, phase := range []types.AgentPhase{types.AgentPreparing, types.AgentUploading, types.AgentWaiting} {
+		Status: statuscenter.AgentStatusSnapshot{Phase: statuscenter.AgentUploading, UploadedBytes: 43008, TotalBytes: 102400, PhaseStartedAt: time.UnixMilli(1000)}}
+	for _, phase := range []statuscenter.AgentPhase{statuscenter.AgentPreparing, statuscenter.AgentUploading, statuscenter.AgentWaiting} {
 		view.Status.Phase = phase
-		if phase == types.AgentWaiting {
+		if phase == statuscenter.AgentWaiting {
 			view.Status.Detail = "Waiting for OpenAI"
 			view.Status.UploadedBytes = view.Status.TotalBytes
 		}
@@ -36,19 +36,19 @@ func TestActivityStripPinsUploadWaitAndActionsAheadOfOptionalFacts(t *testing.T)
 			if !strings.Contains(text, "↑") || !strings.Contains(text, "/ 100 KB") || !strings.Contains(text, "%") || strings.Contains(text, "Plan") || strings.Contains(text, "turn") || strings.Contains(text, "prompt") || !line.TextTide {
 				t.Fatalf("phase=%s frame=%d: %+v", phase, frame, line)
 			}
-			if phase == types.AgentWaiting && (!strings.Contains(text, "Waiting for OpenAI") || !strings.Contains(text, "100%")) {
+			if phase == statuscenter.AgentWaiting && (!strings.Contains(text, "Waiting for OpenAI") || !strings.Contains(text, "100%")) {
 				t.Fatalf("lost waiting/upload parity: %s", text)
 			}
 		}
 	}
-	view.Status.Phase, view.Status.NeedsAction, view.Status.Detail = types.AgentApproval, true, "Approval required"
+	view.Status.Phase, view.Status.NeedsAction, view.Status.Detail = statuscenter.AgentApproval, true, "Approval required"
 	strip.Update(view, 90, th, tokens)
 	for _, frame := range []int{20000, 60000} {
 		if got := strip.Line(frame).PlainText(); got != "Approval required" {
 			t.Fatalf("action hidden by secondary content: %s", got)
 		}
 	}
-	view.Status.Phase, view.Status.NeedsAction, view.Status.RetryAt = types.AgentRetrying, false, time.UnixMilli(65000)
+	view.Status.Phase, view.Status.NeedsAction, view.Status.RetryAt = statuscenter.AgentRetrying, false, time.UnixMilli(65000)
 	view.RetryAttempt, view.RetryLimit, view.RetryReason = 2, 3, "Connection stalled"
 	strip.Update(view, 90, th, tokens)
 	if text := strip.Line(61000).PlainText(); !strings.Contains(text, "attempt 2/3") || !strings.Contains(text, "in 4s") || !strings.Contains(text, "Connection stalled") {
@@ -60,8 +60,8 @@ func TestActivityStripPacksThenRotatesPlanFactsInOrder(t *testing.T) {
 	th := theme.DefaultDark()
 	tokens := ui.NewTokenSet(th)
 	var strip ActivityStrip
-	view := types.AgentActivityView{Active: true, Thinking: "**Inspecting the renderer and state ownership**", ThinkingDisplay: reasoning.Display{Kind: reasoning.Summary, BlockID: "one"}, SuccessfulCalls: 8, CallsKnown: true,
-		Status: types.AgentStatusSnapshot{Ref: types.ResourceRef{ID: "owner"}, Phase: types.AgentThinking},
+	view := statuscenter.AgentActivityView{Active: true, Thinking: "**Inspecting the renderer and state ownership**", ThinkingDisplay: reasoning.Display{Kind: reasoning.Summary, BlockID: "one"}, SuccessfulCalls: 8, CallsKnown: true,
+		Status: statuscenter.AgentStatusSnapshot{Ref: statuscenter.ResourceRef{ID: "owner"}, Phase: statuscenter.AgentThinking},
 		Plan:   &activity.Plan{ID: "plan", Status: "active", Total: 4, Completed: 1, Objective: "Repair activity ownership", Current: []activity.Step{{Number: 2, Text: "Implement the projector"}}, Next: &activity.Step{Number: 3, Text: "Run tests"}}}
 	strip.Update(view, 48, th, tokens)
 	first := strip.Line(1000).PlainText()
@@ -100,7 +100,7 @@ func TestActivityStripNeverAppliesSummaryTreatmentToRawOrUnknown(t *testing.T) {
 	tokens := ui.NewTokenSet(th)
 	for _, kind := range []reasoning.Kind{reasoning.Raw, reasoning.Unknown, reasoning.Encrypted} {
 		var strip ActivityStrip
-		view := types.AgentActivityView{Active: true, Thinking: "must stay in the pane", ThinkingDisplay: reasoning.Display{Kind: kind}, Status: types.AgentStatusSnapshot{Phase: types.AgentThinking, Detail: "Reasoning"}}
+		view := statuscenter.AgentActivityView{Active: true, Thinking: "must stay in the pane", ThinkingDisplay: reasoning.Display{Kind: kind}, Status: statuscenter.AgentStatusSnapshot{Phase: statuscenter.AgentThinking, Detail: "Reasoning"}}
 		strip.Update(view, 100, th, tokens)
 		line := strip.Line(100)
 		if !line.TextTide || strings.Contains(line.PlainText(), "must stay") {
@@ -108,7 +108,7 @@ func TestActivityStripNeverAppliesSummaryTreatmentToRawOrUnknown(t *testing.T) {
 		}
 	}
 	var strip ActivityStrip
-	view := types.AgentActivityView{Active: true, Thinking: "**Measured summary**", ThinkingDisplay: reasoning.Display{Kind: reasoning.InferredSummary}, Status: types.AgentStatusSnapshot{Phase: types.AgentThinking}}
+	view := statuscenter.AgentActivityView{Active: true, Thinking: "**Measured summary**", ThinkingDisplay: reasoning.Display{Kind: reasoning.InferredSummary}, Status: statuscenter.AgentStatusSnapshot{Phase: statuscenter.AgentThinking}}
 	strip.Update(view, 100, th, tokens)
 	if line := strip.Line(100); !line.TextTide || !strings.Contains(line.PlainText(), "Measured summary") {
 		t.Fatalf("measured summary remained in a pane: %+v", line)
@@ -132,7 +132,7 @@ func TestActivityStripNeverAppliesSummaryTreatmentToRawOrUnknown(t *testing.T) {
 	}
 	view.Thinking = ""
 	view.ThinkingDisplay = reasoning.Display{}
-	view.Status.Phase, view.Status.Detail = types.AgentTool, "Running tools"
+	view.Status.Phase, view.Status.Detail = statuscenter.AgentTool, "Running tools"
 	strip.Update(view, 100, th, tokens)
 	line = strip.Line(400)
 	if after := strip.Line(416); !after.TextTide || after.TideCenter <= line.TideCenter {
@@ -144,14 +144,14 @@ func TestActivityStripStoppedPlansStayStill(t *testing.T) {
 	th := theme.DefaultDark()
 	tokens := ui.NewTokenSet(th)
 	for _, width := range []int{40, 120} {
-		for _, phase := range []types.AgentPhase{types.AgentCancelling, types.AgentCancelled, types.AgentIdle, types.AgentCompleted, types.AgentFailed, types.AgentRetrying} {
+		for _, phase := range []statuscenter.AgentPhase{statuscenter.AgentCancelling, statuscenter.AgentCancelled, statuscenter.AgentIdle, statuscenter.AgentCompleted, statuscenter.AgentFailed, statuscenter.AgentRetrying} {
 			t.Run(fmt.Sprintf("%s/%d", phase, width), func(t *testing.T) {
 				var strip ActivityStrip
 				p := &activity.Plan{ID: "plan", Status: "active", Total: 3, Objective: "Polish the activity presentation",
 					Current: []activity.Step{{Number: 1, Status: "in_progress", Text: "Smooth the animation"}},
 					Next:    &activity.Step{Number: 2, Text: "Verify the stopped plan and goal strip"}}
-				view := types.AgentActivityView{Active: true, TideForward: true, Plan: p,
-					Status: types.AgentStatusSnapshot{Phase: types.AgentTool, Detail: "Working"}}
+				view := statuscenter.AgentActivityView{Active: true, TideForward: true, Plan: p,
+					Status: statuscenter.AgentStatusSnapshot{Phase: statuscenter.AgentTool, Detail: "Working"}}
 				strip.Update(view, width, th, tokens)
 				first := strip.Line(0)
 				if rotated := strip.Line(6100); !rotated.TextTide || rotated.PlainText() != first.PlainText() {
@@ -165,7 +165,7 @@ func TestActivityStripStoppedPlansStayStill(t *testing.T) {
 					if line.TextTide {
 						t.Fatal("stopped strip still has a light sweep")
 					}
-					if phase == types.AgentCancelled && line.PlainText() != "Stopped" {
+					if phase == statuscenter.AgentCancelled && line.PlainText() != "Stopped" {
 						t.Fatalf("stopped plan lacks its lifecycle label: %s", line.PlainText())
 					}
 					buf := surface.NewCellBuffer(width, 1)
@@ -186,7 +186,7 @@ func TestActivityStripStoppedPlansStayStill(t *testing.T) {
 					t.Fatal("stopping presentation changed the persisted plan lifecycle")
 				}
 				// The same strip resumes from a quiet entry and rotates again.
-				view.Active, view.Status.Phase, view.Status.Detail = true, types.AgentTool, "Working"
+				view.Active, view.Status.Phase, view.Status.Detail = true, statuscenter.AgentTool, "Working"
 				strip.Update(view, width, th, tokens)
 				restarted := strip.Line(110000)
 				if !restarted.TextTide || restarted.TideCenter >= 0 {
@@ -204,9 +204,9 @@ func TestCompactionActivityOwnsStripUntilNextTurn(t *testing.T) {
 	th := theme.DefaultDark()
 	tokens := ui.NewTokenSet(th)
 	var strip ActivityStrip
-	view := types.AgentActivityView{
+	view := statuscenter.AgentActivityView{
 		Active: true,
-		Status: types.AgentStatusSnapshot{Phase: types.AgentCompacting, Detail: "Compacting context"},
+		Status: statuscenter.AgentStatusSnapshot{Phase: statuscenter.AgentCompacting, Detail: "Compacting context"},
 		Plan: &activity.Plan{ID: "unrelated-plan", Status: "active", Total: 4, Completed: 3,
 			Current: []activity.Step{{Number: 4, Text: "Run build, tests, and whole-repo lint"}}},
 	}
@@ -235,7 +235,7 @@ func TestCompactionActivityOwnsStripUntilNextTurn(t *testing.T) {
 	}
 	view.CompactionPhase = ""
 	view.Active = true
-	view.Status.Phase, view.Status.Detail = types.AgentTool, "Working"
+	view.Status.Phase, view.Status.Detail = statuscenter.AgentTool, "Working"
 	strip.Update(view, 100, th, tokens)
 	if got := strip.Line(15000).PlainText(); got != "4/4 Run build, tests, and whole-repo lint" {
 		t.Fatalf("next turn did not restore the plan: %q", got)
@@ -246,8 +246,8 @@ func TestActivityStripLiveTextKeepsCrestPosition(t *testing.T) {
 	th := theme.DefaultDark()
 	tokens := ui.NewTokenSet(th)
 	var strip ActivityStrip
-	view := types.AgentActivityView{Active: true, TideForward: true, Thinking: "Inspecting state",
-		ThinkingDisplay: reasoning.Display{Kind: reasoning.Summary}, Status: types.AgentStatusSnapshot{Phase: types.AgentThinking}}
+	view := statuscenter.AgentActivityView{Active: true, TideForward: true, Thinking: "Inspecting state",
+		ThinkingDisplay: reasoning.Display{Kind: reasoning.Summary}, Status: statuscenter.AgentStatusSnapshot{Phase: statuscenter.AgentThinking}}
 	strip.Update(view, 100, th, tokens)
 	strip.Line(1700000000013)
 	before := strip.Line(1700000001613)
@@ -267,7 +267,7 @@ func BenchmarkActivityStripRetainedFrame(b *testing.B) {
 	th := theme.DefaultDark()
 	tokens := ui.NewTokenSet(th)
 	var strip ActivityStrip
-	view := types.AgentActivityView{Active: true, Thinking: "**Inspecting** `shared` state", ThinkingDisplay: reasoning.Display{Kind: reasoning.Summary}, Status: types.AgentStatusSnapshot{Phase: types.AgentThinking}}
+	view := statuscenter.AgentActivityView{Active: true, Thinking: "**Inspecting** `shared` state", ThinkingDisplay: reasoning.Display{Kind: reasoning.Summary}, Status: statuscenter.AgentStatusSnapshot{Phase: statuscenter.AgentThinking}}
 	strip.Update(view, 100, th, tokens)
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -283,8 +283,8 @@ func TestCompactPlanStatusIsOnlyCurrentOrdinalAndTask(t *testing.T) {
 		Current: []activity.Step{{Number: 3, Status: "in_progress", Text: "Task name", Reason: "Must not appear"}},
 		Next:    &activity.Step{Number: 4, Text: "Must not appear"}}
 	var strip ActivityStrip
-	strip.Update(types.AgentActivityView{Active: true, Plan: p, SuccessfulCalls: 99, CallsKnown: true,
-		Status: types.AgentStatusSnapshot{Phase: types.AgentTool, Detail: "Running tools"}}, 200, th, ui.NewTokenSet(th))
+	strip.Update(statuscenter.AgentActivityView{Active: true, Plan: p, SuccessfulCalls: 99, CallsKnown: true,
+		Status: statuscenter.AgentStatusSnapshot{Phase: statuscenter.AgentTool, Detail: "Running tools"}}, 200, th, ui.NewTokenSet(th))
 	for _, frame := range []int{0, 6100, 18000} {
 		if got := strip.Line(frame).PlainText(); got != "3/5 Task name" {
 			t.Fatalf("compact task = %q", got)
@@ -301,8 +301,8 @@ func TestPausedPlanDoesNotOwnLaterRunStatus(t *testing.T) {
 		Steps:   []activity.Step{{Number: 1, Status: "completed", Text: "Done"}, {Number: 2, Status: "blocked", Text: "Wait for the user"}},
 		Current: []activity.Step{{Number: 2, Status: "blocked", Text: "Wait for the user"}}}
 	var strip ActivityStrip
-	strip.Update(types.AgentActivityView{Active: true, Plan: paused,
-		Status: types.AgentStatusSnapshot{Phase: types.AgentTool, Detail: "Running tools"}}, 200, th, ui.NewTokenSet(th))
+	strip.Update(statuscenter.AgentActivityView{Active: true, Plan: paused,
+		Status: statuscenter.AgentStatusSnapshot{Phase: statuscenter.AgentTool, Detail: "Running tools"}}, 200, th, ui.NewTokenSet(th))
 	for _, frame := range []int{0, 6100, 18000} {
 		if got := strip.Line(frame).PlainText(); strings.Contains(got, "Plan") || strings.Contains(got, "Wait for the user") {
 			t.Fatalf("frame %d shows the paused plan as run activity: %q", frame, got)
@@ -311,8 +311,8 @@ func TestPausedPlanDoesNotOwnLaterRunStatus(t *testing.T) {
 	resumed := *paused
 	resumed.Status, resumed.Revision = "active", 5
 	resumed.Current = []activity.Step{{Number: 2, Status: "in_progress", Text: "Wait for the user"}}
-	strip.Update(types.AgentActivityView{Active: true, Plan: &resumed,
-		Status: types.AgentStatusSnapshot{Phase: types.AgentTool, Detail: "Running tools"}}, 200, th, ui.NewTokenSet(th))
+	strip.Update(statuscenter.AgentActivityView{Active: true, Plan: &resumed,
+		Status: statuscenter.AgentStatusSnapshot{Phase: statuscenter.AgentTool, Detail: "Running tools"}}, 200, th, ui.NewTokenSet(th))
 	if got := strip.Line(0).PlainText(); !strings.Contains(got, "2/2 Wait for the user") {
 		t.Fatalf("resumed plan is not shown: %q", got)
 	}
@@ -322,16 +322,16 @@ func TestAttentionAndInterruptionOutrankPlanEvenWithStaleActiveFlag(t *testing.T
 	th := theme.DefaultDark()
 	for _, active := range []bool{false, true} {
 		for _, tc := range []struct {
-			phase types.AgentPhase
+			phase statuscenter.AgentPhase
 			label string
 		}{
-			{types.AgentNeedsAttention, "Needs attention · work kept · /retry to continue"},
-			{types.AgentInterrupted, "Interrupted · work kept · /retry to continue"},
-			{types.AgentCancelled, "Stopped"},
+			{statuscenter.AgentNeedsAttention, "Needs attention · work kept · /retry to continue"},
+			{statuscenter.AgentInterrupted, "Interrupted · work kept · /retry to continue"},
+			{statuscenter.AgentCancelled, "Stopped"},
 		} {
 			var strip ActivityStrip
-			strip.Update(types.AgentActivityView{Active: active, Plan: &activity.Plan{Total: 2, Current: []activity.Step{{Number: 1, Text: "Hidden task"}}},
-				Status: types.AgentStatusSnapshot{Phase: tc.phase}}, 200, th, ui.NewTokenSet(th))
+			strip.Update(statuscenter.AgentActivityView{Active: active, Plan: &activity.Plan{Total: 2, Current: []activity.Step{{Number: 1, Text: "Hidden task"}}},
+				Status: statuscenter.AgentStatusSnapshot{Phase: tc.phase}}, 200, th, ui.NewTokenSet(th))
 			for _, frame := range []int{0, 6001, 12001} {
 				line := strip.Line(frame)
 				if line.PlainText() != tc.label || line.TextTide {

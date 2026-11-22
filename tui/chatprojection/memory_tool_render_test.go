@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"crude/tui/theme"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 func TestRenderSearchHistoryStructured(t *testing.T) {
@@ -18,7 +18,7 @@ func TestRenderSearchHistoryStructured(t *testing.T) {
 			{"session_id": "s2", "title": "Refactor", "summary": "Moved settings.", "key_files": []string{"settings.go"}, "when": "1w ago"},
 		},
 	})
-	msg := types.ChatMessage{
+	msg := conversation.ChatMessage{
 		ToolName:   "search_history",
 		ToolStatus: "success",
 		Content:    string(payload),

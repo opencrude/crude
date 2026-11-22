@@ -2,16 +2,16 @@ package control_test
 
 import (
 	"crude/agent/provider"
-	"crude/types"
 	"crude/types/control"
+	"crude/types/setting"
 	"testing"
 )
 
 func TestSettingsChangesAuthorityDerivedCollectorFacts(t *testing.T) {
-	old := types.AppSettings{Accounts: map[string]provider.Account{"a": {ProviderID: "openai"}, "b": {ProviderID: "anthropic"}}, Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{"default": {AccountID: "a", Provider: "openai", Model: "old", ModelInputPrice: 3, ModelOutputPrice: 4, ModelCachePrice: 1, ModelSupportsTools: true}}}}
-	candidate := func() types.AppSettings {
+	old := setting.App{Accounts: map[string]provider.Account{"a": {ProviderID: "openai"}, "b": {ProviderID: "anthropic"}}, Agents: setting.Agents{Categories: map[string]setting.Category{"default": {AccountID: "a", Provider: "openai", Model: "old", ModelInputPrice: 3, ModelOutputPrice: 4, ModelCachePrice: 1, ModelSupportsTools: true}}}}
+	candidate := func() setting.App {
 		next := old
-		next.Agents.Categories = map[string]types.CategorySettings{"default": old.Agents.Categories["default"]}
+		next.Agents.Categories = map[string]setting.Category{"default": old.Agents.Categories["default"]}
 		return next
 	}
 	next := candidate()

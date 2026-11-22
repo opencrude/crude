@@ -3,7 +3,7 @@ package workspace
 import (
 	"context"
 
-	"crude/types"
+	"crude/types/insight"
 )
 
 // SetProjectWatchReliable records whether project file observation is complete.
@@ -29,7 +29,7 @@ func (m *LSPManager) SetProjectWatchReliable(reliable bool) {
 		m.scheduleAssemblyInvalidationLocked(context.Background())
 	}
 	if !reliable && m.sources != nil && m.sources.Insight != nil {
-		m.sources.Insight.diagnostics.InvalidateMatching(func(b types.InsightBoundary) bool {
+		m.sources.Insight.diagnostics.InvalidateMatching(func(b insight.Boundary) bool {
 			_, project := m.projects[b.Context.ID]
 			return project
 		}, "Project file observation is incomplete; this result may be out of date.")

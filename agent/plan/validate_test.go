@@ -10,7 +10,7 @@ func validReq() UpdateRequest {
 		PlanID:    "plan-123",
 		Objective: "Fix prompt-history persistence",
 		Status:    StatusActive,
-		Steps: []PlanStep{
+		Steps: []Step{
 			{ID: "audit", Description: "Audit flow", Status: StepPending},
 			{ID: "verify", Description: "Add tests", Status: StepPending, DependsOn: []string{"audit"}},
 		},
@@ -32,10 +32,10 @@ func TestValidateRejectsMalformedSnapshots(t *testing.T) {
 		{name: "empty objective", mutate: func(req *UpdateRequest) { req.Objective = "   " }},
 		{name: "no steps", mutate: func(req *UpdateRequest) { req.Steps = nil }},
 		{name: "duplicate ids", mutate: func(req *UpdateRequest) {
-			req.Steps = []PlanStep{{ID: "a", Description: "A", Status: StepPending}, {ID: "a", Description: "B", Status: StepPending}}
+			req.Steps = []Step{{ID: "a", Description: "A", Status: StepPending}, {ID: "a", Description: "B", Status: StepPending}}
 		}},
-		{name: "empty id", mutate: func(req *UpdateRequest) { req.Steps = []PlanStep{{Description: "A", Status: StepPending}} }},
-		{name: "empty description", mutate: func(req *UpdateRequest) { req.Steps = []PlanStep{{ID: "a", Status: StepPending}} }},
+		{name: "empty id", mutate: func(req *UpdateRequest) { req.Steps = []Step{{Description: "A", Status: StepPending}} }},
+		{name: "empty description", mutate: func(req *UpdateRequest) { req.Steps = []Step{{ID: "a", Status: StepPending}} }},
 		{name: "invalid status", mutate: func(req *UpdateRequest) { req.Steps[0].Status = "mystery" }},
 		{name: "missing dependency", mutate: func(req *UpdateRequest) { req.Steps[0].DependsOn = []string{"ghost"} }},
 		{name: "self dependency", mutate: func(req *UpdateRequest) { req.Steps[0].DependsOn = []string{"audit"} }},
@@ -57,26 +57,26 @@ func TestValidateRejectsMalformedSnapshots(t *testing.T) {
 func TestValidateAcceptsDeclarativeLifecycleStatesInAnyOrder(t *testing.T) {
 	tests := []struct {
 		name   string
-		status PlanStatus
-		steps  []PlanStep
+		status Status
+		steps  []Step
 	}{
 		{
 			name: "dependent starts before prerequisite",
-			steps: []PlanStep{
+			steps: []Step{
 				{ID: "a", Description: "A", Status: StepPending},
 				{ID: "b", Description: "B", Status: StepInProgress, DependsOn: []string{"a"}},
 			},
 		},
 		{
 			name: "dependent remains pending after prerequisite cancellation",
-			steps: []PlanStep{
+			steps: []Step{
 				{ID: "a", Description: "A", Status: StepCancelled},
 				{ID: "b", Description: "B", Status: StepPending, DependsOn: []string{"a"}},
 			},
 		},
 		{
 			name: "all exceptional states may omit reasons",
-			steps: []PlanStep{
+			steps: []Step{
 				{ID: "a", Description: "A", Status: StepSkipped},
 				{ID: "b", Description: "B", Status: StepBlocked},
 				{ID: "c", Description: "C", Status: StepFailed},
@@ -86,7 +86,7 @@ func TestValidateAcceptsDeclarativeLifecycleStatesInAnyOrder(t *testing.T) {
 		{
 			name:   "completed plan may accurately retain mixed step states",
 			status: StatusCompleted,
-			steps: []PlanStep{
+			steps: []Step{
 				{ID: "a", Description: "A", Status: StepCompleted},
 				{ID: "b", Description: "B", Status: StepFailed},
 				{ID: "c", Description: "C", Status: StepPending},
@@ -95,7 +95,7 @@ func TestValidateAcceptsDeclarativeLifecycleStatesInAnyOrder(t *testing.T) {
 		{
 			name:   "cancelled plan needs no explanation",
 			status: StatusCancelled,
-			steps:  []PlanStep{{ID: "a", Description: "A", Status: StepPending}},
+			steps:  []Step{{ID: "a", Description: "A", Status: StepPending}},
 		},
 	}
 	for _, test := range tests {
@@ -113,11 +113,11 @@ func TestValidateAcceptsDeclarativeLifecycleStatesInAnyOrder(t *testing.T) {
 }
 
 func TestValidateAcceptsReopenRetryAndCancelledPlanResumeWithoutReasons(t *testing.T) {
-	for _, priorStatus := range []PlanStatus{StatusActive, StatusCompleted, StatusCancelled} {
+	for _, priorStatus := range []Status{StatusActive, StatusCompleted, StatusCancelled} {
 		t.Run(string(priorStatus), func(t *testing.T) {
 			existing := &Plan{
 				ID: "plan-123", Revision: 4, Objective: "x", Status: priorStatus,
-				Steps: []PlanStep{
+				Steps: []Step{
 					{ID: "a", Description: "A", Status: StepCompleted},
 					{ID: "b", Description: "B", Status: StepFailed},
 					{ID: "c", Description: "C", Status: StepCancelled},
@@ -125,7 +125,7 @@ func TestValidateAcceptsReopenRetryAndCancelledPlanResumeWithoutReasons(t *testi
 			}
 			req := UpdateRequest{
 				PlanID: "plan-123", Revision: 4, Objective: "x", Status: StatusActive,
-				Steps: []PlanStep{
+				Steps: []Step{
 					{ID: "c", Description: "C", Status: StepInProgress},
 					{ID: "a", Description: "A", Status: StepPending},
 					{ID: "b", Description: "B", Status: StepInProgress},
@@ -141,7 +141,7 @@ func TestValidateAcceptsReopenRetryAndCancelledPlanResumeWithoutReasons(t *testi
 func TestValidateExistingSnapshotRequiresRevisionButAllowsRemovedSteps(t *testing.T) {
 	existing := &Plan{
 		ID: "plan-123", Revision: 4, Objective: "x", Status: StatusActive,
-		Steps: []PlanStep{{ID: "a", Description: "A", Status: StepCompleted}, {ID: "b", Description: "B", Status: StepPending}},
+		Steps: []Step{{ID: "a", Description: "A", Status: StepCompleted}, {ID: "b", Description: "B", Status: StepPending}},
 	}
 	req := validReq()
 	req.Revision = 3
@@ -149,7 +149,7 @@ func TestValidateExistingSnapshotRequiresRevisionButAllowsRemovedSteps(t *testin
 		t.Fatal("expected revision conflict")
 	}
 	req.Revision = 4
-	req.Steps = []PlanStep{{ID: "a", Description: "A", Status: StepCompleted}}
+	req.Steps = []Step{{ID: "a", Description: "A", Status: StepCompleted}}
 	if err := Validate(existing, req); err != nil {
 		t.Fatalf("clean desired snapshot rejected: %v", err)
 	}

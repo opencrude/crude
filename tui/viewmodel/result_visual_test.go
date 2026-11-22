@@ -10,7 +10,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 	"crude/types/toolresult"
 	"crude/workspace"
 )
@@ -18,7 +18,7 @@ import (
 // Called only by the opt-in tuishot branch of the real failure journey. Live
 // and resumed data come from its actual Session/SQLite run, not strings copied
 // from a screenshot. F2 discloses, F3 switches to cold data, F4 shows the batch.
-func runCompactResultVisual(t *testing.T, live, resumed [][]types.ChatMessage) {
+func runCompactResultVisual(t *testing.T, live, resumed [][]conversation.ChatMessage) {
 	root := filepath.Dir(live[0][0].ToolArgs)
 	app := newEditorPaintApp(t, root)
 	wsOf(app).RootPath = root
@@ -38,14 +38,14 @@ func runCompactResultVisual(t *testing.T, live, resumed [][]types.ChatMessage) {
 type compactResultVisualModel struct {
 	*App
 	t             *testing.T
-	live, resumed [][]types.ChatMessage
+	live, resumed [][]conversation.ChatMessage
 	batch         int
 	cold, light   bool
 	disclosures   int
 }
 
-func (m *compactResultVisualModel) install(messages []types.ChatMessage, title string) {
-	renderer := m.subPaneProjections.GetExisting("result-visual").renderer
+func (m *compactResultVisualModel) install(messages []conversation.ChatMessage, title string) {
+	renderer := m.subPaneProjections.Existing("result-visual").renderer
 	rows, _, _ := renderer.ExportMessageRows(m.width)
 	for _, row := range rows {
 		if row.ToggleAny {
@@ -53,7 +53,7 @@ func (m *compactResultVisualModel) install(messages []types.ChatMessage, title s
 		}
 	}
 	state := m.ws.AgentMgr().Get("result-visual").State
-	snapshots := []workspace.Message{{InternalID: "visual-request", Role: types.RoleUser, Content: title}}
+	snapshots := []conversation.Message{{InternalID: "visual-request", Role: conversation.RoleUser, Content: title}}
 	order := []string{"visual-request"}
 	for _, message := range messages {
 		snapshots = append(snapshots, workspaceMessageFromChat(message))
@@ -79,7 +79,7 @@ func (m *compactResultVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch key.Code {
 		case tea.KeyF2:
 			m.requirePainted([]string{"Edit File failed", "Read File failed"}, []string{"var Missing = true", "hint:"})
-			renderer := m.subPaneProjections.GetExisting("result-visual").renderer
+			renderer := m.subPaneProjections.Existing("result-visual").renderer
 			rows, _, _ := renderer.ExportMessageRows(m.width)
 			for _, row := range rows {
 				if row.Toggle {
@@ -110,11 +110,11 @@ func (m *compactResultVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case tea.KeyF5:
 			m.requirePainted([]string{"Apply Patch failed", "Read File failed"}, []string{"hint:"})
-			m.install([]types.ChatMessage{
-				{InternalID: "unknown", Role: types.RoleTool, ToolName: "apply_patch", ToolArgs: "target.go",
-					ToolStatus: types.ToolStatusError, ToolOutcome: toolresult.Outcome{State: toolresult.Uncertain, Summary: "Effects could not be verified."}, Content: "Retained diagnostic evidence from an interrupted operation."},
-				{InternalID: "denied", Role: types.RoleTool, ToolName: "write_file", ToolArgs: "target.go",
-					ToolStatus: types.ToolStatusError, ToolOutcome: toolresult.Outcome{State: toolresult.Denied, Summary: "The user did not approve this change."}, Content: "No file changed."},
+			m.install([]conversation.ChatMessage{
+				{InternalID: "unknown", Role: conversation.RoleTool, ToolName: "apply_patch", ToolArgs: "target.go",
+					ToolStatus: conversation.ToolStatusError, ToolOutcome: toolresult.Outcome{State: toolresult.Uncertain, Summary: "Effects could not be verified."}, Content: "Retained diagnostic evidence from an interrupted operation."},
+				{InternalID: "denied", Role: conversation.RoleTool, ToolName: "write_file", ToolArgs: "target.go",
+					ToolStatus: conversation.ToolStatusError, ToolOutcome: toolresult.Outcome{State: toolresult.Denied, Summary: "The user did not approve this change."}, Content: "No file changed."},
 			}, "Uncertain and denied operations")
 			return m, nil
 		case tea.KeyF7:

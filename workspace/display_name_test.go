@@ -11,7 +11,7 @@ func TestWorkspaceDisplayName_NeverShowsRawHash(t *testing.T) {
 	const hash = "84db4726b4a4528b"
 
 	t.Run("empty_name_uses_path_basename", func(t *testing.T) {
-		got := WorkspaceDisplayName(WorkspaceInfo{
+		got := DisplayName(Info{
 			ID:          hash,
 			ProjectName: "",
 			ProjectDir:  "/home/example/projects/my-project",
@@ -25,7 +25,7 @@ func TestWorkspaceDisplayName_NeverShowsRawHash(t *testing.T) {
 	})
 
 	t.Run("name_equal_to_id_uses_path", func(t *testing.T) {
-		got := WorkspaceDisplayName(WorkspaceInfo{
+		got := DisplayName(Info{
 			ID:          hash,
 			ProjectName: hash,
 			ProjectDir:  "/tmp/crude-probe",
@@ -36,7 +36,7 @@ func TestWorkspaceDisplayName_NeverShowsRawHash(t *testing.T) {
 	})
 
 	t.Run("stored_name_preferred", func(t *testing.T) {
-		got := WorkspaceDisplayName(WorkspaceInfo{
+		got := DisplayName(Info{
 			ID:          hash,
 			ProjectName: "Friendly",
 			ProjectDir:  "/home/example/projects/other",
@@ -47,7 +47,7 @@ func TestWorkspaceDisplayName_NeverShowsRawHash(t *testing.T) {
 	})
 
 	t.Run("no_name_no_path_placeholder", func(t *testing.T) {
-		got := WorkspaceDisplayName(WorkspaceInfo{ID: hash})
+		got := DisplayName(Info{ID: hash})
 		if got == hash || strings.Contains(got, hash) {
 			t.Fatalf("got %q — must not show raw id", got)
 		}
@@ -74,8 +74,8 @@ func TestListWorkspaceInfos_EmptyNameUsesPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantID := WorkspaceID(project)
-	var found *WorkspaceInfo
+	wantID := ID(project)
+	var found *Info
 	for i := range infos {
 		if infos[i].ID == wantID {
 			found = &infos[i]

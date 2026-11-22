@@ -11,7 +11,7 @@ import (
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
 	"crude/tui/chatprojection"
-	ctypes "crude/types"
+	"crude/types/conversation"
 	"crude/types/reasoning"
 	"crude/workspace"
 )
@@ -32,7 +32,7 @@ func TestSummaryThinkingStaysCompactAndPreservesFullTrainOnResume(t *testing.T) 
 				reasoning.Delta{Text: " and preserves evidence.", Kind: kind, BlockID: "second"},
 			)
 			for _, delta := range deltas {
-				app.handleAgentEvent(ctypes.AgentEventMsg{AgentID: "summary", Type: "thinking", Data: delta})
+				app.handleAgentEvent(AgentEventMsg{AgentID: "summary", Type: "thinking", Data: delta})
 				app.paintShellFrame()
 				if app.thinkingPaneID(state) != "" {
 					t.Fatal("summary promoted into a pane")
@@ -69,12 +69,12 @@ func TestSummaryThinkingStaysCompactAndPreservesFullTrainOnResume(t *testing.T) 
 			}
 			renderer.ToggleDisclosure(id)
 			if kind == reasoning.Provisional {
-				app.handleAgentEvent(ctypes.AgentEventMsg{AgentID: "summary", Type: "reasoning_classified", Data: reasoning.InferredSummary})
+				app.handleAgentEvent(AgentEventMsg{AgentID: "summary", Type: "reasoning_classified", Data: reasoning.InferredSummary})
 				if changed := state.Messages.Messages()[0]; changed.InternalID != id || changed.ThinkingDisplay.Kind != reasoning.InferredSummary {
 					t.Fatalf("settling a provisional request moved its canonical thought: %+v", changed)
 				}
 			}
-			app.handleAgentEvent(ctypes.AgentEventMsg{AgentID: "summary", Type: "done", Data: map[string]any{"reason": "completed"}})
+			app.handleAgentEvent(AgentEventMsg{AgentID: "summary", Type: "done", Data: map[string]any{"reason": "completed"}})
 			snapshot := state.Messages.Messages()[0]
 			if snapshot.ThinkingActive || !snapshot.ThinkingDisplay.Kind.IsSummary() {
 				t.Fatalf("settled metadata=%+v", snapshot)
@@ -83,7 +83,7 @@ func TestSummaryThinkingStaysCompactAndPreservesFullTrainOnResume(t *testing.T) 
 			if err := sessiondb.CreateSessionRow(db, "summary"); err != nil {
 				t.Fatal(err)
 			}
-			if err := sessiondb.AppendMessageWithMeta(db, "summary", provider.NewTextMessage("assistant", ""), 1, sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []ctypes.ConversationMessage{snapshot}}); err != nil {
+			if err := sessiondb.AppendMessageWithMeta(db, "summary", provider.NewTextMessage("assistant", ""), 1, sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []conversation.Message{snapshot}}); err != nil {
 				t.Fatal(err)
 			}
 			stored, err := sessiondb.LoadMessagesWithMeta(db)
@@ -113,7 +113,7 @@ func TestThinkingStripClickOpensAndClosesHiddenLiveTrace(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 100, 36
 	app.AddOrchestrator("thinking")
-	app.handleAgentEvent(ctypes.AgentEventMsg{AgentID: "thinking", Type: "thinking", Data: reasoning.Delta{
+	app.handleAgentEvent(AgentEventMsg{AgentID: "thinking", Type: "thinking", Data: reasoning.Delta{
 		Text: "**Inspecting first**\n\n**Checking second**", Kind: reasoning.Provisional,
 	}})
 	app.paintShellFrame()
@@ -146,20 +146,20 @@ func TestThinkingTideDirectionFollowsOwningConnection(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator("first")
 	app.AddOrchestrator("other")
-	app.handleAgentEvent(ctypes.AgentEventMsg{AgentID: "first", Type: "turn_started", Data: ctypes.TurnIdentity{Generation: 1, ProviderID: "gateway", AccountID: "account", ModelID: "model"}})
-	app.handleAgentEvent(ctypes.AgentEventMsg{AgentID: "first", Type: "thinking", Data: reasoning.Delta{Text: "Provisional thinking", Kind: reasoning.Provisional}})
+	app.handleAgentEvent(AgentEventMsg{AgentID: "first", Type: "turn_started", Data: conversation.TurnIdentity{Generation: 1, ProviderID: "gateway", AccountID: "account", ModelID: "model"}})
+	app.handleAgentEvent(AgentEventMsg{AgentID: "first", Type: "thinking", Data: reasoning.Delta{Text: "Provisional thinking", Kind: reasoning.Provisional}})
 	if app.ws.AgentActivity("first").TideForward {
 		t.Fatal("unclassified thinking moved forward before evidence")
 	}
-	app.handleAgentEvent(ctypes.AgentEventMsg{AgentID: "first", Type: "reasoning_classified", Data: reasoning.InferredSummary})
+	app.handleAgentEvent(AgentEventMsg{AgentID: "first", Type: "reasoning_classified", Data: reasoning.InferredSummary})
 	if !app.ws.AgentActivity("first").TideForward || app.ws.AgentActivity("other").TideForward {
 		t.Fatal("settled direction leaked to another agent or failed to settle")
 	}
-	app.handleAgentEvent(ctypes.AgentEventMsg{AgentID: "first", Type: "stream_token", Data: "Answer"})
+	app.handleAgentEvent(AgentEventMsg{AgentID: "first", Type: "stream_token", Data: "Answer"})
 	if !app.ws.AgentActivity("first").TideForward {
 		t.Fatal("forward tide stopped at the end of thinking")
 	}
-	app.handleAgentEvent(ctypes.AgentEventMsg{AgentID: "first", Type: "turn_started", Data: ctypes.TurnIdentity{Generation: 2, ProviderID: "other-gateway", AccountID: "account", ModelID: "model"}})
+	app.handleAgentEvent(AgentEventMsg{AgentID: "first", Type: "turn_started", Data: conversation.TurnIdentity{Generation: 2, ProviderID: "other-gateway", AccountID: "account", ModelID: "model"}})
 	if app.ws.AgentActivity("first").TideForward {
 		t.Fatal("changed serving connection retained stale tide classification")
 	}

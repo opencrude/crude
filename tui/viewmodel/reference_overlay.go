@@ -58,7 +58,7 @@ func (m *App) beginReferenceOverlay(id string) tea.Cmd {
 	if store == nil || screen == nil {
 		return nil
 	}
-	ref, ok := store.GetReference(id)
+	ref, ok := store.Reference(id)
 	if !ok || !ref.Active() {
 		return nil
 	}
@@ -146,7 +146,7 @@ func (m *App) openChatAttachment(payload chatprojection.ChatAttachmentOpenPayloa
 		return nil
 	}
 	if store := m.RefStore(); store != nil {
-		if ref, ok := store.GetReference(payload.Target.ReferenceID); ok && ref.Active() && m.ActiveSession != nil && ref.SessionID == m.ActiveSession.SessionID {
+		if ref, ok := store.Reference(payload.Target.ReferenceID); ok && ref.Active() && m.ActiveSession != nil && ref.SessionID == m.ActiveSession.SessionID {
 			return m.openReferenceIn(ref, true, m.attachmentDestination())
 		}
 	}
@@ -195,7 +195,7 @@ func (m *App) applyReferenceContent(msg referenceContentLoadedMsg) {
 		state.screen.OpenReadOnly(state.ref.ID, state.ref.Caption(), "Attachment could not be opened.\n"+msg.err.Error())
 		m.Feedback.NotifyError("Could not open attachment: " + msg.err.Error())
 	} else {
-		current, ok := state.store.GetReference(state.ref.ID)
+		current, ok := state.store.Reference(state.ref.ID)
 		if !ok || current != state.ref {
 			m.setMode(ModeChat)
 			m.Feedback.NotifyError("The attachment changed while it was loading; open it again")

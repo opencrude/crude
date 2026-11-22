@@ -1,6 +1,6 @@
 package filetree
 
-import "crude/text/search"
+import "crude/text/textsearch"
 
 // FuzzyMatch reports whether pattern is a case-insensitive subsequence of
 // name and returns the rune positions in name that were consumed. Positions

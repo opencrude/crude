@@ -13,7 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace/document"
 )
 
@@ -35,13 +36,13 @@ type inlayAcceptanceClient struct {
 type inlayAcceptanceCall struct {
 	ctx      context.Context
 	path     string
-	span     types.LSPInlayRange
+	span     insight.LSPInlayRange
 	resolve  bool
 	wire     int
 	original string
 }
 
-func (c *inlayAcceptanceClient) answer(call inlayAcceptanceCall) (types.LSPInlayResponse, error) {
+func (c *inlayAcceptanceClient) answer(call inlayAcceptanceCall) (insight.LSPInlayResponse, error) {
 	c.mu.Lock()
 	wire := c.versions[call.path]
 	c.mu.Unlock()
@@ -51,9 +52,9 @@ func (c *inlayAcceptanceClient) answer(call inlayAcceptanceCall) (types.LSPInlay
 	if call.resolve {
 		raw = c.resolved
 	}
-	response := types.LSPInlayResponse{
-		Boundary: types.InsightBoundary{
-			Source: types.InsightSource{Path: "forged-adapter-path", Kind: "disk"},
+	response := insight.LSPInlayResponse{
+		Boundary: insight.Boundary{
+			Source: insight.Source{Path: "forged-adapter-path", Kind: "disk"},
 		},
 		WireVersion: wire + c.wireDelta, JSON: []byte(raw),
 		Unsupported: c.unsupported, ResolveSupported: c.resolveSupported,
@@ -69,17 +70,17 @@ func (c *inlayAcceptanceClient) answer(call inlayAcceptanceCall) (types.LSPInlay
 	return response, err
 }
 
-func (c *inlayAcceptanceClient) RequestInlayHints(ctx context.Context, path string, span types.LSPInlayRange) (types.LSPInlayResponse, error) {
+func (c *inlayAcceptanceClient) RequestInlayHints(ctx context.Context, path string, span insight.LSPInlayRange) (insight.LSPInlayResponse, error) {
 	return c.answer(inlayAcceptanceCall{ctx: ctx, path: path, span: span})
 }
 
-func (c *inlayAcceptanceClient) ResolveInlayHint(ctx context.Context, path string, wire int, original []byte) (types.LSPInlayResponse, error) {
+func (c *inlayAcceptanceClient) ResolveInlayHint(ctx context.Context, path string, wire int, original []byte) (insight.LSPInlayResponse, error) {
 	return c.answer(inlayAcceptanceCall{ctx: ctx, path: path, wire: wire, original: string(original), resolve: true})
 }
 
 type inlayAcceptanceRuntime struct{ client *inlayAcceptanceClient }
 
-func (r inlayAcceptanceRuntime) NewClient(_ types.LSPServerSpec, _ string, admission func() error) LSPClient {
+func (r inlayAcceptanceRuntime) NewClient(_ setting.LSPServerSpec, _ string, admission func() error) LSPClient {
 	r.client.startAdmission = admission
 	return r.client
 }
@@ -88,7 +89,7 @@ type inlayAcceptanceFixture struct {
 	w      *Workspace
 	client *inlayAcceptanceClient
 	owner  document.Owner
-	source types.InsightSource
+	source insight.Source
 	path   string
 	disk   string
 }
@@ -129,14 +130,14 @@ func newInlayAcceptanceFixture(t *testing.T, text string) *inlayAcceptanceFixtur
 	return &inlayAcceptanceFixture{&Workspace{LiveDocuments: docs, LSPMgr: m}, c, owner, source, path, text}
 }
 
-func inlayAcceptanceRange(startLine, startCol, endLine, endCol int) types.LSPInlayRange {
-	return types.LSPInlayRange{
-		Start: types.LSPInlayPosition{Line: startLine, Character: startCol},
-		End:   types.LSPInlayPosition{Line: endLine, Character: endCol},
+func inlayAcceptanceRange(startLine, startCol, endLine, endCol int) insight.LSPInlayRange {
+	return insight.LSPInlayRange{
+		Start: insight.LSPInlayPosition{Line: startLine, Character: startCol},
+		End:   insight.LSPInlayPosition{Line: endLine, Character: endCol},
 	}
 }
 
-func (f *inlayAcceptanceFixture) request(t *testing.T, raw, view string, sequence uint64, span types.LSPInlayRange) types.LSPInlaySet {
+func (f *inlayAcceptanceFixture) request(t *testing.T, raw, view string, sequence uint64, span insight.LSPInlayRange) insight.LSPInlaySet {
 	t.Helper()
 	f.client.inlayMu.Lock()
 	f.client.raw = raw
@@ -184,7 +185,7 @@ func (f *inlayAcceptanceFixture) unchanged(t *testing.T, before document.Snapsho
 	}
 }
 
-func (f *inlayAcceptanceFixture) inspect(t *testing.T, set types.LSPInlaySet, index int, resolve bool) types.LSPInlayInspection {
+func (f *inlayAcceptanceFixture) inspect(t *testing.T, set insight.LSPInlaySet, index int, resolve bool) insight.LSPInlayInspection {
 	t.Helper()
 	out, err := f.w.InspectLSPInlayHint(t.Context(), f.owner, set.ID, set.Digest, index, resolve)
 	if err != nil {
@@ -271,7 +272,7 @@ func TestInlayUnsupportedNullAndEmptyAreRetainedPartialEvidence(t *testing.T) {
 				t.Fatal("range absence invented project cleanliness", set.Detail)
 			}
 			if out, err := f.w.InspectLSPInlayHint(t.Context(), f.owner, set.ID, set.Digest, 0, true); err == nil ||
-				!reflect.DeepEqual(out, types.LSPInlayInspection{}) {
+				!reflect.DeepEqual(out, insight.LSPInlayInspection{}) {
 				t.Fatal("negative answer invented an inspectable hint", out, err)
 			}
 			f.unchanged(t, before, history)
@@ -303,7 +304,7 @@ func TestInlayMalformedProviderAnswersFailAtomically(t *testing.T) {
 				span.Start.Character = 3
 			}
 			set, err := f.w.RequestLSPInlayHints(t.Context(), f.owner, f.source, "view", 1, span)
-			if err == nil || !reflect.DeepEqual(set, types.LSPInlaySet{}) {
+			if err == nil || !reflect.DeepEqual(set, insight.LSPInlaySet{}) {
 				t.Fatal("malformed response leaked qualified or partial evidence", set, err)
 			}
 			f.w.LiveDocuments.mu.Lock()
@@ -319,7 +320,7 @@ func TestInlayMalformedProviderAnswersFailAtomically(t *testing.T) {
 }
 
 func TestInlaySourceRangeSettingsTrustAndWireAdmission(t *testing.T) {
-	if types.DefaultLSPSettings().InlayHints {
+	if setting.DefaultLSP().InlayHints {
 		t.Fatal("inlay hints must be explicitly enabled")
 	}
 	for _, invalid := range []string{"owner", "revision", "lifetime", "path", "noncanonical", "conflict",
@@ -365,7 +366,7 @@ func TestInlaySourceRangeSettingsTrustAndWireAdmission(t *testing.T) {
 				settings.InlayHints = false
 				f.w.LSPMgr.SetSettings(settings)
 			case "trust":
-				f.w.LSPMgr.SetAnalysisPolicy(types.DefaultWorkspaceAnalysisSettings(), "")
+				f.w.LSPMgr.SetAnalysisPolicy(setting.DefaultWorkspaceAnalysis(), "")
 			case "unsynchronized":
 				f.w.LSPMgr.mu.Lock()
 				f.w.LSPMgr.documents[f.path].syncPending = true
@@ -376,7 +377,7 @@ func TestInlaySourceRangeSettingsTrustAndWireAdmission(t *testing.T) {
 				f.client.unsupported = true // A fabricated [] is not unsupported.
 			}
 			set, err := f.w.RequestLSPInlayHints(ctx, owner, source, view, sequence, span)
-			if err == nil || !reflect.DeepEqual(set, types.LSPInlaySet{}) {
+			if err == nil || !reflect.DeepEqual(set, insight.LSPInlaySet{}) {
 				t.Fatal("invalid admission returned qualified evidence", set, err)
 			}
 			f.client.inlayMu.Lock()
@@ -433,7 +434,7 @@ func TestInlayInspectRetainsOriginalJSONAndDetachedNestedData(t *testing.T) {
 			index = 1
 		}
 		out, err := f.w.InspectLSPInlayHint(t.Context(), owner, id, digest, index, true)
-		if err == nil || !reflect.DeepEqual(out, types.LSPInlayInspection{}) {
+		if err == nil || !reflect.DeepEqual(out, insight.LSPInlayInspection{}) {
 			t.Fatal("forged identity acquired retained evidence", forged, out, err)
 		}
 	}
@@ -505,7 +506,7 @@ func TestInlayResolveRejectsNonTooltipChangesAndUnadvertisedDispatch(t *testing.
 					len(out.ResolvedJSON) != 0 {
 					t.Fatal("unadvertised resolve lost explicit unsupported evidence", out, err)
 				}
-			} else if err == nil || !reflect.DeepEqual(out, types.LSPInlayInspection{}) {
+			} else if err == nil || !reflect.DeepEqual(out, insight.LSPInlayInspection{}) {
 				t.Fatal("resolve changed non-tooltip authority", change, out, err)
 			}
 			f.client.inlayMu.Lock()
@@ -541,7 +542,7 @@ func (f *inlayAcceptanceFixture) invalidate(t *testing.T, change string) {
 		settings.InlayHints = false
 		f.w.LSPMgr.SetSettings(settings)
 	case "trust":
-		f.w.LSPMgr.SetAnalysisPolicy(types.DefaultWorkspaceAnalysisSettings(), "")
+		f.w.LSPMgr.SetAnalysisPolicy(setting.DefaultWorkspaceAnalysis(), "")
 	case "close-reopen":
 		if err := s.CloseView(f.owner, f.source.DocumentID); err != nil {
 			t.Fatal(err)
@@ -574,7 +575,7 @@ func TestInlayCompletedEvidenceIsRevokedByLifecycle(t *testing.T) {
 			set := f.request(t, `[{"position":{"line":0,"character":1},"label":"x"}]`, "view", 1, inlayAcceptanceRange(0, 0, 1, 0))
 			f.invalidate(t, change)
 			out, err := f.w.InspectLSPInlayHint(t.Context(), f.owner, set.ID, set.Digest, 0, false)
-			if err == nil || !reflect.DeepEqual(out, types.LSPInlayInspection{}) {
+			if err == nil || !reflect.DeepEqual(out, insight.LSPInlayInspection{}) {
 				t.Fatal("completed evidence survived its lifecycle boundary", change, out, err)
 			}
 		})
@@ -605,7 +606,7 @@ func awaitInlayAcceptanceCall(t *testing.T, entered <-chan inlayAcceptanceCall) 
 }
 
 type inlayAcceptanceOutcome struct {
-	set types.LSPInlaySet
+	set insight.LSPInlaySet
 	err error
 }
 
@@ -647,12 +648,12 @@ func TestInlayLatestSequenceWinsAndExactReleaseCannotRetireNewer(t *testing.T) {
 		t.Fatal("late release retired newer sequence", out)
 	}
 	unblock()
-	if out := awaitInlayAcceptanceOutcome(t, done); out.err == nil || !reflect.DeepEqual(out.set, types.LSPInlaySet{}) {
+	if out := awaitInlayAcceptanceOutcome(t, done); out.err == nil || !reflect.DeepEqual(out.set, insight.LSPInlaySet{}) {
 		t.Fatal("late first answer replaced second", out)
 	}
 	for _, sequence := range []uint64{1, 2} {
 		if set, err := f.w.RequestLSPInlayHints(t.Context(), f.owner, f.source, "view", sequence, span); err == nil ||
-			!reflect.DeepEqual(set, types.LSPInlaySet{}) {
+			!reflect.DeepEqual(set, insight.LSPInlaySet{}) {
 			t.Fatal("non-monotonic sequence was admitted", sequence, set, err)
 		}
 	}
@@ -714,7 +715,7 @@ func TestInlayLateNegativeAndPositiveAnswersStayFenced(t *testing.T) {
 				}
 				unblock()
 				out := awaitInlayAcceptanceOutcome(t, done)
-				if out.err == nil || !reflect.DeepEqual(out.set, types.LSPInlaySet{}) {
+				if out.err == nil || !reflect.DeepEqual(out.set, insight.LSPInlaySet{}) {
 					t.Fatal("late invalidated answer escaped canonical fence", answer, change, out)
 				}
 			})
@@ -732,7 +733,7 @@ func TestInlayReleaseCancelsPendingTooltipResolve(t *testing.T) {
 			f.client.resolved = `{"position":{"line":0,"character":1},"label":"x","data":{"n":1e0},"tooltip":"late"}`
 			entered, unblock := holdInlayAcceptanceRPC(t, f.client)
 			type result struct {
-				out types.LSPInlayInspection
+				out insight.LSPInlayInspection
 				err error
 			}
 			done := make(chan result, 1)
@@ -757,7 +758,7 @@ func TestInlayReleaseCancelsPendingTooltipResolve(t *testing.T) {
 			unblock()
 			select {
 			case got := <-done:
-				if got.err == nil || !reflect.DeepEqual(got.out, types.LSPInlayInspection{}) {
+				if got.err == nil || !reflect.DeepEqual(got.out, insight.LSPInlayInspection{}) {
 					t.Fatal("released resolve returned late evidence", got)
 				}
 			case <-time.After(3 * time.Second):
@@ -779,7 +780,7 @@ func TestInlayActiveViewsAndSequenceTombstonesHaveSeparateBounds(t *testing.T) {
 		f.request(t, "[]", fmt.Sprintf("active-%d", i), 1, span)
 	}
 	if set, err := f.w.RequestLSPInlayHints(t.Context(), f.owner, f.source, "seventeenth", 1, span); err == nil ||
-		!reflect.DeepEqual(set, types.LSPInlaySet{}) {
+		!reflect.DeepEqual(set, insight.LSPInlaySet{}) {
 		t.Fatal("seventeenth active view exceeded cap16", set, err)
 	}
 	for i := 0; i < 16; i++ {
@@ -882,7 +883,7 @@ func TestInlayRawEvidenceBoundAndReleaseCloseShutdownReclamation(t *testing.T) {
 	f.client.raw = "[" + original + strings.Repeat(" ", 1<<20) + "]"
 	f.client.inlayMu.Unlock()
 	if out, err := f.w.RequestLSPInlayHints(t.Context(), f.owner, f.source, "oversize", 1, span); err == nil ||
-		!reflect.DeepEqual(out, types.LSPInlaySet{}) {
+		!reflect.DeepEqual(out, insight.LSPInlaySet{}) {
 		t.Fatal("over-budget original JSON acquired evidence", out, err)
 	}
 	if total, _ := rawBytes(); total != len(original) {

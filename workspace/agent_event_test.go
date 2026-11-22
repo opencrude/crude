@@ -5,13 +5,13 @@ import (
 	"testing"
 	"time"
 
-	ttypes "crude/types"
+	"crude/types/conversation"
 	"crude/types/reasoning"
 )
 
 func TestAgentStateRuntimeEventIdentityRejectsDuplicateAndWrongRun(t *testing.T) {
 	state := NewAgentState("agent", nil, nil)
-	base := ttypes.RuntimeEventIdentity{EventID: "one", OwnerID: "session", AgentID: "agent", RunID: "run", RuntimeEpoch: 2, Generation: 3, Sequence: 1}
+	base := conversation.RuntimeEventIdentity{EventID: "one", OwnerID: "session", AgentID: "agent", RunID: "run", RuntimeEpoch: 2, Generation: 3, Sequence: 1}
 	if !state.AcceptRuntimeEvent(base) {
 		t.Fatal("first exact envelope was rejected")
 	}
@@ -148,7 +148,7 @@ func TestThinkingBlockFinalizesWhenToolActionStarts(t *testing.T) {
 
 func TestReplyResultCreatesOneAttributedProgressMessageNotAToolRow(t *testing.T) {
 	state := NewAgentState("root", nil, nil)
-	identity := ttypes.TurnIdentity{Generation: 1, ProviderID: "openai", ModelID: "model"}
+	identity := conversation.TurnIdentity{Generation: 1, ProviderID: "openai", ModelID: "model"}
 	handle := func(evt AgentEvent) {
 		state.ApplyEvent(evt)
 	}

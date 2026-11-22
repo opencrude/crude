@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/types/statuscenter"
 	"crude/workspace"
 	"crude/workspace/document"
 )
@@ -63,7 +63,7 @@ func TestIdleActorExternalOwnersPublishWithoutMaintenanceDeadline(t *testing.T) 
 	// arriving while earlier state derivation/publication is in progress.
 	for round := range 20 {
 		summary := fmt.Sprintf("external-%d", round)
-		a.ws.Status.Notify(types.NotificationRecord{Summary: summary})
+		a.ws.Status.Notify(statuscenter.NotificationRecord{Summary: summary})
 		awaitIdleState(t, a, coreprotocol.TopicStatus, func(state coreprotocol.WorkspaceState) bool {
 			return state.Status != nil && len(state.Status.Notifications) > 0 && state.Status.Notifications[0].Summary == summary
 		})

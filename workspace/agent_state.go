@@ -5,12 +5,12 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"crude/agent"
 	"crude/agent/collaboration"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
-	ttypes "crude/types"
+	"crude/agent/turnloop"
 	"crude/types/command"
+	"crude/types/conversation"
 	"crude/types/reasoning"
 	"crude/types/recovery"
 )
@@ -52,9 +52,9 @@ type AgentState struct {
 	PendingPermTool string
 	PendingBlockID  string
 	// Goal is the last goal this main agent reported, for transition rows.
-	Goal            *ttypes.Goal
-	TurnIdentity    ttypes.TurnIdentity
-	runtimeIdentity ttypes.RuntimeEventIdentity
+	Goal            *conversation.Goal
+	TurnIdentity    conversation.TurnIdentity
+	runtimeIdentity conversation.RuntimeEventIdentity
 	runtimeEventIDs map[string]struct{}
 	terminal        bool
 }
@@ -74,7 +74,7 @@ func NewAgentState(id string, messages *Conversation, lg Logger) *AgentState {
 // AcceptRuntimeEvent admits one exact backend envelope. Same-run semantic
 // evidence remains admissible after terminal UI state, while duplicates,
 // replaced runs, wrong owners and non-monotonic sequences fail closed.
-func (a *AgentState) AcceptRuntimeEvent(id ttypes.RuntimeEventIdentity) bool {
+func (a *AgentState) AcceptRuntimeEvent(id conversation.RuntimeEventIdentity) bool {
 	if a == nil || !id.Valid() || id.AgentID != a.ID || id.OwnerID == "" {
 		return false
 	}
@@ -224,7 +224,7 @@ func (a *AgentState) ApplyEvent(evt AgentEvent) AgentEffects {
 				break
 			}
 		}
-		target.AppendMessageIfAbsent(ttypes.ConversationMessage{
+		target.AppendMessageIfAbsent(conversation.Message{
 			InternalID: event.ID, Role: MessageRoleUser, Origin: provider.OriginPeer,
 			Content: event.Body, Collaboration: attribution, Time: event.CreatedAt,
 		})
@@ -530,7 +530,7 @@ func isManualCompactionEvent(evt AgentEvent) bool {
 // operation after a turn ended: a human /compact, or the workspace Errand's
 // compaction when its agentic loop ends. Other triggers run inside a turn.
 func isSessionCompactionTrigger(trigger string) bool {
-	return trigger == agent.CompactionTriggerManual || trigger == agent.CompactionTriggerLoopEnd
+	return trigger == turnloop.CompactionTriggerManual || trigger == turnloop.CompactionTriggerLoopEnd
 }
 
 // Session operations have their own identity; they must neither inherit the
@@ -586,14 +586,14 @@ func parseCompactionStatus(phase string, data any) TurnStatus {
 	return status
 }
 
-func parseTurnIdentity(data any) (ttypes.TurnIdentity, bool) {
-	identity, ok := data.(ttypes.TurnIdentity)
+func parseTurnIdentity(data any) (conversation.TurnIdentity, bool) {
+	identity, ok := data.(conversation.TurnIdentity)
 	if ok {
 		return identity, identity.Generation > 0 && identity.ModelID != ""
 	}
 	values, ok := data.(map[string]any)
 	if !ok {
-		return ttypes.TurnIdentity{}, false
+		return conversation.TurnIdentity{}, false
 	}
 	identity.AccountID, _ = values["account_id"].(string)
 	identity.ProviderID, _ = values["provider_id"].(string)

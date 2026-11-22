@@ -11,7 +11,7 @@ import (
 
 	"crude/agent/collaboration"
 	"crude/agent/worktree"
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
 	"crude/types/control"
 )
 

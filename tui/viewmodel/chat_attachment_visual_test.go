@@ -15,8 +15,9 @@ import (
 
 	"crude/agent/sessiondb"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/types/attachment"
+	"crude/types/conversation"
+	"crude/types/setting"
 )
 
 // Opt-in fixture for scripts/tuishot.sh with the compiled viewmodel test binary:
@@ -58,7 +59,7 @@ func TestChatAttachmentVisualAcceptance(t *testing.T) {
 		t.Fatal(err)
 	}
 	posted := "Posted attachments: " + text.Label + " and " + media.Label
-	app.appendActiveMessage(types.ChatMessage{InternalID: "visual-posted", Role: types.RoleUser, Content: posted, Attachments: attachment.Locate(posted, []attachment.Target{{ReferenceID: text.ID, Label: text.Label}, {ReferenceID: media.ID, Label: media.Label}})})
+	app.appendActiveMessage(conversation.ChatMessage{InternalID: "visual-posted", Role: conversation.RoleUser, Content: posted, Attachments: attachment.Locate(posted, []attachment.Target{{ReferenceID: text.ID, Label: text.Label}, {ReferenceID: media.ID, Label: media.Label}})})
 	historical, err := app.RefStore().CreateReference(sessiondb.CreateRequest{Kind: sessiondb.KindPastedText, Content: "COLD SQLITE HISTORICAL CONTENT\n\nThis identity came from the retained input preparation, not a guessed session label."})
 	if err != nil {
 		t.Fatal(err)
@@ -121,13 +122,13 @@ func (m *attachmentVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyF5:
 			return m, m.click(m.historical.Label)
 		case tea.KeyF6:
-			setAttachmentDestination(m.t, m.App, types.AttachmentOpenSystem)
+			setAttachmentDestination(m.t, m.App, setting.AttachmentOpenSystem)
 			return m, m.openAttachment(m.image.ID, false)
 		case tea.KeyF7:
-			setAttachmentDestination(m.t, m.App, types.AttachmentOpenFileManager)
+			setAttachmentDestination(m.t, m.App, setting.AttachmentOpenFileManager)
 			return m, m.openAttachment(m.image.ID, false)
 		case tea.KeyF8:
-			setAttachmentDestination(m.t, m.App, types.AttachmentOpenSystem)
+			setAttachmentDestination(m.t, m.App, setting.AttachmentOpenSystem)
 			m.openApplicationSettings()
 			return m, nil
 		case tea.KeyF9:

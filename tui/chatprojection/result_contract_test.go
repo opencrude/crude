@@ -5,15 +5,15 @@ import (
 	"testing"
 
 	"crude/tui/theme"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 func TestSettledResultsDefaultToTitleOnlyAndRetainExpandedEvidence(t *testing.T) {
 	for _, name := range []string{"read_file", "agent_send", "mcp__test__read"} {
 		t.Run(name, func(t *testing.T) {
 			r := newActivityRenderer()
-			message := types.ChatMessage{InternalID: "result", Role: types.RoleTool, ToolName: name,
-				ToolStatus: types.ToolStatusError, ToolPreviewPhase: types.ToolPreviewError,
+			message := conversation.ChatMessage{InternalID: "result", Role: conversation.RoleTool, ToolName: name,
+				ToolStatus: conversation.ToolStatusError, ToolPreviewPhase: conversation.ToolPreviewError,
 				Content: "Error: cannot complete the operation\nRetained diagnostic evidence"}
 			mode := r.defaultDisclosure(&message)
 			compact := renderToolMessageLines(message, theme.DefaultDark(), 160, 160, 160, 0, 24, "done", mode)
@@ -29,8 +29,8 @@ func TestSettledResultsDefaultToTitleOnlyAndRetainExpandedEvidence(t *testing.T)
 }
 
 func TestLongOperandCannotHideClosedReasonOrDuplicateExpandedDiagnostic(t *testing.T) {
-	msg := types.ChatMessage{Role: types.RoleTool, ToolName: "edit_file", ToolArgs: "/project/" + strings.Repeat("long-directory/", 20) + "file.go",
-		ToolStatus: types.ToolStatusError, Content: "Error: search text not found\nExact search evidence"}
+	msg := conversation.ChatMessage{Role: conversation.RoleTool, ToolName: "edit_file", ToolArgs: "/project/" + strings.Repeat("long-directory/", 20) + "file.go",
+		ToolStatus: conversation.ToolStatusError, Content: "Error: search text not found\nExact search evidence"}
 	for _, width := range []int{80, 160} {
 		closed := renderToolMessageLines(msg, theme.DefaultDark(), width, width, width, 0, 24, "done", DisclosureCollapsed)
 		plain := strings.Join(closed.lines, "\n")

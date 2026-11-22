@@ -68,11 +68,11 @@ func TestEditorTab_StatePreservedAcrossSwitch(t *testing.T) {
 
 	// Switch back to A by pointing m.editor at edA again (this is
 	// exactly what handleTabSwitch does).
-	m_editor := edA
-	if !m_editor.IsOpen() || m_editor.FilePath() != pathA {
+	mEditor := edA
+	if !mEditor.IsOpen() || mEditor.FilePath() != pathA {
 		t.Errorf("expected m.editor to be tab A")
 	}
-	if got := m_editor.Value(); got != beforeValue {
+	if got := mEditor.Value(); got != beforeValue {
 		t.Errorf("tab A value changed after switch-back: got %q want %q", got, beforeValue)
 	}
 

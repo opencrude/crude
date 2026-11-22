@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/types/insight"
 	"crude/workspace/document"
 )
 
@@ -37,7 +37,7 @@ func TestInsightTopicThreeShellsAndSlowAckDoesNotBlockText(t *testing.T) {
 	}
 	type publication struct {
 		header coreprotocol.TopicHeader
-		view   types.DocumentInsight
+		view   insight.DocumentInsight
 		ack    chan struct{}
 	}
 	ctx, cancel := context.WithCancel(t.Context())
@@ -80,10 +80,10 @@ func TestInsightTopicThreeShellsAndSlowAckDoesNotBlockText(t *testing.T) {
 		t.Helper()
 		for {
 			p := next(index)
-			if p.view.Revision == revision && p.view.State == types.InsightCurrent {
+			if p.view.Revision == revision && p.view.State == insight.Current {
 				return p
 			}
-			if p.view.State != types.InsightPending || p.view.Syntax != nil {
+			if p.view.State != insight.Pending || p.view.Syntax != nil {
 				t.Fatalf("unexpected insight: %+v", p.view)
 			}
 			close(p.ack)

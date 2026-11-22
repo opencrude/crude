@@ -6,8 +6,8 @@ import (
 	"sync"
 
 	"crude/agent/session"
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -26,16 +26,16 @@ func (a *actor) prepareSessionSettings(request coreprotocol.Request) (func(conte
 	if err := decodeRequest(request, &in); err != nil {
 		return bad("invalid_request", err.Error())
 	}
-	if err := types.ValidateSettingEdits(types.SessionPreferences{}, in.Edits); err != nil {
+	if err := setting.ValidateEdits(setting.SessionPreferences{}, in.Edits); err != nil {
 		return bad("invalid_request", err.Error())
 	}
 	var op *workspace.SessionSettingsOperation
 	var err error
 	switch request.Method {
 	case coreprotocol.SessionSettingsSave:
-		value := types.Settings{SessionEdits: in.Edits}
+		value := setting.Settings{SessionEdits: in.Edits}
 		if value.SessionEdits == nil {
-			value.SessionEdits = []types.SettingEdit{}
+			value.SessionEdits = []setting.Edit{}
 		}
 		op, err = a.ws.PrepareSessionSettingsSave(in.SessionID, value)
 	case coreprotocol.SessionSettingsReset:

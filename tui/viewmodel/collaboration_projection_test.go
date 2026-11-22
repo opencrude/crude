@@ -11,8 +11,8 @@ import (
 	"crude/agent/sessiondb"
 	"crude/tui/chatprojection"
 	"crude/tui/theme"
-	"crude/types"
 	"crude/types/command"
+	"crude/types/conversation"
 	"crude/workspace"
 )
 
@@ -40,7 +40,7 @@ func TestCommandOutcomeLiveEventSQLiteHydrationParity(t *testing.T) {
 					t.Fatal(err)
 				}
 				if err := sessiondb.AppendMessageWithMeta(database, "session", wire, 1, sessiondb.DisplayMeta{
-					SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []types.ConversationMessage{canonical},
+					SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []conversation.Message{canonical},
 				}); err != nil {
 					t.Fatal(err)
 				}
@@ -48,10 +48,10 @@ func TestCommandOutcomeLiveEventSQLiteHydrationParity(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				live := ChatMessagesFromViews([]workspace.ChatMessageView{canonical})
+				live := ChatMessagesFromViews([]conversation.Message{canonical})
 				hydrated := ChatMessagesFromViews(workspace.ConvertMessagesForDisplay(stored))
 				for _, expanded := range []bool{false, true} {
-					render := func(messages []types.ChatMessage) []chatprojection.MessageRow {
+					render := func(messages []conversation.ChatMessage) []chatprojection.MessageRow {
 						r := chatprojection.NewRenderer(theme.DefaultDark())
 						r.SetSize(width, 40)
 						r.SetChatAreaBounds(0, 30)
@@ -92,8 +92,8 @@ func TestCollaborationMessageLiveSQLiteHydrationParity(t *testing.T) {
 					RecipientIDs: []string{"root"}, RecipientNames: []string{"Rebecca"},
 					Kind: "work_request", RequestID: "request-review", RequestRevision: 2,
 				}
-				canonical := types.ConversationMessage{
-					InternalID: "event-review", Role: types.RoleUser, Origin: provider.OriginPeer,
+				canonical := conversation.Message{
+					InternalID: "event-review", Role: conversation.RoleUser, Origin: provider.OriginPeer,
 					Content:       "Review the parser ownership and verify the exact persisted evidence.",
 					Collaboration: attribution, Time: time.Unix(123, 0),
 				}
@@ -110,7 +110,7 @@ func TestCollaborationMessageLiveSQLiteHydrationParity(t *testing.T) {
 				}
 				if err := sessiondb.AppendMessageWithMeta(database, "session", wire, 1, sessiondb.DisplayMeta{
 					SnapshotVersion: sessiondb.ConversationSnapshotVersion,
-					Snapshots:       []types.ConversationMessage{canonical},
+					Snapshots:       []conversation.Message{canonical},
 				}); err != nil {
 					t.Fatal(err)
 				}
@@ -118,9 +118,9 @@ func TestCollaborationMessageLiveSQLiteHydrationParity(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				live := ChatMessagesFromViews([]workspace.ChatMessageView{canonical})
+				live := ChatMessagesFromViews([]conversation.Message{canonical})
 				hydrated := ChatMessagesFromViews(workspace.ConvertMessagesForDisplay(stored))
-				render := func(messages []types.ChatMessage) []chatprojection.MessageRow {
+				render := func(messages []conversation.ChatMessage) []chatprojection.MessageRow {
 					renderer := chatprojection.NewRenderer(themeCase.th)
 					renderer.SetSize(width, 40)
 					renderer.SetChatAreaBounds(0, 30)
@@ -156,8 +156,8 @@ func TestCollaborationMessageLiveSQLiteHydrationParity(t *testing.T) {
 }
 
 func TestRunningAgentBroadcastRendersAsRareBroadcastInsteadOfRecipientDump(t *testing.T) {
-	message := types.ConversationMessage{
-		InternalID: "event-broadcast", Role: types.RoleUser, Origin: provider.OriginPeer,
+	message := conversation.Message{
+		InternalID: "event-broadcast", Role: conversation.RoleUser, Origin: provider.OriginPeer,
 		Content: "Stop before publishing stale generated files.",
 		Collaboration: &provider.CollaborationAttribution{
 			EventID: "event-broadcast", ThreadID: "event-broadcast",
@@ -170,7 +170,7 @@ func TestRunningAgentBroadcastRendersAsRareBroadcastInsteadOfRecipientDump(t *te
 	renderer := chatprojection.NewRenderer(theme.DefaultDark())
 	renderer.SetSize(80, 24)
 	renderer.SetChatAreaBounds(0, 20)
-	renderer.SyncMessages(ChatMessagesFromViews([]workspace.ChatMessageView{message}), 1, 0)
+	renderer.SyncMessages(ChatMessagesFromViews([]conversation.Message{message}), 1, 0)
 	rows := renderer.ExportMessageRowsSnapshot(80).Rows
 	if len(rows) != 1 {
 		t.Fatalf("rows=%d", len(rows))

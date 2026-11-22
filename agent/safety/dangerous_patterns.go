@@ -3,7 +3,7 @@ package safety
 import (
 	"regexp"
 
-	"crude/logger"
+	"crude/internal/logger"
 )
 
 type DangerousPattern struct {

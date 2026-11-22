@@ -18,9 +18,9 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
+	"crude/core/corewire"
 	"crude/core/remoteconn"
-	"crude/core/wire"
 	"crude/workspace/fileio"
 )
 

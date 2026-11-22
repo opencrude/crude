@@ -19,12 +19,12 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/agent/prompthistory"
 	"crude/agent/provider"
 	"crude/agent/session"
 	"crude/agent/sessiondb"
-	"crude/history"
 	"crude/tui/input"
-	"crude/types"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -195,7 +195,7 @@ func TestPromptHistoryRecallFencesPointerEditsAndColdHydration(t *testing.T) {
 			app.Input.SetInput("original draft")
 			prior := composerDraftLoadedMsg{session: app.ActiveSession, epoch: app.composerDraftEpoch, requestRevision: app.Input.DraftRevision(), text: "old saved draft"}
 			app.draftOwner(app.ActiveSession).loadRevision = prior.requestRevision
-			entry := history.Entry{Text: "[notes]", Attachments: []history.Attachment{{Start: 0, End: 7, Reference: sessiondb.Reference{ID: "notes", Kind: sessiondb.KindPastedText, Label: "[notes]", Content: "exact notes"}}}}
+			entry := prompthistory.Entry{Text: "[notes]", Attachments: []prompthistory.Attachment{{Start: 0, End: 7, Reference: sessiondb.Reference{ID: "notes", Kind: sessiondb.KindPastedText, Label: "[notes]", Content: "exact notes"}}}}
 			cmd := app.recallPrompt(app.Input.RecallPrompt(entry))
 			result := cmd().(promptHistoryRestoredMsg)
 			switch kind {
@@ -230,13 +230,13 @@ func TestHistoryRecallToActualProviderRetainsMixedContent(t *testing.T) {
 	if err := os.WriteFile(imagePath, encoded.Bytes(), 0600); err != nil {
 		t.Fatal(err)
 	}
-	entry := history.Entry{Text: "inspect [image] and [notes] with literal [Pasted IMG1]"}
-	entry.Attachments = []history.Attachment{
+	entry := prompthistory.Entry{Text: "inspect [image] and [notes] with literal [Pasted IMG1]"}
+	entry.Attachments = []prompthistory.Attachment{
 		{Start: 8, End: 15, Reference: sessiondb.Reference{ID: "image", Kind: sessiondb.KindPastedImage, Label: "[image]", Mime: "image/png", FilePath: imagePath}},
 		{Start: 20, End: 27, Reference: sessiondb.Reference{ID: "notes", Kind: sessiondb.KindPastedText, Label: "[notes]", Content: "EXACT-NOTES-CONTENT"}},
 	}
 	historyPath := filepath.Join(home, "history.json")
-	store := history.New()
+	store := prompthistory.New()
 	store.Record(entry.Text, time.Now(), entry.Attachments...)
 	if err := store.Save(historyPath); err != nil {
 		t.Fatal(err)
@@ -244,7 +244,7 @@ func TestHistoryRecallToActualProviderRetainsMixedContent(t *testing.T) {
 	if err := os.Remove(imagePath); err != nil {
 		t.Fatal(err)
 	}
-	store, err := history.LoadFile(historyPath)
+	store, err := prompthistory.LoadFile(historyPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +263,7 @@ func TestHistoryRecallToActualProviderRetainsMixedContent(t *testing.T) {
 	wsOf(app).Logger = stubLogger{}
 	wsOf(app).RootPath, wsOf(app).WorkspaceDir = t.TempDir(), t.TempDir()
 	wsOf(app).SessionsByID, wsOf(app).SessionsByAgent = make(map[string]*workspace.Session), make(map[string]*workspace.Session)
-	wsOf(app).SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
+	wsOf(app).SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}})
 	cfg := testAccountConfig()
 	account := cfg.Accounts["test"]
 	account.Connection.ProviderURL = server.URL
@@ -279,7 +279,7 @@ func TestHistoryRecallToActualProviderRetainsMixedContent(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer wsOf(app).CloseAllSessions()
-	sender := &recoveryJourneySender{events: make(chan types.AgentMsg, 512)}
+	sender := &recoveryJourneySender{events: make(chan AgentMsg, 512)}
 	orch, err := wsOf(app).StartOrchestrator(owner.SessionID, sender)
 	if err != nil {
 		t.Fatal(err)

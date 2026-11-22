@@ -10,7 +10,8 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -44,9 +45,9 @@ func TestConnectedAutomaticCompletionWithRealPyright(t *testing.T) {
 			runtime := remoteJourneyRuntime(t, "http://unused.invalid", func(w *workspace.Workspace) {
 				owned = w
 				settings := w.AppDefaults()
-				settings.LSP = types.DefaultLSPSettings()
+				settings.LSP = setting.DefaultLSP()
 				settings.LSP.AutoDetect = false
-				settings.LSP.Languages = map[string]types.LSPLanguageSettings{"python": {
+				settings.LSP.Languages = map[string]setting.LSPLanguage{"python": {
 					Enabled: true, Command: server, Args: []string{"--stdio"}, RootMarkers: []string{"pyrightconfig.json"},
 				}}
 				w.SetAppDefaults(settings)
@@ -56,7 +57,7 @@ func TestConnectedAutomaticCompletionWithRealPyright(t *testing.T) {
 			ed := liveTestOpen(t, shell.app, path)
 			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 			defer cancel()
-			if _, _, err := owned.LSPMgr.ProbeHover(ctx, path, types.LSPSourcePosition{Line: 1, Column: 7}); err != nil {
+			if _, _, err := owned.LSPMgr.ProbeHover(ctx, path, insight.LSPSourcePosition{Line: 1, Column: 7}); err != nil {
 				t.Fatal(err)
 			}
 			remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool {

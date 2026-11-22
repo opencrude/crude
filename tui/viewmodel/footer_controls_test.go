@@ -9,7 +9,7 @@ import (
 	"crude/tui/screens/shellfooter"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"
-	ttypes "crude/types"
+	"crude/types/statuscenter"
 )
 
 func TestFooterControlsContainOnlyPanelToggles(t *testing.T) {
@@ -109,7 +109,7 @@ func TestFooterColorsFollowAttentionInsteadOfPermanentAlarms(t *testing.T) {
 	}
 	tokens := ui.NewTokenSet(app.Theme)
 	_, quiet := tokens.StatusStripColors(idle[1].FillRole, idle[1].Active, idle[1].Attention)
-	noticeID := app.ws.Status().Notify(ttypes.NotificationRecord{Summary: "Build finished", Source: "test"})
+	noticeID := app.ws.Status().Notify(statuscenter.NotificationRecord{Summary: "Build finished", Source: "test"})
 	unread := app.footerStatusSegments()[1]
 	_, alert := tokens.StatusStripColors(unread.FillRole, unread.Active, unread.Attention)
 	if !unread.Attention || quiet.Equal(alert) {
@@ -119,13 +119,13 @@ func TestFooterColorsFollowAttentionInsteadOfPermanentAlarms(t *testing.T) {
 	if app.footerStatusSegments()[1].Attention {
 		t.Fatal("read notice retained attention fill")
 	}
-	wsOf(app).Status.SetAgent(ttypes.AgentStatusSnapshot{Ref: ttypes.ResourceRef{ID: "background"}, Phase: ttypes.AgentTool})
+	wsOf(app).Status.SetAgent(statuscenter.AgentStatusSnapshot{Ref: statuscenter.ResourceRef{ID: "background"}, Phase: statuscenter.AgentTool})
 	segments := app.footerStatusSegments()
 	working := segments[len(segments)-1]
 	if !working.Attention || working.FillRole != ui.ColorAccent2 {
 		t.Fatal("background work did not change Workspace color")
 	}
-	wsOf(app).Status.SetAgent(ttypes.AgentStatusSnapshot{Ref: ttypes.ResourceRef{ID: "background"}, Phase: ttypes.AgentQuestion, NeedsAction: true})
+	wsOf(app).Status.SetAgent(statuscenter.AgentStatusSnapshot{Ref: statuscenter.ResourceRef{ID: "background"}, Phase: statuscenter.AgentQuestion, NeedsAction: true})
 	segments = app.footerStatusSegments()
 	if needsInput := segments[len(segments)-1]; !needsInput.Attention || needsInput.FillRole != ui.ColorWarning {
 		t.Fatal("genuine input request did not change Workspace color")

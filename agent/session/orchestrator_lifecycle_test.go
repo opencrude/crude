@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"testing"
 
-	"crude/agent"
 	"crude/agent/provider"
-	ttypes "crude/types"
+	"crude/agent/turnloop"
+	"crude/types/conversation"
 )
 
 func TestImmediateCancellationCannotMissAdmittedTurn(t *testing.T) {
@@ -37,9 +37,9 @@ func TestTurnFinalizationAndExplicitCancellationHaveDistinctChildOwnership(t *te
 		runner := NewSubAgentRunner(s, 1)
 		t.Cleanup(runner.SessionCancel)
 		childCtx, childCancel := context.WithCancel(context.Background())
-		handle := &agent.SubAgentHandle{
-			Spec:   agent.SubAgentSpec{ID: "child", Name: "child", Category: agent.CatResearcher, ParentTurn: 1},
-			Agent:  &agent.Agent{Ctx: childCtx},
+		handle := &turnloop.SubAgentHandle{
+			Spec:   turnloop.SubAgentSpec{ID: "child", Name: "child", Category: turnloop.CatResearcher, ParentTurn: 1},
+			Agent:  &turnloop.Agent{Ctx: childCtx},
 			Cancel: childCancel,
 		}
 		if err := runner.Manager().Register(handle); err != nil {
@@ -85,9 +85,9 @@ func TestCancellingLaterTurnDoesNotKillEarlierAsyncChild(t *testing.T) {
 
 	earlierCtx, cancelEarlier := context.WithCancel(context.Background())
 	t.Cleanup(cancelEarlier)
-	earlier := &agent.SubAgentHandle{
-		Spec:   agent.SubAgentSpec{ID: "earlier", Name: "earlier", Category: agent.CatResearcher, ParentTurn: 1},
-		Agent:  &agent.Agent{Ctx: earlierCtx},
+	earlier := &turnloop.SubAgentHandle{
+		Spec:   turnloop.SubAgentSpec{ID: "earlier", Name: "earlier", Category: turnloop.CatResearcher, ParentTurn: 1},
+		Agent:  &turnloop.Agent{Ctx: earlierCtx},
 		Cancel: cancelEarlier,
 	}
 	if err := runner.Manager().Register(earlier); err != nil {
@@ -100,9 +100,9 @@ func TestCancellingLaterTurnDoesNotKillEarlierAsyncChild(t *testing.T) {
 	orchestrator.endTurn(first.generation)
 
 	currentCtx, cancelCurrent := context.WithCancel(context.Background())
-	current := &agent.SubAgentHandle{
-		Spec:   agent.SubAgentSpec{ID: "current", Name: "current", Category: agent.CatResearcher, ParentTurn: 2},
-		Agent:  &agent.Agent{Ctx: currentCtx},
+	current := &turnloop.SubAgentHandle{
+		Spec:   turnloop.SubAgentSpec{ID: "current", Name: "current", Category: turnloop.CatResearcher, ParentTurn: 2},
+		Agent:  &turnloop.Agent{Ctx: currentCtx},
 		Cancel: cancelCurrent,
 	}
 	if err := runner.Manager().Register(current); err != nil {
@@ -124,14 +124,14 @@ func TestCancellingLaterTurnDoesNotKillEarlierAsyncChild(t *testing.T) {
 
 func TestOrchestratorBlockResponsesAreRequestCorrelated(t *testing.T) {
 	orchestrator := NewOrchestrator("root", nil)
-	response := ttypes.BlockResponse{RequestID: "block-2", Outcome: ttypes.BlockAnswered, Value: "allow"}
+	response := conversation.BlockResponse{RequestID: "block-2", Outcome: conversation.BlockAnswered, Value: "allow"}
 	if !orchestrator.ResolveBlock(response) {
 		t.Fatal("owned block response was rejected")
 	}
 	if got := <-orchestrator.BlockResolveCh; got != response {
 		t.Fatalf("block response = %#v, want %#v", got, response)
 	}
-	if orchestrator.ResolveBlock(ttypes.BlockResponse{Outcome: ttypes.BlockAnswered, Value: "allow"}) {
+	if orchestrator.ResolveBlock(conversation.BlockResponse{Outcome: conversation.BlockAnswered, Value: "allow"}) {
 		t.Fatal("response without request ID was accepted")
 	}
 }
@@ -140,9 +140,9 @@ func TestSessionRoutesBlockingResponseToOwningSubAgent(t *testing.T) {
 	s := &Session{}
 	runner := NewSubAgentRunner(s, 1)
 	t.Cleanup(runner.SessionCancel)
-	handle := &agent.SubAgentHandle{
-		Spec:    agent.SubAgentSpec{ID: "child", Name: "child", Category: agent.CatResearcher},
-		BlockCh: make(chan ttypes.BlockResponse, 1),
+	handle := &turnloop.SubAgentHandle{
+		Spec:    turnloop.SubAgentSpec{ID: "child", Name: "child", Category: turnloop.CatResearcher},
+		BlockCh: make(chan conversation.BlockResponse, 1),
 		Cancel:  func() {},
 	}
 	if err := runner.Manager().Register(handle); err != nil {
@@ -150,7 +150,7 @@ func TestSessionRoutesBlockingResponseToOwningSubAgent(t *testing.T) {
 	}
 	s.subAgentSup = runner
 
-	response := ttypes.BlockResponse{RequestID: "child-block", Outcome: ttypes.BlockAnswered, Value: "answer"}
+	response := conversation.BlockResponse{RequestID: "child-block", Outcome: conversation.BlockAnswered, Value: "answer"}
 	if !s.ResolveBlock("child", response) {
 		t.Fatal("child blocking response was not routed")
 	}

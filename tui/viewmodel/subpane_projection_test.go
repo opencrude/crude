@@ -7,7 +7,7 @@ import (
 
 	"crude/tui/chatprojection"
 	"crude/tui/ui"
-	ttypes "crude/types"
+	"crude/types/conversation"
 	"crude/workspace"
 )
 
@@ -57,13 +57,13 @@ func TestSubPaneProjectionSyncPreservesByVersion(t *testing.T) {
 	if node == nil {
 		t.Fatal("orchestrator not registered")
 	}
-	node.State.Messages.AppendMessage(workspace.Message{
-		Role:    ttypes.RoleAssistant,
+	node.State.Messages.AppendMessage(conversation.Message{
+		Role:    conversation.RoleAssistant,
 		Content: "first",
 		Time:    time.Now(),
 	})
 	app.syncAgentMessages("sync-agent", false)
-	proj := app.subPaneProjections.GetExisting("sync-agent")
+	proj := app.subPaneProjections.Existing("sync-agent")
 	if proj == nil {
 		t.Fatal("projection not created")
 	}
@@ -82,10 +82,10 @@ func TestSubPaneProjectionSyncPreservesByVersion(t *testing.T) {
 // header line plus content lines for a PaneThinking pane with messages.
 func TestSubPaneProjectionRenderThinkingPane(t *testing.T) {
 	app := newFullTestApp(t)
-	sp := app.ws.PaneMgr().GetOrCreate("think-1", workspace.PaneThinking, "Thinking")
+	sp := app.ws.PaneMgr().Ensure("think-1", workspace.PaneThinking, "Thinking")
 	app.subPaneProjections.Get("think-1", workspace.PaneThinking)
-	sp.Messages.AppendMessage(workspace.Message{
-		Role:    ttypes.RoleAssistant,
+	sp.Messages.AppendMessage(conversation.Message{
+		Role:    conversation.RoleAssistant,
 		Content: "pondering the universe",
 		Time:    time.Now(),
 	})
@@ -104,10 +104,10 @@ func TestSubPaneProjectionRenderThinkingPane(t *testing.T) {
 // a header + tool lines for a PaneAgent pane with tool messages.
 func TestSubPaneProjectionRenderAgentPaneCompact(t *testing.T) {
 	app := newFullTestApp(t)
-	sp := app.ws.PaneMgr().GetOrCreate("agent-1", workspace.PaneAgent, "my-agent")
+	sp := app.ws.PaneMgr().Ensure("agent-1", workspace.PaneAgent, "my-agent")
 	app.subPaneProjections.Get("agent-1", workspace.PaneAgent)
-	sp.Messages.AppendMessage(workspace.Message{
-		Role:             ttypes.RoleTool,
+	sp.Messages.AppendMessage(conversation.Message{
+		Role:             conversation.RoleTool,
 		ToolName:         "read_file",
 		ToolArgs:         "main.go",
 		ToolStatus:       "success",
@@ -137,7 +137,7 @@ func TestSubPaneProjectionRenderAgentPaneCompact(t *testing.T) {
 // its summary only. The transcript owns inter-item spacing.
 func TestSubPaneProjectionRenderDoneSummary(t *testing.T) {
 	app := newFullTestApp(t)
-	sp := app.ws.PaneMgr().GetOrCreate("done-1", workspace.PaneAgent, "my-agent")
+	sp := app.ws.PaneMgr().Ensure("done-1", workspace.PaneAgent, "my-agent")
 	sp.TokenCount = 5200
 	sp.Collapse()
 	app.subPaneProjections.Get("done-1", workspace.PaneAgent)
@@ -156,11 +156,11 @@ func TestSubPaneProjectionRenderDoneSummary(t *testing.T) {
 // TestSubPaneProjectionCompactScrollModel verifies compact panes use ScrollModel.
 func TestSubPaneProjectionCompactScrollModel(t *testing.T) {
 	app := newFullTestApp(t)
-	sp := app.ws.PaneMgr().GetOrCreate("scroll-1", workspace.PaneAgent, "agent")
+	sp := app.ws.PaneMgr().Ensure("scroll-1", workspace.PaneAgent, "agent")
 	app.subPaneProjections.Get("scroll-1", workspace.PaneAgent)
 	for i := 0; i < 5; i++ {
-		sp.Messages.AppendMessage(workspace.Message{
-			Role:             ttypes.RoleTool,
+		sp.Messages.AppendMessage(conversation.Message{
+			Role:             conversation.RoleTool,
 			ToolName:         "read_file",
 			ToolArgs:         "f" + string(rune('a'+i)) + ".go",
 			ToolStatus:       "success",
@@ -197,10 +197,10 @@ func scrollMax(s *ui.ScrollModel) int {
 // bump invalidates the compact tool-line cache.
 func TestSubPaneProjectionToolLineCacheInvalidation(t *testing.T) {
 	app := newFullTestApp(t)
-	sp := app.ws.PaneMgr().GetOrCreate("cache-1", workspace.PaneAgent, "agent")
+	sp := app.ws.PaneMgr().Ensure("cache-1", workspace.PaneAgent, "agent")
 	app.subPaneProjections.Get("cache-1", workspace.PaneAgent)
-	sp.Messages.AppendMessage(workspace.Message{
-		Role:             ttypes.RoleTool,
+	sp.Messages.AppendMessage(conversation.Message{
+		Role:             conversation.RoleTool,
 		ToolName:         "read_file",
 		ToolArgs:         "first.go",
 		ToolStatus:       "success",
@@ -210,15 +210,15 @@ func TestSubPaneProjectionToolLineCacheInvalidation(t *testing.T) {
 	app.syncPaneMessages("cache-1", false)
 	// First render populates the cache.
 	app.subPaneProjections.Render("cache-1", sp, 30, 5, 0, true)
-	proj := app.subPaneProjections.GetExisting("cache-1")
+	proj := app.subPaneProjections.Existing("cache-1")
 	cachedVersion := proj.compactMsgVersion
 	cachedCount := proj.compactMsgCount
 	if cachedCount != 1 {
 		t.Fatalf("expected cached count 1, got %d", cachedCount)
 	}
 	// Append another tool message; sync bumps the MessageList version.
-	sp.Messages.AppendMessage(workspace.Message{
-		Role:             ttypes.RoleTool,
+	sp.Messages.AppendMessage(conversation.Message{
+		Role:             conversation.RoleTool,
 		ToolName:         "write_file",
 		ToolArgs:         "second.go",
 		ToolStatus:       "streaming",
@@ -276,10 +276,10 @@ func TestThinkingPanePromotionRoundTrip(t *testing.T) {
 // scroll offset) and asserts content rows stay native.
 func TestThinkingSubpaneNativeRowsPreserveScrollPad(t *testing.T) {
 	app := newFullTestApp(t)
-	sp := app.ws.PaneMgr().GetOrCreate("think-native", workspace.PaneThinking, "Thinking")
+	sp := app.ws.PaneMgr().Ensure("think-native", workspace.PaneThinking, "Thinking")
 	app.subPaneProjections.Get("think-native", workspace.PaneThinking)
-	sp.Messages.AppendMessage(workspace.Message{
-		Role:    ttypes.RoleThinking,
+	sp.Messages.AppendMessage(conversation.Message{
+		Role:    conversation.RoleThinking,
 		Content: "thought line one\nthought line two\nthought line three",
 		Time:    time.Now(),
 	})
@@ -316,7 +316,7 @@ func TestThinkingSubpaneNativeRowsPreserveScrollPad(t *testing.T) {
 	}
 
 	// Overflow viewport + non-zero scroll: pin which content rows appear.
-	spOverflow := app.ws.PaneMgr().GetOrCreate("think-scroll", workspace.PaneThinking, "Thinking")
+	spOverflow := app.ws.PaneMgr().Ensure("think-scroll", workspace.PaneThinking, "Thinking")
 	app.subPaneProjections.Get("think-scroll", workspace.PaneThinking)
 	var b strings.Builder
 	for i := 0; i < 12; i++ {
@@ -326,8 +326,8 @@ func TestThinkingSubpaneNativeRowsPreserveScrollPad(t *testing.T) {
 		b.WriteString("scroll-line-")
 		b.WriteByte(byte('a' + i))
 	}
-	spOverflow.Messages.AppendMessage(workspace.Message{
-		Role:    ttypes.RoleThinking,
+	spOverflow.Messages.AppendMessage(conversation.Message{
+		Role:    conversation.RoleThinking,
 		Content: b.String(),
 		Time:    time.Now(),
 	})
@@ -390,10 +390,10 @@ func TestThinkingSubpaneNativeRowsPreserveScrollPad(t *testing.T) {
 
 func TestExpandedCompletedThinkingPaneRetainsScrollbar(t *testing.T) {
 	app := newTestApp(t)
-	sp := app.ws.PaneMgr().GetOrCreate("thinking-scroll", workspace.PaneThinking, "Thinking")
+	sp := app.ws.PaneMgr().Ensure("thinking-scroll", workspace.PaneThinking, "Thinking")
 	proj := app.subPaneProjections.Get("thinking-scroll", workspace.PaneThinking)
-	proj.renderer.AppendMessage(ttypes.ChatMessage{
-		InternalID: "thinking-body", Role: ttypes.RoleThinking,
+	proj.renderer.AppendMessage(conversation.ChatMessage{
+		InternalID: "thinking-body", Role: conversation.RoleThinking,
 		Content: strings.Repeat("reasoning body that wraps across rows ", 20),
 	})
 	sp.Collapse()
@@ -419,10 +419,10 @@ func subPanePlainContains(lines []chatprojection.SubPaneLine, sub string) bool {
 func TestSubPaneEmbeddingOwnersRetainIndependentPresentation(t *testing.T) {
 	app := newTestApp(t)
 	root := app.subPaneProjections
-	sp := app.ws.PaneMgr().GetOrCreate("shared-child", workspace.PaneAgent, "child")
+	sp := app.ws.PaneMgr().Ensure("shared-child", workspace.PaneAgent, "child")
 	for i := 0; i < 8; i++ {
-		sp.Messages.AppendMessage(workspace.Message{
-			Role: ttypes.RoleTool, ToolName: "read_file", ToolArgs: string(rune('a'+i)) + ".go",
+		sp.Messages.AppendMessage(conversation.Message{
+			Role: conversation.RoleTool, ToolName: "read_file", ToolArgs: string(rune('a'+i)) + ".go",
 			ToolStatus: "success", ToolPreviewPhase: "done",
 		})
 	}
@@ -437,10 +437,10 @@ func TestSubPaneEmbeddingOwnersRetainIndependentPresentation(t *testing.T) {
 	leftScroll.ScrollTo(0)
 	before := left.Render(sp.ID, sp, 30, 3, 0, true)
 	right.Render(sp.ID, sp, 70, 6, 0, true)
-	if left.ScrollModel(sp.ID) == right.ScrollModel(sp.ID) || left.GetExisting(sp.ID).renderer == canonical.renderer {
+	if left.ScrollModel(sp.ID) == right.ScrollModel(sp.ID) || left.Existing(sp.ID).renderer == canonical.renderer {
 		t.Fatal("embedding projection shares canonical or other owner's presentation")
 	}
-	if leftScroll.Viewport() != 2 || leftScroll.Offset() != 0 || left.GetExisting(sp.ID).compactCacheWidth != 30 {
+	if leftScroll.Viewport() != 2 || leftScroll.Offset() != 0 || left.Existing(sp.ID).compactCacheWidth != 30 {
 		t.Fatal("other owner overwrote left geometry, offset or cache")
 	}
 	if !subPanePlainContains(before, "Read a.go") || subPanePlainContains(before, "Read h.go") {
@@ -449,12 +449,12 @@ func TestSubPaneEmbeddingOwnersRetainIndependentPresentation(t *testing.T) {
 	if !subPanePlainContains(right.Render(sp.ID, sp, 70, 6, 0, true), "Read h.go") {
 		t.Fatal("right did not retain independent bottom window")
 	}
-	version := left.GetExisting(sp.ID).renderer.Version()
+	version := left.Existing(sp.ID).renderer.Version()
 	left.Render(sp.ID, sp, 30, 3, 0, true)
-	if left.GetExisting(sp.ID).renderer.Version() != version {
+	if left.Existing(sp.ID).renderer.Version() != version {
 		t.Fatal("unchanged source caused projection republish")
 	}
-	sp.Messages.AppendMessage(workspace.Message{Role: ttypes.RoleTool, ToolName: "read_file", ToolArgs: "new.go", ToolStatus: "success", ToolPreviewPhase: "done"})
+	sp.Messages.AppendMessage(conversation.Message{Role: conversation.RoleTool, ToolName: "read_file", ToolArgs: "new.go", ToolStatus: "success", ToolPreviewPhase: "done"})
 	if !subPanePlainContains(right.Render(sp.ID, sp, 70, 6, 0, true), "Read new.go") {
 		t.Fatal("canonical source append missing from embedding")
 	}
@@ -481,8 +481,8 @@ func TestSubPaneEmbeddingOwnersRetainIndependentPresentation(t *testing.T) {
 
 func TestThinkingEmbeddingOwnersSyncAndScrollIndependently(t *testing.T) {
 	app := newTestApp(t)
-	sp := app.ws.PaneMgr().GetOrCreate("shared-thought", workspace.PaneThinking, "Thinking")
-	sp.Messages.AppendMessage(workspace.Message{Role: ttypes.RoleThinking, Content: "first\nsecond\nthird\nfourth\nfifth\nsixth"})
+	sp := app.ws.PaneMgr().Ensure("shared-thought", workspace.PaneThinking, "Thinking")
+	sp.Messages.AppendMessage(conversation.Message{Role: conversation.RoleThinking, Content: "first\nsecond\nthird\nfourth\nfifth\nsixth"})
 	left, right := app.subPaneProjections.ForOwner("left"), app.subPaneProjections.ForOwner("right")
 	left.Render(sp.ID, sp, 30, 3, 0, true)
 	left.ScrollModel(sp.ID).SetAutoScroll(false)
@@ -500,7 +500,7 @@ func TestThinkingEmbeddingOwnersSyncAndScrollIndependently(t *testing.T) {
 	}
 	// Replacement conversations may have the same version, but not the same source.
 	sp.Messages = workspace.NewConversation()
-	sp.Messages.AppendMessage(workspace.Message{Role: ttypes.RoleThinking, Content: "replacement thought"})
+	sp.Messages.AppendMessage(conversation.Message{Role: conversation.RoleThinking, Content: "replacement thought"})
 	if !subPanePlainContains(left.Render(sp.ID, sp, 30, 8, 0, true), "replacement thought") {
 		t.Fatal("same-version replacement retained stale source")
 	}

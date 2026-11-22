@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"time"
 
-	"crude/types"
+	"crude/types/conversation"
 )
 
 // GoalRecord is a session's stored goal. VerifierID names the running
 // verifier child; the shell view only learns that one is running.
 type GoalRecord struct {
-	Goal       types.Goal
+	Goal       conversation.Goal
 	VerifierID string
 }
 
@@ -37,7 +37,7 @@ func loadGoal(db interface{ QueryRow(string, ...any) *sql.Row }, sessionID strin
 	if err != nil {
 		return GoalRecord{}, false, fmt.Errorf("sessiondb: load goal: %w", err)
 	}
-	record.Goal.Status = types.GoalStatus(status)
+	record.Goal.Status = conversation.GoalStatus(status)
 	record.Goal.TimeUsed = time.Duration(timeUsed) * time.Millisecond
 	record.Goal.Waiting = waiting
 	record.Goal.Verifying = record.VerifierID != ""

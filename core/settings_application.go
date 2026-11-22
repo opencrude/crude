@@ -3,9 +3,9 @@ package core
 import (
 	"context"
 	"crude/agent/provider"
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
 	captypes "crude/types/capability"
+	"crude/types/setting"
 	"encoding/json"
 	"errors"
 	"reflect"
@@ -19,7 +19,7 @@ func (a *actor) prepareApplicationSettings(request coreprotocol.Request) (func(c
 	bad := func(code, message string) (func(context.Context) coreprotocol.Response, func(coreprotocol.Response), bool) {
 		return func(context.Context) coreprotocol.Response { return fault(request, code, message) }, nil, true
 	}
-	var operation func(context.Context) (types.AppSettings, coreprotocol.Value, error)
+	var operation func(context.Context) (setting.App, coreprotocol.Value, error)
 	var publishApp bool
 	var capabilityFailure func(error) string
 	switch request.Method {
@@ -35,7 +35,7 @@ func (a *actor) prepareApplicationSettings(request coreprotocol.Request) (func(c
 		if in.After == nil && (!exists || in.BeforeRevision != "" && in.BeforeRevision != entityRevision(before)) {
 			return bad("account_changed", "The account changed. Review it and try again.")
 		}
-		change := types.AccountChange{ID: in.ID, ProviderID: before.ProviderID, RemovalPreview: in.RemovalPreview}
+		change := setting.AccountChange{ID: in.ID, ProviderID: before.ProviderID, RemovalPreview: in.RemovalPreview}
 		if exists {
 			copy := provider.CloneAccount(before)
 			change.Before = &copy
@@ -55,7 +55,7 @@ func (a *actor) prepareApplicationSettings(request coreprotocol.Request) (func(c
 		if commit == nil {
 			return bad("settings_unavailable", "application account persistence unavailable")
 		}
-		operation = func(ctx context.Context) (types.AppSettings, coreprotocol.Value, error) {
+		operation = func(ctx context.Context) (setting.App, coreprotocol.Value, error) {
 			s, err := commit(change)
 			if change.After == nil {
 				return s, wire(coreprotocol.AccountView{ID: in.ID}), err
@@ -69,13 +69,13 @@ func (a *actor) prepareApplicationSettings(request coreprotocol.Request) (func(c
 			return bad("invalid_request", err.Error())
 		}
 		before := a.ws.AppDefaults()
-		if err := types.ValidateSettingEdits(types.AppSettings{}, in.Edits); err != nil {
+		if err := setting.ValidateEdits(setting.App{}, in.Edits); err != nil {
 			return bad("invalid_request", err.Error())
 		}
-		if err := types.ValidateAnalysisSettingEdits(types.SettingsScopeApplication, in.Edits); err != nil {
+		if err := setting.ValidateAnalysisEdits(setting.ScopeApplication, in.Edits); err != nil {
 			return bad("invalid_request", err.Error())
 		}
-		if err := types.ValidatePredictionSettingEdits(types.SettingsScopeApplication, in.Edits); err != nil {
+		if err := setting.ValidatePredictionEdits(setting.ScopeApplication, in.Edits); err != nil {
 			return bad("invalid_request", err.Error())
 		}
 		for _, edit := range in.Edits {
@@ -86,20 +86,20 @@ func (a *actor) prepareApplicationSettings(request coreprotocol.Request) (func(c
 		// Secrets never enter the ordinary projection. Keep leaves the stored
 		// proxy untouched, even if another preference form was opened earlier.
 		privateEdits := slices.Clone(in.Edits)
-		privateEdits = slices.DeleteFunc(privateEdits, func(e types.SettingEdit) bool { return slices.Equal(e.Path, []string{"network", "proxy_url"}) })
+		privateEdits = slices.DeleteFunc(privateEdits, func(e setting.Edit) bool { return slices.Equal(e.Path, []string{"network", "proxy_url"}) })
 		proxy, err := resolveSecret(in.ProxyURL, before.Network.ProxyURL)
 		if err != nil {
 			return bad("invalid_request", err.Error())
 		}
 		if !in.ProxyURL.Keep {
 			raw, _ := json.Marshal(proxy)
-			privateEdits = append(privateEdits, types.SettingEdit{Path: []string{"network", "proxy_url"}, After: raw})
+			privateEdits = append(privateEdits, setting.Edit{Path: []string{"network", "proxy_url"}, After: raw})
 		}
 		commit := a.ws.OnAppPreferencesCommit
 		if commit == nil {
 			return bad("settings_unavailable", "application persistence unavailable")
 		}
-		operation = func(ctx context.Context) (types.AppSettings, coreprotocol.Value, error) {
+		operation = func(ctx context.Context) (setting.App, coreprotocol.Value, error) {
 			s, err := commit(privateEdits)
 			return s, wire(coreprotocol.ApplicationPreferencesResult{Value: publicApp(s), Revision: entityRevision(s)}), err
 		}
@@ -136,12 +136,12 @@ func (a *actor) prepareApplicationSettings(request coreprotocol.Request) (func(c
 			in.Action.Source.Location = location
 		}
 
-		prepared, err := a.ws.PrepareCapabilities(func(ctx context.Context, before, after types.AppSettings, scope captypes.Scope) (types.AppSettings, error) {
+		prepared, err := a.ws.PrepareCapabilities(func(ctx context.Context, before, after setting.App, scope captypes.Scope) (setting.App, error) {
 			if scope == captypes.ScopeApplication {
 				if appCommit == nil {
-					return types.AppSettings{}, errors.New("application persistence unavailable")
+					return setting.App{}, errors.New("application persistence unavailable")
 				}
-				return appCommit(types.SettingsEdits(before, after))
+				return appCommit(setting.Edits(before, after))
 			}
 			return overlayCommit(ctx, before, after, scope)
 		})
@@ -151,18 +151,18 @@ func (a *actor) prepareApplicationSettings(request coreprotocol.Request) (func(c
 		publishApp = in.Action.Scope == captypes.ScopeApplication
 		switch request.Method {
 		case coreprotocol.CapabilitySnapshot:
-			operation = func(ctx context.Context) (types.AppSettings, coreprotocol.Value, error) {
+			operation = func(ctx context.Context) (setting.App, coreprotocol.Value, error) {
 				s, e := prepared.Snapshot(ctx)
-				return types.AppSettings{}, wire(publicCapabilityResult(s, nil, "")), e
+				return setting.App{}, wire(publicCapabilityResult(s, nil, "")), e
 			}
 		case coreprotocol.CapabilityAcquisitionPreview:
-			operation = func(ctx context.Context) (types.AppSettings, coreprotocol.Value, error) {
+			operation = func(ctx context.Context) (setting.App, coreprotocol.Value, error) {
 				p, e := prepared.Preview(ctx, in.Action)
-				return types.AppSettings{}, wire(coreprotocol.CapabilityPreviewResult{Preview: publicCapabilityPreview(p)}), e
+				return setting.App{}, wire(coreprotocol.CapabilityPreviewResult{Preview: publicCapabilityPreview(p)}), e
 			}
 		default:
 			run := prepared.PrepareAction(in.Action)
-			operation = func(ctx context.Context) (types.AppSettings, coreprotocol.Value, error) {
+			operation = func(ctx context.Context) (setting.App, coreprotocol.Value, error) {
 				s, entries, content, published, e := run(ctx)
 				if in.Action.Operation == "test" {
 					content = ""
@@ -179,9 +179,9 @@ func (a *actor) prepareApplicationSettings(request coreprotocol.Request) (func(c
 		if err != nil {
 			return bad("agent_missing", err.Error())
 		}
-		operation = func(ctx context.Context) (types.AppSettings, coreprotocol.Value, error) {
+		operation = func(ctx context.Context) (setting.App, coreprotocol.Value, error) {
 			input, e := run(ctx)
-			return types.AppSettings{}, wire(coreprotocol.SkillInputResult{Input: input}), e
+			return setting.App{}, wire(coreprotocol.SkillInputResult{Input: input}), e
 		}
 	default:
 		return nil, nil, false
@@ -189,7 +189,7 @@ func (a *actor) prepareApplicationSettings(request coreprotocol.Request) (func(c
 	var mu sync.Mutex
 	var once sync.Once
 	var out coreprotocol.Response
-	var retained types.AppSettings
+	var retained setting.App
 	run := func(ctx context.Context) coreprotocol.Response {
 		mu.Lock()
 		defer mu.Unlock()
@@ -222,7 +222,7 @@ func (a *actor) prepareApplicationSettings(request coreprotocol.Request) (func(c
 		// Preview, discovery and runtime observation do not commit preferences.
 		// Publishing their zero return used to reset application defaults after a
 		// preview, so its exact source could never pass the subsequent approval.
-		if reflect.DeepEqual(retained, types.AppSettings{}) {
+		if reflect.DeepEqual(retained, setting.App{}) {
 			return
 		}
 		if publishApp {

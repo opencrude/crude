@@ -6,9 +6,9 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/clipboard"
+	"crude/internal/clipboard"
+	"crude/internal/terminalvt"
 	"crude/internal/testterminal"
-	"crude/terminalvt"
 	"crude/tui/screens/shellterm"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"

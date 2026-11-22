@@ -15,7 +15,7 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/session"
-	"crude/types"
+	"crude/types/statuscenter"
 )
 
 // Driven only through scripts/tuishot.sh in a dedicated terminal. The core,
@@ -88,7 +88,7 @@ func TestStopLifecycleVisualAcceptance(t *testing.T) {
 	runAppCommand(t, shell.app, shell.app.submitPreparedInput(id, provider.UserInput{
 		Text: "Review the original evidence.\n" + strings.Repeat("accepted source evidence\n", 4_000), DisplayText: "Review the saved source evidence and preserve all completed work.",
 	}, shell.app.Input.DraftRevision()))
-	remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool { return shell.app.ws.AgentActivity(id).Status.Phase == types.AgentCompleted })
+	remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool { return shell.app.ws.AgentActivity(id).Status.Phase == statuscenter.AgentCompleted })
 	model := &stopLifecycleVisualModel{App: shell.app, t: t, id: id, normal: &normal, extraction: &extraction, holdExtraction: &holdExtraction, release: release}
 	program := tea.NewProgram(model, tea.WithWidthMethod(ansi.GraphemeWidth))
 	shell.app.SetProgram(program)

@@ -9,7 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/screens/activitybar"
-	settingsui "crude/tui/settings"
+	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/surface"
 	"crude/tui/ui"
 	captypes "crude/types/capability"

@@ -10,13 +10,13 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/port"
-	"crude/retry"
+	"crude/core/shellport"
+	"crude/internal/retry"
 	"crude/tui/editor"
 	"crude/tui/screens/completion"
 	"crude/tui/ui"
 	"crude/tui/wm"
-	"crude/types"
+	"crude/types/insight"
 )
 
 const completionPopupID = "completion-popup"
@@ -27,7 +27,7 @@ const completionViewID = "editor-completion"
 type completionState struct {
 	workspace                               shellport.Workspace
 	editor                                  *editor.Editor
-	source                                  types.InsightSource
+	source                                  insight.Source
 	selection                               codeActionSelection
 	focus                                   FocusTarget
 	revision, generation, feature, sequence uint64
@@ -47,14 +47,14 @@ type completionState struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	deadline      time.Time
-	set           *types.LSPCompletionSet
+	set           *insight.LSPCompletionSet
 	screen        *completion.Screen
 	pending       *completionRead
 	observed      map[string]bool
 	requestErr    error
 	requesting    bool
 	busyAttempts  int
-	trigger       types.LSPCompletionContext
+	trigger       insight.LSPCompletionContext
 }
 
 type completionRead struct {
@@ -80,13 +80,13 @@ type completionRetryDueMsg struct{ owner *completionState }
 
 type completionResultMsg struct {
 	owner *completionState
-	set   types.LSPCompletionSet
+	set   insight.LSPCompletionSet
 	err   error
 }
 
 type completionReadMsg struct {
 	read   *completionRead
-	result types.LSPCompletionInspection
+	result insight.LSPCompletionInspection
 	err    error
 }
 
@@ -128,10 +128,10 @@ func (m *App) requestCompletionCmd() tea.Cmd {
 	if m.openSnippetChoices() {
 		return nil
 	}
-	return m.requestCompletion(false, types.LSPCompletionContext{})
+	return m.requestCompletion(false, insight.LSPCompletionContext{})
 }
 
-func (m *App) requestCompletion(automatic bool, trigger types.LSPCompletionContext) tea.Cmd {
+func (m *App) requestCompletion(automatic bool, trigger insight.LSPCompletionContext) tea.Cmd {
 	// A list kept on screen while typing stays until this request's result
 	// replaces it, so the list does not blink on every key.
 	old := m.completion
@@ -218,7 +218,7 @@ func (m *App) startCompletionRequest(s *completionState) tea.Cmd {
 		defer stop()
 		set, err := s.port.RequestLSPCompletions(request, s.source, completionViewID, s.sequence, s.line, s.col, s.trigger)
 		if cancelled := request.Err(); cancelled != nil {
-			set, err = types.LSPCompletionSet{}, errors.Join(err, cancelled)
+			set, err = insight.LSPCompletionSet{}, errors.Join(err, cancelled)
 		}
 		return completionResultMsg{owner: s, set: set, err: err}
 	})
@@ -357,7 +357,7 @@ func (m *App) syncCompletion() tea.Cmd {
 	if len(set.Entries) == 0 {
 		if !s.automatic {
 			switch {
-			case set.Answer == types.LSPCompletionUnsupported:
+			case set.Answer == insight.LSPCompletionUnsupported:
 				m.Feedback.NotifyInfo("This language server does not support completion.")
 			case set.UnsupportedItems > 0:
 				m.Feedback.NotifyInfo("These suggestions cannot be inserted. Continue typing to narrow the list.")
@@ -500,7 +500,7 @@ func (m *App) readCompletion(s *completionState, itemID string, accept bool) tea
 		s.pending.stop()
 		s.pending = nil
 	}
-	var row *types.LSPCompletionEntry
+	var row *insight.LSPCompletionEntry
 	for i := range s.set.Entries {
 		if s.set.Entries[i].ID == itemID {
 			row = &s.set.Entries[i]
@@ -534,7 +534,7 @@ func (m *App) readCompletion(s *completionState, itemID string, accept bool) tea
 		defer cancel()
 		result, err := s.port.InspectLSPCompletion(ctx, s.set.ID, s.set.Digest, itemID, !accept)
 		if cancelled := ctx.Err(); cancelled != nil {
-			result, err = types.LSPCompletionInspection{}, errors.Join(err, cancelled)
+			result, err = insight.LSPCompletionInspection{}, errors.Join(err, cancelled)
 		}
 		return completionReadMsg{read: read, result: result, err: err}
 	}
@@ -554,7 +554,7 @@ func (m *App) handleCompletionRead(msg completionReadMsg) bool {
 	if s.screen.SelectedID() != read.itemID || s.set == nil {
 		return false
 	}
-	var row *types.LSPCompletionEntry
+	var row *insight.LSPCompletionEntry
 	for i := range s.set.Entries {
 		if s.set.Entries[i].ID == read.itemID {
 			row = &s.set.Entries[i]
@@ -747,7 +747,7 @@ func (m *App) commitCompletion(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		}
 		id = s.screen.SoleID()
 	}
-	i := slices.IndexFunc(s.set.Entries, func(row types.LSPCompletionEntry) bool { return row.ID == id })
+	i := slices.IndexFunc(s.set.Entries, func(row insight.LSPCompletionEntry) bool { return row.ID == id })
 	if id == "" || i < 0 || !slices.Contains(s.set.Entries[i].CommitCharacters, msg.Text) ||
 		s.screen.SelectedID() != id && !s.screen.Select(id) {
 		return nil, false
@@ -766,8 +766,8 @@ func (m *App) commitCompletion(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 // completionTypedIsSuggestion: the typed word is itself a complete suggestion
 // (its row is hidden because accepting it changes nothing). A commit character
 // then must not replace it with a different sole row.
-func completionTypedIsSuggestion(rows []types.LSPCompletionEntry) bool {
-	return slices.ContainsFunc(rows, func(row types.LSPCompletionEntry) bool {
+func completionTypedIsSuggestion(rows []insight.LSPCompletionEntry) bool {
+	return slices.ContainsFunc(rows, func(row insight.LSPCompletionEntry) bool {
 		return row.Prefix != "" && completionInsertText(row.Insertion) == row.Prefix
 	})
 }

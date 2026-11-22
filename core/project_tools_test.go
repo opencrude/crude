@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
 )
 
 func TestProjectToolsNativeConsentCannotBeForgedByGenericControl(t *testing.T) {

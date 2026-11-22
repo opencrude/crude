@@ -475,11 +475,11 @@ func mergeOpenAIReasoningDetails(details []json.RawMessage) []json.RawMessage {
 // CanonicalizeProviderItems collapses replay fragments whose protocol defines
 // concatenation semantics. It is idempotent so storage, estimation, and replay
 // all observe the same representation.
-func CanonicalizeProviderItems(items []ProviderItem) []ProviderItem {
+func CanonicalizeProviderItems(items []Item) []Item {
 	if len(items) < 2 {
 		return items
 	}
-	canonical := make([]ProviderItem, 0, len(items))
+	canonical := make([]Item, 0, len(items))
 	for index := 0; index < len(items); {
 		item := items[index]
 		if item.Standard != "openai" || item.Type != "openai.reasoning_detail" {
@@ -496,7 +496,7 @@ func CanonicalizeProviderItems(items []ProviderItem) []ProviderItem {
 			details = append(details, fragment.Data)
 		}
 		for _, detail := range mergeOpenAIReasoningDetails(details) {
-			canonical = append(canonical, ProviderItem{
+			canonical = append(canonical, Item{
 				Standard: item.Standard,
 				Type:     item.Type,
 				Data:     detail,
@@ -573,8 +573,8 @@ func captureOpenAIReasoningDetails(message *ChatMessage, additional []json.RawMe
 func openAIReasoningDetailItems(
 	details []json.RawMessage,
 	seen map[string]struct{},
-) []ProviderItem {
-	var items []ProviderItem
+) []Item {
+	var items []Item
 	for _, raw := range details {
 		if len(raw) == 0 || !json.Valid(raw) {
 			continue
@@ -594,7 +594,7 @@ func openAIReasoningDetailItems(
 		if itemType == "" {
 			itemType = "reasoning_detail"
 		}
-		items = append(items, ProviderItem{
+		items = append(items, Item{
 			Standard: "openai",
 			Type:     itemType,
 			Data:     bytes.Clone(raw),

@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"crude/core/protocol"
-	"crude/retry"
+	"crude/core/coreprotocol"
+	"crude/internal/retry"
 	"github.com/fsnotify/fsnotify"
 )
 

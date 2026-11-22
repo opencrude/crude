@@ -3,13 +3,13 @@ package tools
 import (
 	"encoding/json"
 
-	ttypes "crude/types"
+	"crude/types/conversation"
 )
 
 // thinkingEffortEnum derives the effort choices from the canonical ladder;
 // "default" restores the role's configured effort.
 var thinkingEffortEnum = func() string {
-	encoded, _ := json.Marshal(append([]string{"default"}, ttypes.ThinkingLevels...))
+	encoded, _ := json.Marshal(append([]string{"default"}, conversation.ThinkingLevels...))
 	return string(encoded)
 }()
 

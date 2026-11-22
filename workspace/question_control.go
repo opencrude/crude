@@ -1,8 +1,8 @@
 package workspace
 
 import (
-	"crude/types"
 	"crude/types/control"
+	"crude/types/conversation"
 )
 
 // ResolveQuestionControl runs under the workspace actor after caller admission.
@@ -17,9 +17,9 @@ func (w *Workspace) ResolveQuestionControl(caller control.Caller, sessionID, age
 	if caller.Kind == control.AgentCaller {
 		kind, id = "agent", caller.AgentID
 	}
-	reply := types.BlockResponse{RequestID: blockID, Outcome: types.BlockAnswered, AttributionKind: kind, AttributionID: id}
+	reply := conversation.BlockResponse{RequestID: blockID, Outcome: conversation.BlockAnswered, AttributionKind: kind, AttributionID: id}
 	if cancelled {
-		reply.Outcome = types.BlockUserCancelled
+		reply.Outcome = conversation.BlockUserCancelled
 	} else {
 		text, ok := formatQuestionAnswers(answers, questions)
 		if !ok {

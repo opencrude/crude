@@ -18,9 +18,10 @@ import (
 	"crude/agent/toolstore"
 	"crude/insight/catalog"
 	"crude/internal/fileuri"
-	"crude/lsp/client"
-	"crude/third_party/pathwalk"
-	ttypes "crude/types"
+	"crude/lsp/lspclient"
+	"crude/third_party/fastwalk"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace/fileio"
 )
 
@@ -66,10 +67,10 @@ func (m *LSPManager) SetToolStore(store *toolstore.Store) {
 }
 
 // Assembly returns the current assembly plan.
-func (m *LSPManager) Assembly() ttypes.AssemblyPlan {
+func (m *LSPManager) Assembly() insight.AssemblyPlan {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return ttypes.CloneAssemblyPlan(m.assembly)
+	return insight.CloneAssemblyPlan(m.assembly)
 }
 
 // RefreshAssembly lists the project again and resolves its tools. The
@@ -98,9 +99,9 @@ func (m *LSPManager) requestAssemblyLocked() {
 	m.assemblyCancel = cancel
 	m.assemblyRequested++
 	generation := m.assemblyRequested
-	root, settings, store, discovery := m.workspaceRoot, ttypes.CloneLSPSettings(m.settings), m.toolStore, m.discovery
+	root, settings, store, discovery := m.workspaceRoot, setting.CloneLSP(m.settings), m.toolStore, m.discovery
 	if m.assembly.State == "" || discovery == nil {
-		m.assembly.State, m.assembly.Message = ttypes.AssemblyScanning, "Crude is looking at the project files."
+		m.assembly.State, m.assembly.Message = insight.AssemblyScanning, "Crude is looking at the project files."
 		m.bumpVersionLocked()
 	}
 	m.assemblyWG.Add(1)
@@ -110,7 +111,7 @@ func (m *LSPManager) requestAssemblyLocked() {
 		if discovery == nil || discovery.root != root {
 			discovery = discoverProjectLanguages(ctx, root, settings)
 		}
-		plan := resolveAssembly(root, settings, discovery, func(spec ttypes.LSPServerSpec, download *catalog.Download) (string, string, error) {
+		plan := resolveAssembly(root, settings, discovery, func(spec setting.LSPServerSpec, download *catalog.Download) (string, string, error) {
 			return locateTool(ctx, spec, root, store, download)
 		})
 		plan.Generation = generation
@@ -120,7 +121,7 @@ func (m *LSPManager) requestAssemblyLocked() {
 
 // publishAssembly installs a finished plan unless a newer one was requested
 // or the manager closed, and starts the project producers the plan names.
-func (m *LSPManager) publishAssembly(ctx context.Context, discovery *assemblyDiscovery, plan ttypes.AssemblyPlan) {
+func (m *LSPManager) publishAssembly(ctx context.Context, discovery *assemblyDiscovery, plan insight.AssemblyPlan) {
 	if ctx.Err() != nil {
 		return
 	}
@@ -133,21 +134,21 @@ func (m *LSPManager) publishAssembly(ctx context.Context, discovery *assemblyDis
 	m.assembly = plan
 	m.toolPaths = map[assemblyToolKey]string{}
 	m.toolMissing = map[assemblyToolKey]string{}
-	var producers []ttypes.LSPProjectProducer
+	var producers []insight.LSPProjectProducer
 	for _, language := range plan.Languages {
 		switch language.Status {
-		case ttypes.ToolReady:
-			if language.Source == ttypes.ToolSourceStore {
+		case insight.ToolReady:
+			if language.Source == insight.ToolSourceStore {
 				m.toolPaths[assemblyToolKey{language.ServerID, language.Command}] = language.Executable
 			}
-			if language.Scope != ttypes.CoverageProject || language.Root == "" {
+			if language.Scope != insight.CoverageProject || language.Root == "" {
 				continue
 			}
 			spec, ok := m.resolveServerLocked(language.Sample)
 			if ok {
-				producers = append(producers, ttypes.LSPProjectProducer{Root: language.Root, Spec: spec})
+				producers = append(producers, insight.LSPProjectProducer{Root: language.Root, Spec: spec})
 			}
-		case ttypes.ToolMissing, ttypes.ToolUnavailable:
+		case insight.ToolMissing, insight.ToolUnavailable:
 			m.toolMissing[assemblyToolKey{language.ServerID, language.Command}] = language.Reason
 		}
 	}
@@ -157,11 +158,11 @@ func (m *LSPManager) publishAssembly(ctx context.Context, discovery *assemblyDis
 
 // discoverProjectLanguages lists the project and counts files per language.
 // Hidden folders and symbolic links are not followed. Only ignore files are read.
-func discoverProjectLanguages(ctx context.Context, root string, settings ttypes.LSPSettings) *assemblyDiscovery {
+func discoverProjectLanguages(ctx context.Context, root string, settings setting.LSP) *assemblyDiscovery {
 	return discoverProjectLanguagesBounded(ctx, root, settings, assemblyMaxEntries)
 }
 
-func discoverProjectLanguagesBounded(ctx context.Context, root string, settings ttypes.LSPSettings, maxEntries int) *assemblyDiscovery {
+func discoverProjectLanguagesBounded(ctx context.Context, root string, settings setting.LSP, maxEntries int) *assemblyDiscovery {
 	out := &assemblyDiscovery{root: root, languages: map[string]*discoveredLanguage{}}
 	root, err := filepath.Abs(root)
 	if err != nil {
@@ -169,12 +170,12 @@ func discoverProjectLanguagesBounded(ctx context.Context, root string, settings 
 		return out
 	}
 	ignores := &assemblyIgnores{ctx: ctx, root: root, patterns: make(map[string][]gitignore.Pattern)}
-	listing, err := pathwalk.Scan(ctx, pathwalk.Request{Root: root, MaxEntries: maxEntries, MaxWorkers: pathwalk.DefaultWorkers,
+	listing, err := fastwalk.Scan(ctx, fastwalk.Request{Root: root, MaxEntries: maxEntries, MaxWorkers: fastwalk.DefaultWorkers,
 		SkipDir: func(path, name string) bool {
 			return defaultBrowserSkipDir(path, name) || ignores.ignored(path, true)
 		}})
 	out.limited = listing.Truncated
-	if err == pathwalk.ErrEntryLimit {
+	if err == fastwalk.ErrEntryLimit {
 		out.limited, err = true, nil
 	}
 	out.err = assemblyListingError(ctx, listing, err)
@@ -204,7 +205,7 @@ func discoverProjectLanguagesBounded(ctx context.Context, root string, settings 
 	return out
 }
 
-func assemblyListingError(ctx context.Context, listing pathwalk.Catalog, err error) error {
+func assemblyListingError(ctx context.Context, listing fastwalk.Catalog, err error) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -297,10 +298,10 @@ func (m *assemblyIgnores) rules(dir string) []gitignore.Pattern {
 
 // resolveAssembly decides, per discovered language, which tool serves it and
 // where it comes from. locate finds a program without running it.
-func resolveAssembly(root string, settings ttypes.LSPSettings, discovery *assemblyDiscovery, locate func(ttypes.LSPServerSpec, *catalog.Download) (string, string, error)) ttypes.AssemblyPlan {
-	plan := ttypes.AssemblyPlan{State: ttypes.AssemblyReady, FilesSeen: discovery.seen, Limited: discovery.limited}
+func resolveAssembly(root string, settings setting.LSP, discovery *assemblyDiscovery, locate func(setting.LSPServerSpec, *catalog.Download) (string, string, error)) insight.AssemblyPlan {
+	plan := insight.AssemblyPlan{State: insight.AssemblyReady, FilesSeen: discovery.seen, Limited: discovery.limited}
 	if discovery.err != nil {
-		plan.State = ttypes.AssemblyFailed
+		plan.State = insight.AssemblyFailed
 		plan.Message = "Crude could not list the project files. Check the folder permissions and refresh."
 		return plan
 	}
@@ -308,15 +309,15 @@ func resolveAssembly(root string, settings ttypes.LSPSettings, discovery *assemb
 	enabled := settings
 	enabled.Enabled = true
 	for _, found := range discovery.languages {
-		language := ttypes.AssemblyLanguage{ID: found.id, Name: found.name, Files: found.files, Sample: found.sample}
+		language := insight.AssemblyLanguage{ID: found.id, Name: found.name, Files: found.files, Sample: found.sample}
 		catalogLanguage, builtin := c.Language(found.id)
 		spec, ok := enabled.ResolveServer(found.sample)
 		switch {
 		case !ok && builtin && len(catalogLanguage.Servers) == 0:
-			language.Status = ttypes.ToolNoServer
+			language.Status = insight.ToolNoServer
 			language.Reason = fmt.Sprintf("No language server is known for %s. Editing works without one.", found.name)
 		case !ok:
-			language.Status = ttypes.ToolOff
+			language.Status = insight.ToolOff
 			language.Reason = fmt.Sprintf("The language server for %s is off. Turn it on in Language servers settings.", found.name)
 		default:
 			language.ServerID, language.Command = spec.ServerID, spec.Command
@@ -336,12 +337,12 @@ func resolveAssembly(root string, settings ttypes.LSPSettings, discovery *assemb
 			var launchErr error
 			language.Executable, language.Source, launchErr = locate(spec, download)
 			if spec.ServerID == "" {
-				language.Source = ttypes.ToolSourceSettings
+				language.Source = insight.ToolSourceSettings
 			}
 			if language.Executable == "" {
-				language.Status = ttypes.ToolMissing
+				language.Status = insight.ToolMissing
 				if launchErr != nil && !errors.Is(launchErr, exec.ErrNotFound) {
-					language.Status = ttypes.ToolUnavailable
+					language.Status = insight.ToolUnavailable
 					language.Reason = lspStartError(spec.Command, launchErr)
 					break
 				}
@@ -353,11 +354,11 @@ func resolveAssembly(root string, settings ttypes.LSPSettings, discovery *assemb
 				}
 				break
 			}
-			language.Status = ttypes.ToolReady
-			language.Scope = ttypes.CoverageOpenFiles
+			language.Status = insight.ToolReady
+			language.Scope = insight.CoverageOpenFiles
 			language.Reason = openFilesCoverage(settings)
-			if spec.DiagnosticScope == ttypes.CoverageProject {
-				language.Scope = ttypes.CoverageProject
+			if spec.DiagnosticScope == insight.CoverageProject {
+				language.Scope = insight.CoverageProject
 				language.Root, _ = fileuri.ToPath(resolveLSPRoot(found.sample, root, spec.RootMarkers, spec.WorkspaceRootMarkers))
 				language.Reason = "Checks the whole project, including files that are not open."
 			}
@@ -375,15 +376,15 @@ func resolveAssembly(root string, settings ttypes.LSPSettings, discovery *assemb
 	return plan
 }
 
-func assemblyMessage(plan ttypes.AssemblyPlan) string {
+func assemblyMessage(plan insight.AssemblyPlan) string {
 	ready, missing, unavailable := 0, 0, 0
 	for _, language := range plan.Languages {
 		switch language.Status {
-		case ttypes.ToolReady:
+		case insight.ToolReady:
 			ready++
-		case ttypes.ToolMissing:
+		case insight.ToolMissing:
 			missing++
-		case ttypes.ToolUnavailable:
+		case insight.ToolUnavailable:
 			unavailable++
 		}
 	}
@@ -408,7 +409,7 @@ func assemblyMessage(plan ttypes.AssemblyPlan) string {
 // path from settings, a tool in the tool store, then the system path.
 // Path entries inside the workspace are skipped, so a project cannot supply
 // its own server program.
-func locateTool(ctx context.Context, spec ttypes.LSPServerSpec, workspaceRoot string, store *toolstore.Store, download *catalog.Download) (string, string, error) {
+func locateTool(ctx context.Context, spec setting.LSPServerSpec, workspaceRoot string, store *toolstore.Store, download *catalog.Download) (string, string, error) {
 	command := spec.Command
 	if command == "" {
 		return "", "", nil
@@ -418,7 +419,7 @@ func locateTool(ctx context.Context, spec ttypes.LSPServerSpec, workspaceRoot st
 	}
 	if filepath.IsAbs(command) {
 		path, err := locate(command)
-		return path, ttypes.ToolSourceSettings, err
+		return path, insight.ToolSourceSettings, err
 	}
 	if store != nil && download != nil {
 		if tools, _, err := store.List(ctx); err == nil {
@@ -430,13 +431,13 @@ func locateTool(ctx context.Context, spec ttypes.LSPServerSpec, workspaceRoot st
 			}
 			if newest.Executable != "" {
 				if path, err := locate(newest.Executable); err == nil {
-					return path, ttypes.ToolSourceStore, nil
+					return path, insight.ToolSourceStore, nil
 				}
 			}
 		}
 	}
 	path, err := locate(command)
-	return path, ttypes.ToolSourcePath, err
+	return path, insight.ToolSourcePath, err
 }
 
 func managedToolMatches(tool toolstore.Tool, download catalog.Download) bool {

@@ -54,7 +54,8 @@ type Screen struct {
 	actionsMenu     bool
 }
 
-func (screen *Screen) SetDockHeaderInset(width int) { screen.dockHeaderInset = max(0, width) }
+// SetDockHeaderInset sets the width that the dock header takes from the screen header.
+func (s *Screen) SetDockHeaderInset(width int) { s.dockHeaderInset = max(0, width) }
 
 func New(th *theme.Theme) *Screen {
 	tokens := ui.NewTokenSet(th)
@@ -86,61 +87,64 @@ func New(th *theme.Theme) *Screen {
 	return screen
 }
 
-func (screen *Screen) SetTokens(tokens *ui.TokenSet) {
-	screen.tokens = tokens
-	screen.tabs.SetTokens(tokens)
-	screen.filter.SetTokens(tokens)
-	screen.table.SetTokens(tokens)
-	screen.detail.SetTokens(tokens)
-	screen.bar.SetTokens(tokens)
-	screen.narrowActions.SetTokens(tokens)
-	screen.overflowActions.SetTokens(tokens)
-	screen.overflowActions.SetSurfaceBackground(tokens.Color(ui.ColorBg))
-	screen.scroll.SetTokens(tokens)
-	screen.detail.SetBackgroundColor(tokens.Color(ui.ColorBg))
+// SetTokens replaces the token set of the screen and of its children.
+func (s *Screen) SetTokens(tokens *ui.TokenSet) {
+	s.tokens = tokens
+	s.tabs.SetTokens(tokens)
+	s.filter.SetTokens(tokens)
+	s.table.SetTokens(tokens)
+	s.detail.SetTokens(tokens)
+	s.bar.SetTokens(tokens)
+	s.narrowActions.SetTokens(tokens)
+	s.overflowActions.SetTokens(tokens)
+	s.overflowActions.SetSurfaceBackground(tokens.Color(ui.ColorBg))
+	s.scroll.SetTokens(tokens)
+	s.detail.SetBackgroundColor(tokens.Color(ui.ColorBg))
 }
 
-func (screen *Screen) Request(operation string) Request {
-	screen.sequence++
-	screen.loading = true
-	screen.errorText = ""
+// Request builds the next board request with a fresh sequence.
+func (s *Screen) Request(operation string) Request {
+	s.sequence++
+	s.loading = true
+	s.errorText = ""
 	request := Request{
-		Target: screen, Sequence: screen.sequence, Operation: operation,
-		Query: screen.filter.Value(), Thread: screen.thread, Page: screen.page,
+		Target: s, Sequence: s.sequence, Operation: operation,
+		Query: s.filter.Value(), Thread: s.thread, Page: s.page,
 	}
 	if operation == "next" {
-		request.Since = screen.snapshot.Page.Cursor
-		request.Snapshot = screen.snapshot.Page.Snapshot
+		request.Since = s.snapshot.Page.Cursor
+		request.Snapshot = s.snapshot.Page.Snapshot
 	}
 	if operation == "mark-read" {
-		request.Through = screen.snapshot.Page.Snapshot
+		request.Through = s.snapshot.Page.Snapshot
 	}
 	return request
 }
 
-func (screen *Screen) Apply(sequence uint64, snapshot workspace.BoardSnapshot, err error) {
-	if sequence != screen.sequence {
+// Apply stores the board snapshot when its sequence is still current.
+func (s *Screen) Apply(sequence uint64, snapshot workspace.BoardSnapshot, err error) {
+	if sequence != s.sequence {
 		return
 	}
-	screen.loading = false
+	s.loading = false
 	if err != nil {
-		screen.errorText = err.Error()
+		s.errorText = err.Error()
 		return
 	}
-	screen.snapshot = snapshot
-	screen.updateRows()
+	s.snapshot = snapshot
+	s.updateRows()
 }
 
-func (screen *Screen) updateRows() {
+func (s *Screen) updateRows() {
 	var rows []ui.TableRow
-	switch screen.page {
+	switch s.page {
 	case "agents":
-		screen.table.SetColumns([]ui.TableColumn{
+		s.table.SetColumns([]ui.TableColumn{
 			{ID: "name", Label: "Agent", Track: ui.FractionGridTrack(3)},
 			{ID: "state", Label: "State", Track: ui.FractionGridTrack(2)},
 			{ID: "run", Label: "Current work", Track: ui.FractionGridTrack(3)},
 		})
-		for _, participant := range screen.snapshot.Participants {
+		for _, participant := range s.snapshot.Participants {
 			state := string(participant.State) + " · " + string(participant.Presence)
 			run := participant.CurrentRunID
 			if run == "" {
@@ -156,25 +160,25 @@ func (screen *Screen) updateRows() {
 			})
 		}
 	case "reports":
-		screen.table.SetColumns([]ui.TableColumn{
+		s.table.SetColumns([]ui.TableColumn{
 			{ID: "route", Label: "Author → Recipients", Track: ui.FractionGridTrack(3)},
 			{ID: "kind", Label: "Type", Track: ui.FractionGridTrack(1)},
 			{ID: "body", Label: "Report", Track: ui.FractionGridTrack(5)},
 		})
-		for _, event := range screen.snapshot.Page.Events {
+		for _, event := range s.snapshot.Page.Events {
 			if event.Kind != collaboration.EventReportPublished {
 				continue
 			}
 			rows = append(rows, eventRow(event))
 		}
 	default:
-		screen.table.SetColumns([]ui.TableColumn{
+		s.table.SetColumns([]ui.TableColumn{
 			{ID: "route", Label: "From → To", Track: ui.FractionGridTrack(3)},
 			{ID: "kind", Label: "Type", Track: ui.FractionGridTrack(2)},
 			{ID: "body", Label: "Message", Track: ui.FractionGridTrack(5)},
 		})
 		seen := make(map[string]bool)
-		for _, event := range screen.snapshot.Page.Events {
+		for _, event := range s.snapshot.Page.Events {
 			if seen[event.ThreadID] {
 				continue
 			}
@@ -182,10 +186,10 @@ func (screen *Screen) updateRows() {
 			rows = append(rows, eventRow(event))
 		}
 	}
-	screen.table.SetRows(rows)
-	if screen.thread != "" && screen.thread != "agent" {
+	s.table.SetRows(rows)
+	if s.thread != "" && s.thread != "agent" {
 		var detail strings.Builder
-		for _, event := range screen.snapshot.Page.Events {
+		for _, event := range s.snapshot.Page.Events {
 			fmt.Fprintf(&detail, "%s · %s → %s · %s\n%s\n",
 				event.ID, event.SenderName, recipientNames(event.Recipients),
 				eventKindLabel(event.Kind), event.Body)
@@ -204,31 +208,31 @@ func (screen *Screen) updateRows() {
 			}
 			detail.WriteByte('\n')
 		}
-		screen.detail.SetValue(strings.TrimSpace(detail.String()))
+		s.detail.SetValue(strings.TrimSpace(detail.String()))
 	}
 	buttons := []ui.ActionBarButton{
 		{Label: "Refresh", Action: "board.refresh", Enabled: true},
 		{Label: "Search", Action: "board.search", Enabled: true},
 	}
-	if screen.thread != "" {
+	if s.thread != "" {
 		buttons = []ui.ActionBarButton{{Label: "Back", Action: "board.back", Enabled: true}}
 	}
-	if screen.snapshot.Page.HasMore {
+	if s.snapshot.Page.HasMore {
 		buttons = append(buttons, ui.ActionBarButton{Label: "Next page", Action: "board.next", Enabled: true})
 	}
-	if screen.snapshot.Page.Snapshot > screen.snapshot.Page.HumanReadThrough {
+	if s.snapshot.Page.Snapshot > s.snapshot.Page.HumanReadThrough {
 		buttons = append(buttons, ui.ActionBarButton{Label: "Mark viewed read", Action: "board.mark-read", Enabled: true})
 	}
-	screen.bar.SetButtons(buttons...)
-	screen.actionSpecs = buttons
+	s.bar.SetButtons(buttons...)
+	s.actionSpecs = buttons
 	items := make([]ui.ListItem, 0, len(buttons)+1)
 	for _, button := range buttons {
 		items = append(items, ui.ListItem{ID: button.Action, Label: button.Label, Command: true})
 	}
-	if screen.actionsMenu {
+	if s.actionsMenu {
 		items = append(items, ui.ListItem{ID: "board.close-menu", Label: "Back", Command: true})
 	}
-	screen.narrowActions.SetItemsStable(items)
+	s.narrowActions.SetItemsStable(items)
 }
 
 func eventRow(event collaboration.Event) ui.TableRow {
@@ -280,18 +284,19 @@ func eventKindLabel(kind collaboration.EventKind) string {
 	}
 }
 
-func (screen *Screen) Children() []ui.Component {
-	if screen.Bounds().Empty() {
+// Children returns the components that the screen shows.
+func (s *Screen) Children() []ui.Component {
+	if s.Bounds().Empty() {
 		return nil
 	}
-	if screen.actionsMenu {
-		return visibleChildren(screen.tabs, screen.narrowActions)
+	if s.actionsMenu {
+		return visibleChildren(s.tabs, s.narrowActions)
 	}
-	candidates := []ui.Component{screen.tabs, screen.filter, screen.actionComponent()}
-	if screen.thread != "" {
-		candidates = append(candidates, screen.detail)
+	candidates := []ui.Component{s.tabs, s.filter, s.actionComponent()}
+	if s.thread != "" {
+		candidates = append(candidates, s.detail)
 	} else {
-		candidates = append(candidates, screen.table, screen.scroll)
+		candidates = append(candidates, s.table, s.scroll)
 	}
 	return visibleChildren(candidates...)
 }
@@ -306,161 +311,166 @@ func visibleChildren(candidates ...ui.Component) []ui.Component {
 	return children
 }
 
-func (screen *Screen) Measure(_ ui.LayoutContext, constraints ui.Constraints) ui.Size {
+// Measure reports the whole constraint box as the size of the screen.
+func (s *Screen) Measure(_ ui.LayoutContext, constraints ui.Constraints) ui.Size {
 	return constraints.ClampSize(ui.Size{W: constraints.MaxW, H: constraints.MaxH})
 }
 
-func (screen *Screen) Layout(ctx ui.LayoutContext, rect ui.Rect) {
-	screen.SetBounds(rect)
+// Layout places the header, filter, actions and content in the given rect.
+func (s *Screen) Layout(ctx ui.LayoutContext, rect ui.Rect) {
+	s.SetBounds(rect)
 	width, height := max(0, rect.W), max(0, rect.H)
-	headerW := max(0, width-screen.dockHeaderInset)
-	barWidth := screen.bar.Measure(ctx, ui.Loose(1000, 1)).W
+	headerW := max(0, width-s.dockHeaderInset)
+	barWidth := s.bar.Measure(ctx, ui.Loose(1000, 1)).W
 	canShare := height > ui.StripHeight+2
 	fullActions := canShare && width >= barWidth+14
-	moreWidth := screen.overflowActions.Measure(ctx, ui.Loose(1000, 1)).W
-	screen.moreActions = canShare && !fullActions && width >= moreWidth+6
-	shared := fullActions || screen.moreActions
-	if screen.moreActions {
+	moreWidth := s.overflowActions.Measure(ctx, ui.Loose(1000, 1)).W
+	s.moreActions = canShare && !fullActions && width >= moreWidth+6
+	shared := fullActions || s.moreActions
+	if s.moreActions {
 		barWidth = moreWidth
 	}
-	screen.compactActions = !shared && barWidth > width
+	s.compactActions = !shared && barWidth > width
 	barH := 0
 	if !shared {
 		barH = 1
-		if screen.compactActions {
-			barH = len(screen.actionSpecs)
+		if s.compactActions {
+			barH = len(s.actionSpecs)
 		}
 		barH = min(barH, height)
 	}
 	footerY := height - barH
-	screen.statusY = max(0, footerY-1)
-	filterY := min(ui.StripHeight, screen.statusY)
+	s.statusY = max(0, footerY-1)
+	filterY := min(ui.StripHeight, s.statusY)
 	if shared {
 		filterW := max(0, width-barWidth-2)
-		screen.bar.SetAlignEnd(false)
+		s.bar.SetAlignEnd(false)
 		actions := ui.Rect{X: filterW + 2, Y: filterY, W: barWidth, H: min(1, height-filterY)}
-		if screen.moreActions {
-			screen.overflowActions.Layout(ctx, actions)
-			screen.bar.Layout(ctx, ui.Rect{})
+		if s.moreActions {
+			s.overflowActions.Layout(ctx, actions)
+			s.bar.Layout(ctx, ui.Rect{})
 		} else {
-			screen.overflowActions.Layout(ctx, ui.Rect{})
-			screen.bar.Layout(ctx, actions)
+			s.overflowActions.Layout(ctx, ui.Rect{})
+			s.bar.Layout(ctx, actions)
 		}
-		screen.narrowActions.Layout(ctx, ui.Rect{})
-		screen.filter.Layout(ctx, ui.Rect{Y: filterY, W: filterW, H: min(1, height-filterY)})
+		s.narrowActions.Layout(ctx, ui.Rect{})
+		s.filter.Layout(ctx, ui.Rect{Y: filterY, W: filterW, H: min(1, height-filterY)})
 	} else {
-		screen.overflowActions.Layout(ctx, ui.Rect{})
-		screen.bar.Layout(ctx, ui.Rect{Y: footerY, W: width, H: barH})
-		screen.narrowActions.Layout(ctx, ui.Rect{Y: footerY, W: width, H: barH})
-		screen.filter.Layout(ctx, ui.Rect{Y: filterY, W: width, H: min(1, height-filterY)})
+		s.overflowActions.Layout(ctx, ui.Rect{})
+		s.bar.Layout(ctx, ui.Rect{Y: footerY, W: width, H: barH})
+		s.narrowActions.Layout(ctx, ui.Rect{Y: footerY, W: width, H: barH})
+		s.filter.Layout(ctx, ui.Rect{Y: filterY, W: width, H: min(1, height-filterY)})
 	}
-	screen.tabs.SetRuleBleed(0, width)
-	screen.tabs.Layout(ctx, ui.Rect{W: headerW, H: min(ui.StripHeight, height)})
-	bodyY := min(filterY+1, screen.statusY)
-	body := ui.Rect{Y: bodyY, W: width, H: max(0, screen.statusY-bodyY)}
-	screen.detail.Layout(ctx, body)
+	s.tabs.SetRuleBleed(0, width)
+	s.tabs.Layout(ctx, ui.Rect{W: headerW, H: min(ui.StripHeight, height)})
+	bodyY := min(filterY+1, s.statusY)
+	body := ui.Rect{Y: bodyY, W: width, H: max(0, s.statusY-bodyY)}
+	s.detail.Layout(ctx, body)
 	barW := 0
-	if screen.scroll.NeededForViewport(body.H) {
+	if s.scroll.NeededForViewport(body.H) {
 		barW = min(ui.ScrollbarWidth, width)
 	}
-	screen.table.Layout(ctx, ui.Rect{Y: body.Y, W: max(0, width-barW), H: body.H})
-	screen.scroll.Layout(ctx, ui.Rect{X: max(0, width-barW), Y: body.Y, W: barW, H: body.H})
-	if screen.actionsMenu {
-		screen.narrowActions.Layout(ctx, ui.Rect{
+	s.table.Layout(ctx, ui.Rect{Y: body.Y, W: max(0, width-barW), H: body.H})
+	s.scroll.Layout(ctx, ui.Rect{X: max(0, width-barW), Y: body.Y, W: barW, H: body.H})
+	if s.actionsMenu {
+		s.narrowActions.Layout(ctx, ui.Rect{
 			Y: min(ui.StripHeight, height), W: width,
-			H: max(0, screen.statusY-ui.StripHeight),
+			H: max(0, s.statusY-ui.StripHeight),
 		})
 	}
 }
 
-func (screen *Screen) Paint(buffer *surface.CellBuffer, originX, originY int, _ ui.PaintContext) {
-	rect := screen.Bounds()
-	ui.FillRect(buffer, originX, originY, rect, cell.BlankCell(screen.tokens.Color(ui.ColorBg)))
+// Paint fills the screen background and draws its status line.
+func (s *Screen) Paint(buffer *surface.CellBuffer, originX, originY int, _ ui.PaintContext) {
+	rect := s.Bounds()
+	ui.FillRect(buffer, originX, originY, rect, cell.BlankCell(s.tokens.Color(ui.ColorBg)))
 	text := fmt.Sprintf("%d unread · %d workspace agents · directed delivery is automatic",
-		screen.snapshot.Unread, len(screen.snapshot.Participants))
+		s.snapshot.Unread, len(s.snapshot.Participants))
 	role := ui.ColorMuted
-	if screen.loading {
+	if s.loading {
 		text = "Loading workspace communication…"
 	}
-	if screen.errorText != "" {
-		text = screen.errorText
+	if s.errorText != "" {
+		text = s.errorText
 		role = ui.ColorError
 	}
-	if len(screen.snapshot.Participants) == 0 && len(screen.snapshot.Page.Events) == 0 &&
-		!screen.loading && screen.errorText == "" {
+	if len(s.snapshot.Participants) == 0 && len(s.snapshot.Page.Events) == 0 &&
+		!s.loading && s.errorText == "" {
 		text = "No workspace agents or communication yet."
 	}
-	if rect.W > 0 && rect.H > 0 && (screen.statusY > 0 || screen.dockHeaderInset == 0) {
-		buffer.WriteString(originX+rect.X, originY+rect.Y+screen.statusY,
+	if rect.W > 0 && rect.H > 0 && (s.statusY > 0 || s.dockHeaderInset == 0) {
+		buffer.WriteString(originX+rect.X, originY+rect.Y+s.statusY,
 			rendering.TruncateVisual(text, rect.W, "…"),
-			screen.tokens.Color(role), screen.tokens.Color(ui.ColorBg), 0)
+			s.tokens.Color(role), s.tokens.Color(ui.ColorBg), 0)
 	}
 }
 
-func (screen *Screen) Handle(_ ui.EventContext, event ui.Event) ui.EventResult {
-	if event.IsKey() && event.Key.Code == tea.KeyEsc && screen.actionsMenu {
-		return screen.HandleAction(ui.EventContext{}, ui.Action{ID: "board.close-menu"})
+// Handle closes the action menu or leaves a thread when the user presses Escape.
+func (s *Screen) Handle(_ ui.EventContext, event ui.Event) ui.EventResult {
+	if event.IsKey() && event.Key.Code == tea.KeyEsc && s.actionsMenu {
+		return s.HandleAction(ui.EventContext{}, ui.Action{ID: "board.close-menu"})
 	}
-	if event.IsKey() && event.Key.Code == tea.KeyEsc && screen.thread != "" {
-		screen.thread = ""
-		screen.updateRows()
+	if event.IsKey() && event.Key.Code == tea.KeyEsc && s.thread != "" {
+		s.thread = ""
+		s.updateRows()
 		return ui.EventResult{Handled: true, Action: &ui.Action{ID: "board.refresh"}, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
 	}
 	return ui.EventResult{}
 }
 
-func (screen *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
+// HandleAction opens the action menu, switches tabs and moves focus.
+func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
 	switch action.ID {
 	case "board.menu":
-		screen.actionsMenu = true
-		screen.updateRows()
-		return ui.EventResult{Handled: true, Action: &ui.Action{ID: "ui.focus", Payload: screen.narrowActions.ID()}, Invalidate: ui.InvalidateLayout | ui.InvalidateFocus | ui.InvalidatePaint}
+		s.actionsMenu = true
+		s.updateRows()
+		return ui.EventResult{Handled: true, Action: &ui.Action{ID: "ui.focus", Payload: s.narrowActions.ID()}, Invalidate: ui.InvalidateLayout | ui.InvalidateFocus | ui.InvalidatePaint}
 	case "board.close-menu":
-		screen.actionsMenu = false
-		screen.updateRows()
-		return ui.EventResult{Handled: true, Action: &ui.Action{ID: "ui.focus", Payload: screen.filter.ID()}, Invalidate: ui.InvalidateLayout | ui.InvalidateFocus | ui.InvalidatePaint}
+		s.actionsMenu = false
+		s.updateRows()
+		return ui.EventResult{Handled: true, Action: &ui.Action{ID: "ui.focus", Payload: s.filter.ID()}, Invalidate: ui.InvalidateLayout | ui.InvalidateFocus | ui.InvalidatePaint}
 	case "tabs.enter":
-		return ui.EventResult{Handled: true, Action: &ui.Action{ID: "ui.focus", Payload: screen.filter.ID()}, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
+		return ui.EventResult{Handled: true, Action: &ui.Action{ID: "ui.focus", Payload: s.filter.ID()}, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 	case "tabs.activate":
 		mode, _ := action.Payload.(string)
 		if mode == "threads" || mode == "agents" || mode == "reports" {
-			screen.actionsMenu = false
-			screen.page = mode
-			screen.thread = ""
-			screen.tabs.SetItems([]ui.TabItem{
+			s.actionsMenu = false
+			s.page = mode
+			s.thread = ""
+			s.tabs.SetItems([]ui.TabItem{
 				{ID: "threads", Label: "Threads"},
 				{ID: "agents", Label: "Agents"},
 				{ID: "reports", Label: "Reports"},
-			}, screen.page)
-			screen.updateRows()
+			}, s.page)
+			s.updateRows()
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
 		}
 	case "board.action":
-		if selected, ok := screen.narrowActions.Selected(); ok {
-			return screen.HandleAction(ui.EventContext{}, ui.Action{ID: selected.ID})
+		if selected, ok := s.narrowActions.Selected(); ok {
+			return s.HandleAction(ui.EventContext{}, ui.Action{ID: selected.ID})
 		}
 	case "form.changed":
 		return ui.EventResult{Handled: true, Action: &ui.Action{ID: "board.refresh"}, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
 	case "board.inspect":
-		if selected, ok := screen.table.Selected(); ok {
+		if selected, ok := s.table.Selected(); ok {
 			if event, ok := selected.Payload.(collaboration.Event); ok {
-				screen.thread = event.ThreadID
+				s.thread = event.ThreadID
 				return ui.EventResult{Handled: true, Action: &ui.Action{ID: "board.refresh"}}
 			}
 			if participant, ok := selected.Payload.(workspace.BoardParticipant); ok {
-				screen.detail.SetValue(fmt.Sprintf(
+				s.detail.SetValue(fmt.Sprintf(
 					"%s\nID: %s\nSession: %s\nParent: %s\nState: %s\nPresence: %s\nRuntime epoch: %d\nCurrent run: %s",
 					participant.Name, participant.ID, participant.SessionID, participant.ParentID,
 					participant.State, participant.Presence, participant.RuntimeEpoch, participant.CurrentRunID,
 				))
-				screen.thread = "agent"
-				screen.updateRows()
+				s.thread = "agent"
+				s.updateRows()
 			}
 		}
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
 	case "board.back":
-		screen.thread = ""
-		screen.updateRows()
+		s.thread = ""
+		s.updateRows()
 		return ui.EventResult{Handled: true, Action: &ui.Action{ID: "board.refresh"}, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
 	}
 	if strings.HasPrefix(action.ID, "board.") {
@@ -469,16 +479,17 @@ func (screen *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.Event
 	return ui.EventResult{}
 }
 
-func (screen *Screen) actionComponent() ui.Component {
-	if screen.moreActions {
-		return screen.overflowActions
+func (s *Screen) actionComponent() ui.Component {
+	if s.moreActions {
+		return s.overflowActions
 	}
-	if screen.compactActions {
-		return screen.narrowActions
+	if s.compactActions {
+		return s.narrowActions
 	}
-	return screen.bar
+	return s.bar
 }
 
-func (screen *Screen) Semantics() ui.Semantics {
-	return ui.Semantics{Role: ui.RoleGroup, Label: "Workspace collaboration", Value: screen.snapshot.WorkspaceID}
+// Semantics describes the screen to accessibility tools.
+func (s *Screen) Semantics() ui.Semantics {
+	return ui.Semantics{Role: ui.RoleGroup, Label: "Workspace collaboration", Value: s.snapshot.WorkspaceID}
 }

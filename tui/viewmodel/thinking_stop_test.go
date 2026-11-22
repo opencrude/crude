@@ -6,7 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/types"
+	"crude/types/conversation"
 	"crude/types/reasoning"
 	"crude/workspace"
 )
@@ -30,9 +30,9 @@ func TestStopWithPromotedRawThinkingKeepsOneThoughtAndNoNewPanes(t *testing.T) {
 	app.AddOrchestrator("agent")
 	agent := app.ws.AgentMgr().Get("agent").State
 	app.paintShellFrame()
-	app.handleAgentEvent(types.AgentEventMsg{Type: "turn_started", AgentID: "agent", Data: types.TurnIdentity{Generation: 1, ModelID: "example-model"}})
+	app.handleAgentEvent(AgentEventMsg{Type: "turn_started", AgentID: "agent", Data: conversation.TurnIdentity{Generation: 1, ModelID: "example-model"}})
 	for i := 0; i < 40; i++ {
-		app.handleAgentEvent(types.AgentEventMsg{Type: "thinking", AgentID: "agent", Data: reasoning.Delta{Text: strings.Repeat("reasoning word ", 12), Kind: reasoning.Raw}})
+		app.handleAgentEvent(AgentEventMsg{Type: "thinking", AgentID: "agent", Data: reasoning.Delta{Text: strings.Repeat("reasoning word ", 12), Kind: reasoning.Raw}})
 	}
 	paneID := app.thinkingPaneID(agent)
 	if paneID == "" {
@@ -52,7 +52,7 @@ func TestStopWithPromotedRawThinkingKeepsOneThoughtAndNoNewPanes(t *testing.T) {
 	}
 	stopped := thinkingMessageCount(agent)
 	for i := 0; i < 50; i++ {
-		app.handleAgentEvent(types.AgentEventMsg{Type: "thinking", AgentID: "agent", Data: reasoning.Delta{Text: "late", Kind: reasoning.Raw}})
+		app.handleAgentEvent(AgentEventMsg{Type: "thinking", AgentID: "agent", Data: reasoning.Delta{Text: "late", Kind: reasoning.Raw}})
 		app.paintShellFrame()
 		if id := app.thinkingPaneID(agent); id != "" {
 			t.Fatalf("late delta %d promoted pane %q after stop", i, id)

@@ -52,28 +52,28 @@ func packagePreparation(config captypes.ConnectionConfig) (captypes.PreparationR
 // prepareLaunch returns PreparationRequired until the exact package is known
 // to be available in this process: a session completed its preparation, or a
 // launch of the same preparation identity already succeeded.
-func (service *Service) prepareLaunch(ctx context.Context, config captypes.ConnectionConfig) (string, error) {
+func (s *Service) prepareLaunch(ctx context.Context, config captypes.ConnectionConfig) (string, error) {
 	request, needed := packagePreparation(config)
 	if !needed {
 		return "", nil
 	}
-	service.mu.RLock()
-	prepared := service.prepared[request.Key]
-	service.mu.RUnlock()
+	s.mu.RLock()
+	prepared := s.prepared[request.Key]
+	s.mu.RUnlock()
 	if prepared || captypes.PreparedFrom(ctx) == request.Key {
 		return request.Key, nil
 	}
 	return "", &request
 }
 
-func (service *Service) markPrepared(key string) {
+func (s *Service) markPrepared(key string) {
 	if key == "" {
 		return
 	}
-	service.mu.Lock()
-	defer service.mu.Unlock()
-	if service.prepared == nil {
-		service.prepared = make(map[string]bool)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.prepared == nil {
+		s.prepared = make(map[string]bool)
 	}
-	service.prepared[key] = true
+	s.prepared[key] = true
 }

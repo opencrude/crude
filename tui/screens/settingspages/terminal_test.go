@@ -1,0 +1,77 @@
+package settingspages
+
+import (
+	"reflect"
+	"slices"
+	"testing"
+
+	"crude/tui/theme"
+	"crude/tui/ui"
+	"crude/types/setting"
+)
+
+func TestTerminalSettingsRoundTripWithoutDirtyState(t *testing.T) {
+	want := setting.Terminal{Shell: "git-bash", Args: []string{"-x", "a path"}, LoginShell: "off", Environment: map[string]string{"EDITOR": "vim"}, ScrollbackLines: 2000, Placement: setting.TerminalPlacementFloating}
+	model := New(theme.DefaultDark(), setting.App{Terminal: want, TerminalShells: []setting.TerminalShell{{ID: "git-bash", Label: "Git Bash", Path: `C:\Git\bin\bash.exe`}}}, nil)
+	if got := model.AppSettings().Terminal; !reflect.DeepEqual(got, want) {
+		t.Fatalf("terminal settings\n got=%#v\nwant=%#v", got, want)
+	}
+	if model.hasUnsavedPreferences() {
+		t.Fatal("an untouched Terminal page reports unsaved changes")
+	}
+}
+
+func TestTerminalShellChoicesNameAutoAndKeepUnknownSelection(t *testing.T) {
+	shells := []setting.TerminalShell{{ID: "pwsh", Label: "PowerShell 7", Path: `C:\pwsh.exe`}, {ID: "cmd", Label: "Command Prompt", Path: `C:\cmd.exe`}}
+	model := New(theme.DefaultDark(), setting.App{Terminal: setting.Terminal{Shell: "zsh"}, TerminalShells: shells}, nil)
+	form := model.categories[catTerminal].Form
+	var labels []string
+	for _, option := range form.Field(fieldTerminalShell).Options {
+		labels = append(labels, option.Label)
+	}
+	if !slices.Equal(labels, []string{"Auto (PowerShell 7)", "PowerShell 7", "Command Prompt", "zsh (not installed)", "Custom"}) {
+		t.Fatalf("shell choices = %v", labels)
+	}
+	if model.AppSettings().Terminal.Shell != "zsh" {
+		t.Fatal("a shell synced from another machine was silently replaced")
+	}
+
+	form.SetValue(fieldTerminalShell, ui.StringValue(setting.TerminalShellAuto))
+	model.handleFieldChanged(catTerminal, fieldTerminalShell)
+	command := form.Field(fieldTerminalCommand)
+	if command.Required || command.Placeholder != `C:\pwsh.exe` {
+		t.Fatalf("Auto command preview = %q required=%t", command.Placeholder, command.Required)
+	}
+	form.SetValue(fieldTerminalShell, ui.StringValue(setting.TerminalShellCustom))
+	model.handleFieldChanged(catTerminal, fieldTerminalShell)
+	if !command.Required || command.Placeholder != "" {
+		t.Fatalf("Custom command required=%t placeholder=%q", command.Required, command.Placeholder)
+	}
+	command.Validate()
+	if !command.HasErrors() {
+		t.Fatal("empty Custom command did not report its own validation error")
+	}
+	form.SetValue(fieldTerminalShell, ui.StringValue("pwsh"))
+	if command.HasErrors() || command.Placeholder != `C:\pwsh.exe` {
+		t.Fatal("Custom validation hid the newly selected shell's help")
+	}
+	surface := NewSurface(theme.DefaultDark(), model)
+	if !surface.UpdateShellInventory(shells[1:], nil) {
+		t.Fatal("removal was not reflected in the terminal picker")
+	}
+	shell := form.Field(fieldTerminalShell)
+	if shell.Value.String() != "pwsh" || !slices.ContainsFunc(shell.Options, func(o ui.FormOption) bool {
+		return o.ID == "pwsh" && o.Label == "pwsh (not installed)"
+	}) || command.Description != "This shell is not installed. Install it or choose another shell." {
+		t.Fatal("an unavailable explicit shell lost its draft, option or guidance")
+	}
+}
+
+func TestTerminalPageFollowsInterfaceInIDEGroup(t *testing.T) {
+	model := New(theme.DefaultDark(), setting.App{}, nil)
+	visible := model.visibleCategoryIndices()
+	ui, terminal := slices.Index(visible, catUI), slices.Index(visible, catTerminal)
+	if ui < 0 || terminal != ui+1 || model.categories[catTerminal].Group != "IDE" {
+		t.Fatalf("Terminal page position %d after Interface %d in %v", terminal, ui, visible)
+	}
+}

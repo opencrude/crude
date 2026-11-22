@@ -6,11 +6,11 @@ import (
 	"strings"
 	"sync"
 
-	"crude/agent"
 	"crude/agent/plan"
 	rootprompt "crude/agent/prompt"
 	"crude/agent/provider"
 	"crude/agent/tools"
+	"crude/agent/turnloop"
 	"crude/types/activity"
 )
 
@@ -39,7 +39,7 @@ type planDiscipline struct {
 	runPlanRevision uint64
 }
 
-func (s *Session) planActivityFor(live *agent.Agent) *activity.Plan {
+func (s *Session) planActivityFor(live *turnloop.Agent) *activity.Plan {
 	if live.Depth > 0 {
 		return s.ChildPlanActivity(string(live.AgentID))
 	}
@@ -58,7 +58,7 @@ func openPlan(p *activity.Plan) bool {
 	return false
 }
 
-func (s *Session) bindPlanDiscipline(live *agent.Agent) {
+func (s *Session) bindPlanDiscipline(live *turnloop.Agent) {
 	d := &planDiscipline{limit: planDriftFloor}
 	previousPrepare, previousFn, previousFinish := live.PrepareStep, live.ToolFn, live.BeforeFinish
 	live.PrepareStep = func() ([]tools.ToolDef, []provider.ChatMessage) {

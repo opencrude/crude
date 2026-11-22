@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"crude/tui/ui"
-	ttypes "crude/types"
+	"crude/types/conversation"
 	"crude/workspace"
 )
 
@@ -31,8 +31,8 @@ func fillAgentChat(app *App, agentID string, count int, prefix string) {
 		panic("agent missing for fillAgentChat")
 	}
 	for i := 0; i < count; i++ {
-		node.State.Messages.AppendMessage(workspace.Message{
-			Role:    ttypes.RoleAssistant,
+		node.State.Messages.AppendMessage(conversation.Message{
+			Role:    conversation.RoleAssistant,
 			Content: fmt.Sprintf("%s-%d\n%s", prefix, i, strings.Repeat("body line\n", 8)),
 			Time:    time.Now(),
 		})
@@ -124,11 +124,11 @@ func TestAgentChatScrollStreamingDoesNotAlterSavedSnapshot(t *testing.T) {
 
 	nodeB := app.ws.AgentMgr().Get("agent-b")
 	nodeB.State.Streaming = true
-	projB := app.subPaneProjections.GetExisting("agent-b")
+	projB := app.subPaneProjections.Existing("agent-b")
 	projB.renderer.SetStreaming(true)
 	for i := 0; i < 5; i++ {
-		nodeB.State.Messages.AppendMessage(workspace.Message{
-			Role:    ttypes.RoleAssistant,
+		nodeB.State.Messages.AppendMessage(conversation.Message{
+			Role:    conversation.RoleAssistant,
 			Content: fmt.Sprintf("stream chunk %d\n", i),
 			Time:    time.Now(),
 		})
@@ -213,8 +213,8 @@ func TestAgentChatScrollContentShrinkClampsRestore(t *testing.T) {
 
 	node := app.ws.AgentMgr().Get("agent-a")
 	node.State.Messages = workspace.NewConversation()
-	node.State.Messages.AppendMessage(workspace.Message{
-		Role:    ttypes.RoleAssistant,
+	node.State.Messages.AppendMessage(conversation.Message{
+		Role:    conversation.RoleAssistant,
 		Content: "tiny",
 		Time:    time.Now(),
 	})

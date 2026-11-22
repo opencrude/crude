@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/text/textdiff"
 	"crude/tui/editor"
 	"crude/workspace"
 )
@@ -138,9 +139,9 @@ func (m *App) applyEditorGitAnnotation(msg editorGitAnnotationMsg) {
 			Uncommitted: line.Uncommitted,
 		}
 	}
-	hunks := make([]editor.GitHunk, len(msg.annotation.Hunks))
+	hunks := make([]textdiff.Hunk, len(msg.annotation.Hunks))
 	for i, hunk := range msg.annotation.Hunks {
-		hunks[i] = editor.GitHunk{
+		hunks[i] = textdiff.Hunk{
 			OldStart: hunk.OldStart,
 			NewStart: hunk.NewStart,
 			OldLines: append([]string(nil), hunk.OldLines...),

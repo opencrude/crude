@@ -10,7 +10,7 @@ import (
 
 	"crude/agent/toolstore"
 	"crude/insight/catalog"
-	model "crude/types"
+	"crude/types/setting"
 )
 
 func TestManagedToolRequiresExactCatalogIdentity(t *testing.T) {
@@ -73,11 +73,11 @@ func TestLocateToolDoesNotUseMatchingBasenameFromAnotherPackage(t *testing.T) {
 		t.Fatal(err)
 	}
 	d := catalog.Download{Package: "expected", Version: "1", Source: "source", URL: "https://example.test/tool", Archive: "zip", Bin: "bin/" + name, Command: "tool"}
-	if path, _, _ := locateTool(t.Context(), model.LSPServerSpec{Command: "tool"}, t.TempDir(), store, &d); path != "" {
+	if path, _, _ := locateTool(t.Context(), setting.LSPServerSpec{Command: "tool"}, t.TempDir(), store, &d); path != "" {
 		t.Fatalf("selected unrelated artifact %q", path)
 	}
 	d.Package = "wrong-package"
-	if path, source, err := locateTool(t.Context(), model.LSPServerSpec{Command: "tool"}, t.TempDir(), store, &d); err != nil || path != bin || source != "tool-store" {
+	if path, source, err := locateTool(t.Context(), setting.LSPServerSpec{Command: "tool"}, t.TempDir(), store, &d); err != nil || path != bin || source != "tool-store" {
 		t.Fatalf("matching artifact = %q, %q", path, source)
 	}
 }

@@ -8,7 +8,7 @@ import (
 	"crude/tui/screens/inlay"
 	historyscreen "crude/tui/screens/localhistory"
 	"crude/tui/screens/navigation"
-	settingsui "crude/tui/settings"
+	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/ui"
 	"crude/types/control"
 )

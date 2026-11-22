@@ -5,8 +5,8 @@ import (
 	"sort"
 	"strings"
 
+	"crude/agent/prompthistory"
 	"crude/agent/sessiondb"
-	"crude/history"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
@@ -123,7 +123,7 @@ type Model struct {
 	theme                 *theme.Theme
 	tokens                *ui.TokenSet
 	input                 *ui.TextArea
-	history               []history.Entry
+	history               []prompthistory.Entry
 	histIdx               int
 	histDraft, histPrefix string
 	historyGeneration     uint64
@@ -373,11 +373,13 @@ func (m *Model) SetSpinFrame(frame int) {
 	m.spinFrame = frame
 }
 
-func (m *Model) SetHistory(h []history.Entry) {
+// SetHistory replaces the entries that the composer can recall.
+func (m *Model) SetHistory(h []prompthistory.Entry) {
 	m.history = h
 }
 
-func (m Model) History() []history.Entry {
+// History returns the entries that the composer can recall.
+func (m Model) History() []prompthistory.Entry {
 	return m.history
 }
 
@@ -586,7 +588,7 @@ func (m Model) PromptReferences() []sessiondb.Reference {
 	ids := m.ReferencedIDs()
 	refs := make([]sessiondb.Reference, 0, len(ids))
 	for _, id := range ids {
-		if ref, ok := m.refStore.GetReference(id); ok && ref.Active() {
+		if ref, ok := m.refStore.Reference(id); ok && ref.Active() {
 			refs = append(refs, ref)
 		}
 	}

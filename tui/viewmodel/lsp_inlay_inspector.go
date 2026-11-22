@@ -10,7 +10,7 @@ import (
 
 	"crude/tui/screens/inlay"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
 )
 
 type inlayInspectorState struct {
@@ -32,7 +32,7 @@ type inlayInspectionMsg struct {
 	owner      *inlayInspectorState
 	sequence   uint64
 	index      int
-	inspection types.LSPInlayInspection
+	inspection insight.LSPInlayInspection
 	err        error
 }
 
@@ -224,7 +224,7 @@ func (m *App) inspectInlayHintCmd(msg inlay.InspectMsg) tea.Cmd {
 		defer cancel()
 		detail, err := port.InspectLSPInlayHint(parent, result.ID, result.Digest, msg.Index, msg.Resolve)
 		if cancelled := parent.Err(); cancelled != nil {
-			detail, err = types.LSPInlayInspection{}, errors.Join(err, cancelled)
+			detail, err = insight.LSPInlayInspection{}, errors.Join(err, cancelled)
 		}
 		return inlayInspectionMsg{owner: s, sequence: sequence, index: msg.Index, inspection: detail, err: err}
 	})

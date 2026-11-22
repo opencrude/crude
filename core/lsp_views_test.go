@@ -1,7 +1,7 @@
 package core
 
 import (
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
 	"crude/workspace/document"
 	"errors"
 	"testing"

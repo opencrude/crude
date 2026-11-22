@@ -14,7 +14,8 @@ import (
 	"crude/tui/screens/operationissue"
 	"crude/tui/surface"
 	"crude/tui/ui"
-	ttypes "crude/types"
+	"crude/types/setting"
+	"crude/types/statuscenter"
 	"crude/workspace"
 )
 
@@ -89,8 +90,8 @@ func TestNewSessionWithSavedAccountsOpensMainAgentSelection(t *testing.T) {
 	cfg.Agents.Profiles[cfg.Agents.ActiveProfile] = profile
 	wsOf(app).SetBackendConfig(cfg, t.TempDir())
 	app.ws.SetEventSender(noopEventSender{})
-	wsOf(app).SetAppDefaults(ttypes.AppSettings{Accounts: cfg.Accounts,
-		Agents: ttypes.AgentsSettings{Categories: map[string]ttypes.CategorySettings{session.CategoryDefault: {Model: "test-model"}}}})
+	wsOf(app).SetAppDefaults(setting.App{Accounts: cfg.Accounts,
+		Agents: setting.Agents{Categories: map[string]setting.Category{session.CategoryDefault: {Model: "test-model"}}}})
 	app.launcherNewSession()
 	if app.ws.AgentMgr().Count() != 0 || app.overlayHost.IsOpen(ui.OverlayOperationIssue) {
 		t.Fatal("incomplete Main Agent setup must not create a session or generic dialog")
@@ -118,7 +119,7 @@ func TestResumeUnpinnedSessionKeepsHistoryAndOpensConnectionPicker(t *testing.T)
 	wsOf(app).RootPath = root
 	wsOf(app).SessionsByID = make(map[string]*workspace.Session)
 	wsOf(app).SessionsByAgent = make(map[string]*workspace.Session)
-	dataDir, err := workspace.WorkspaceDir(root)
+	dataDir, err := workspace.Dir(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +146,7 @@ func TestResumeUnpinnedSessionKeepsHistoryAndOpensConnectionPicker(t *testing.T)
 	if app.ActiveSession == nil || !errors.Is(app.ActiveSessionConnectionIssue(), session.ErrAccountRequired) {
 		t.Fatal("old transcript silently adopted today's account or failed to open")
 	}
-	if !app.overlayHost.IsOpen(ui.OverlayOperationIssue) || app.operationIssue.screen.Issue().Target != ttypes.RepairSessionAccount {
+	if !app.overlayHost.IsOpen(ui.OverlayOperationIssue) || app.operationIssue.screen.Issue().Target != statuscenter.RepairSessionAccount {
 		t.Fatal("resumed history did not show connection recovery")
 	}
 	if _, err := os.Stat(filepath.Join(sessionDir, id+".db")); err != nil {

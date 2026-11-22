@@ -3,13 +3,13 @@ package sessionsettings
 import (
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/setting"
 	"testing"
 )
 
 func TestRoleRetentionEditsAreValidatedAndDetached(t *testing.T) {
 	value := 32000
-	base := types.Settings{Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{"default": {Model: "model", ContextRetentionTokens: &value}}}}
+	base := setting.Settings{Agents: setting.Agents{Categories: map[string]setting.Category{"default": {Model: "model", ContextRetentionTokens: &value}}}}
 	screen := New(theme.DefaultDark(), cloneSettings(base), base, nil)
 	screen.openRole("default")
 	field := screen.formModel.Field(fieldContextRetention)

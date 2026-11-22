@@ -11,12 +11,12 @@ import (
 
 	"crude/agent/provider"
 	"crude/core"
-	"crude/core/port"
-	"crude/core/protocol"
-	settingsui "crude/tui/settings"
+	"crude/core/coreprotocol"
+	"crude/core/shellport"
+	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/types/control"
+	"crude/types/setting"
 	"crude/workspace"
 
 	"github.com/charmbracelet/x/ansi"
@@ -35,16 +35,16 @@ func settingsJourneyRuntime(t *testing.T) *core.Runtime {
 	t.Cleanup(server.Close)
 	path := filepath.Join(t.TempDir(), "application.json")
 	runtime, err := core.New(func(root string) (*workspace.Workspace, error) {
-		ws := workspace.NewWorkspace(root, "test-model", "tester", types.Settings{}, nil)
-		ws.SetAppDefaults(types.AppSettings{
+		ws := workspace.NewWorkspace(root, "test-model", "tester", setting.Settings{}, nil)
+		ws.SetAppDefaults(setting.App{
 			Accounts:     map[string]provider.Account{"test": {ID: "test", ProviderID: "openai", APIKey: "test", Connection: provider.Template{Name: "test", ProviderURL: server.URL, APIStandard: "openai", AuthType: provider.AuthProtocol}}},
-			Agents:       types.AgentsSettings{Categories: map[string]types.CategorySettings{"default": {AccountID: "test", Model: "test-model"}, "crafter": {AccountID: "test", Model: "test-model"}}},
-			LocalHistory: types.LocalHistorySettings{Enabled: "off"},
-			Memory:       types.MemorySettings{AutoRecall: "off", AutoExtract: "off", Consolidation: "off"},
+			Agents:       setting.Agents{Categories: map[string]setting.Category{"default": {AccountID: "test", Model: "test-model"}, "crafter": {AccountID: "test", Model: "test-model"}}},
+			LocalHistory: setting.LocalHistory{Enabled: "off"},
+			Memory:       setting.Memory{AutoRecall: "off", AutoExtract: "off", Consolidation: "off"},
 		})
-		ws.OnAppPreferencesCommit = func(edits []types.SettingEdit) (types.AppSettings, error) {
+		ws.OnAppPreferencesCommit = func(edits []setting.Edit) (setting.App, error) {
 			after := ws.AppDefaults()
-			if err := types.ApplySettingsEdits(&after, edits); err != nil {
+			if err := setting.ApplyEdits(&after, edits); err != nil {
 				return after, err
 			}
 			raw, err := json.Marshal(after)

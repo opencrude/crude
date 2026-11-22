@@ -9,7 +9,7 @@ import (
 	"sort"
 
 	"crude/agent/toolstore"
-	"crude/types"
+	"crude/types/insight"
 )
 
 func (r *Runtime) toolStore() (*toolstore.Store, error) {
@@ -23,8 +23,8 @@ func (r *Runtime) toolStore() (*toolstore.Store, error) {
 	return r.tools, nil
 }
 
-func codeTool(t toolstore.Tool) types.CodeTool {
-	return types.CodeTool{
+func codeTool(t toolstore.Tool) insight.CodeTool {
+	return insight.CodeTool{
 		ID: t.ID, Package: t.Package, Version: t.Version, Dir: t.Dir,
 		Executable: t.Executable, Bin: t.Bin, Command: t.Command, SHA256: t.SHA256,
 		DigestOrigin: t.DigestOrigin, Source: t.Source, URL: t.URL, Archive: t.Archive,
@@ -35,8 +35,8 @@ func codeTool(t toolstore.Tool) types.CodeTool {
 }
 
 // readCodeToolInventory performs blocking I/O and must run on a worker.
-func readCodeToolInventory(ctx context.Context, store *toolstore.Store, plan types.AssemblyPlan, offset, limit int) (types.CodeToolInventory, error) {
-	var out types.CodeToolInventory
+func readCodeToolInventory(ctx context.Context, store *toolstore.Store, plan insight.AssemblyPlan, offset, limit int) (insight.CodeToolInventory, error) {
+	var out insight.CodeToolInventory
 	tools, total, err := store.List(ctx)
 	if err != nil {
 		return out, err
@@ -50,7 +50,7 @@ func readCodeToolInventory(ctx context.Context, store *toolstore.Store, plan typ
 		return out, err
 	}
 	out.TotalBytes, out.Unrecognized, out.HistoryTotal, out.HistoryOffset = total, unknown, count, offset
-	out.Project = types.CloneAssemblyPlan(plan)
+	out.Project = insight.CloneAssemblyPlan(plan)
 	for _, t := range tools {
 		value, err := inspectCodeTool(ctx, t)
 		if err != nil {
@@ -59,7 +59,7 @@ func readCodeToolInventory(ctx context.Context, store *toolstore.Store, plan typ
 		out.Tools = append(out.Tools, value)
 	}
 	for _, e := range history {
-		out.History = append(out.History, types.CodeToolHistoryEvent{Time: e.Time, Kind: e.Kind, ToolID: e.ToolID, Package: e.Package, Version: e.Version, Detail: e.Detail, By: e.By, Approval: e.Approval})
+		out.History = append(out.History, insight.CodeToolHistoryEvent{Time: e.Time, Kind: e.Kind, ToolID: e.ToolID, Package: e.Package, Version: e.Version, Detail: e.Detail, By: e.By, Approval: e.Approval})
 	}
 	seen := make(map[string]bool)
 	managedFiles := make([]fs.FileInfo, 0, len(tools))
@@ -71,7 +71,7 @@ func readCodeToolInventory(ctx context.Context, store *toolstore.Store, plan typ
 		managedFiles = append(managedFiles, info)
 	}
 	for _, l := range plan.Languages {
-		if l.Executable == "" || (l.Source != types.ToolSourcePath && l.Source != types.ToolSourceSettings) || seen[l.Executable] {
+		if l.Executable == "" || (l.Source != insight.ToolSourcePath && l.Source != insight.ToolSourceSettings) || seen[l.Executable] {
 			continue
 		}
 		if err := ctx.Err(); err != nil {
@@ -95,13 +95,13 @@ func readCodeToolInventory(ctx context.Context, store *toolstore.Store, plan typ
 			continue
 		}
 		seen[l.Executable] = true
-		out.Unmanaged = append(out.Unmanaged, types.UnmanagedCodeTool{Name: l.ServerID, Command: l.Command, Executable: l.Executable, Source: l.Source})
+		out.Unmanaged = append(out.Unmanaged, insight.UnmanagedCodeTool{Name: l.ServerID, Command: l.Command, Executable: l.Executable, Source: l.Source})
 	}
 	sort.Slice(out.Unmanaged, func(i, j int) bool { return out.Unmanaged[i].Executable < out.Unmanaged[j].Executable })
 	return out, nil
 }
 
-func inspectCodeTool(ctx context.Context, tool toolstore.Tool) (types.CodeTool, error) {
+func inspectCodeTool(ctx context.Context, tool toolstore.Tool) (insight.CodeTool, error) {
 	out := codeTool(tool)
 	err := filepath.WalkDir(tool.Dir, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -124,7 +124,7 @@ func inspectCodeTool(ctx context.Context, tool toolstore.Tool) (types.CodeTool, 
 		if err != nil {
 			return err
 		}
-		file := types.CodeToolFile{Path: relative, Kind: "file", Size: info.Size()}
+		file := insight.CodeToolFile{Path: relative, Kind: "file", Size: info.Size()}
 		switch {
 		case entry.IsDir():
 			file.Kind, file.Size = "folder", 0

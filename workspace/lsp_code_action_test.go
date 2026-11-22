@@ -3,6 +3,8 @@ package workspace
 import (
 	"context"
 	"crude/internal/fileuri"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -15,7 +17,6 @@ import (
 	"testing"
 	"time"
 
-	"crude/types"
 	"crude/workspace/document"
 	"crude/workspace/localhistory"
 )
@@ -33,7 +34,7 @@ type codeActionClient struct {
 	resolveInputs    [][]byte
 	resolveWires     []int
 	commandSupported bool
-	commandResponse  types.LSPCommandResponse
+	commandResponse  insight.LSPCommandResponse
 	commandErr       error
 	commands         []struct {
 		name string
@@ -43,7 +44,7 @@ type codeActionClient struct {
 	release <-chan struct{}
 }
 
-func (c *codeActionClient) answer(path string, resolving bool, wire int, original []byte, position [4]int) (types.LSPCodeActionResponse, error) {
+func (c *codeActionClient) answer(path string, resolving bool, wire int, original []byte, position [4]int) (insight.LSPCodeActionResponse, error) {
 	c.mu.Lock()
 	currentWire := c.versions[path]
 	c.mu.Unlock()
@@ -56,12 +57,12 @@ func (c *codeActionClient) answer(path string, resolving bool, wire int, origina
 	} else {
 		c.requests = append(c.requests, position)
 	}
-	response := types.LSPCodeActionResponse{
+	response := insight.LSPCodeActionResponse{
 		JSON: append([]byte(nil), raw...), WireVersion: currentWire + c.wireDelta,
 		ResolveSupported: c.resolveSupported, CommandSupported: c.commandSupported,
 		// Adapter provenance is deliberately false. The synchronized manager
 		// must stamp its own source even for null and empty responses.
-		Boundary: types.InsightBoundary{Source: types.InsightSource{Path: "forged-adapter-path"}},
+		Boundary: insight.Boundary{Source: insight.Source{Path: "forged-adapter-path"}},
 	}
 	entered, release := c.entered, c.release
 	c.actionMu.Unlock()
@@ -74,15 +75,15 @@ func (c *codeActionClient) answer(path string, resolving bool, wire int, origina
 	return response, nil
 }
 
-func (c *codeActionClient) RequestCodeActions(_ context.Context, path string, line, col, endLine, endCol int) (types.LSPCodeActionResponse, error) {
+func (c *codeActionClient) RequestCodeActions(_ context.Context, path string, line, col, endLine, endCol int) (insight.LSPCodeActionResponse, error) {
 	return c.answer(path, false, 0, nil, [4]int{line, col, endLine, endCol})
 }
 
-func (c *codeActionClient) ResolveCodeAction(_ context.Context, path string, wire int, raw []byte) (types.LSPCodeActionResponse, error) {
+func (c *codeActionClient) ResolveCodeAction(_ context.Context, path string, wire int, raw []byte) (insight.LSPCodeActionResponse, error) {
 	return c.answer(path, true, wire, raw, [4]int{})
 }
 
-func (c *codeActionClient) ExecuteCommand(_ context.Context, _ string, _ int, name string, arguments json.RawMessage) (types.LSPCommandResponse, error) {
+func (c *codeActionClient) ExecuteCommand(_ context.Context, _ string, _ int, name string, arguments json.RawMessage) (insight.LSPCommandResponse, error) {
 	c.actionMu.Lock()
 	c.commands = append(c.commands, struct{ name, args string }{name, string(arguments)})
 	response, err := c.commandResponse, c.commandErr
@@ -92,7 +93,7 @@ func (c *codeActionClient) ExecuteCommand(_ context.Context, _ string, _ int, na
 
 type codeActionRuntime struct{ client *codeActionClient }
 
-func (r codeActionRuntime) NewClient(_ types.LSPServerSpec, _ string, admission func() error) LSPClient {
+func (r codeActionRuntime) NewClient(_ setting.LSPServerSpec, _ string, admission func() error) LSPClient {
 	r.client.startAdmission = admission
 	return r.client
 }
@@ -101,7 +102,7 @@ type codeActionFixture struct {
 	workspace *Workspace
 	client    *codeActionClient
 	owner     document.Owner
-	source    types.InsightSource
+	source    insight.Source
 	path      string
 	before    string
 }
@@ -771,7 +772,7 @@ func TestCodeActionCommandEditRunsOnceAndReviewsCreate(t *testing.T) {
 	f.client.commandSupported = true
 	target := filepath.Join(filepath.Dir(f.path), "generated.go")
 	uri := fileuri.FromPath(target)
-	f.client.commandResponse = types.LSPCommandResponse{WorkspaceEdits: [][]byte{[]byte(fmt.Sprintf(
+	f.client.commandResponse = insight.LSPCommandResponse{WorkspaceEdits: [][]byte{[]byte(fmt.Sprintf(
 		`{"documentChanges":[{"kind":"create","uri":%q},{"textDocument":{"uri":%q,"version":0},"edits":[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":0}},"newText":"package generated\n"}]}]}`,
 		uri, uri))}}
 	f.client.actionMu.Unlock()
@@ -806,7 +807,7 @@ func TestCodeActionCommandBrowserOutcomeHasNoReview(t *testing.T) {
 	f := newCodeActionFixture(t, "var old = 1\r\nold\r\n")
 	f.client.actionMu.Lock()
 	f.client.commandSupported = true
-	f.client.commandResponse = types.LSPCommandResponse{Result: []byte(`"https://go.dev/gopls/features"`)}
+	f.client.commandResponse = insight.LSPCommandResponse{Result: []byte(`"https://go.dev/gopls/features"`)}
 	f.client.actionMu.Unlock()
 	raw := `{"title":"Browse documentation","kind":"source.doc","command":{"title":"Browse","command":"provider.doc"}}`
 	set := f.list(t, "["+raw+"]", false)
@@ -878,7 +879,7 @@ func TestCodeActionCommandOutcomeExtractsOnlyThePageFromMessages(t *testing.T) {
 		{"Read http://example.test/plain first", ""},
 		{"No page here.", ""},
 	} {
-		message, url := commandActionOutcome(types.LSPCommandResponse{Messages: []string{tc.message}})
+		message, url := commandActionOutcome(insight.LSPCommandResponse{Messages: []string{tc.message}})
 		if url != tc.url || message != tc.message {
 			t.Errorf("message %q: got message %q url %q, want url %q", tc.message, message, url, tc.url)
 		}

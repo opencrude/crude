@@ -7,7 +7,7 @@ import (
 
 	"crude/tui/ui"
 	"crude/tui/wm"
-	"crude/types"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -141,7 +141,7 @@ func (m *App) dirtyPromptCancel() {
 // rearmAfterDelayAutosave restores the After Delay deadline for one dirty
 // buffer after a close decision stopped suppressing scheduling.
 func (m *App) rearmAfterDelayAutosave(path string) {
-	if m.editorSettings.AutoSave != types.AutoSaveAfterDelay || m.ws.Documents() == nil || path == "" {
+	if m.editorSettings.AutoSave != setting.AutoSaveAfterDelay || m.ws.Documents() == nil || path == "" {
 		return
 	}
 	tab := m.EditorState.Tabs[path]

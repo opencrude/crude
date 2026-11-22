@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"crude/logger"
-	"crude/text/encoding"
+	"crude/internal/logger"
+	"crude/text/textencoding"
 	"crude/workspace/fileio"
 )
 

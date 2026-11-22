@@ -7,7 +7,7 @@ import (
 
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 func TestTransientLifecycleDoesNotChangeTranscriptGeometry(t *testing.T) {
@@ -15,8 +15,8 @@ func TestTransientLifecycleDoesNotChangeTranscriptGeometry(t *testing.T) {
 	renderer.SetSize(100, 20)
 	renderer.SetChatAreaBounds(0, 12)
 	renderer.SetSpinFrame(0)
-	renderer.SyncMessages([]types.ChatMessage{{
-		InternalID: "turn-status", Role: types.RoleStatus,
+	renderer.SyncMessages([]conversation.ChatMessage{{
+		InternalID: "turn-status", Role: conversation.RoleStatus,
 		LifecyclePhase: "preparing", LifecycleProgress: 42,
 		LifecycleUploadedBytes: 43008, LifecycleTotalBytes: 102400, Time: time.Now(),
 	}}, 1, 0)
@@ -34,7 +34,7 @@ func TestTransientLifecycleDoesNotChangeTranscriptGeometry(t *testing.T) {
 }
 
 func TestPlainTerminalStatusNeverAnimates(t *testing.T) {
-	msg := types.ChatMessage{InternalID: "history-status", Role: types.RoleStatus, Content: "Restored 1 file from Local History"}
+	msg := conversation.ChatMessage{InternalID: "history-status", Role: conversation.RoleStatus, Content: "Restored 1 file from Local History"}
 	first := renderLifecycleMessage(msg, renderContext{spinFrame: 0})
 	second := renderLifecycleMessage(msg, renderContext{spinFrame: ui.ActivityBlinkPhaseMillis})
 	if first.frameSensitive || second.frameSensitive {
@@ -49,7 +49,7 @@ func TestPlainTerminalStatusNeverAnimates(t *testing.T) {
 }
 
 func TestHistoryRestoreUsesPermanentContextBoundaryTable(t *testing.T) {
-	msg := types.ChatMessage{InternalID: "history", Role: types.RoleStatus, LifecyclePhase: "history_restored", LifecycleOperationID: "plan-1234567890abcdef",
+	msg := conversation.ChatMessage{InternalID: "history", Role: conversation.RoleStatus, LifecyclePhase: "history_restored", LifecycleOperationID: "plan-1234567890abcdef",
 		HistoryPathCount: 1, HistoryTargetSnapshot: "target-1234567890", HistorySafetySnapshot: "safety-1234567890", Time: time.Now()}
 	rendered := renderLifecycleMessage(msg, renderContext{innerW: 92, spinFrame: 0})
 	if rendered.frameSensitive || len(rendered.native) != 8 {
@@ -69,12 +69,12 @@ func TestHistoryRestoreUsesPermanentContextBoundaryTable(t *testing.T) {
 
 func TestLifecycleAnimationRequiresExplicitActivePhase(t *testing.T) {
 	for _, phase := range []string{"", "history_restored", "compaction_completed", "compaction_cancelled", "compaction_failed", "compaction_interrupted", "unknown_future_state"} {
-		if lifecycleMessageFrameSensitive(types.ChatMessage{Role: types.RoleStatus, LifecyclePhase: phase}) {
+		if lifecycleMessageFrameSensitive(conversation.ChatMessage{Role: conversation.RoleStatus, LifecyclePhase: phase}) {
 			t.Fatalf("terminal or unknown phase %q animated", phase)
 		}
 	}
 	for _, phase := range []string{"preparing", "waiting_provider", "cancelling", "compaction_preparing", "compaction_extracting", "compaction_retrying", "compaction_committing", "compaction_cancelling"} {
-		if !lifecycleMessageFrameSensitive(types.ChatMessage{Role: types.RoleStatus, LifecyclePhase: phase}) {
+		if !lifecycleMessageFrameSensitive(conversation.ChatMessage{Role: conversation.RoleStatus, LifecyclePhase: phase}) {
 			t.Fatalf("active phase %q did not animate", phase)
 		}
 	}
@@ -84,8 +84,8 @@ func TestLifecycleStatusProjectionTransformsInPlaceToTool(t *testing.T) {
 	renderer := NewRenderer(theme.DefaultDark())
 	renderer.SetSize(100, 20)
 	renderer.SetChatAreaBounds(0, 12)
-	renderer.SyncMessages([]types.ChatMessage{{
-		InternalID: "stable-row", Role: types.RoleStatus,
+	renderer.SyncMessages([]conversation.ChatMessage{{
+		InternalID: "stable-row", Role: conversation.RoleStatus,
 		LifecyclePhase: "waiting_provider", LifecycleProvider: "OpenAI", Time: time.Now().Add(-2 * time.Second),
 	}}, 1, 0)
 
@@ -94,10 +94,10 @@ func TestLifecycleStatusProjectionTransformsInPlaceToTool(t *testing.T) {
 		t.Fatalf("provider wait row = %#v", waiting)
 	}
 
-	renderer.SyncMessages([]types.ChatMessage{{
-		InternalID: "stable-row", Role: types.RoleTool,
-		ToolID: "tool-1", ToolName: "edit_file", ToolStatus: types.ToolStatusStreaming,
-		ToolPreviewPhase: types.ToolPreviewPreparing, ToolStartTime: time.Now(),
+	renderer.SyncMessages([]conversation.ChatMessage{{
+		InternalID: "stable-row", Role: conversation.RoleTool,
+		ToolID: "tool-1", ToolName: "edit_file", ToolStatus: conversation.ToolStatusStreaming,
+		ToolPreviewPhase: conversation.ToolPreviewPreparing, ToolStartTime: time.Now(),
 	}}, 2, 0)
 	toolRows, _, _ := renderer.ExportMessageRows(100)
 	if len(toolRows) != 1 || toolRows[0].ID != "stable-row" {
@@ -113,13 +113,13 @@ func TestCompactionLifecycleUsesRetainedBoundaryTable(t *testing.T) {
 	renderer := NewRenderer(theme.DefaultDark())
 	renderer.SetSize(100, 20)
 	renderer.SetChatAreaBounds(0, 12)
-	msg := types.ChatMessage{
-		InternalID: "compact", Role: types.RoleStatus, LifecyclePhase: "compaction_extracting",
+	msg := conversation.ChatMessage{
+		InternalID: "compact", Role: conversation.RoleStatus, LifecyclePhase: "compaction_extracting",
 		LifecycleOperationID: "compact-1", LifecycleStageName: "Capturing state", LifecycleTrigger: "manual",
 		LifecycleStageIndex: 3, LifecycleCompleted: 2, LifecycleStageCount: 4,
 		LifecycleBeforeTokens: 420000, Time: time.Now().Add(-2 * time.Second),
 	}
-	renderer.SyncMessages([]types.ChatMessage{msg}, 1, 0)
+	renderer.SyncMessages([]conversation.ChatMessage{msg}, 1, 0)
 	rows, _, _ := renderer.ExportMessageRows(100)
 	joined := strings.Join(rows[0].Lines, "\n")
 	if len(rows[0].Lines) != 7 || !rows[0].ContextBoundary || rows[0].ContextBoundaryStart != 1 ||
@@ -141,8 +141,8 @@ func TestCompactionLifecycleUsesRetainedBoundaryTable(t *testing.T) {
 
 func TestCompactionTerminalFormsStayCompactAndDiscloseEvidence(t *testing.T) {
 	for _, phase := range []string{"compaction_completed", "compaction_cancelled", "compaction_failed", "compaction_interrupted"} {
-		msg := types.ChatMessage{
-			InternalID: "compact", Role: types.RoleStatus, LifecyclePhase: phase,
+		msg := conversation.ChatMessage{
+			InternalID: "compact", Role: conversation.RoleStatus, LifecyclePhase: phase,
 			LifecycleOperationID: "compact-1", LifecycleStageName: "Capturing state",
 			LifecycleStageIndex: 3, LifecycleCompleted: 2, LifecycleStageCount: 4,
 			LifecycleBeforeTokens: 155955, LifecycleAfterTokens: 10476,
@@ -196,8 +196,8 @@ func TestAutomaticCompactionPaintsAsOneToolRow(t *testing.T) {
 		if trigger == "" {
 			trigger = "automatic"
 		}
-		msg := types.ChatMessage{
-			InternalID: "auto-compact", Role: types.RoleStatus, LifecyclePhase: test.phase,
+		msg := conversation.ChatMessage{
+			InternalID: "auto-compact", Role: conversation.RoleStatus, LifecyclePhase: test.phase,
 			LifecycleOperationID: "compact-auto", LifecycleTrigger: trigger,
 			LifecycleStageName: test.stage, LifecycleRetryAttempt: 2, LifecycleRetryLimit: 3,
 			LifecycleStageIndex: 2, LifecycleCompleted: 1, LifecycleStageCount: 4,
@@ -225,8 +225,8 @@ func TestAutomaticCompactionRowHasNoContextBoundaryRules(t *testing.T) {
 	renderer := NewRenderer(theme.DefaultDark())
 	renderer.SetSize(100, 20)
 	renderer.SetChatAreaBounds(0, 12)
-	renderer.SyncMessages([]types.ChatMessage{{
-		InternalID: "auto-compact", Role: types.RoleStatus, LifecyclePhase: "compaction_completed",
+	renderer.SyncMessages([]conversation.ChatMessage{{
+		InternalID: "auto-compact", Role: conversation.RoleStatus, LifecyclePhase: "compaction_completed",
 		LifecycleOperationID: "compact-auto", LifecycleTrigger: "automatic",
 		LifecycleBeforeTokens: 155955, LifecycleAfterTokens: 10476, ModelID: "errand/model",
 	}}, 1, 0)
@@ -246,30 +246,30 @@ func TestAutomaticCompactionRowHasNoContextBoundaryRules(t *testing.T) {
 func TestActivityDotSemanticColorsStayStableAcrossBlinkPhases(t *testing.T) {
 	for _, frame := range []int{0, ui.ActivityBlinkPhaseMillis} {
 		ctx := renderContext{contentWidth: 80, spinFrame: frame}
-		preparing := renderLifecycleMessage(types.ChatMessage{LifecyclePhase: "preparing"}, ctx).native[0]
+		preparing := renderLifecycleMessage(conversation.ChatMessage{LifecyclePhase: "preparing"}, ctx).native[0]
 		if preparing.Spans[1].Role != ui.ColorWarning {
 			t.Fatalf("preparing dot role at frame %d = %v", frame, preparing.Spans[1].Role)
 		}
-		waiting := renderLifecycleMessage(types.ChatMessage{LifecyclePhase: "waiting_provider"}, ctx).native[0]
+		waiting := renderLifecycleMessage(conversation.ChatMessage{LifecyclePhase: "waiting_provider"}, ctx).native[0]
 		if waiting.Spans[1].Role != ui.ColorAccent {
 			t.Fatalf("waiting dot role at frame %d = %v", frame, waiting.Spans[1].Role)
 		}
-		tool := buildToolTitleLine(types.ChatMessage{
-			ToolName: "edit_file", ToolStatus: types.ToolStatusStreaming,
-			ToolPreviewPhase: types.ToolPreviewPreparing,
-		}, types.ToolPreviewPreparing, frame)
+		tool := buildToolTitleLine(conversation.ChatMessage{
+			ToolName: "edit_file", ToolStatus: conversation.ToolStatusStreaming,
+			ToolPreviewPhase: conversation.ToolPreviewPreparing,
+		}, conversation.ToolPreviewPreparing, frame)
 		if tool.Spans[1].Role != ui.ColorToolTitle {
 			t.Fatalf("tool preparing dot role at frame %d = %v", frame, tool.Spans[1].Role)
 		}
-		doing := buildToolTitleLine(types.ChatMessage{
-			ToolName: "edit_file", ToolStatus: types.ToolStatusStreaming,
-			ToolPreviewPhase: types.ToolPreviewStreaming,
-		}, types.ToolPreviewStreaming, frame)
+		doing := buildToolTitleLine(conversation.ChatMessage{
+			ToolName: "edit_file", ToolStatus: conversation.ToolStatusStreaming,
+			ToolPreviewPhase: conversation.ToolPreviewStreaming,
+		}, conversation.ToolPreviewStreaming, frame)
 		if doing.Spans[1].Role != ui.ColorToolTitle {
 			t.Fatalf("tool doing dot role at frame %d = %v", frame, doing.Spans[1].Role)
 		}
-		thinking := renderThinkingMessage(types.ChatMessage{
-			Role: types.RoleThinking, ThinkingActive: true, Content: "working",
+		thinking := renderThinkingMessage(conversation.ChatMessage{
+			Role: conversation.RoleThinking, ThinkingActive: true, Content: "working",
 		}, renderContext{contentWidth: 80, spinFrame: frame}, false).native[0]
 		if thinking.Spans[1].Role != ui.ColorAccent {
 			t.Fatalf("thinking dot role at frame %d = %v", frame, thinking.Spans[1].Role)
@@ -280,8 +280,8 @@ func TestActivityDotSemanticColorsStayStableAcrossBlinkPhases(t *testing.T) {
 func TestInvalidateWidthProfileDropsCompletedMessageCache(t *testing.T) {
 	renderer := NewRenderer(theme.DefaultDark())
 	renderer.SetSize(80, 20)
-	renderer.SyncMessages([]types.ChatMessage{{
-		InternalID: "static", Role: types.RoleAssistant, Content: "ambiguous ○ text",
+	renderer.SyncMessages([]conversation.ChatMessage{{
+		InternalID: "static", Role: conversation.RoleAssistant, Content: "ambiguous ○ text",
 	}}, 1, 0)
 	renderer.sync.Messages[0].CachedLines = []string{"cached under old width profile"}
 	renderer.InvalidateWidthProfile()
@@ -292,12 +292,12 @@ func TestInvalidateWidthProfileDropsCompletedMessageCache(t *testing.T) {
 
 func TestLongToolTitleWrapsWithoutLosingOperand(t *testing.T) {
 	path := "/home/example/.crude/workspaces/hash/sessions/id/reports/smoke-blocking-errand-report.md"
-	lines := buildToolTitleLines(types.ChatMessage{
-		ToolName: "publish_report", ToolStatus: types.ToolStatusSuccess,
-		ToolPreviewPhase: types.ToolPreviewDone,
+	lines := buildToolTitleLines(conversation.ChatMessage{
+		ToolName: "publish_report", ToolStatus: conversation.ToolStatusSuccess,
+		ToolPreviewPhase: conversation.ToolPreviewDone,
 		ToolArgs:         path,
 		ToolLivedAdded:   21, ToolDuration: 50 * time.Millisecond,
-	}, types.ToolPreviewDone, 0, 52, DisclosureExpanded)
+	}, conversation.ToolPreviewDone, 0, 52, DisclosureExpanded)
 	var operand, plain strings.Builder
 	for _, line := range lines {
 		if line.VisibleWidth() > 52 {
@@ -316,30 +316,30 @@ func TestLongToolTitleWrapsWithoutLosingOperand(t *testing.T) {
 }
 
 func TestSubAgentToolLabelsDistinguishRunningAndFailure(t *testing.T) {
-	waiting := buildToolTitleLine(types.ChatMessage{
-		ToolName: "agent_start", ToolStatus: types.ToolStatusStreaming,
-		ToolPreviewPhase: types.ToolPreviewStreaming, ToolProgressLabel: "Lily · Researcher — survey",
-	}, types.ToolPreviewStreaming, 0).PlainText()
+	waiting := buildToolTitleLine(conversation.ChatMessage{
+		ToolName: "agent_start", ToolStatus: conversation.ToolStatusStreaming,
+		ToolPreviewPhase: conversation.ToolPreviewStreaming, ToolProgressLabel: "Lily · Researcher — survey",
+	}, conversation.ToolPreviewStreaming, 0).PlainText()
 	if !strings.Contains(waiting, "Starting agent Lily · Researcher — survey") {
 		t.Fatalf("running label = %q", waiting)
 	}
-	failed := buildToolTitleLine(types.ChatMessage{
-		ToolName: "agent_start", ToolStatus: types.ToolStatusError,
-		ToolPreviewPhase: types.ToolPreviewError,
-	}, types.ToolPreviewError, 0).PlainText()
+	failed := buildToolTitleLine(conversation.ChatMessage{
+		ToolName: "agent_start", ToolStatus: conversation.ToolStatusError,
+		ToolPreviewPhase: conversation.ToolPreviewError,
+	}, conversation.ToolPreviewError, 0).PlainText()
 	if !strings.Contains(failed, "Agent start failed") {
 		t.Fatalf("failed label = %q", failed)
 	}
 }
 
 func TestCompactAgentWaitKeepsNameAndIdentityWithoutJSON(t *testing.T) {
-	msg := &types.ChatMessage{InternalID: "wait", Role: types.RoleTool, ToolName: "agent_wait", ToolArgs: "agent-8f21",
+	msg := &conversation.ChatMessage{InternalID: "wait", Role: conversation.RoleTool, ToolName: "agent_wait", ToolArgs: "agent-8f21",
 		ToolInput:  `{"agent_id":"agent-8f21"}`,
 		Content:    `{"id":"agent-8f21","name":"Lily sub Dawn","category":"researcher","state":"available","presence":"attached","runtime_epoch":1}`,
-		ToolStatus: types.ToolStatusSuccess, ToolPreviewPhase: types.ToolPreviewDone}
+		ToolStatus: conversation.ToolStatusSuccess, ToolPreviewPhase: conversation.ToolPreviewDone}
 	r := NewRenderer(theme.DefaultDark())
 	r.AppendMessage(*msg)
-	lines, _ := r.BuildSubPaneToolLines([]*types.ChatMessage{msg}, 42, 0)
+	lines, _ := r.BuildSubPaneToolLines([]*conversation.ChatMessage{msg}, 42, 0)
 	var text strings.Builder
 	for _, line := range lines {
 		text.WriteString(line.PlainText())
@@ -347,7 +347,7 @@ func TestCompactAgentWaitKeepsNameAndIdentityWithoutJSON(t *testing.T) {
 	if !strings.Contains(text.String(), "Lily sub Dawn") || strings.Contains(text.String(), `"agent_id"`) {
 		t.Fatalf("compact agent wait label: %q", text.String())
 	}
-	expanded := renderToolMessageLines(*msg, theme.DefaultDark(), 42, 42, 42, 0, 24, types.ToolPreviewDone, DisclosureExpanded)
+	expanded := renderToolMessageLines(*msg, theme.DefaultDark(), 42, 42, 42, 0, 24, conversation.ToolPreviewDone, DisclosureExpanded)
 	text.Reset()
 	for _, line := range expanded.native {
 		text.WriteString(line.PlainText())
@@ -362,18 +362,18 @@ func TestCompactWaitTitleMatchesItsTarget(t *testing.T) {
 		name, input, status, phase, content, want string
 	}{
 		{"next update", `{"agent_id":"","run_id":"","artifact_id":"","timeout_seconds":600}`,
-			types.ToolStatusStreaming, types.ToolPreviewStreaming, "", "Waiting for an update"},
+			conversation.ToolStatusStreaming, conversation.ToolPreviewStreaming, "", "Waiting for an update"},
 		{"named agent", `{"agent_id":"agent-8f21","timeout_seconds":600}`,
-			types.ToolStatusStreaming, types.ToolPreviewStreaming, "", "Waiting for agent event agent-8f21"},
-		{"command update", `{"timeout_seconds":600}`, types.ToolStatusSuccess, types.ToolPreviewDone,
+			conversation.ToolStatusStreaming, conversation.ToolPreviewStreaming, "", "Waiting for agent event agent-8f21"},
+		{"command update", `{"timeout_seconds":600}`, conversation.ToolStatusSuccess, conversation.ToolPreviewDone,
 			`{"status":"directed_event","event":{"id":"event-1","origin":"runtime","kind":"command_outcome"}}`, "Wait finished"},
-		{"no update", `{"timeout_seconds":600}`, types.ToolStatusSuccess, types.ToolPreviewDone,
+		{"no update", `{"timeout_seconds":600}`, conversation.ToolStatusSuccess, conversation.ToolPreviewDone,
 			`{"status":"timeout_no_match"}`, "Wait finished"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			msg := &types.ChatMessage{Role: types.RoleTool, ToolName: "agent_wait", ToolInput: tc.input,
+			msg := &conversation.ChatMessage{Role: conversation.RoleTool, ToolName: "agent_wait", ToolInput: tc.input,
 				ToolStatus: tc.status, ToolPreviewPhase: tc.phase, Content: tc.content}
-			lines, _ := NewRenderer(theme.DefaultDark()).BuildSubPaneToolLines([]*types.ChatMessage{msg}, 80, 0)
+			lines, _ := NewRenderer(theme.DefaultDark()).BuildSubPaneToolLines([]*conversation.ChatMessage{msg}, 80, 0)
 			var text strings.Builder
 			for _, line := range lines {
 				text.WriteString(line.PlainText())

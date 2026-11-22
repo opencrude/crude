@@ -12,7 +12,8 @@ import (
 
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -36,16 +37,16 @@ func TestRegressionRepairVisualAcceptance(t *testing.T) {
 	ws.AgentMgr.AddOrchestrator("errand-fixture", workspace.NewAgentState("errand-fixture", nil, nil))
 	ws.SessionsByAgent["errand-fixture"] = &workspace.Session{
 		SessionID: "errand-fixture", AgentID: "errand-fixture",
-		Settings: &workspace.SessionSettingsState{Effective: types.Settings{SessionMainAgent: "errand"}},
+		Settings: &workspace.SessionSettingsState{Effective: setting.Settings{SessionMainAgent: "errand"}},
 	}
 	app.AgentView.SetHidden("errand-fixture", true)
 	app.setActivity(activityAgents, true)
 	requireErrandAbsentFromAgentList(t, app)
 	path := filepath.Join(app.ws.RootPath(), "example.go")
-	app.lspFacts = map[string]types.InsightDiagnostics{path: {
+	app.lspFacts = map[string]insight.Diagnostics{path: {
 		ID: "visual-problem",
-		Diagnostics: []types.LSPDiagnostic{{
-			Line: 14, Col: 0, Severity: types.DiagError, Source: "compiler",
+		Diagnostics: []insight.LSPDiagnostic{{
+			Line: 14, Col: 0, Severity: insight.DiagError, Source: "compiler",
 			Message: strings.Repeat("The declaration is not valid. Remove this text or replace it with a declaration. ", 32) + "FINAL_SENTENCE.",
 		}},
 	}}

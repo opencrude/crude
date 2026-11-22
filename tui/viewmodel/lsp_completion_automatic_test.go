@@ -5,7 +5,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/types"
+	"crude/types/setting"
 	"crude/workspace/document"
 )
 
@@ -60,7 +60,7 @@ func TestAutomaticCompletionIntentRetiresWithInputOwner(t *testing.T) {
 			case "disabled":
 				port.service.enabled = false
 			case "automatic off":
-				settings := types.DefaultLSPSettings()
+				settings := setting.DefaultLSP()
 				settings.AutoComplete = false
 				port.service.settings = &settings
 			case "non-typing edit":
@@ -87,7 +87,7 @@ func TestCompletionAcceptancePreferenceLeavesOtherKeyAsEditing(t *testing.T) {
 	} {
 		t.Run(tc.mode+"/"+tea.KeyPressMsg{Code: tc.key}.String(), func(t *testing.T) {
 			app, port := completionTestApp(t, 100, 32, "pr")
-			settings := types.DefaultLSPSettings()
+			settings := setting.DefaultLSP()
 			settings.CompletionAccept, settings.AutoComplete = tc.mode, false
 			port.service.settings = &settings
 			completionTestKey(t, app, tea.KeyPressMsg{Code: ' ', Mod: tea.ModCtrl})

@@ -9,12 +9,12 @@ import (
 	"crude/tui/cell"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 func TestActivityExpansionKeepsTreeAndFullOperands(t *testing.T) {
 	r := newActivityRenderer()
-	messages := []types.ChatMessage{
+	messages := []conversation.ChatMessage{
 		{InternalID: "read", Role: "tool", ToolName: "read_file", ToolArgs: "tui/chatprojection/very_descriptive_file_name.go", ToolStatus: "success", Content: "package fixture"},
 		{InternalID: "search", Role: "tool", ToolName: "grep_files", ToolInput: "the complete expression", ToolScope: "tui/chatprojection", ToolStatus: "calling", ToolPreviewPhase: "streaming"},
 	}
@@ -44,7 +44,7 @@ func TestActivityExpansionKeepsTreeAndFullOperands(t *testing.T) {
 }
 
 func TestNativeCommandOutputIsReadableAndNotAllRed(t *testing.T) {
-	msg := types.ChatMessage{Role: "tool", ToolName: "exec_command", ToolCommand: "go test ./...", ToolStatus: "error", ToolPreviewPhase: "error", Content: `{"wall_time_seconds":0.2,"exit_code":1,"output":"FAIL package/example\n    expected true\nactual false"}`}
+	msg := conversation.ChatMessage{Role: "tool", ToolName: "exec_command", ToolCommand: "go test ./...", ToolStatus: "error", ToolPreviewPhase: "error", Content: `{"wall_time_seconds":0.2,"exit_code":1,"output":"FAIL package/example\n    expected true\nactual false"}`}
 	ml := renderToolMessageLines(msg, theme.DefaultDark(), 80, 95, 100, 0, 25, "error", DisclosureExpanded)
 	text := strings.Join(ml.lines, "\n")
 	if strings.Contains(text, "wall_time_seconds") || strings.Contains(text, `\n`) || !strings.Contains(text, "expected true") {
@@ -60,8 +60,8 @@ func TestNativeCommandOutputIsReadableAndNotAllRed(t *testing.T) {
 }
 
 func TestPatchFailureColorsOnlyActionAndIndicator(t *testing.T) {
-	msg := types.ChatMessage{Role: types.RoleTool, ToolName: "apply_patch", ToolArgs: "source.go", ToolStatus: types.ToolStatusError, ToolPreviewPhase: types.ToolPreviewError, Content: "Error: one hunk failed\n```diff\n--- a/source.go\n+++ b/source.go\n@@ -1 +1 @@\n-old\n+new\n```"}
-	lines := renderToolMessageLines(msg, theme.DefaultDark(), 80, 90, 100, 0, 30, types.ToolPreviewError, DisclosureExpanded)
+	msg := conversation.ChatMessage{Role: conversation.RoleTool, ToolName: "apply_patch", ToolArgs: "source.go", ToolStatus: conversation.ToolStatusError, ToolPreviewPhase: conversation.ToolPreviewError, Content: "Error: one hunk failed\n```diff\n--- a/source.go\n+++ b/source.go\n@@ -1 +1 @@\n-old\n+new\n```"}
+	lines := renderToolMessageLines(msg, theme.DefaultDark(), 80, 90, 100, 0, 30, conversation.ToolPreviewError, DisclosureExpanded)
 	if !strings.Contains(lines.lines[0], "×") || lines.native[0].Spans[2].Role != ui.ColorError {
 		t.Fatal("failure action/indicator missing")
 	}
@@ -76,8 +76,8 @@ func TestPatchFailureColorsOnlyActionAndIndicator(t *testing.T) {
 
 func TestWriteDefaultsExpandedAndCanCollapse(t *testing.T) {
 	r := newActivityRenderer()
-	msg := types.ChatMessage{InternalID: "write", Role: "tool", ToolName: "write_file", ToolArgs: "new.go", ToolStatus: "success", ToolPreviewPhase: "done", Content: "Written 2 lines\n+package fixture\n+var X = true"}
-	r.SyncMessages([]types.ChatMessage{msg}, 1, 0)
+	msg := conversation.ChatMessage{InternalID: "write", Role: "tool", ToolName: "write_file", ToolArgs: "new.go", ToolStatus: "success", ToolPreviewPhase: "done", Content: "Written 2 lines\n+package fixture\n+var X = true"}
+	r.SyncMessages([]conversation.ChatMessage{msg}, 1, 0)
 	if r.disclosureState(r.sync.MsgByID["write"]) != DisclosureExpanded {
 		t.Fatal("file write is not expanded by default")
 	}
@@ -96,15 +96,15 @@ func TestToolLabelColorsSurviveWrapping(t *testing.T) {
 		name, status, phase string
 		title, dot          ui.SemanticColor
 	}{
-		{"completed", types.ToolStatusSuccess, types.ToolPreviewDone, ui.ColorToolTitle, ui.ColorToolTitle},
-		{"completed-stale-phase", types.ToolStatusSuccess, types.ToolPreviewError, ui.ColorToolTitle, ui.ColorToolTitle},
-		{"preparing", types.ToolStatusCalling, types.ToolPreviewPreparing, ui.ColorToolTitle, ui.ColorToolTitle},
-		{"running", types.ToolStatusCalling, types.ToolPreviewStreaming, ui.ColorToolTitle, ui.ColorToolTitle},
-		{"failed", types.ToolStatusError, types.ToolPreviewError, ui.ColorError, ui.ColorError},
-		{"stopped", types.ToolStatusCancelled, types.ToolPreviewDone, ui.ColorToolTitle, ui.ColorMuted},
+		{"completed", conversation.ToolStatusSuccess, conversation.ToolPreviewDone, ui.ColorToolTitle, ui.ColorToolTitle},
+		{"completed-stale-phase", conversation.ToolStatusSuccess, conversation.ToolPreviewError, ui.ColorToolTitle, ui.ColorToolTitle},
+		{"preparing", conversation.ToolStatusCalling, conversation.ToolPreviewPreparing, ui.ColorToolTitle, ui.ColorToolTitle},
+		{"running", conversation.ToolStatusCalling, conversation.ToolPreviewStreaming, ui.ColorToolTitle, ui.ColorToolTitle},
+		{"failed", conversation.ToolStatusError, conversation.ToolPreviewError, ui.ColorError, ui.ColorError},
+		{"stopped", conversation.ToolStatusCancelled, conversation.ToolPreviewDone, ui.ColorToolTitle, ui.ColorMuted},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			msg := types.ChatMessage{Role: types.RoleTool, ToolName: "execute_command", ToolArgs: "rg --line-number complete search expression in a long directory", ToolStatus: tc.status, ToolPreviewPhase: tc.phase, ToolDuration: time.Second}
+			msg := conversation.ChatMessage{Role: conversation.RoleTool, ToolName: "execute_command", ToolArgs: "rg --line-number complete search expression in a long directory", ToolStatus: tc.status, ToolPreviewPhase: tc.phase, ToolDuration: time.Second}
 			for _, frame := range []int{0, 400} {
 				header := buildToolTitleLine(msg, tc.phase, frame)
 				if header.Spans[2].Role != tc.title {
@@ -117,7 +117,7 @@ func TestToolLabelColorsSurviveWrapping(t *testing.T) {
 				if lines[0].Spans[1].Role != tc.dot {
 					t.Fatalf("outcome/activity dot lost its color: %+v", lines[0].Spans[1])
 				}
-				if (tc.status == types.ToolStatusError) != strings.Contains(lines[0].Spans[1].Text, "×") {
+				if (tc.status == conversation.ToolStatusError) != strings.Contains(lines[0].Spans[1].Text, "×") {
 					t.Fatalf("failure does not have a unique times indicator: %+v", lines[0])
 				}
 				var operand strings.Builder
@@ -168,8 +168,8 @@ func TestSemanticWrappingPreservesOperandAndMetadata(t *testing.T) {
 }
 
 func TestAmbientFailureDoesNotRecolorRunningTool(t *testing.T) {
-	msg := types.ChatMessage{Role: types.RoleTool, ToolName: "execute_command", ToolArgs: "go test ./...", ToolStatus: types.ToolStatusCalling, ToolPreviewPhase: types.ToolPreviewStreaming}
-	line := buildToolTitleLine(msg, types.ToolPreviewError, 0)
+	msg := conversation.ChatMessage{Role: conversation.RoleTool, ToolName: "execute_command", ToolArgs: "go test ./...", ToolStatus: conversation.ToolStatusCalling, ToolPreviewPhase: conversation.ToolPreviewStreaming}
+	line := buildToolTitleLine(msg, conversation.ToolPreviewError, 0)
 	if strings.Contains(line.PlainText(), "×") || line.Spans[2].Role == ui.ColorError {
 		t.Fatalf("ambient request failure recolored an active tool: %+v", line)
 	}
@@ -177,11 +177,11 @@ func TestAmbientFailureDoesNotRecolorRunningTool(t *testing.T) {
 
 func BenchmarkDenseActivityPresentedFrame(b *testing.B) {
 	r := newActivityRenderer()
-	messages := make([]types.ChatMessage, 4001)
+	messages := make([]conversation.ChatMessage, 4001)
 	for i := range 4000 {
-		messages[i] = types.ChatMessage{InternalID: fmt.Sprint(i), Role: "tool", ToolName: "read_file", ToolArgs: "src/file.go", ToolStatus: "success", ToolPreviewPhase: "done", Content: strings.Repeat("source line\n", 40)}
+		messages[i] = conversation.ChatMessage{InternalID: fmt.Sprint(i), Role: "tool", ToolName: "read_file", ToolArgs: "src/file.go", ToolStatus: "success", ToolPreviewPhase: "done", Content: strings.Repeat("source line\n", 40)}
 	}
-	messages[4000] = types.ChatMessage{InternalID: "active", Role: "tool", ToolName: "exec_command", ToolCommand: "go test ./...", ToolStatus: "calling", ToolPreviewPhase: "streaming"}
+	messages[4000] = conversation.ChatMessage{InternalID: "active", Role: "tool", ToolName: "exec_command", ToolCommand: "go test ./...", ToolStatus: "calling", ToolPreviewPhase: "streaming"}
 	r.SyncMessages(messages, 1, 0)
 	r.ExportMessageRows(100)
 	b.ReportAllocs()
@@ -199,14 +199,14 @@ func BenchmarkDenseProjectPathsPresentedFrame(b *testing.B) {
 		b.Run(tc.name, func(b *testing.B) {
 			r := newActivityRenderer()
 			r.SetProjectRoot(tc.root)
-			messages := make([]types.ChatMessage, 4001)
+			messages := make([]conversation.ChatMessage, 4001)
 			for i := range 4000 {
-				messages[i] = types.ChatMessage{InternalID: fmt.Sprint(i), Role: types.RoleTool, ToolName: "read_file",
-					ToolArgs: "/home/example/large-project/src/file.go", ToolStatus: types.ToolStatusSuccess,
-					ToolPreviewPhase: types.ToolPreviewDone, Content: strings.Repeat("source line\n", 40)}
+				messages[i] = conversation.ChatMessage{InternalID: fmt.Sprint(i), Role: conversation.RoleTool, ToolName: "read_file",
+					ToolArgs: "/home/example/large-project/src/file.go", ToolStatus: conversation.ToolStatusSuccess,
+					ToolPreviewPhase: conversation.ToolPreviewDone, Content: strings.Repeat("source line\n", 40)}
 			}
-			messages[4000] = types.ChatMessage{InternalID: "active", Role: types.RoleTool, ToolName: "read_file",
-				ToolArgs: "/home/example/large-project/src/active.go", ToolStatus: types.ToolStatusCalling, ToolPreviewPhase: types.ToolPreviewStreaming}
+			messages[4000] = conversation.ChatMessage{InternalID: "active", Role: conversation.RoleTool, ToolName: "read_file",
+				ToolArgs: "/home/example/large-project/src/active.go", ToolStatus: conversation.ToolStatusCalling, ToolPreviewPhase: conversation.ToolPreviewStreaming}
 			r.SyncMessages(messages, 1, 0)
 			r.ExportMessageRows(100)
 			b.ReportAllocs()

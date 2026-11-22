@@ -7,7 +7,7 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 func TestAssistantCodeBlockPaintsCopyChipWithRawCode(t *testing.T) {
@@ -15,7 +15,7 @@ func TestAssistantCodeBlockPaintsCopyChipWithRawCode(t *testing.T) {
 	md := rendering.MakeMdRenderer(80, th)
 	ctx := renderContext{th: th, tokens: ui.NewTokenSet(th), contentWidth: 76, innerW: 80, width: 80, mdRenderer: md}
 	raw := "func main() {\n\tfmt.Println(\"hi\")\n}"
-	msg := types.ChatMessage{InternalID: "a1", Role: types.RoleAssistant, Content: "Here is the code:\n\n```go\n" + raw + "\n```\n\nDone."}
+	msg := conversation.ChatMessage{InternalID: "a1", Role: conversation.RoleAssistant, Content: "Here is the code:\n\n```go\n" + raw + "\n```\n\nDone."}
 	ml := renderAssistantMessage(msg, ctx, true)
 	var payload ChatCopyCodePayload
 	found := false
@@ -41,7 +41,7 @@ func TestCodeChipKeepsFollowingProse(t *testing.T) {
 	th := theme.DefaultDark()
 	md := rendering.MakeMdRenderer(80, th)
 	ctx := renderContext{th: th, tokens: ui.NewTokenSet(th), contentWidth: 76, innerW: 80, width: 80, mdRenderer: md}
-	msg := types.ChatMessage{InternalID: "a1", Role: types.RoleAssistant, Content: "```go\nx := 1\n```\nAfter the block."}
+	msg := conversation.ChatMessage{InternalID: "a1", Role: conversation.RoleAssistant, Content: "```go\nx := 1\n```\nAfter the block."}
 	ml := renderAssistantMessage(msg, ctx, true)
 	paint := strings.Join(ml.lines, "\n")
 	if !strings.Contains(paint, "After the block.") {
@@ -61,7 +61,7 @@ func TestNestedCodeCopyUsesMarkdownCodeNotContainerIndent(t *testing.T) {
 	} {
 		th := theme.DefaultDark()
 		ctx := renderContext{th: th, tokens: ui.NewTokenSet(th), contentWidth: 76, innerW: 80, width: 80, mdRenderer: rendering.MakeMdRenderer(80, th)}
-		ml := renderAssistantMessage(types.ChatMessage{InternalID: "nested", Role: types.RoleAssistant, Content: input}, ctx, true)
+		ml := renderAssistantMessage(conversation.ChatMessage{InternalID: "nested", Role: conversation.RoleAssistant, Content: input}, ctx, true)
 		found := 0
 		for _, row := range ml.native {
 			for _, span := range row.Spans {
@@ -86,7 +86,7 @@ func TestStreamingCopySourceSurvivesRewriteCompletionAndReflow(t *testing.T) {
 	r.SetSize(80, 40)
 	r.SetChatAreaBounds(0, 40)
 	source := "```text\nfirst\n```\n"
-	message := types.ChatMessage{InternalID: "stream", Role: types.RoleAssistant, Content: source}
+	message := conversation.ChatMessage{InternalID: "stream", Role: conversation.RoleAssistant, Content: source}
 	r.AppendMessage(message)
 	r.SetStreaming(true)
 	check := func(want string) {
@@ -112,7 +112,7 @@ func TestStreamingCopySourceSurvivesRewriteCompletionAndReflow(t *testing.T) {
 	check("first\n")
 	// Same-length replacement must not qualify a completed-prefix cache.
 	message.Content = strings.Replace(source, "first", "other", 1)
-	r.SyncMessages([]types.ChatMessage{message}, 2, 0)
+	r.SyncMessages([]conversation.ChatMessage{message}, 2, 0)
 	check("other\n")
 	r.SetSize(40, 40)
 	check("other\n")
@@ -124,7 +124,7 @@ func TestStreamingTailSelectionKeepsSourceTab(t *testing.T) {
 	r := NewRenderer(theme.DefaultDark())
 	r.SetSize(80, 40)
 	r.SetChatAreaBounds(0, 40)
-	r.AppendMessage(types.ChatMessage{InternalID: "tail", Role: types.RoleAssistant, Content: "```text\n\talpha"})
+	r.AppendMessage(conversation.ChatMessage{InternalID: "tail", Role: conversation.RoleAssistant, Content: "```text\n\talpha"})
 	r.SetStreaming(true)
 	rows, _, _ := r.ExportMessageRows(80)
 	global := 0
@@ -145,7 +145,7 @@ func TestStreamingTailSelectionKeepsSourceTab(t *testing.T) {
 func TestCodeInfoCannotPutSourceControlsInTheCopyChip(t *testing.T) {
 	th := theme.DefaultDark()
 	ctx := renderContext{th: th, tokens: ui.NewTokenSet(th), contentWidth: 76, innerW: 80, width: 80, mdRenderer: rendering.MakeMdRenderer(80, th)}
-	message := types.ChatMessage{InternalID: "control-info", Role: types.RoleAssistant, Content: "```text\x1b_fake\x1b\\\nx\n```"}
+	message := conversation.ChatMessage{InternalID: "control-info", Role: conversation.RoleAssistant, Content: "```text\x1b_fake\x1b\\\nx\n```"}
 	rendered := renderAssistantMessage(message, ctx, true)
 	found := false
 	for _, line := range rendered.native {

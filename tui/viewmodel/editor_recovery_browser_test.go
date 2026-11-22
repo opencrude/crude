@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"crude/clientstate"
+	"crude/internal/clientstate"
 	"crude/tui/surface"
 	"crude/tui/ui"
 	"crude/workspace/document"

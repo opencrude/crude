@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"unicode/utf8"
 
-	"crude/types"
+	"crude/types/conversation"
 	"crude/types/recovery"
 )
 
@@ -28,14 +28,14 @@ func (c *Conversation) InstallDelta(delta ConversationDelta) error {
 	if !delta.Reset && delta.Revision == c.version {
 		return nil
 	}
-	upserts := make(map[string]Message, len(delta.Upserts))
+	upserts := make(map[string]conversation.Message, len(delta.Upserts))
 	for _, message := range delta.Upserts {
-		upserts[message.InternalID] = types.CloneConversationMessage(message)
+		upserts[message.InternalID] = conversation.CloneMessage(message)
 	}
 	if delta.Reset {
 		c.sourceGeneration++
-		c.byID = make(map[string]*Message, len(upserts))
-		c.toolTimelines = make(map[*Message]*toolTimeline)
+		c.byID = make(map[string]*conversation.Message, len(upserts))
+		c.toolTimelines = make(map[*conversation.Message]*toolTimeline)
 		c.brief = ""
 		c.lastRecovery = recovery.Status{}
 	}
@@ -66,7 +66,7 @@ func (c *Conversation) InstallDelta(delta ConversationDelta) error {
 		message.ThinkingDisplay = append.ThinkingDisplay
 	}
 	if delta.Order != nil {
-		c.messages = make([]*Message, len(delta.Order))
+		c.messages = make([]*conversation.Message, len(delta.Order))
 		for i, id := range delta.Order {
 			c.messages[i] = c.byID[id]
 		}
@@ -115,7 +115,7 @@ func (c *Conversation) ValidateDelta(delta ConversationDelta) error {
 	if !delta.Reset && !duplicate && delta.Revision == c.version && (delta.Order != nil || len(delta.Upserts)+len(delta.Removed)+len(delta.Appends) != 0) {
 		return fmt.Errorf("conversation mutation must advance revision")
 	}
-	upserts := make(map[string]Message, len(delta.Upserts))
+	upserts := make(map[string]conversation.Message, len(delta.Upserts))
 	for _, message := range delta.Upserts {
 		if message.InternalID == "" {
 			return fmt.Errorf("conversation record has no identity")
@@ -208,7 +208,7 @@ func (c *Conversation) ValidateDelta(delta ConversationDelta) error {
 		} else if append.Offset != length {
 			return fmt.Errorf("conversation text offset mismatch: have %d, append %d", length, append.Offset)
 		}
-		if message.Role == MessageRoleAssistant && append.ThinkingDisplay != (Message{}).ThinkingDisplay || append.ThinkingDisplay.Start < 0 || uint64(append.ThinkingDisplay.Start) > append.Offset+uint64(len(append.Text)) {
+		if message.Role == MessageRoleAssistant && append.ThinkingDisplay != (conversation.Message{}).ThinkingDisplay || append.ThinkingDisplay.Start < 0 || uint64(append.ThinkingDisplay.Start) > append.Offset+uint64(len(append.Text)) {
 			return fmt.Errorf("invalid conversation reasoning index")
 		}
 		start := append.ThinkingDisplay.Start

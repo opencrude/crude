@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"crude/types"
+	"crude/types/insight"
 	"crude/workspace/document"
 )
 
@@ -33,11 +33,11 @@ func TestInsightDiskProbeCannotReuseRelocatedCanonicalIdentity(t *testing.T) {
 
 func TestInsightRootReplacementInvalidatesSourceContextBeforeReuse(t *testing.T) {
 	m, c, initial := diagnosticFixture(t)
-	c.emit(c.publication(initial.Path, []LSPDiagnostic{{Severity: types.DiagError, Message: "retained root warning"}}))
+	c.emit(c.publication(initial.Path, []insight.LSPDiagnostic{{Severity: insight.DiagError, Message: "retained root warning"}}))
 	first := requireDiagnostic(t, m, initial.Path, "retained root warning")
 	m.SetWorkspaceRoot(filepath.Dir(filepath.Dir(initial.Path)))
 	after, ok := m.FileDiagnostics(initial.Path)
-	if !ok || after.ID != first.ID || after.State != types.InsightStale || after.HasExactSource() {
+	if !ok || after.ID != first.ID || after.State != insight.Stale || after.HasExactSource() {
 		t.Fatalf("root replacement restamped or lost source evidence: %+v", after)
 	}
 	ctx, cancel := context.WithCancel(t.Context())

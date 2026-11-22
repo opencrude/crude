@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"crude/agent/provider"
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -23,10 +23,10 @@ func TestSettingsLaneCapturesOnlyAfterPriorPublication(t *testing.T) {
 		}
 	}()
 	r, err := New(func(root string) (*workspace.Workspace, error) {
-		ws := workspace.NewWorkspace(root, "", "test", types.Settings{}, coreTestLogger{})
-		ws.SetAppDefaults(types.AppSettings{Accounts: map[string]provider.Account{"one": {ID: "one", ProviderID: "p", Label: "before"}}})
+		ws := workspace.NewWorkspace(root, "", "test", setting.Settings{}, coreTestLogger{})
+		ws.SetAppDefaults(setting.App{Accounts: map[string]provider.Account{"one": {ID: "one", ProviderID: "p", Label: "before"}}})
 		baseline := ws.AppDefaults()
-		ws.OnAppAccountCommit = func(change types.AccountChange) (types.AppSettings, error) {
+		ws.OnAppAccountCommit = func(change setting.AccountChange) (setting.App, error) {
 			close(entered)
 			<-release
 			baseline.Accounts = map[string]provider.Account{"one": *change.After}

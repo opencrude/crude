@@ -86,11 +86,11 @@ only result was "tool … is not available to this agent".
 model sometimes dropped or changed the prefix, and sometimes invented a name.
 
 **Fix.** When the rejected name ends with the name of an available tool, the
-model-only hint names that tool (`closestToolHint` in `agent/tool_exec.go`). The runtime
+model-only hint names that tool (`closestToolHint` in `agent/turnloop/tool_exec.go`). The runtime
 never runs a different tool from the one called. Invented names get no hint.
 
 **Test.** `TestUnavailableToolNamesTheClosestTool` in
-`agent/tool_hint_test.go`.
+`agent/turnloop/tool_hint_test.go`.
 
 ## Repair hints leaked through real edit failures (fixed 2026-11-09)
 

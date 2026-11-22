@@ -3,8 +3,8 @@ package viewmodel
 import (
 	tea "charm.land/bubbletea/v2"
 	"context"
-	"crude/core/port"
-	"crude/text/indent"
+	"crude/core/shellport"
+	"crude/text/indentation"
 	"crude/tui/editor"
 	"time"
 )

@@ -10,13 +10,14 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/screens/shellchat"
 	"crude/tui/screens/shellterm"
 	"crude/tui/screens/termdock"
 	"crude/tui/surface"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace"
 	"crude/workspace/document"
 )
@@ -24,21 +25,21 @@ import (
 type signatureTestService struct {
 	shellport.LSPService
 	context           uint64
-	answer            types.LSPSignatureHelp
+	answer            insight.LSPSignatureHelp
 	err               error
-	lastTrigger       atomic.Pointer[types.LSPSignatureContext]
+	lastTrigger       atomic.Pointer[insight.LSPSignatureContext]
 	calls             atomic.Int64
 	cancelled         atomic.Bool
 	notReady          bool
 	aggregateNotReady bool
-	assistance        *types.LSPAssistanceCapabilities
+	assistance        *insight.LSPAssistanceCapabilities
 }
 
 func (s *signatureTestService) ServerReady() bool { return !s.notReady && !s.aggregateNotReady }
 func (s *signatureTestService) ContextCursor() (string, uint64) {
 	return "signature-owner", s.context
 }
-func (s *signatureTestService) RequestSignatureHelp(ctx context.Context, _ string, _, _ int, trigger types.LSPSignatureContext) (types.LSPSignatureHelp, error) {
+func (s *signatureTestService) RequestSignatureHelp(ctx context.Context, _ string, _, _ int, trigger insight.LSPSignatureContext) (insight.LSPSignatureHelp, error) {
 	s.lastTrigger.Store(&trigger)
 	s.calls.Add(1)
 	s.cancelled.Store(ctx.Err() != nil)
@@ -75,11 +76,11 @@ func signatureTestApp(t *testing.T, width int) (*App, *signatureTestService) {
 	if !current {
 		t.Fatal("fixture failed to install canonical source metadata")
 	}
-	service := &signatureTestService{LSPService: app.ws.LSPMgr(), context: 7, answer: types.LSPSignatureHelp{
-		Boundary: types.InsightBoundary{Source: source, Context: types.InsightContext{Generation: 7, UnknownInputs: []string{"build flags are unknown"}},
-			Producer: types.InsightProducer{InstanceID: "instance", Provider: "fixture-server"}},
-		Signatures: []types.LSPSignature{{Label: "join(first string, count int)", Documentation: "Independent signature fixture.",
-			ActiveParameter: 1, Parameters: []types.LSPSignatureParameter{{Label: "first string"}, {Label: "count int", Documentation: "Number of copies."}}}},
+	service := &signatureTestService{LSPService: app.ws.LSPMgr(), context: 7, answer: insight.LSPSignatureHelp{
+		Boundary: insight.Boundary{Source: source, Context: insight.Context{Generation: 7, UnknownInputs: []string{"build flags are unknown"}},
+			Producer: insight.Producer{InstanceID: "instance", Provider: "fixture-server"}},
+		Signatures: []insight.LSPSignature{{Label: "join(first string, count int)", Documentation: "Independent signature fixture.",
+			ActiveParameter: 1, Parameters: []insight.LSPSignatureParameter{{Label: "first string"}, {Label: "count int", Documentation: "Number of copies."}}}},
 	}}
 	original := app.ws
 	app.ws = &signatureTestWorkspace{Workspace: original, service: service}
@@ -354,7 +355,7 @@ func TestSignaturePendingReaderRetiresOnNonmodalSessionPanel(t *testing.T) {
 	sessionGroup := app.Win.SplitGroup(editorGroup, ui.Horizontal, false)
 	app.focusMainGroup(sessionGroup)
 	selectDeckSession(t, app, &workspace.Session{SessionID: "signature-focus-session",
-		Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}, "signature-agent")
+		Settings: workspace.NewSessionSettingsState(setting.Settings{}, setting.Settings{}, nil)}, "signature-agent")
 	app.openSessionSettings()
 	projection := app.activeSessionDeck()
 	if projection == nil || app.sessionDeckBlocking() {
@@ -398,12 +399,12 @@ func TestSignatureLoadingNoticeIsExactAndClearsOnRetirement(t *testing.T) {
 	}
 }
 
-func (s *signatureTestService) AssistanceCapabilities(string) types.LSPAssistanceCapabilities {
+func (s *signatureTestService) AssistanceCapabilities(string) insight.LSPAssistanceCapabilities {
 	if s.notReady {
-		return types.LSPAssistanceCapabilities{}
+		return insight.LSPAssistanceCapabilities{}
 	}
 	if s.assistance != nil {
-		return types.CloneLSPAssistance(*s.assistance)
+		return insight.CloneLSPAssistance(*s.assistance)
 	}
-	return types.LSPAssistanceCapabilities{Completion: true, CompletionTriggers: []string{"."}, SignatureHelp: true, SignatureTriggers: []string{"(", ","}}
+	return insight.LSPAssistanceCapabilities{Completion: true, CompletionTriggers: []string{"."}, SignatureHelp: true, SignatureTriggers: []string{"(", ","}}
 }

@@ -616,7 +616,7 @@ func (d *geminiStepDecoder) stop(index int, update *StreamUpdate) error {
 	if err != nil {
 		return fmt.Errorf("encode Gemini step: %w", err)
 	}
-	update.ProviderItems = append(update.ProviderItems, ProviderItem{Standard: "gemini-interactions", Type: state.kind, Data: encoded})
+	update.ProviderItems = append(update.ProviderItems, Item{Standard: "gemini-interactions", Type: state.kind, Data: encoded})
 	return nil
 }
 

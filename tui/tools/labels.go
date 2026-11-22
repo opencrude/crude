@@ -6,8 +6,8 @@ import (
 
 	ccrude "crude/agent/tools"
 	"crude/tui/rendering"
-	"crude/types"
 	"crude/types/command"
+	"crude/types/conversation"
 	"crude/types/toolresult"
 )
 
@@ -89,7 +89,8 @@ var toolVerbs = map[string][3]string{
 	"crude_control":           {"Preparing Crude operation", "Running Crude operation", "Ran Crude operation"},
 }
 
-func BuildToolTitle(msg types.ChatMessage, phase string) ToolTitle {
+// BuildToolTitle returns the title, target and state of a tool row.
+func BuildToolTitle(msg conversation.ChatMessage, phase string) ToolTitle {
 	msg.ToolName = ccrude.DisplayToolName(msg.ToolName)
 	target := msg.ToolProgressLabel
 	if structuredToolLabel(target) {
@@ -107,13 +108,13 @@ func BuildToolTitle(msg types.ChatMessage, phase string) ToolTitle {
 			target = SummarizeToolArgs(msg.ToolName, target)
 		}
 	}
-	if msg.ToolName == "read_file" && msg.ToolStatus == types.ToolStatusSuccess && msg.ToolArgs != "" {
+	if msg.ToolName == "read_file" && msg.ToolStatus == conversation.ToolStatusSuccess && msg.ToolArgs != "" {
 		target = msg.ToolArgs
 		if structuredToolLabel(target) {
 			target = SummarizeToolArgs(msg.ToolName, target)
 		}
 	}
-	if msg.ToolName == "agent_start" && msg.ToolStatus == types.ToolStatusSuccess {
+	if msg.ToolName == "agent_start" && msg.ToolStatus == conversation.ToolStatusSuccess {
 		if outcome, ok := subAgentOutcome(msg.Content); ok && outcome.status == "running" {
 			if outcome.name != "" || outcome.id != "" {
 				target = subAgentIdentityLabel(outcome.name, outcome.id, outcome.category)
@@ -139,7 +140,7 @@ func BuildToolTitle(msg types.ChatMessage, phase string) ToolTitle {
 			target = msg.ToolInput
 		}
 	}
-	if isCollaborationOperation(msg.ToolName) && msg.ToolStatus == types.ToolStatusSuccess {
+	if isCollaborationOperation(msg.ToolName) && msg.ToolStatus == conversation.ToolStatusSuccess {
 		if operand := CollaborationOperand(msg.ToolName, msg.Content, msg.ToolInput); operand != "" {
 			target = operand
 		}
@@ -149,7 +150,7 @@ func BuildToolTitle(msg types.ChatMessage, phase string) ToolTitle {
 	if msg.ToolDuration > 0 {
 		duration = rendering.FormatDuration(msg.ToolDuration)
 	}
-	if msg.ToolStatus == types.ToolStatusCancelled {
+	if msg.ToolStatus == conversation.ToolStatusCancelled {
 		action := "Stopped " + strings.ToLower(rendering.PascalCaseTool(msg.ToolName))
 		if ccrude.IsCommandTool(msg.ToolName) {
 			action = "Command stopped"
@@ -174,14 +175,14 @@ func BuildToolTitle(msg types.ChatMessage, phase string) ToolTitle {
 		return ToolTitle{Action: "Agent run failed", Operand: target, Metadata: resultMetadata(duration, msg.ToolOutcome.Summary), Failed: true}
 	}
 	// A renderer's ambient phase is not evidence that this tool failed.
-	failed := msg.ToolStatus == types.ToolStatusError || msg.ToolPreviewPhase == types.ToolPreviewError && msg.ToolStatus != types.ToolStatusSuccess
-	if msg.ToolName == "agent_wait" && msg.ToolStatus == types.ToolStatusSuccess {
+	failed := msg.ToolStatus == conversation.ToolStatusError || msg.ToolPreviewPhase == conversation.ToolPreviewError && msg.ToolStatus != conversation.ToolStatusSuccess
+	if msg.ToolName == "agent_wait" && msg.ToolStatus == conversation.ToolStatusSuccess {
 		outcome := parseCollaborationWaitOutcome(msg.Content)
 		if outcome.known && outcome.failed {
 			return ToolTitle{Action: "Agent run failed", Operand: target, Metadata: outcome.summary, Failed: true}
 		}
 	}
-	if result, ok := ccrude.ParseCommandResult(msg.ToolName, msg.Content); ok && (msg.ToolStatus == types.ToolStatusSuccess || failed) {
+	if result, ok := ccrude.ParseCommandResult(msg.ToolName, msg.Content); ok && (msg.ToolStatus == conversation.ToolStatusSuccess || failed) {
 		if result.Command != "" {
 			target = strings.ReplaceAll(result.Command, "\n", " ")
 		}
@@ -217,10 +218,10 @@ func BuildToolTitle(msg types.ChatMessage, phase string) ToolTitle {
 	// Argument streaming and an outstanding approval both precede tool_call.
 	// Receiving a complete command string is not evidence of dispatch.
 	launch := msg.ToolName == "execute_command" || msg.ToolName == "async_execute_command" || msg.ToolName == "exec_command"
-	if phase == types.ToolPreviewPreparing || launch && msg.ToolStatus == types.ToolStatusStreaming {
+	if phase == conversation.ToolPreviewPreparing || launch && msg.ToolStatus == conversation.ToolStatusStreaming {
 		stage = 0
 	}
-	if phase == types.ToolPreviewDone || msg.ToolStatus == types.ToolStatusSuccess {
+	if phase == conversation.ToolPreviewDone || msg.ToolStatus == conversation.ToolStatusSuccess {
 		stage = 2
 	}
 	verbs, known := toolVerbs[msg.ToolName]
@@ -288,7 +289,7 @@ func resultMetadata(duration, reason string) string {
 	return strings.TrimSpace(duration + " · " + CollapseLine(reason))
 }
 
-func resultReason(message types.ChatMessage) string {
+func resultReason(message conversation.ChatMessage) string {
 	if message.ToolOutcome.Summary != "" {
 		return CollapseLine(message.ToolOutcome.Summary)
 	}

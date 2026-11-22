@@ -10,10 +10,10 @@ import (
 	"sync"
 	"unicode/utf8"
 
+	"crude/agent/prompthistory"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
-	"crude/core/protocol"
-	"crude/history"
+	"crude/core/coreprotocol"
 	"crude/workspace"
 )
 
@@ -95,7 +95,7 @@ func (a *actor) prepareCrossSessionImport(request coreprotocol.Request, input co
 		}
 		referenceCommandMu.Lock()
 		defer referenceCommandMu.Unlock()
-		ref, ok := source.GetReference(input.ID)
+		ref, ok := source.Reference(input.ID)
 		if !ok || !ref.Active() || ref.SessionID != input.SourceSessionID {
 			return fault(request, "reference_failed", "reference is missing, inactive, or belongs to another session")
 		}
@@ -171,7 +171,7 @@ func runReferenceCommand(store workspace.SessionReferences, method string, in co
 		ref, err := store.CreateReference(sessiondb.CreateRequest{Kind: req.Kind, Label: req.Label, Title: req.Title, Mime: req.Mime, Content: content, Data: imageData, FilePath: req.ServerPath, Inline: req.Inline})
 		return wire(referenceView(ref)), err
 	}
-	ref, ok := store.GetReference(in.ID)
+	ref, ok := store.Reference(in.ID)
 	if !ok || !ref.Active() || ref.SessionID != in.SessionID {
 		return nil, errors.New("reference is missing, inactive, or belongs to another session")
 	}
@@ -194,7 +194,7 @@ func runReferenceCommand(store workspace.SessionReferences, method string, in co
 			if ref.FilePath == "" {
 				return nil, errors.New("reference has no media file")
 			}
-			data, err = history.ReadAttachment(ref.FilePath)
+			data, err = prompthistory.ReadAttachment(ref.FilePath)
 		} else {
 			var text string
 			text, readOnly, err = store.ReadReferenceContent(ref.ID)
@@ -214,7 +214,7 @@ func runReferenceCommand(store workspace.SessionReferences, method string, in co
 		if err := store.SaveReferenceContent(ref, in.Original, in.Content); err != nil {
 			return nil, err
 		}
-		updated, _ := store.GetReference(ref.ID)
+		updated, _ := store.Reference(ref.ID)
 		return wire(referenceView(updated)), nil
 	case coreprotocol.ReferenceRename:
 		label, ok := store.RenameReference(ref.ID, in.Label)

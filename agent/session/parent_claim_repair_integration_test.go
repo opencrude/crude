@@ -15,10 +15,10 @@ import (
 	"testing"
 	"time"
 
-	"crude/agent"
 	"crude/agent/collaboration"
 	"crude/agent/provider"
 	"crude/agent/tools"
+	"crude/agent/turnloop"
 )
 
 func TestParentClaimRepairToolProjectsOnlyCommittedNarrowScope(t *testing.T) {
@@ -62,11 +62,11 @@ func TestParentClaimRepairToolProjectsOnlyCommittedNarrowScope(t *testing.T) {
 	if len(repaired.Claims) != 1 || repaired.Claims[0].Path != filepath.Clean(narrow) || repaired.Audit.ID == "" {
 		t.Fatalf("repair result = %+v", repaired)
 	}
-	projection := agent.NewFileOwnership()
-	if err := projection.PreClaim(agent.AgentID(child.ID), child.Name, []string{broad}); err != nil {
+	projection := turnloop.NewFileOwnership()
+	if err := projection.PreClaim(turnloop.AgentID(child.ID), child.Name, []string{broad}); err != nil {
 		t.Fatal(err)
 	}
-	if err := projection.ReplaceClaims(agent.AgentID(child.ID), child.Name, []string{repaired.Claims[0].Path}); err != nil {
+	if err := projection.ReplaceClaims(turnloop.AgentID(child.ID), child.Name, []string{repaired.Claims[0].Path}); err != nil {
 		t.Fatal(err)
 	}
 	if err := projection.CheckOrClaim("other", "Other", sibling, true); err != nil {
@@ -75,7 +75,7 @@ func TestParentClaimRepairToolProjectsOnlyCommittedNarrowScope(t *testing.T) {
 	if err := projection.CheckOrClaim("other", "Other", narrow, true); err == nil {
 		t.Fatal("committed narrow scope was not enforced")
 	}
-	if !projection.WriteScopeAllows(agent.AgentID(child.ID), narrow) || projection.WriteScopeAllows(agent.AgentID(child.ID), sibling) {
+	if !projection.WriteScopeAllows(turnloop.AgentID(child.ID), narrow) || projection.WriteScopeAllows(turnloop.AgentID(child.ID), sibling) {
 		t.Fatal("resumed tool guard did not enforce the committed narrow scope")
 	}
 	active, err := store.Claims(t.Context(), child.ID, true)
@@ -107,7 +107,7 @@ func TestActiveActorCanNarrowOwnClaimsWithoutEndingRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.FileOwnership().ReplaceClaims(agent.AgentID(parent.ID), parent.Name, []string{broad}); err != nil {
+	if err := s.FileOwnership().ReplaceClaims(turnloop.AgentID(parent.ID), parent.Name, []string{broad}); err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.WithValue(t.Context(), tools.ExecutionIdentityKey{}, tools.ExecutionIdentity{AgentID: parent.ID, ToolCallID: "narrow-call"})
@@ -118,7 +118,7 @@ func TestActiveActorCanNarrowOwnClaimsWithoutEndingRun(t *testing.T) {
 	if err != nil || !handled {
 		t.Fatalf("narrow claims: handled=%v result=%+v err=%v", handled, result, err)
 	}
-	if got := s.FileOwnership().WriteClaimsByAgent(agent.AgentID(parent.ID)); len(got) != 1 || got[0] != filepath.Clean(narrow) {
+	if got := s.FileOwnership().WriteClaimsByAgent(turnloop.AgentID(parent.ID)); len(got) != 1 || got[0] != filepath.Clean(narrow) {
 		t.Fatalf("local projection = %v", got)
 	}
 	active, err := store.Claims(t.Context(), parent.ID, true)
@@ -268,7 +268,7 @@ func TestChildScopeRejectionKeepsLoopAliveAndParentWidensLiveScope(t *testing.T)
 	if !s.initSubAgentRunner() {
 		t.Fatal("cannot prepare resumed runner before workspace binding")
 	}
-	s.SetCapabilities(nil, agent.NewFileOwnership())
+	s.SetCapabilities(nil, turnloop.NewFileOwnership())
 	if !root.SubmitInput(provider.UserInput{InternalID: "claim-repair-human", Text: task}) {
 		t.Fatal("real root input was rejected")
 	}
@@ -309,7 +309,7 @@ func TestChildScopeRejectionKeepsLoopAliveAndParentWidensLiveScope(t *testing.T)
 	result := func(request provider.ChatRequest, id string) provider.ChatMessage {
 		t.Helper()
 		message := toolMessage(request, id)
-		if message.ToolError || agent.IsToolError(message.ContentString()) {
+		if message.ToolError || turnloop.IsToolError(message.ContentString()) {
 			t.Fatalf("tool %s failed: %s", id, message.ContentString())
 		}
 		return message
@@ -355,7 +355,7 @@ func TestChildScopeRejectionKeepsLoopAliveAndParentWidensLiveScope(t *testing.T)
 	childAfterRejection := next(childCalls, "child continues after its rejected write")
 	result(childAfterRejection.request, "scratch-write")
 	rejected := toolMessage(childAfterRejection.request, "outside-write")
-	if !rejected.ToolError && !agent.IsToolError(rejected.ContentString()) ||
+	if !rejected.ToolError && !turnloop.IsToolError(rejected.ContentString()) ||
 		!strings.Contains(rejected.ContentString(), "outside your file scope") || !strings.Contains(rejected.ContentString(), "your run continues") {
 		t.Fatalf("outside write was not an actionable tool error: %q", rejected.ContentString())
 	}
@@ -411,7 +411,7 @@ func TestChildScopeRejectionKeepsLoopAliveAndParentWidensLiveScope(t *testing.T)
 	if len(widened.Claims) != 2 || widened.Claims[0].RunID != launched.RunID {
 		t.Fatalf("live scope update was not bound to the running attempt: %+v", widened)
 	}
-	if !s.FileOwnership().WriteScopeAllows(agent.AgentID(launched.AgentID), outside) {
+	if !s.FileOwnership().WriteScopeAllows(turnloop.AgentID(launched.AgentID), outside) {
 		t.Fatal("live scope update did not reach the running child's write guard")
 	}
 	fourth.reply <- map[string]any{"content": "Scope widened; the child keeps working."}
@@ -463,7 +463,7 @@ func TestClaimChangesNeedOnlyTheNewPaths(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.FileOwnership().ReplaceClaims(agent.AgentID(parent.ID), parent.Name, []string{broad}); err != nil {
+	if err := s.FileOwnership().ReplaceClaims(turnloop.AgentID(parent.ID), parent.Name, []string{broad}); err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.WithValue(t.Context(), tools.ExecutionIdentityKey{}, tools.ExecutionIdentity{AgentID: parent.ID, ToolCallID: "narrow-paths-only"})

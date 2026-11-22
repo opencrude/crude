@@ -1,6 +1,3 @@
-// Package perfdash is the Performance surface: live charts, ranked owners
-// and plain-language findings for the shell and core processes. It reads
-// metrics snapshots handed to it by the viewmodel and performs no I/O.
 package perfdash
 
 import (
@@ -10,7 +7,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/metrics"
+	"crude/internal/metrics"
+	"crude/internal/perfdata"
 	"crude/tui/cell"
 	"crude/tui/surface"
 	"crude/tui/theme"
@@ -56,7 +54,7 @@ type Screen struct {
 	paused          bool
 	data            Data
 	hasData         bool
-	findings        []Finding
+	findings        []perfdata.Finding
 	dockHeaderInset int
 	buttonsOnStrip  bool
 }
@@ -145,7 +143,7 @@ func (s *Screen) Query() metrics.Query {
 func (s *Screen) Section() string { return s.section }
 
 // Findings returns the current diagnosis, worst first.
-func (s *Screen) Findings() []Finding { return s.findings }
+func (s *Screen) Findings() []perfdata.Finding { return s.findings }
 
 // SetSection activates a tab.
 func (s *Screen) SetSection(section string) {

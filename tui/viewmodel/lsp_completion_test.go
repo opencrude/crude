@@ -13,14 +13,15 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/text/snippet"
 	"crude/tui/screens/completion"
 	"crude/tui/screens/shellchat"
 	"crude/tui/surface"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/types/control"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace/document"
 )
 
@@ -34,26 +35,26 @@ type completionTestService struct {
 	owner             string
 	feature           uint64
 	enabled           bool
-	settings          *types.LSPSettings
+	settings          *setting.LSP
 	aggregateNotReady bool
-	assistance        *types.LSPAssistanceCapabilities
+	assistance        *insight.LSPAssistanceCapabilities
 }
 
 func (s *completionTestService) ServerReady() bool                { return !s.aggregateNotReady }
 func (s *completionTestService) ContextCursor() (string, uint64)  { return s.owner, s.context }
 func (s *completionTestService) CompletionsState() (bool, uint64) { return s.enabled, s.feature }
-func (s *completionTestService) Settings() types.LSPSettings {
+func (s *completionTestService) Settings() setting.LSP {
 	if s.settings != nil {
-		return types.CloneLSPSettings(*s.settings)
+		return setting.CloneLSP(*s.settings)
 	}
-	settings := types.DefaultLSPSettings()
+	settings := setting.DefaultLSP()
 	settings.AutoComplete = true
 	return settings
 }
 
 type completionTestRequest struct {
-	trigger   types.LSPCompletionContext
-	source    types.InsightSource
+	trigger   insight.LSPCompletionContext
+	source    insight.Source
 	view      string
 	sequence  uint64
 	line, col int
@@ -69,8 +70,8 @@ type completionTestRelease struct {
 type completionTestPort struct {
 	shellport.Workspace
 	service                *completionTestService
-	set                    types.LSPCompletionSet
-	docs                   map[string]types.LSPCompletionDocumentation
+	set                    insight.LSPCompletionSet
+	docs                   map[string]insight.LSPCompletionDocumentation
 	requestErr, inspectErr error
 	mu                     sync.Mutex
 	requests               []completionTestRequest
@@ -79,12 +80,12 @@ type completionTestPort struct {
 }
 
 func (p *completionTestPort) LSPMgr() shellport.LSPService { return p.service }
-func (p *completionTestPort) RequestLSPCompletions(_ context.Context, source types.InsightSource, view string, sequence uint64, line, col int, trigger types.LSPCompletionContext) (types.LSPCompletionSet, error) {
+func (p *completionTestPort) RequestLSPCompletions(_ context.Context, source insight.Source, view string, sequence uint64, line, col int, trigger insight.LSPCompletionContext) (insight.LSPCompletionSet, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.requests = append(p.requests, completionTestRequest{trigger, source, view, sequence, line, col})
 	if p.requestErr != nil {
-		return types.LSPCompletionSet{}, p.requestErr
+		return insight.LSPCompletionSet{}, p.requestErr
 	}
 	set := p.set
 	// The invocation sequence is assigned by the requesting view, not a provider.
@@ -93,11 +94,11 @@ func (p *completionTestPort) RequestLSPCompletions(_ context.Context, source typ
 	set.Sequence = sequence
 	return set, nil
 }
-func (p *completionTestPort) InspectLSPCompletion(_ context.Context, id, digest, item string, resolve bool) (types.LSPCompletionInspection, error) {
+func (p *completionTestPort) InspectLSPCompletion(_ context.Context, id, digest, item string, resolve bool) (insight.LSPCompletionInspection, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.inspections = append(p.inspections, completionTestInspection{id, digest, item, resolve})
-	return types.LSPCompletionInspection{
+	return insight.LSPCompletionInspection{
 		SetID: "original-set", Digest: strings.Repeat("d", 64), ItemID: item,
 		Boundary: p.set.Boundary, WireVersion: 9, FeatureGeneration: 3,
 		Documentation: p.docs[item], ResolveState: "resolved",
@@ -131,7 +132,7 @@ func completionTestApp(t *testing.T, width, height int, text string) (*App, *com
 		t.Fatal(err)
 	}
 	ed.SetCursorPosition(0, len(text))
-	source := types.InsightSource{WorkspaceGeneration: "completion-owner", DocumentID: "completion-document",
+	source := insight.Source{WorkspaceGeneration: "completion-owner", DocumentID: "completion-document",
 		Path: path, Lifetime: "completion-open", Revision: 41, Kind: "canonical"}
 	if actual, current := ed.CurrentInsightSource(); !current || actual != source {
 		t.Fatalf("fixture did not install its acknowledged immutable canonical source: %+v current=%t", actual, current)
@@ -140,19 +141,19 @@ func completionTestApp(t *testing.T, width, height int, text string) (*App, *com
 	port := &completionTestPort{Workspace: original,
 		released: make(chan completionTestRelease, 32),
 		service:  &completionTestService{LSPService: original.LSPMgr(), owner: "completion-owner", context: 7, feature: 3, enabled: true},
-		set: types.LSPCompletionSet{ID: "original-set", Digest: strings.Repeat("d", 64), ViewID: "editor-completion",
-			Boundary: types.InsightBoundary{Source: source,
-				Context:  types.InsightContext{ID: "original-context", Generation: 7, UnknownInputs: []string{"build flags unknown"}},
-				Producer: types.InsightProducer{InstanceID: "original-instance", Provider: "literal-provider"}},
+		set: insight.LSPCompletionSet{ID: "original-set", Digest: strings.Repeat("d", 64), ViewID: "editor-completion",
+			Boundary: insight.Boundary{Source: source,
+				Context:  insight.Context{ID: "original-context", Generation: 7, UnknownInputs: []string{"build flags unknown"}},
+				Producer: insight.Producer{InstanceID: "original-instance", Provider: "literal-provider"}},
 			WireVersion: 9, FeatureGeneration: 3, Line: 0, Col: len(text),
-			Answer: types.LSPCompletionItems, ExpiresAt: time.Now().Add(time.Minute),
-			Entries: []types.LSPCompletionEntry{
-				{ID: "original:0", Index: 0, Insertion: types.CompletionItem{Label: "duplicate", InsertText: "first"},
-					Documentation: types.LSPCompletionDocumentation{Present: true, Form: "string", Value: "FIRST_SELECTED_DOC"}},
-				{ID: "original:1", Index: 1, Insertion: types.CompletionItem{Label: "duplicate", InsertText: "second"},
-					Documentation: types.LSPCompletionDocumentation{Present: true, Form: "markup", Kind: "markdown", Value: "**SECOND_SELECTED_DOC**"}},
+			Answer: insight.LSPCompletionItems, ExpiresAt: time.Now().Add(time.Minute),
+			Entries: []insight.LSPCompletionEntry{
+				{ID: "original:0", Index: 0, Insertion: insight.CompletionItem{Label: "duplicate", InsertText: "first"},
+					Documentation: insight.LSPCompletionDocumentation{Present: true, Form: "string", Value: "FIRST_SELECTED_DOC"}},
+				{ID: "original:1", Index: 1, Insertion: insight.CompletionItem{Label: "duplicate", InsertText: "second"},
+					Documentation: insight.LSPCompletionDocumentation{Present: true, Form: "markup", Kind: "markdown", Value: "**SECOND_SELECTED_DOC**"}},
 			}},
-		docs: map[string]types.LSPCompletionDocumentation{
+		docs: map[string]insight.LSPCompletionDocumentation{
 			"original:0": {HasDetail: true, Detail: "resolved first detail", Present: true, Form: "string", Value: "FIRST_RESOLVED_DOC"},
 			"original:1": {HasDetail: true, Detail: "resolved second detail", Present: true, Form: "markup", Kind: "markdown", Value: "**SECOND_RESOLVED_DOC**"},
 		}}
@@ -260,13 +261,13 @@ func TestCompletionDocumentationShowsAvailableTextOrEmptyState(t *testing.T) {
 	for _, size := range [][2]int{{160, 40}, {80, 24}} {
 		for _, tc := range []struct {
 			name            string
-			doc             types.LSPCompletionDocumentation
+			doc             insight.LSPCompletionDocumentation
 			present, absent []string
 		}{
 			// A row with nothing to read gets no empty documentation pane.
-			{"absent", types.LSPCompletionDocumentation{}, []string{"duplicate"}, []string{"MARKDOWN_LITERAL", "No documentation available."}},
-			{"empty", types.LSPCompletionDocumentation{Present: true, Form: "string"}, []string{"duplicate"}, []string{"MARKDOWN_LITERAL", "No documentation available."}},
-			{"markdown", types.LSPCompletionDocumentation{Present: true, Form: "markup", Kind: "markdown", Value: "**MARKDOWN_LITERAL**"}, []string{"**MARKDOWN_LITERAL**"}, []string{"No documentation available."}},
+			{"absent", insight.LSPCompletionDocumentation{}, []string{"duplicate"}, []string{"MARKDOWN_LITERAL", "No documentation available."}},
+			{"empty", insight.LSPCompletionDocumentation{Present: true, Form: "string"}, []string{"duplicate"}, []string{"MARKDOWN_LITERAL", "No documentation available."}},
+			{"markdown", insight.LSPCompletionDocumentation{Present: true, Form: "markup", Kind: "markdown", Value: "**MARKDOWN_LITERAL**"}, []string{"**MARKDOWN_LITERAL**"}, []string{"No documentation available."}},
 		} {
 			t.Run(fmt.Sprintf("%dx%d/%s", size[0], size[1], tc.name), func(t *testing.T) {
 				app, port := completionTestApp(t, size[0], size[1], "pr")
@@ -289,7 +290,7 @@ func TestCompletionResolveUsesOriginalIdentityAndAcceptsOnlyInitialSnippet(t *te
 					t.Fatal(err)
 				}
 				port.set.ResolveSupported = true
-				port.set.Entries[0].Insertion = types.CompletionItem{Label: "duplicate", InsertText: text, Snippet: plan}
+				port.set.Entries[0].Insertion = insight.CompletionItem{Label: "duplicate", InsertText: text, Snippet: plan}
 				completionTestKey(t, app, tea.KeyPressMsg{Code: ' ', Mod: tea.ModCtrl})
 				completionRequireText(t, app, []string{"FIRST_RESOLVED_DOC", "resolved first detail"}, []string{"SECOND_RESOLVED_DOC"})
 				completionTestKey(t, app, tea.KeyPressMsg{Code: tea.KeyDown})
@@ -554,7 +555,7 @@ func TestCompletionAllAnswersUseOriginalContextBarrierAndQuietAutomaticResults(t
 				for i := range port.set.Entries {
 					port.set.Entries[i].FilterText = "print" // continues the typed "pr"
 				}
-				cmd := app.requestCompletion(automatic, types.LSPCompletionContext{})
+				cmd := app.requestCompletion(automatic, insight.LSPCompletionContext{})
 				if cmd == nil {
 					t.Fatal("request not admitted")
 				}
@@ -711,7 +712,7 @@ func TestCompletionInspectionErrorRemainsInertAndPendingEscapeDoesNotCloseEditor
 	for _, automatic := range []bool{false, true} {
 		t.Run(fmt.Sprintf("pending-escape/automatic=%t", automatic), func(t *testing.T) {
 			app, _ := completionTestApp(t, 80, 24, "pr")
-			cmd := app.requestCompletion(automatic, types.LSPCompletionContext{})
+			cmd := app.requestCompletion(automatic, insight.LSPCompletionContext{})
 			s := app.completion
 			if cmd == nil || s == nil {
 				t.Fatal("pending request not admitted")
@@ -749,16 +750,16 @@ func TestCompletionInspectionErrorRemainsInertAndPendingEscapeDoesNotCloseEditor
 	}
 }
 
-func (s *completionTestService) AssistanceCapabilities(string) types.LSPAssistanceCapabilities {
+func (s *completionTestService) AssistanceCapabilities(string) insight.LSPAssistanceCapabilities {
 	if s.assistance != nil {
-		return types.CloneLSPAssistance(*s.assistance)
+		return insight.CloneLSPAssistance(*s.assistance)
 	}
-	return types.LSPAssistanceCapabilities{Completion: true, CompletionTriggers: []string{"."}, SignatureHelp: true, SignatureTriggers: []string{"(", ","}}
+	return insight.LSPAssistanceCapabilities{Completion: true, CompletionTriggers: []string{"."}, SignatureHelp: true, SignatureTriggers: []string{"(", ","}}
 }
 
 func TestCompletionRejectedInsertionExplainsNextStep(t *testing.T) {
 	app, port := completionTestApp(t, 80, 24, "pr")
-	port.set.Entries[0].Insertion = types.CompletionItem{Label: "bad", InsertText: "x", AdjustIndentation: true, SnippetSource: "unexpected"}
+	port.set.Entries[0].Insertion = insight.CompletionItem{Label: "bad", InsertText: "x", AdjustIndentation: true, SnippetSource: "unexpected"}
 	completionTestKey(t, app, tea.KeyPressMsg{Code: ' ', Mod: tea.ModCtrl})
 	completionTestKey(t, app, tea.KeyPressMsg{Code: tea.KeyTab})
 	if app.EditorState.Editor.Value() != "pr" || app.EditorState.Editor.Modified() {

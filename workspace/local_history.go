@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"crude/types/conversation"
 	"crude/workspace/localhistory"
 )
 
@@ -63,7 +64,7 @@ type HistoryRestored struct {
 func openLocalHistory(projectDir, workspaceDir string) (*localhistory.Store, error) {
 	if workspaceDir == "" {
 		var err error
-		workspaceDir, err = WorkspaceDir(projectDir)
+		workspaceDir, err = Dir(projectDir)
 		if err != nil {
 			return nil, err
 		}
@@ -147,7 +148,7 @@ func (w *Workspace) AppendHistoryRestoreEvent(result localhistory.RestoreResult)
 	}
 	display := fmt.Sprintf("Restored %d file(s) from Local History · safety snapshot %s", len(result.Paths), shortHistory(result.SafetySnapshotID))
 	hidden := fmt.Sprintf("<workspace_history_event>\nRestored %d paths to snapshot %s. Restore plan: %s. Safety snapshot: %s.\n</workspace_history_event>", len(result.Paths), result.TargetSnapshotID, result.PlanID, result.SafetySnapshotID)
-	status := Message{InternalID: "history-status-" + result.PlanID, Role: MessageRoleStatus, Content: display, Time: time.Now(),
+	status := conversation.Message{InternalID: "history-status-" + result.PlanID, Role: MessageRoleStatus, Content: display, Time: time.Now(),
 		LifecyclePhase: "history_restored", LifecycleOperationID: result.PlanID, HistoryPathCount: len(result.Paths),
 		HistoryTargetSnapshot: result.TargetSnapshotID, HistorySafetySnapshot: result.SafetySnapshotID}
 	agentState := frontend.AgentState

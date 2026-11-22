@@ -1,6 +1,8 @@
 package editor
 
-import "crude/types"
+import (
+	"crude/types/insight"
+)
 
 // SetDiagnosticsVisible is a projection filter, not a mutation of observed facts.
 // It applies to every view of the document.
@@ -20,10 +22,10 @@ func (e *Editor) setDiagnosticsVisible(visible bool) {
 }
 
 // DiagnosticFacts is an explicit detached read; paint never copies a batch.
-func (e *Editor) DiagnosticFacts() types.InsightDiagnostics {
+func (e *Editor) DiagnosticFacts() insight.Diagnostics {
 	e.diagMu.RLock()
 	defer e.diagMu.RUnlock()
-	return types.CloneInsightDiagnostics(e.diagnosticFacts)
+	return insight.CloneDiagnostics(e.diagnosticFacts)
 }
 
 // DiagnosticStatus explains why error navigation has no target. It describes
@@ -35,7 +37,7 @@ func (e *Editor) DiagnosticStatus() string {
 	status := "No results yet. Open a file and start its language server."
 	switch {
 	case f.ID == "":
-	case f.Limited || f.State == types.InsightLimited:
+	case f.Limited || f.State == insight.Limited:
 		status = "Results are not available for this file. Check the language server."
 	case f.Binding != "exact-version" || f.ReportedVersion == nil:
 		status = "Results cannot be matched to this version of the file."

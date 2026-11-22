@@ -6,25 +6,29 @@ import (
 	"sync/atomic"
 )
 
-type SessionInfo struct {
+// Info pairs one session with the orchestrator that serves it.
+type Info struct {
 	ID           string
 	Session      *Session
 	Orchestrator *Orchestrator
 }
 
-type SessionManager struct {
+// Manager keeps the sessions of this process and hands out their ids.
+type Manager struct {
 	mu       sync.Mutex
-	sessions map[string]*SessionInfo
+	sessions map[string]*Info
 	nextID   atomic.Int64
 }
 
-func NewSessionManager() *SessionManager {
-	return &SessionManager{
-		sessions: make(map[string]*SessionInfo),
+// NewSessionManager returns an empty session manager.
+func NewSessionManager() *Manager {
+	return &Manager{
+		sessions: make(map[string]*Info),
 	}
 }
 
-func (sm *SessionManager) NewSession(cfg *Config, homeDir string) (*SessionInfo, error) {
+// NewSession creates a session with the next id and registers its info.
+func (sm *Manager) NewSession(cfg *Config, homeDir string) (*Info, error) {
 	id := fmt.Sprintf("ses_%d", sm.nextID.Add(1))
 
 	sess, err := New(id, cfg, homeDir)
@@ -32,7 +36,7 @@ func (sm *SessionManager) NewSession(cfg *Config, homeDir string) (*SessionInfo,
 		return nil, fmt.Errorf("new session: %w", err)
 	}
 
-	info := &SessionInfo{
+	info := &Info{
 		ID:      id,
 		Session: sess,
 	}
@@ -44,7 +48,8 @@ func (sm *SessionManager) NewSession(cfg *Config, homeDir string) (*SessionInfo,
 	return info, nil
 }
 
-func (sm *SessionManager) ResumeSession(dbPath string, cfg *Config, homeDir string) (*SessionInfo, error) {
+// ResumeSession restores a session from its database file and registers it under a new id.
+func (sm *Manager) ResumeSession(dbPath string, cfg *Config, homeDir string) (*Info, error) {
 	id := fmt.Sprintf("ses_%d", sm.nextID.Add(1))
 
 	sess, err := ResumeSession(dbPath, cfg, homeDir)
@@ -53,7 +58,7 @@ func (sm *SessionManager) ResumeSession(dbPath string, cfg *Config, homeDir stri
 	}
 	sess.ID = id
 
-	info := &SessionInfo{
+	info := &Info{
 		ID:      id,
 		Session: sess,
 	}
@@ -65,7 +70,8 @@ func (sm *SessionManager) ResumeSession(dbPath string, cfg *Config, homeDir stri
 	return info, nil
 }
 
-func (sm *SessionManager) StartOrchestrator(id string, sender EventSender) (*Orchestrator, error) {
+// StartOrchestrator builds the orchestrator for a registered session and returns it.
+func (sm *Manager) StartOrchestrator(id string, sender EventSender) (*Orchestrator, error) {
 	sm.mu.Lock()
 	info, ok := sm.sessions[id]
 	sm.mu.Unlock()
@@ -82,14 +88,16 @@ func (sm *SessionManager) StartOrchestrator(id string, sender EventSender) (*Orc
 	return orch, nil
 }
 
-func (sm *SessionManager) Get(id string) (*SessionInfo, bool) {
+// Get returns the registered session info for an id.
+func (sm *Manager) Get(id string) (*Info, bool) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	info, ok := sm.sessions[id]
 	return info, ok
 }
 
-func (sm *SessionManager) First() *SessionInfo {
+// First returns one registered session, or nil when the manager holds none.
+func (sm *Manager) First() *Info {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	for _, info := range sm.sessions {
@@ -98,7 +106,8 @@ func (sm *SessionManager) First() *SessionInfo {
 	return nil
 }
 
-func (sm *SessionManager) Remove(id string) {
+// Remove closes a session and forgets its info.
+func (sm *Manager) Remove(id string) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	if info, ok := sm.sessions[id]; ok {
@@ -107,7 +116,8 @@ func (sm *SessionManager) Remove(id string) {
 	}
 }
 
-func (sm *SessionManager) CloseAll() {
+// CloseAll closes every registered session and empties the manager.
+func (sm *Manager) CloseAll() {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	for id, info := range sm.sessions {
@@ -116,7 +126,8 @@ func (sm *SessionManager) CloseAll() {
 	}
 }
 
-func (sm *SessionManager) Count() int {
+// Count returns how many sessions the manager holds.
+func (sm *Manager) Count() int {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	return len(sm.sessions)

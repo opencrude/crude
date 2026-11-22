@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/types"
+	"crude/types/setting"
 )
 
 func TestProbeDiagnosticsBatchAgainstRealPyright(t *testing.T) {
@@ -57,7 +57,7 @@ func TestProbeDiagnosticsBatchAgainstRealPyright(t *testing.T) {
 	m.SetWorkspaceRoot(root)
 	trustAnalysis(t, m, root)
 	settings := editorDisabledSettings()
-	settings.Languages = map[string]types.LSPLanguageSettings{"python": {
+	settings.Languages = map[string]setting.LSPLanguage{"python": {
 		Enabled: true, Command: server, Args: []string{"--stdio"}, RootMarkers: []string{"pyrightconfig.json"},
 	}}
 	m.SetSettings(settings)

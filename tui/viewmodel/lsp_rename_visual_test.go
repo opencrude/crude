@@ -13,8 +13,8 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/core/port"
-	"crude/types"
+	"crude/core/shellport"
+	"crude/types/setting"
 	"crude/workspace"
 	"crude/workspace/localhistory"
 	"github.com/charmbracelet/x/ansi"
@@ -86,9 +86,9 @@ func runRenameVisual(t *testing.T, headless bool, width, height int) {
 	}
 	coreRuntime := remoteJourneyRuntime(t, "http://127.0.0.1:1", func(w *workspace.Workspace) {
 		settings := w.AppDefaults()
-		settings.LSP = types.DefaultLSPSettings()
+		settings.LSP = setting.DefaultLSP()
 		settings.LSP.AutoDetect, settings.LSP.AutoComplete = false, false
-		settings.LSP.Languages = map[string]types.LSPLanguageSettings{"go": {Enabled: true, Command: executable,
+		settings.LSP.Languages = map[string]setting.LSPLanguage{"go": {Enabled: true, Command: executable,
 			Args: []string{"serve"}, RootMarkers: []string{"go.mod"},
 			Environment: map[string]string{"HOME": home, "GOROOT": strings.TrimSpace(string(goroot)), "GOPATH": filepath.Join(home, "go"),
 				"GOCACHE": filepath.Join(home, "cache"), "GOENV": "off", "GOPROXY": "off", "GOSUMDB": "off", "GOTOOLCHAIN": "local"}}}

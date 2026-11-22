@@ -43,7 +43,7 @@ func TestPastePromotionPreservesSmallProseWithoutFloodingUnboundInput(t *testing
 }
 
 func (s *pasteReferenceStore) DeleteReference(string) error { return nil }
-func (s *pasteReferenceStore) GetReference(id string) (sessiondb.Reference, bool) {
+func (s *pasteReferenceStore) Reference(id string) (sessiondb.Reference, bool) {
 	for _, ref := range s.references {
 		if ref.ID == id {
 			return ref, true

@@ -18,7 +18,7 @@ import (
 	"github.com/charmbracelet/x/ansi/kitty"
 
 	"crude/tui/window"
-	"crude/types"
+	"crude/types/setting"
 )
 
 func TestImageWorkingSetManyTabs(t *testing.T) {
@@ -183,7 +183,7 @@ func TestImageWorkingSetCloseAndWorkspaceRejectLateResults(t *testing.T) {
 	// This journey switches while an image result is undelivered, not while
 	// Local History is writing. That separate owner correctly refuses a switch.
 	defaults := ws.AppDefaults()
-	defaults.LocalHistory = types.LocalHistorySettings{Enabled: "off"}
+	defaults.LocalHistory = setting.LocalHistory{Enabled: "off"}
 	ws.SetAppDefaults(defaults)
 	path := writeImageFixture(t, ws.RootPath, "old.png")
 	prepared := app.openPaneFiles([]string{path}, app.Win.ActiveGroup())().(paneFilesOpenedMsg)

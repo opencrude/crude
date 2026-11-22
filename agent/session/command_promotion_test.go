@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"crude/agent/tools"
-	"crude/logger"
+	"crude/internal/logger"
 	"crude/workspace/fileio"
 )
 

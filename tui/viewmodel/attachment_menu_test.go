@@ -74,7 +74,7 @@ func TestRemoveAttachmentStripsTokenAndPreservesRef(t *testing.T) {
 	if got := app.Input.Value(); got != "keep  tail" {
 		t.Fatalf("draft after removal = %q", got)
 	}
-	deleted, ok := app.ActiveSession.RefStore.GetReference(ref.ID)
+	deleted, ok := app.ActiveSession.RefStore.Reference(ref.ID)
 	if !ok || !deleted.Active() {
 		t.Fatal("draft removal deleted a retained reference")
 	}

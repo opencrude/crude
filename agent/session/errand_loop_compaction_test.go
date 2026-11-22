@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"crude/agent"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
+	"crude/agent/turnloop"
 )
 
 // When the workspace Errand's agentic loop ends (the model answers without
@@ -98,7 +98,7 @@ func TestErrandCompactsWhenItsAgenticLoopEnds(t *testing.T) {
 				}
 				return
 			}
-			if len(records) != 1 || records[0].State != sessiondb.CompactionCompleted || records[0].Trigger != agent.CompactionTriggerLoopEnd {
+			if len(records) != 1 || records[0].State != sessiondb.CompactionCompleted || records[0].Trigger != turnloop.CompactionTriggerLoopEnd {
 				t.Fatalf("loop end compaction records = %+v", records)
 			}
 			if extractions.Load() != 1 || turns.Load() != 2 || compactedBeforeAnswer.Load() {
@@ -107,7 +107,7 @@ func TestErrandCompactsWhenItsAgenticLoopEnds(t *testing.T) {
 			sess.msgsMu.Lock()
 			reason := sess.contextReason
 			sess.msgsMu.Unlock()
-			if reason != agent.CompactionTriggerLoopEnd+"_compaction" {
+			if reason != turnloop.CompactionTriggerLoopEnd+"_compaction" {
 				t.Fatalf("active context was not replaced by the checkpoint: %q", reason)
 			}
 		})

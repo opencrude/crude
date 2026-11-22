@@ -12,13 +12,13 @@ import (
 	"unicode/utf16"
 	"unicode/utf8"
 
-	"crude/agent"
 	"crude/agent/codexio"
 	rootprompt "crude/agent/prompt"
 	"crude/agent/provider"
 	"crude/agent/safety"
 	"crude/agent/tools"
-	ttypes "crude/types"
+	"crude/agent/turnloop"
+	"crude/types/insight"
 )
 
 // CodeIntelligence is the workspace language service a session borrows. Probes
@@ -26,10 +26,10 @@ import (
 type CodeIntelligence interface {
 	EditorEnabled() bool
 	ServesWarm(path string) bool
-	ProbeDiagnosticsBatch(ctx context.Context, paths []string) []ttypes.LSPDiagnosticsResult
-	ProbeNavigation(ctx context.Context, path, kind string, position ttypes.LSPSourcePosition, includeDeclaration bool) (ttypes.LSPNavigation, ttypes.LSPProbeView, error)
-	ProbeHover(ctx context.Context, path string, position ttypes.LSPSourcePosition) (string, ttypes.LSPProbeView, error)
-	ProbeSymbols(ctx context.Context, path string) ([]ttypes.LSPSymbol, ttypes.LSPProbeView, error)
+	ProbeDiagnosticsBatch(ctx context.Context, paths []string) []insight.LSPDiagnosticsResult
+	ProbeNavigation(ctx context.Context, path, kind string, position insight.LSPSourcePosition, includeDeclaration bool) (insight.LSPNavigation, insight.LSPProbeView, error)
+	ProbeHover(ctx context.Context, path string, position insight.LSPSourcePosition) (string, insight.LSPProbeView, error)
+	ProbeSymbols(ctx context.Context, path string) ([]insight.LSPSymbol, insight.LSPProbeView, error)
 }
 
 const (
@@ -74,14 +74,14 @@ func (s *Session) codeIntelligence() CodeIntelligence {
 	return s.codeIntel
 }
 
-func (s *Session) codeIntelligenceConsumerAllowed(live *agent.Agent) bool {
+func (s *Session) codeIntelligenceConsumerAllowed(live *turnloop.Agent) bool {
 	return s.controlToolSelected(live, "lsp") && live.Policy.IsAllowed(safety.OpRead)
 }
 
 // bindCodeIntelligence offers the lsp tool while code intelligence is on and
 // queues post-edit diagnostics for the next request. The tool set changes only
 // when the setting changes, so prompt caching is unaffected otherwise.
-func (s *Session) bindCodeIntelligence(live *agent.Agent) {
+func (s *Session) bindCodeIntelligence(live *turnloop.Agent) {
 	previousPrepare, previousFn := live.PrepareStep, live.ToolFn
 	var mu sync.Mutex
 	pending := map[string]string{}
@@ -269,10 +269,10 @@ func (s *Session) executeLSPTool(ctx context.Context, root string, params map[st
 		}
 		return tools.ToolResult{Content: formatSymbols(root, path, symbols, view)}, nil
 	}
-	position := ttypes.LSPSourcePosition{Line: getIntParam(params, "line"), Column: getIntParam(params, "column"), Symbol: getStrParam(params, "symbol")}
+	position := insight.LSPSourcePosition{Line: getIntParam(params, "line"), Column: getIntParam(params, "column"), Symbol: getStrParam(params, "symbol")}
 	switch operation {
-	case ttypes.LSPNavigationDefinition, ttypes.LSPNavigationTypeDefinition, ttypes.LSPNavigationImplementation, ttypes.LSPNavigationReferences:
-		result, view, err := service.ProbeNavigation(ctx, path, operation, position, operation == ttypes.LSPNavigationReferences)
+	case insight.LSPNavigationDefinition, insight.LSPNavigationTypeDefinition, insight.LSPNavigationImplementation, insight.LSPNavigationReferences:
+		result, view, err := service.ProbeNavigation(ctx, path, operation, position, operation == insight.LSPNavigationReferences)
 		if err != nil {
 			return tools.ToolResult{}, err
 		}
@@ -309,8 +309,8 @@ func severityFloor(value string) (int, error) {
 
 // filterDiagnostics keeps severities up to floor (1 error … 4 hint). A server
 // that omits severity is treated as reporting an error, per the protocol.
-func filterDiagnostics(diags []ttypes.LSPDiagnostic, floor int) []ttypes.LSPDiagnostic {
-	out := make([]ttypes.LSPDiagnostic, 0, len(diags))
+func filterDiagnostics(diags []insight.LSPDiagnostic, floor int) []insight.LSPDiagnostic {
+	out := make([]insight.LSPDiagnostic, 0, len(diags))
 	for _, d := range diags {
 		severity := d.Severity
 		if severity >= 1 && severity <= floor {
@@ -358,7 +358,7 @@ func displayLSPPath(root, path string) string {
 // Destination files without their own qualified source remain raw UTF-16 data.
 type sourceLines map[string][]string
 
-func probeSourceLines(view ttypes.LSPProbeView) sourceLines {
+func probeSourceLines(view insight.LSPProbeView) sourceLines {
 	lines := sourceLines{}
 	if view.Source.DocumentID != "" && view.Source.Path != "" {
 		lines[view.Source.Path] = strings.Split(view.SourceText, "\n")
@@ -412,7 +412,7 @@ func truncateUTF8(text string, limit int) string {
 	return text[:limit]
 }
 
-func bufferNote(view ttypes.LSPProbeView) string {
+func bufferNote(view insight.LSPProbeView) string {
 	if view.BufferDiffers {
 		return "Note: this file has unsaved changes in the editor; results describe the editor buffer, not the file on disk.\n"
 	}
@@ -421,7 +421,7 @@ func bufferNote(view ttypes.LSPProbeView) string {
 
 var severityNames = map[int]string{1: "error", 2: "warning", 3: "info", 4: "hint"}
 
-func formatFileDiagnostics(root, path string, batch ttypes.InsightDiagnostics, floor int, view ttypes.LSPProbeView, errorsOnly bool) string {
+func formatFileDiagnostics(root, path string, batch insight.Diagnostics, floor int, view insight.LSPProbeView, errorsOnly bool) string {
 	diags := filterDiagnostics(batch.Diagnostics, floor)
 	var b strings.Builder
 	display := displayLSPPath(root, path)
@@ -438,7 +438,7 @@ func formatFileDiagnostics(root, path string, batch ttypes.InsightDiagnostics, f
 	// agent tokens and change nothing it does. Only qualifications that change
 	// how to read the result are written.
 	var notes []string
-	if batch.State == ttypes.InsightStale {
+	if batch.State == insight.Stale {
 		notes = append(notes, "out of date")
 	}
 	if batch.Binding != "exact-version" {
@@ -510,7 +510,7 @@ func formatFileDiagnostics(root, path string, batch ttypes.InsightDiagnostics, f
 // contains it. Destination files are never read; a location in another file
 // keeps the server's UTF-16 column. Provenance identities stay in the
 // structured facts.
-func formatNavigation(root string, result ttypes.LSPNavigation, view ttypes.LSPProbeView) string {
+func formatNavigation(root string, result insight.LSPNavigation, view insight.LSPProbeView) string {
 	var b strings.Builder
 	b.WriteString(bufferNote(view))
 	source := result.Boundary.Source
@@ -520,13 +520,13 @@ func formatNavigation(root string, result ttypes.LSPNavigation, view ttypes.LSPP
 	}
 	query := fmt.Sprintf("%s %s:%d:%d", strings.ReplaceAll(result.Kind, "-", " "), displayLSPPath(root, source.Path), result.Line+1, lines.column(source.Path, result.Line, result.Col))
 	switch result.Answer {
-	case ttypes.LSPNavigationNull:
+	case insight.LSPNavigationNull:
 		fmt.Fprintf(&b, "%s: the language server returned no result.", query)
 		return b.String()
-	case ttypes.LSPNavigationEmpty:
+	case insight.LSPNavigationEmpty:
 		fmt.Fprintf(&b, "%s: no locations.", query)
 		return b.String()
-	case ttypes.LSPNavigationUnsupported:
+	case insight.LSPNavigationUnsupported:
 		fmt.Fprintf(&b, "%s: the language server does not support %s.", query, strings.ReplaceAll(result.Kind, "-", " "))
 		return b.String()
 	}
@@ -568,7 +568,7 @@ func formatNavigation(root string, result ttypes.LSPNavigation, view ttypes.LSPP
 	return strings.TrimRight(b.String(), "\n")
 }
 
-func formatSymbols(root, path string, symbols []ttypes.LSPSymbol, view ttypes.LSPProbeView) string {
+func formatSymbols(root, path string, symbols []insight.LSPSymbol, view insight.LSPProbeView) string {
 	var b strings.Builder
 	b.WriteString(bufferNote(view))
 	if len(symbols) == 0 {
@@ -577,8 +577,8 @@ func formatSymbols(root, path string, symbols []ttypes.LSPSymbol, view ttypes.LS
 	}
 	fmt.Fprintf(&b, "%s:\n", displayLSPPath(root, path))
 	written := 0
-	var walk func([]ttypes.LSPSymbol, int)
-	walk = func(items []ttypes.LSPSymbol, depth int) {
+	var walk func([]insight.LSPSymbol, int)
+	walk = func(items []insight.LSPSymbol, depth int) {
 		for _, symbol := range items {
 			if written == maxLSPSymbols {
 				return

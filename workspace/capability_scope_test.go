@@ -10,8 +10,8 @@ import (
 
 	"crude/agent/collaboration"
 	"crude/agent/skills"
-	"crude/types"
 	captypes "crude/types/capability"
+	"crude/types/setting"
 )
 
 // localCatalogOwner builds a workspace whose only enabled source is a local
@@ -33,7 +33,7 @@ func localCatalogOwner(t *testing.T) (*Workspace, string) {
 		sources[id] = source
 	}
 	sources["local"] = captypes.SourceConfig{ID: "local", Name: "Local", Kind: "local", Location: catalog, Trusted: true}
-	owner.SetAppDefaults(types.AppSettings{Capabilities: captypes.Settings{
+	owner.SetAppDefaults(setting.App{Capabilities: captypes.Settings{
 		Sources:     sources,
 		Acquisition: captypes.AcquisitionSettings{Mode: "automatic", AutomaticSelection: "on"},
 	}})
@@ -155,7 +155,7 @@ func TestApplicationInstallSurvivesWorkspaceDeletion(t *testing.T) {
 	}
 	// Downloaded/verified payloads must live outside the workspace store: that
 	// store is exactly what workspace deletion moves to recovery storage.
-	workspacesRoot, err := WorkspaceRoot()
+	workspacesRoot, err := Root()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +165,7 @@ func TestApplicationInstallSurvivesWorkspaceDeletion(t *testing.T) {
 
 	projectDir := t.TempDir()
 	createSavedWorkspace(t, projectDir)
-	plan, err := PreviewWorkspaceDeletion(t.Context(), WorkspaceID(projectDir), projectDir, owner.RootPath)
+	plan, err := PreviewWorkspaceDeletion(t.Context(), ID(projectDir), projectDir, owner.RootPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func insideDir(root, path string) bool {
 
 func createSavedWorkspace(t *testing.T, projectDir string) {
 	t.Helper()
-	dir, err := WorkspaceDir(projectDir)
+	dir, err := Dir(projectDir)
 	if err != nil {
 		t.Fatal(err)
 	}

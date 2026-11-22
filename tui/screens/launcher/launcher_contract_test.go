@@ -11,7 +11,7 @@ import (
 	"crude/workspace"
 )
 
-func launcherContractHost(t *testing.T, width, height int, workspaces []workspace.WorkspaceInfo) (*Screen, *ui.Host) {
+func launcherContractHost(t *testing.T, width, height int, workspaces []workspace.Info) (*Screen, *ui.Host) {
 	t.Helper()
 	s := New(theme.DefaultDark())
 	s.SetData("/projects/current", workspaces)
@@ -23,10 +23,10 @@ func launcherContractHost(t *testing.T, width, height int, workspaces []workspac
 	return s, h
 }
 
-func manyWorkspaces(n int) []workspace.WorkspaceInfo {
-	out := make([]workspace.WorkspaceInfo, n)
+func manyWorkspaces(n int) []workspace.Info {
+	out := make([]workspace.Info, n)
 	for i := range out {
-		out[i] = workspace.WorkspaceInfo{
+		out[i] = workspace.Info{
 			ProjectName: fmt.Sprintf("ws-%02d", i),
 			ProjectDir:  fmt.Sprintf("/projects/ws-%02d", i),
 		}
@@ -56,7 +56,7 @@ func TestLauncherAnimationPublishesOnlyChangedInk(t *testing.T) {
 // for fixed action rows, workspace list navigation, filter mode, and bounds.
 func TestLauncherHostKeyboardContractTable(t *testing.T) {
 	t.Run("filter_slash_activates_once", func(t *testing.T) {
-		s, h := launcherContractHost(t, 100, 24, []workspace.WorkspaceInfo{
+		s, h := launcherContractHost(t, 100, 24, []workspace.Info{
 			{ProjectName: "alpha", ProjectDir: "/projects/alpha"},
 		})
 		res := h.Handle(tea.KeyPressMsg{Code: '/', Text: "/"})
@@ -84,7 +84,7 @@ func TestLauncherHostKeyboardContractTable(t *testing.T) {
 	})
 
 	t.Run("navigation_bounds_fixed_and_workspace_rows", func(t *testing.T) {
-		s, h := launcherContractHost(t, 100, 24, []workspace.WorkspaceInfo{
+		s, h := launcherContractHost(t, 100, 24, []workspace.Info{
 			{ProjectName: "alpha", ProjectDir: "/projects/alpha"},
 			{ProjectName: "beta", ProjectDir: "/projects/beta"},
 		})
@@ -114,7 +114,7 @@ func TestLauncherHostKeyboardContractTable(t *testing.T) {
 	})
 
 	t.Run("pgup_pgdown_clamped", func(t *testing.T) {
-		s, h := launcherContractHost(t, 100, 24, []workspace.WorkspaceInfo{
+		s, h := launcherContractHost(t, 100, 24, []workspace.Info{
 			{ProjectName: "only", ProjectDir: "/projects/only"},
 		})
 		h.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
@@ -165,7 +165,7 @@ func TestLauncherHostKeyboardContractTable(t *testing.T) {
 	})
 
 	t.Run("esc_clears_filter_then_noop", func(t *testing.T) {
-		s, h := launcherContractHost(t, 100, 24, []workspace.WorkspaceInfo{
+		s, h := launcherContractHost(t, 100, 24, []workspace.Info{
 			{ProjectName: "alpha", ProjectDir: "/projects/alpha"},
 		})
 		h.Handle(tea.KeyPressMsg{Code: '/', Text: "/"})
@@ -183,7 +183,7 @@ func TestLauncherHostKeyboardContractTable(t *testing.T) {
 	})
 
 	t.Run("ctrl_c_never_navigates", func(t *testing.T) {
-		s, h := launcherContractHost(t, 100, 24, []workspace.WorkspaceInfo{
+		s, h := launcherContractHost(t, 100, 24, []workspace.Info{
 			{ProjectName: "alpha", ProjectDir: "/projects/alpha"},
 		})
 		h.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
@@ -199,7 +199,7 @@ func TestLauncherHostKeyboardContractTable(t *testing.T) {
 	})
 
 	t.Run("filter_keeps_fixed_action_rows", func(t *testing.T) {
-		s, h := launcherContractHost(t, 100, 24, []workspace.WorkspaceInfo{
+		s, h := launcherContractHost(t, 100, 24, []workspace.Info{
 			{ProjectName: "alpha", ProjectDir: "/projects/alpha"},
 			{ProjectName: "beta", ProjectDir: "/projects/beta"},
 		})

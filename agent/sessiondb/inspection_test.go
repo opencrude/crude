@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/types"
+	"crude/types/conversation"
 	recoverytypes "crude/types/recovery"
 )
 
@@ -28,16 +28,16 @@ func TestInspectAgentWorkProjectsOnlyBoundedPublicEvidence(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	insert(1, "assistant", "assistant", "conversation", "old-message", DisplayMeta{Snapshots: []types.ConversationMessage{{Role: "assistant", Content: "STALE_OLD_TURN"}}})
-	insert(2, "user", "peer", "context_only", "wake-event", DisplayMeta{TurnGeneration: 7, Snapshots: []types.ConversationMessage{{Role: "user", Content: "HIDDEN_INPUT"}}})
+	insert(1, "assistant", "assistant", "conversation", "old-message", DisplayMeta{Snapshots: []conversation.Message{{Role: "assistant", Content: "STALE_OLD_TURN"}}})
+	insert(2, "user", "peer", "context_only", "wake-event", DisplayMeta{TurnGeneration: 7, Snapshots: []conversation.Message{{Role: "user", Content: "HIDDEN_INPUT"}}})
 	if _, err := db.Exec(`INSERT INTO collaboration_admissions(delivery_id,event_id,session_id,agent_id,runtime_epoch,delivery_version,context_commit_id,run_id,published_at,admitted_at) VALUES('delivery','wake-event','session','agent',1,1,'commit','exact-run',1,1)`); err != nil {
 		t.Fatal(err)
 	}
 	for i := range 15 {
-		insert(2, "tool", "tool", "conversation", fmt.Sprintf("tool-%02d", i), DisplayMeta{TurnGeneration: 7, DurationMs: int64(i + 1), Snapshots: []types.ConversationMessage{{Role: "tool", ToolName: "read_file", ToolStatus: "success", Content: "PRIVATE_TOOL_OUTPUT", ToolArgs: "SECRET_ARGUMENTS", ToolInput: "SECRET_INPUT"}}})
+		insert(2, "tool", "tool", "conversation", fmt.Sprintf("tool-%02d", i), DisplayMeta{TurnGeneration: 7, DurationMs: int64(i + 1), Snapshots: []conversation.Message{{Role: "tool", ToolName: "read_file", ToolStatus: "success", Content: "PRIVATE_TOOL_OUTPUT", ToolArgs: "SECRET_ARGUMENTS", ToolInput: "SECRET_INPUT"}}})
 	}
-	insert(2, "assistant", "assistant", "conversation", "latest-answer", DisplayMeta{TurnGeneration: 7, DurationMs: 20, Snapshots: []types.ConversationMessage{{Role: "thinking", Content: "PRIVATE_REASONING"}, {Role: "assistant", Content: strings.Repeat("visible answer ", 150)}}})
-	insert(2, "assistant", "runtime_context", "context_only", "hidden", DisplayMeta{TurnGeneration: 7, DurationMs: 21, ContextOnly: true, Snapshots: []types.ConversationMessage{{Role: "assistant", Content: "PRIVATE_SYSTEM_CONTEXT"}}})
+	insert(2, "assistant", "assistant", "conversation", "latest-answer", DisplayMeta{TurnGeneration: 7, DurationMs: 20, Snapshots: []conversation.Message{{Role: "thinking", Content: "PRIVATE_REASONING"}, {Role: "assistant", Content: strings.Repeat("visible answer ", 150)}}})
+	insert(2, "assistant", "runtime_context", "context_only", "hidden", DisplayMeta{TurnGeneration: 7, DurationMs: 21, ContextOnly: true, Snapshots: []conversation.Message{{Role: "assistant", Content: "PRIVATE_SYSTEM_CONTEXT"}}})
 	var before int
 	if err := db.QueryRow(`SELECT total_changes()`).Scan(&before); err != nil {
 		t.Fatal(err)

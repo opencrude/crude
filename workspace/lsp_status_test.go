@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/types"
+	"crude/types/statuscenter"
 )
 
 func TestLSPHealthInstanceTracksStartStopAndReplacement(t *testing.T) {
@@ -14,7 +14,7 @@ func TestLSPHealthInstanceTracksStartStopAndReplacement(t *testing.T) {
 	runtime.startGate = gate
 	editorSource(t, m, filepath.Join(root, "main.go"), "package main\n")
 
-	await := func(match func(types.LSPServerHealth) bool) types.LSPServerHealth {
+	await := func(match func(statuscenter.LSPServerHealth) bool) statuscenter.LSPServerHealth {
 		t.Helper()
 		deadline := time.NewTimer(15 * time.Second)
 		defer deadline.Stop()
@@ -35,12 +35,12 @@ func TestLSPHealthInstanceTracksStartStopAndReplacement(t *testing.T) {
 			}
 		}
 	}
-	starting := await(func(h types.LSPServerHealth) bool { return h.Starting })
+	starting := await(func(h statuscenter.LSPServerHealth) bool { return h.Starting })
 	if starting.InstanceID == "" {
 		t.Fatal("starting producer has no exact instance")
 	}
 	close(gate)
-	first := await(func(h types.LSPServerHealth) bool { return h.ID == starting.ID && h.Connected })
+	first := await(func(h statuscenter.LSPServerHealth) bool { return h.ID == starting.ID && h.Connected })
 	if first.InstanceID != starting.InstanceID {
 		t.Fatalf("start changed the admitted producer identity: %+v -> %+v", starting, first)
 	}
@@ -52,14 +52,14 @@ func TestLSPHealthInstanceTracksStartStopAndReplacement(t *testing.T) {
 			t.Fatalf("stopping producer remained authoritative: %+v", health)
 		}
 	}
-	stopped := await(func(h types.LSPServerHealth) bool { return h.ID == first.ID && h.Status == "Stopped" })
+	stopped := await(func(h statuscenter.LSPServerHealth) bool { return h.ID == first.ID && h.Status == "Stopped" })
 	if stopped.InstanceID != "" || stopped.Connected {
 		t.Fatalf("stopped producer retained a live identity: %+v", stopped)
 	}
 	if !m.RestartServer(first.ID) {
 		t.Fatal("stopped launch key could not be restarted")
 	}
-	replacement := await(func(h types.LSPServerHealth) bool {
+	replacement := await(func(h statuscenter.LSPServerHealth) bool {
 		return h.ID == first.ID && h.Connected && h.InstanceID != ""
 	})
 	if replacement.InstanceID == first.InstanceID {

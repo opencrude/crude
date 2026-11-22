@@ -3,21 +3,20 @@
 package hostshell
 
 import (
+	"crude/types/setting"
 	"os"
 	"path/filepath"
 	"strings"
-
-	ttypes "crude/types"
 )
 
 // detect lists the shells installed on this machine: PowerShell 7 before
 // Windows PowerShell 5.1, which ships with every Windows but is no longer
 // developed, then Command Prompt, Git Bash and WSL.
-func detect(env SearchEnvironment) []ttypes.TerminalShell {
-	var shells []ttypes.TerminalShell
+func detect(env SearchEnvironment) []setting.TerminalShell {
+	var shells []setting.TerminalShell
 	add := func(id, label string, path string, loginArgs, args []string) {
 		if path != "" {
-			shells = append(shells, ttypes.TerminalShell{ID: id, Label: label, Path: path, LoginArgs: loginArgs, Args: args})
+			shells = append(shells, setting.TerminalShell{ID: id, Label: label, Path: path, LoginArgs: loginArgs, Args: args})
 		}
 	}
 	programFiles := []string{env.values[searchProgramFiles], env.values[searchProgramW6432], env.values[searchProgramFilesX86]}

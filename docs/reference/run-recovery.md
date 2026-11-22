@@ -222,7 +222,7 @@ must not append the final response or its continuation suffix a second time. See
   journal-admitted human steering with its immutable preparation suffix.
   Runtime-note receipts commit before one complete batch checkpoint, never after
   checkpointing reserved notes that a failed admission would try to remove.
-- `retry/` owns every Crude-managed automatic cooldown. Exponential math
+- `internal/retry/` owns every Crude-managed automatic cooldown. Exponential math
   saturates safely and cancellation is prompt; **five minutes is the absolute
   per-wait maximum**, including Retry-After and millisecond/date hints. A server's
   24-hour hint must never cause an hours-long local retry sleep. Request/job
@@ -230,7 +230,7 @@ must not append the final response or its continuation suffix a second time. See
 
 ## Shared cooldown contract
 
-`retry/` is the one authority for automatic cooldown arithmetic and waits:
+`internal/retry/` is the one authority for automatic cooldown arithmetic and waits:
 
 - **Absolute maximum: five minutes per cooldown**, including server hints.
 - Exponential growth saturates before duration/integer overflow.
@@ -533,13 +533,13 @@ See [network transport](network.md) for secure remediation of routing/TLS issues
   failure before and after text/reasoning/tool fragments; actual HTTP SSE/NDJSON
   paths for every registered protocol, including Anthropic events and Ollama
   string/structured errors, permanent negatives and explicit retry vetoes.
-- `agent/stream_recovery_regression_test.go`: root/child semantic continuations
+- `agent/turnloop/stream_recovery_regression_test.go`: root/child semantic continuations
   across every registered protocol, retained accepted prefix, discarded incomplete
   calls, real countdown expiry and no manual wake or original-request replay.
 - `agent/session/stream_recovery_regression_test.go`: actual Chat root/child runners,
   durable SQLite countdown/continuation, retained exactly-once earlier file effect,
   required child report provenance and exact Stop preventing a delayed restart.
-- `agent/http_recovery_regression_test.go`: every registered protocol, root and
+- `agent/turnloop/http_recovery_regression_test.go`: every registered protocol, root and
   child, repeated exhausted requests beyond the five-minute saturation point.
   The clock wait is simulated; real timer expiry is tested below.
 - `agent/session/http_recovery_regression_test.go`: real local HTTP, SQLite, root and

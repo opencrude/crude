@@ -11,10 +11,11 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/agent/session"
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/types/control"
+	"crude/types/setting"
+	"crude/types/statuscenter"
 )
 
 // The actual session deck, connected core and provider request must agree:
@@ -40,7 +41,7 @@ func TestConnectedNamedAgentSpeedJourney(t *testing.T) {
 		profile := cfg.Agents.Profiles["default"]
 		profile.Categories[session.CategoryResearcher] = session.CategoryConfig{AccountID: "test", Model: "role-model", ServiceTier: "standard"}
 		cfg.Agents.Profiles["default"] = profile
-		cfg.Agents.AgentProfiles["writer"] = types.AgentProfileSettings{Category: "crafter", Model: "writer-model"}
+		cfg.Agents.AgentProfiles["writer"] = setting.AgentProfile{Category: "crafter", Model: "writer-model"}
 	})
 	root := t.TempDir()
 	one := newRemoteJourneyShell(t, runtime, root)
@@ -50,11 +51,11 @@ func TestConnectedNamedAgentSpeedJourney(t *testing.T) {
 	remoteJourneyUntil(t, shells, func() bool { return two.app.ws.AgentMgr().Get(id) != nil })
 	// Create the named agent after the session is already running. The settings
 	// owner must publish the catalog to both shells and the existing session.
-	profile, err := json.Marshal(types.AgentProfileSettings{Category: "researcher", Model: "review-model"})
+	profile, err := json.Marshal(setting.AgentProfile{Category: "researcher", Model: "review-model"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	saveProfile := one.app.ws.PreparePreferencesSave(types.SettingsScopeWorkspace, []types.SettingEdit{{
+	saveProfile := one.app.ws.PreparePreferencesSave(setting.ScopeWorkspace, []setting.Edit{{
 		Path: []string{"agents", "agent_profiles", "reviewer"}, After: profile,
 	}})
 	var saveErr error
@@ -113,7 +114,7 @@ func TestConnectedNamedAgentSpeedJourney(t *testing.T) {
 		for _, shell := range shells {
 			owner := shell.app.ws.SessionForAgent(id)
 			if owner == nil || owner.Settings.Effective.SessionMainAgent != "profile/reviewer" ||
-				owner.Settings.Effective.FastMode != types.FastModeOn {
+				owner.Settings.Effective.FastMode != setting.FastModeOn {
 				return false
 			}
 		}
@@ -140,7 +141,7 @@ func TestConnectedNamedAgentSpeedJourney(t *testing.T) {
 		case <-time.After(8 * time.Second):
 			t.Fatal("provider request was not sent")
 		}
-		remoteJourneyUntil(t, shells, func() bool { return one.app.ws.AgentActivity(id).Status.Phase == types.AgentCompleted })
+		remoteJourneyUntil(t, shells, func() bool { return one.app.ws.AgentActivity(id).Status.Phase == statuscenter.AgentCompleted })
 	}
 	send("first request", "fast")
 
@@ -151,7 +152,7 @@ func TestConnectedNamedAgentSpeedJourney(t *testing.T) {
 	save()
 	remoteJourneyUntil(t, shells, func() bool {
 		for _, shell := range shells {
-			if shell.app.ws.SessionForAgent(id).Settings.Effective.FastMode != types.FastModeOff {
+			if shell.app.ws.SessionForAgent(id).Settings.Effective.FastMode != setting.FastModeOff {
 				return false
 			}
 		}
@@ -159,7 +160,7 @@ func TestConnectedNamedAgentSpeedJourney(t *testing.T) {
 	})
 	send("second request", "default")
 
-	removeProfile := one.app.ws.PreparePreferencesSave(types.SettingsScopeWorkspace, []types.SettingEdit{{
+	removeProfile := one.app.ws.PreparePreferencesSave(setting.ScopeWorkspace, []setting.Edit{{
 		Path: []string{"agents", "agent_profiles", "reviewer"},
 	}})
 	runAppCommand(t, one.app, func() tea.Msg {

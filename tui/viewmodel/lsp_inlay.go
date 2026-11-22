@@ -9,10 +9,10 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/port"
-	"crude/retry"
+	"crude/core/shellport"
+	"crude/internal/retry"
 	"crude/tui/editor"
-	"crude/types"
+	"crude/types/insight"
 )
 
 const inlayDebounce = 180 * time.Millisecond
@@ -33,27 +33,27 @@ type inlayViewState struct {
 type inlayRequest struct {
 	view                            *inlayViewState
 	port                            shellport.InlayHints
-	source                          types.InsightSource
-	producer                        types.InsightProducer
+	source                          insight.Source
+	producer                        insight.Producer
 	revision                        uint64
 	contextOwner                    string
 	contextGeneration, settingEpoch uint64
 	first, last                     int
-	span                            types.LSPInlayRange
+	span                            insight.LSPInlayRange
 	sequence                        uint64
 	ctx                             context.Context
 	cancel                          context.CancelFunc
 	deadline                        time.Time
 	started, installed              bool
 	busyAttempts                    int
-	result                          *types.LSPInlaySet
+	result                          *insight.LSPInlaySet
 	err                             error
 }
 
 type inlayDueMsg struct{ owner *inlayRequest }
 type inlayResultMsg struct {
 	owner  *inlayRequest
-	result types.LSPInlaySet
+	result insight.LSPInlaySet
 	err    error
 }
 type inlayReleasedMsg struct{ err error }
@@ -189,8 +189,8 @@ func (m *App) syncInlayHints() tea.Cmd {
 			request = &inlayRequest{view: view, port: port, source: source, revision: view.editor.Revision(),
 				producer: producer, contextOwner: contextOwner, contextGeneration: contextGeneration, settingEpoch: epoch,
 				first: first, last: last, sequence: view.sequence, ctx: ctx, cancel: cancel,
-				span: types.LSPInlayRange{Start: types.LSPInlayPosition{Line: first},
-					End: types.LSPInlayPosition{Line: last, Character: endCol}}}
+				span: insight.LSPInlayRange{Start: insight.LSPInlayPosition{Line: first},
+					End: insight.LSPInlayPosition{Line: last, Character: endCol}}}
 			view.request = request
 			commands = append(commands, tea.Tick(inlayDebounce, func(time.Time) tea.Msg { return inlayDueMsg{owner: request} }))
 		}

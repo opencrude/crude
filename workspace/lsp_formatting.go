@@ -3,8 +3,9 @@ package workspace
 import (
 	"cmp"
 	"context"
-	"crude/lsp/edit"
-	"crude/types"
+	"crude/lsp/lspedit"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace/document"
 	"errors"
 	"path/filepath"
@@ -13,14 +14,15 @@ import (
 
 // Optional protocol support, not a new formatter/process owner.
 type LSPRangeFormatter interface {
-	RequestRangeFormatting(context.Context, string, types.LSPFormattingSpan, types.LSPFormattingOptions) (types.LSPFormattingResponse, error)
+	RequestRangeFormatting(context.Context, string, insight.LSPFormattingSpan, insight.LSPFormattingOptions) (insight.LSPFormattingResponse, error)
 }
 
-func formattingGate(s types.LSPSettings) bool { return s.Enabled }
+func formattingGate(s setting.LSP) bool { return s.Enabled }
 
-func (w *Workspace) RequestSelectionFormatting(ctx context.Context, owner document.Owner, in types.LSPFormattingRequest) (types.LSPFormattingResult, error) {
+// RequestSelectionFormatting formats an editor selection through the language server.
+func (w *Workspace) RequestSelectionFormatting(ctx context.Context, owner document.Owner, in insight.LSPFormattingRequest) (insight.LSPFormattingResult, error) {
 	if w == nil || w.LiveDocuments == nil || w.LSPMgr == nil {
-		return types.LSPFormattingResult{}, errors.New("selection formatting needs a language server")
+		return insight.LSPFormattingResult{}, errors.New("selection formatting needs a language server")
 	}
 	in.Ranges = slices.Clone(in.Ranges)
 	s := w.LiveDocuments
@@ -28,26 +30,26 @@ func (w *Workspace) RequestSelectionFormatting(ctx context.Context, owner docume
 	_, err := s.readOnlyLSPSourceLocked(owner, in.Source)
 	s.mu.Unlock()
 	if err != nil {
-		return types.LSPFormattingResult{}, err
+		return insight.LSPFormattingResult{}, err
 	}
 	out, err := w.LSPMgr.selectionFormatting(ctx, in)
 	if err != nil {
-		return types.LSPFormattingResult{}, err
+		return insight.LSPFormattingResult{}, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, err = s.readOnlyLSPSourceLocked(owner, in.Source); err != nil {
-		return types.LSPFormattingResult{}, err
+		return insight.LSPFormattingResult{}, err
 	}
 	if _, err = w.LSPMgr.semanticFence(out.Boundary, out.WireVersion, formattingGate, "selection formatting"); err != nil {
-		return types.LSPFormattingResult{}, err
+		return insight.LSPFormattingResult{}, err
 	}
 	return out, ctx.Err()
 }
-func (m *LSPManager) selectionFormatting(ctx context.Context, in types.LSPFormattingRequest) (types.LSPFormattingResult, error) {
+func (m *LSPManager) selectionFormatting(ctx context.Context, in insight.LSPFormattingRequest) (insight.LSPFormattingResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, ManualLSPRequestTimeout)
 	defer cancel()
-	var out types.LSPFormattingResult
+	var out insight.LSPFormattingResult
 	if !m.featureOn(formattingGate) {
 		return out, errors.New("selection formatting needs enabled Code Intelligence")
 	}
@@ -64,7 +66,7 @@ func (m *LSPManager) selectionFormatting(ctx context.Context, in types.LSPFormat
 		doc := m.documents[filepath.Clean(in.Source.Path)]
 		text := ""
 		wire := 0
-		var boundary types.InsightBoundary
+		var boundary insight.Boundary
 		if doc != nil && doc.opened && !doc.syncPending {
 			wire, text, boundary = doc.wireVersion, doc.text, doc.boundary
 			boundary.Context.UnknownInputs = slices.Clone(boundary.Context.UnknownInputs)
@@ -80,7 +82,7 @@ func (m *LSPManager) selectionFormatting(ctx context.Context, in types.LSPFormat
 		if err = validateFormattingRanges(text, in); err != nil {
 			return err
 		}
-		out = types.LSPFormattingResult{Boundary: boundary, WireVersion: wire}
+		out = insight.LSPFormattingResult{Boundary: boundary, WireVersion: wire}
 		formatter, supported := client.(LSPRangeFormatter)
 		if !supported {
 			out.Unsupported = true
@@ -151,11 +153,11 @@ func (m *LSPManager) selectionFormatting(ctx context.Context, in types.LSPFormat
 		return fence()
 	})
 	if err != nil {
-		return types.LSPFormattingResult{}, err
+		return insight.LSPFormattingResult{}, err
 	}
 	return out, ctx.Err()
 }
-func validateFormattingRanges(text string, in types.LSPFormattingRequest) error {
+func validateFormattingRanges(text string, in insight.LSPFormattingRequest) error {
 	if len(in.Ranges) == 0 || len(in.Ranges) > 256 || in.Options.TabSize < 1 || in.Options.TabSize > 32 {
 		return errors.New("select text and use a valid indentation width")
 	}

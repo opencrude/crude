@@ -11,7 +11,7 @@ import (
 	"crude/tui/screens/shellchat"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	ctypes "crude/types"
+	"crude/types/conversation"
 	"crude/workspace"
 
 	tea "charm.land/bubbletea/v2"
@@ -53,9 +53,9 @@ func TestActivityReadStormSurvivesDBRecoveryAndDisclosure(t *testing.T) {
 		{Role: "tool", ToolCallID: "progress", Content: provider.TextContent("Inspecting the result.")},
 	}
 	metas := []sessiondb.DisplayMeta{
-		{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []ctypes.ConversationMessage{{InternalID: "persisted-read-one", Role: "tool", ToolID: "read-one", ToolName: "read_file", ToolArgs: `path: first.go`, ToolStatus: "success", ToolPreviewPhase: "done", Content: "package fixture", ToolDuration: live[0].ToolDuration}}},
-		{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []ctypes.ConversationMessage{{InternalID: "persisted-read-two", Role: "tool", ToolID: "read-two", ToolName: "read_file", ToolArgs: `path: second.go`, ToolStatus: "success", ToolPreviewPhase: "done", Content: "package fixture", ToolDuration: live[1].ToolDuration}}},
-		{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []ctypes.ConversationMessage{{InternalID: "reply:progress", Role: "assistant", Content: "Inspecting the result."}}},
+		{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []conversation.Message{{InternalID: "persisted-read-one", Role: "tool", ToolID: "read-one", ToolName: "read_file", ToolArgs: `path: first.go`, ToolStatus: "success", ToolPreviewPhase: "done", Content: "package fixture", ToolDuration: live[0].ToolDuration}}},
+		{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []conversation.Message{{InternalID: "persisted-read-two", Role: "tool", ToolID: "read-two", ToolName: "read_file", ToolArgs: `path: second.go`, ToolStatus: "success", ToolPreviewPhase: "done", Content: "package fixture", ToolDuration: live[1].ToolDuration}}},
+		{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []conversation.Message{{InternalID: "reply:progress", Role: "assistant", Content: "Inspecting the result."}}},
 	}
 	if _, err := sessiondb.ReplaceMessagesWithMeta(db, "root", wire, []int{1, 1, 1}, metas); err != nil {
 		t.Fatal(err)

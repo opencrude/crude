@@ -13,8 +13,8 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
-	"crude/logger"
-	ttypes "crude/types"
+	"crude/internal/logger"
+	"crude/types/conversation"
 	"crude/workspace/fileio"
 )
 
@@ -110,7 +110,7 @@ func TestHumanCompactionWaitsForFinishingTurnInsteadOfRefusing(t *testing.T) {
 		s.turnGate.RUnlock()
 		t.Fatalf("finishing turn refused /compact: %+v", early)
 	}
-	done := make(chan ttypes.CompactResultMsg, 1)
+	done := make(chan conversation.CompactResultMsg, 1)
 	go func() { done <- prepared.Run() }()
 	select {
 	case <-done:

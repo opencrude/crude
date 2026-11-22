@@ -19,9 +19,9 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/session"
-	settingsui "crude/tui/settings"
+	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/setting"
 	"crude/workspace/fileio"
 )
 
@@ -75,20 +75,20 @@ const predictionSettingsPrivateDraft = "private prediction settings visual draft
 // the persistence implementation. Account/format are configured separately.
 var predictionSettingsVisualPhases = []struct {
 	name         string
-	draftMode    types.EditorPredictionMode
+	draftMode    setting.EditorPredictionMode
 	draftCap     int64
-	savedMode    types.EditorPredictionMode
+	savedMode    setting.EditorPredictionMode
 	savedCap     int64
 	grant, dirty bool
 	enters       int
 }{
-	{"Off paint", types.PredictionOff, 0, types.PredictionOff, 0, false, false, 0},
-	{"Light zero-cap draft", types.PredictionAsk, 0, types.PredictionOff, 0, false, true, 0},
-	{"zero-cap Save refused", types.PredictionAsk, 0, types.PredictionOff, 0, false, true, 1},
-	{"exact cap 4200 paint", types.PredictionAsk, 4200, types.PredictionOff, 0, false, true, 1},
-	{"saved Light bound grant", types.PredictionAsk, 4200, types.PredictionAsk, 4200, true, false, 2},
-	{"Off draft retains committed Light", types.PredictionOff, 4200, types.PredictionAsk, 4200, true, true, 2},
-	{"saved Off clears grant", types.PredictionOff, 4200, types.PredictionOff, 4200, false, false, 3},
+	{"Off paint", setting.PredictionOff, 0, setting.PredictionOff, 0, false, false, 0},
+	{"Light zero-cap draft", setting.PredictionAsk, 0, setting.PredictionOff, 0, false, true, 0},
+	{"zero-cap Save refused", setting.PredictionAsk, 0, setting.PredictionOff, 0, false, true, 1},
+	{"exact cap 4200 paint", setting.PredictionAsk, 4200, setting.PredictionOff, 0, false, true, 1},
+	{"saved Light bound grant", setting.PredictionAsk, 4200, setting.PredictionAsk, 4200, true, false, 2},
+	{"Off draft retains committed Light", setting.PredictionOff, 4200, setting.PredictionAsk, 4200, true, true, 2},
+	{"saved Off clears grant", setting.PredictionOff, 4200, setting.PredictionOff, 4200, false, false, 3},
 }
 
 type predictionSettingsVisualProbe struct{}
@@ -208,7 +208,7 @@ func (m *predictionSettingsVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd)
 func (m *predictionSettingsVisualModel) observe() (bool, error) {
 	want := predictionSettingsVisualPhases[m.phase]
 	body, form := m.body(), m.form()
-	if body == nil || form == nil || body.Model().Scope() != types.SettingsScopeWorkspace {
+	if body == nil || form == nil || body.Model().Scope() != setting.ScopeWorkspace {
 		return false, fmt.Errorf("lost the mounted Workspace / Code Intelligence page")
 	}
 	model := body.Model()
@@ -225,8 +225,8 @@ func (m *predictionSettingsVisualModel) observe() (bool, error) {
 		return false, fmt.Errorf("native settings input consumed the private composer")
 	}
 	draft, saved := model.AppSettings(), m.ws.LoadAppSettings()
-	if draft.Analysis.Trust != types.AnalysisUndecided || saved.Analysis.Trust != types.AnalysisUndecided ||
-		m.ws.AppDefaults().Prediction.Mode != types.PredictionOff ||
+	if draft.Analysis.Trust != setting.AnalysisUndecided || saved.Analysis.Trust != setting.AnalysisUndecided ||
+		m.ws.AppDefaults().Prediction.Mode != setting.PredictionOff ||
 		m.ws.AppDefaults().Prediction.HourlyTokenLimit != 0 {
 		return false, fmt.Errorf("prediction changed independent analysis Trust or application defaults")
 	}
@@ -244,10 +244,10 @@ func (m *predictionSettingsVisualModel) observe() (bool, error) {
 		}
 	}
 	if m.enters != want.enters ||
-		draft.Prediction != (types.WorkspacePredictionSettings{
+		draft.Prediction != (setting.WorkspacePrediction{
 			Mode: want.draftMode, HourlyTokenLimit: want.draftCap,
 		}) ||
-		saved.Prediction != (types.WorkspacePredictionSettings{
+		saved.Prediction != (setting.WorkspacePrediction{
 			Mode: want.savedMode, HourlyTokenLimit: want.savedCap,
 		}) || (len(model.Edits()) != 0) != want.dirty {
 		return false, fmt.Errorf("ordinary keys did not retain exact draft/committed mode, cap, or dirty state; Enter=%d", m.enters)
@@ -292,7 +292,7 @@ func (m *predictionSettingsVisualModel) observe() (bool, error) {
 			return false, fmt.Errorf("unsaved or refused enable wrote a partial preference overlay")
 		}
 	} else {
-		persisted, err := types.DecodeWorkspacePredictionSettings(overlay.Prediction)
+		persisted, err := setting.DecodeWorkspacePrediction(overlay.Prediction)
 		if err != nil || persisted != saved.Prediction {
 			return false, fmt.Errorf("published durable preference overlay differs from exact committed choice")
 		}
@@ -318,7 +318,7 @@ func (m *predictionSettingsVisualModel) observe() (bool, error) {
 		}
 	} else {
 		label := "Off"
-		if want.draftMode == types.PredictionAsk {
+		if want.draftMode == setting.PredictionAsk {
 			label = "When I ask"
 		}
 		if !strings.Contains(paint, "Errand suggestions") || !strings.Contains(paint, label) {

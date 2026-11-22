@@ -2,7 +2,8 @@ package viewmodel
 
 import (
 	"context"
-	"crude/text/encoding"
+	"crude/text/textencoding"
+	"crude/types/setting"
 	"os"
 	"path/filepath"
 	"sync"
@@ -12,7 +13,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"crude/tui/ui"
-	"crude/types"
 	"crude/workspace/document"
 )
 
@@ -37,7 +37,7 @@ func TestUntitledVisualAcceptance(t *testing.T) {
 	}
 	shell := newRemoteJourneyShell(t, remoteJourneyRuntime(t, "http://unused.invalid"), root)
 	liveTestOpen(t, shell.app, existing)
-	shell.app.applyEditorSettings(types.EditorSettings{AutoSave: types.AutoSaveAfterDelay, AutoSaveDelay: 250})
+	shell.app.applyEditorSettings(setting.Editor{AutoSave: setting.AutoSaveAfterDelay, AutoSaveDelay: 250})
 	model := &untitledVisualModel{App: shell.app}
 	program := tea.NewProgram(model, tea.WithWidthMethod(ansi.GraphemeWidth))
 	model.SetProgram(program)

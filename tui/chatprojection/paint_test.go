@@ -11,7 +11,7 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 	"crude/workspace"
 )
 
@@ -88,10 +88,10 @@ func TestSubAgentReviewPaneShowsTerminalFailureInCollapsedAndExpandedForms(t *te
 }
 
 func TestBuildSubPaneToolStates(t *testing.T) {
-	messages := []*types.ChatMessage{
-		{Role: types.RoleTool, ToolName: "read_file", ToolArgs: "ok", ToolPreviewPhase: "done", ToolStatus: "success"},
-		{Role: types.RoleTool, ToolName: "write_file", ToolArgs: "fail", ToolPreviewPhase: "error", ToolStatus: "error"},
-		{Role: types.RoleTool, ToolName: "read_file", ToolArgs: "next", ToolPreviewPhase: "streaming", ToolStatus: "streaming"},
+	messages := []*conversation.ChatMessage{
+		{Role: conversation.RoleTool, ToolName: "read_file", ToolArgs: "ok", ToolPreviewPhase: "done", ToolStatus: "success"},
+		{Role: conversation.RoleTool, ToolName: "write_file", ToolArgs: "fail", ToolPreviewPhase: "error", ToolStatus: "error"},
+		{Role: conversation.RoleTool, ToolName: "read_file", ToolArgs: "next", ToolPreviewPhase: "streaming", ToolStatus: "streaming"},
 	}
 	r := chatprojection.NewRenderer(theme.DefaultDark())
 	lines, active := r.BuildSubPaneToolLines(messages, 24, 0)

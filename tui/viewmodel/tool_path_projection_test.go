@@ -11,7 +11,7 @@ import (
 	"crude/agent/sessiondb"
 	"crude/tui/chatprojection"
 	"crude/tui/theme"
-	"crude/types"
+	"crude/types/conversation"
 	"crude/workspace"
 )
 
@@ -31,7 +31,7 @@ func TestToolPathProjectionUsesWorkspaceRoot(t *testing.T) {
 		"internal_id": "read", "tool_id": "call", "name": "read_file", "args": string(args),
 	}})
 	app.syncAgentMessages(state.ID, false)
-	r := app.subPaneProjections.GetExisting(state.ID).renderer
+	r := app.subPaneProjections.Existing(state.ID).renderer
 	r.SetSize(160, 40)
 	r.SetChatAreaBounds(0, 40)
 	rows, _, _ := r.ExportMessageRows(160)
@@ -42,7 +42,7 @@ func TestToolPathProjectionUsesWorkspaceRoot(t *testing.T) {
 	if !strings.Contains(text, filepath.Join("src", "long_filename.go")) || strings.Contains(text, root) {
 		t.Fatalf("tool title should use a project-relative path, got %q", text)
 	}
-	if got := state.Messages.Messages()[0]; got.ToolArgs != path || got.Role != types.RoleTool {
+	if got := state.Messages.Messages()[0]; got.ToolArgs != path || got.Role != conversation.RoleTool {
 		t.Fatalf("presentation changed canonical tool data: %+v", got)
 	}
 }
@@ -64,7 +64,7 @@ func TestToolPathProjectionFollowsWorkspaceSwitch(t *testing.T) {
 		"internal_id": "read", "tool_id": "call", "name": "read_file", "args": string(args),
 	}})
 	app.syncAgentMessages(state.ID, false)
-	r := app.subPaneProjections.GetExisting(state.ID).renderer
+	r := app.subPaneProjections.Existing(state.ID).renderer
 	r.SetSize(160, 40)
 	r.SetChatAreaBounds(0, 40)
 	rows, _, _ := r.ExportMessageRows(160)
@@ -103,10 +103,10 @@ func TestRelativePathsInStreamingAndFailedRows(t *testing.T) {
 		}
 	}
 
-	failed := types.ChatMessage{InternalID: "failed", Role: types.RoleTool, ToolName: "read_file",
-		ToolArgs: "/project/src/a.go", ToolStatus: types.ToolStatusError, ToolPreviewPhase: types.ToolPreviewError,
+	failed := conversation.ChatMessage{InternalID: "failed", Role: conversation.RoleTool, ToolName: "read_file",
+		ToolArgs: "/project/src/a.go", ToolStatus: conversation.ToolStatusError, ToolPreviewPhase: conversation.ToolPreviewError,
 		Content: "Error: denied absolute path /project/src/a.go"}
-	r.SyncMessages([]types.ChatMessage{failed}, 4, 0)
+	r.SyncMessages([]conversation.ChatMessage{failed}, 4, 0)
 	rows, _, _ = r.ExportMessageRows(200)
 	text := strings.Join(rows[0].Lines, "\n")
 	if !strings.Contains(text, "Read File failed src/a.go") || !strings.Contains(text, "denied absolute path /project/src/a.go") {
@@ -117,9 +117,9 @@ func TestRelativePathsInStreamingAndFailedRows(t *testing.T) {
 func TestProjectRelativeWindowsPathsInRenderedRows(t *testing.T) {
 	r := newParityRenderer()
 	r.SetProjectRoot(`C:\Users\Me\Project`)
-	r.SyncMessages([]types.ChatMessage{
-		{InternalID: "read", Role: types.RoleTool, ToolName: "read_file", ToolArgs: `c:/users/me/project/src\main.go`, ToolStatus: types.ToolStatusSuccess},
-		{InternalID: "external", Role: types.RoleTool, ToolName: "delete_file", ToolArgs: `D:\outside\file.go`, ToolStatus: types.ToolStatusError, Content: "Error: denied"},
+	r.SyncMessages([]conversation.ChatMessage{
+		{InternalID: "read", Role: conversation.RoleTool, ToolName: "read_file", ToolArgs: `c:/users/me/project/src\main.go`, ToolStatus: conversation.ToolStatusSuccess},
+		{InternalID: "external", Role: conversation.RoleTool, ToolName: "delete_file", ToolArgs: `D:\outside\file.go`, ToolStatus: conversation.ToolStatusError, Content: "Error: denied"},
 	}, 1, 0)
 	rows, _, _ := r.ExportMessageRows(200)
 	var text strings.Builder
@@ -149,8 +149,8 @@ func TestParallelPatchUsesRemotePathSyntax(t *testing.T) {
 			}
 			r := newParityRenderer()
 			r.SetProjectRoot(tc.root)
-			r.SyncMessages([]types.ChatMessage{{InternalID: "batch", Role: types.RoleTool, ToolName: "multi_tool_use.parallel",
-				ToolInput: string(input), ToolStatus: types.ToolStatusStreaming, ToolPreviewPhase: types.ToolPreviewStreaming}}, 1, 0)
+			r.SyncMessages([]conversation.ChatMessage{{InternalID: "batch", Role: conversation.RoleTool, ToolName: "multi_tool_use.parallel",
+				ToolInput: string(input), ToolStatus: conversation.ToolStatusStreaming, ToolPreviewPhase: conversation.ToolPreviewStreaming}}, 1, 0)
 			rows, _, _ := r.ExportMessageRows(200)
 			if len(rows) != 1 {
 				t.Fatalf("parallel patch rows = %d", len(rows))
@@ -236,11 +236,11 @@ func TestRelativeParallelToolRowsAndDisclosure(t *testing.T) {
 		"internal_id": "batch", "tool_id": "call", "name": "multi_tool_use.parallel", "result": result,
 	}})
 	snapshot := state.Messages.Messages()[0]
-	snapshot.ToolStatus, snapshot.ToolPreviewPhase = types.ToolStatusSuccess, types.ToolPreviewDone
-	live := ChatMessagesFromViews([]workspace.ChatMessageView{snapshot})
+	snapshot.ToolStatus, snapshot.ToolPreviewPhase = conversation.ToolStatusSuccess, conversation.ToolPreviewDone
+	live := ChatMessagesFromViews([]conversation.Message{snapshot})
 	hydrated := ChatMessagesFromViews(workspace.ConvertMessagesForDisplay([]sessiondb.MessageWithMeta{{
 		Msg:  provider.ChatMessage{Role: "tool", ToolCallID: "call"},
-		Meta: sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []types.ConversationMessage{snapshot}},
+		Meta: sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []conversation.Message{snapshot}},
 	}}))
 	left, right := newParityRenderer(), newParityRenderer()
 	left.SetProjectRoot(root)
@@ -278,8 +278,8 @@ func TestProjectPathRootChangeRefreshesMainAndCompactRows(t *testing.T) {
 	reg.SetProjectRoot("/first")
 	embedded := reg.ForOwner("parent")
 	pane := workspace.NewSubPane("child", workspace.PaneAgent, "Child")
-	pane.Messages.AppendMessage(workspace.Message{InternalID: "read", Role: types.RoleTool, ToolName: "read_file",
-		ToolArgs: "/first/src/a.go", ToolStatus: types.ToolStatusSuccess, ToolPreviewPhase: types.ToolPreviewDone})
+	pane.Messages.AppendMessage(conversation.Message{InternalID: "read", Role: conversation.RoleTool, ToolName: "read_file",
+		ToolArgs: "/first/src/a.go", ToolStatus: conversation.ToolStatusSuccess, ToolPreviewPhase: conversation.ToolPreviewDone})
 	p := embedded.Get(pane.ID, pane.Type)
 	p.renderer.SetSize(100, 24)
 	p.renderer.SetChatAreaBounds(0, 24)
@@ -306,7 +306,7 @@ func TestProjectPathRootChangeRefreshesMainAndCompactRows(t *testing.T) {
 	other.SetProjectRoot("/second")
 	other.SetSize(100, 24)
 	other.SetChatAreaBounds(0, 24)
-	other.SyncMessages([]types.ChatMessage{{InternalID: "read", Role: types.RoleTool, ToolName: "read_file", ToolArgs: "/second/src/b.go", ToolStatus: types.ToolStatusSuccess}}, 1, 0)
+	other.SyncMessages([]conversation.ChatMessage{{InternalID: "read", Role: conversation.RoleTool, ToolName: "read_file", ToolArgs: "/second/src/b.go", ToolStatus: conversation.ToolStatusSuccess}}, 1, 0)
 	rows, _, _ := other.ExportMessageRows(100)
 	if len(rows) != 1 || !strings.Contains(strings.Join(rows[0].Lines, "\n"), "Read src/b.go") {
 		t.Fatalf("second workspace root missing: %+v", rows)

@@ -13,7 +13,7 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 const bidiTableMarkdown = `فارسی را می` + "\u200c" + `خوانیم.
@@ -41,7 +41,7 @@ func TestChatMarkdownBidiGeometry(t *testing.T) {
 				r := chatprojection.NewRenderer(th)
 				r.SetSize(width, 40)
 				r.SetChatAreaBounds(0, 40)
-				msg := types.ChatMessage{InternalID: "markdown-bidi", Role: types.RoleAssistant}
+				msg := conversation.ChatMessage{InternalID: "markdown-bidi", Role: conversation.RoleAssistant}
 				if live {
 					cut := strings.Index(bidiTableMarkdown, "| שלום")
 					msg.Content = bidiTableMarkdown[:cut]
@@ -51,7 +51,7 @@ func TestChatMarkdownBidiGeometry(t *testing.T) {
 					r.AppendToken(bidiTableMarkdown[cut:])
 				} else {
 					msg.Content = bidiTableMarkdown
-					r.SyncMessages([]types.ChatMessage{msg}, 1, 1)
+					r.SyncMessages([]conversation.ChatMessage{msg}, 1, 1)
 				}
 				rows, _, height := r.ExportMessageRows(width)
 				p := ComposeParams{InnerW: width - 2*th.Spacing.PadLR, PadLR: th.Spacing.PadLR, Theme: th}

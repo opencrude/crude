@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"crude/core/port"
-	"crude/core/protocol"
-	settingsui "crude/tui/settings"
+	"crude/core/coreprotocol"
+	"crude/core/shellport"
+	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/ui"
 	"crude/types/control"
 

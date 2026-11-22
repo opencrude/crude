@@ -19,7 +19,7 @@ import (
 // workspaceSwitchState retains only the old projections needed to finish a
 // successful switch or restore the old file watcher after validation fails.
 type workspaceSwitchState struct {
-	tree             *filetree.FileTreeModel
+	tree             *filetree.Model
 	workspaceGen     uint64
 	gitGen           uint64
 	editorGitGen     uint64
@@ -32,7 +32,7 @@ type workspaceSwitchState struct {
 type workspaceTreeReadyMsg struct {
 	generation uint64
 	rootPath   string
-	model      *filetree.FileTreeModel
+	model      *filetree.Model
 }
 
 func sameWorkspaceRoot(current, candidate string) bool {
@@ -309,7 +309,7 @@ func (m *App) applyWorkspaceTreeReady(msg workspaceTreeReadyMsg) {
 // wireAndStartWorkspaceTreeWatcherAsync keeps the recursive watcher walk off
 // the update goroutine. A generation change during startup stops the newly
 // created watcher before it can outlive its project.
-func (m *App) wireAndStartWorkspaceTreeWatcherAsync(model *filetree.FileTreeModel, generation uint64) {
+func (m *App) wireAndStartWorkspaceTreeWatcherAsync(model *filetree.Model, generation uint64) {
 	if m == nil || model == nil {
 		return
 	}
@@ -351,7 +351,7 @@ func (m *App) wireAndStartWorkspaceTreeWatcherAsync(model *filetree.FileTreeMode
 // wireAndStartWorkspaceTreeWatcher is the single startup path used by Init and
 // project switching. The captured generation prevents a stopped old model from
 // publishing a late callback into the new workspace.
-func (m *App) wireAndStartWorkspaceTreeWatcher(model *filetree.FileTreeModel) {
+func (m *App) wireAndStartWorkspaceTreeWatcher(model *filetree.Model) {
 	if m == nil || model == nil {
 		return
 	}

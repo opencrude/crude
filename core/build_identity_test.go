@@ -4,14 +4,14 @@ import (
 	"path/filepath"
 	"testing"
 
-	"crude/types"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
 func TestHandshakePublishesActualCoreNativeBuild(t *testing.T) {
 	setCoreTestHome(t, t.TempDir())
 	r, err := New(func(root string) (*workspace.Workspace, error) {
-		return workspace.NewWorkspace(root, "", "", types.Settings{}, coreTestLogger{}), nil
+		return workspace.NewWorkspace(root, "", "", setting.Settings{}, coreTestLogger{}), nil
 	}, filepath.Join(t.TempDir(), "receipts.db"))
 	if err != nil {
 		t.Fatal(err)

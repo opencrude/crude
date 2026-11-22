@@ -22,7 +22,7 @@ func TestCloseAgentLeavesListableResumableRegistryRecord(t *testing.T) {
 	t.Cleanup(func() { _ = wdb.Close() })
 
 	const sid = "2026-07-30_recovery_test"
-	wsDir, err := WorkspaceDir(project)
+	wsDir, err := Dir(project)
 	if err != nil {
 		t.Fatalf("WorkspaceDir: %v", err)
 	}

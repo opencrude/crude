@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -145,12 +145,12 @@ func (b blockingStartupOwner) StartupSnapshot(ctx context.Context) (coreprotocol
 	<-ctx.Done()
 	return coreprotocol.StartupSnapshot{}, ctx.Err()
 }
-func (b blockingStartupOwner) SaveStartup(context.Context, []types.SettingEdit) (types.OnboardingSettings, error) {
-	return types.OnboardingSettings{}, nil
+func (b blockingStartupOwner) SaveStartup(context.Context, []setting.Edit) (setting.Onboarding, error) {
+	return setting.Onboarding{}, nil
 }
 
-func (b blockingStartupOwner) ReadStartupSettings(context.Context) (types.AppSettings, error) {
-	return types.AppSettings{}, nil
+func (b blockingStartupOwner) ReadStartupSettings(context.Context) (setting.App, error) {
+	return setting.App{}, nil
 }
 
 func TestStartupCloseCancelsAndJoinsRead(t *testing.T) {

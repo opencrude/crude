@@ -6,9 +6,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/editor"
-	"crude/types"
+	"crude/types/insight"
 )
 
 // occurrenceDelay lets the caret rest before asking for the occurrences of
@@ -24,8 +24,8 @@ type occurrenceRequest struct {
 	workspace          shellport.Workspace
 	port               shellport.Highlights
 	generation         uint64
-	source             types.InsightSource
-	producer           types.InsightProducer
+	source             insight.Source
+	producer           insight.Producer
 	contextOwner       string
 	contextGeneration  uint64
 	revision           uint64
@@ -34,13 +34,13 @@ type occurrenceRequest struct {
 	ctx                context.Context
 	cancel             context.CancelFunc
 	started, installed bool
-	result             *types.LSPHighlights
+	result             *insight.LSPHighlights
 }
 
 type occurrenceDueMsg struct{ owner *occurrenceRequest }
 type occurrenceResultMsg struct {
 	owner  *occurrenceRequest
-	result types.LSPHighlights
+	result insight.LSPHighlights
 	err    error
 }
 

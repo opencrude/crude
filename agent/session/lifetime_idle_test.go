@@ -9,7 +9,8 @@ import (
 	"time"
 
 	"crude/agent/provider"
-	"crude/types"
+	"crude/types/command"
+	"crude/types/conversation"
 	"crude/workspace/fileio"
 )
 
@@ -83,7 +84,7 @@ func TestIdleLeaseRefusesPendingQueuedMemoryAndAutonomousWorkWithoutMutation(t *
 			if u, err := s.BeginIdleLease(t.Context()); err == nil {
 				u()
 				t.Fatal("busy owner accepted")
-			} else if (mode == "control" || mode == "compaction") && !errors.Is(err, types.ErrIdleSettling) {
+			} else if (mode == "control" || mode == "compaction") && !errors.Is(err, conversation.ErrIdleSettling) {
 				t.Fatalf("finishing admission cannot settle during an explicit stop: %v", err)
 			}
 			if s.idle.fenced || s.memoryJobs.fenced {
@@ -162,12 +163,12 @@ func TestIdleLeaseRacesTurnAndMemoryReservations(t *testing.T) {
 func TestIdleLeaseRefusesAutonomousGoalAndChildWithoutStoppingThem(t *testing.T) {
 	s := idleSession()
 	s.goal.present = true
-	s.goal.record.Goal = types.Goal{Status: types.GoalActive, Objective: "continue accepted work"}
+	s.goal.record.Goal = conversation.Goal{Status: conversation.GoalActive, Objective: "continue accepted work"}
 	if u, err := s.BeginIdleLease(t.Context()); err == nil {
 		u()
 		t.Fatal("autonomous goal treated as idle")
 	}
-	if s.goal.record.Goal.Status != types.GoalActive {
+	if s.goal.record.Goal.Status != conversation.GoalActive {
 		t.Fatal("stop paused the goal")
 	}
 	s.goal.present = false
@@ -201,7 +202,7 @@ func TestIdleLeaseIgnoresRetainedCommandResults(t *testing.T) {
 	defer cancel()
 	for _, test := range []struct {
 		handle, command string
-		want            fileio.AsyncStatus
+		want            command.Status
 	}{
 		{"completed", "exit 0", fileio.AsyncCompleted},
 		{"failed", "exit 7", fileio.AsyncFailed},
@@ -246,12 +247,12 @@ func TestIdleLeaseIgnoresRetainedCommandResults(t *testing.T) {
 }
 
 func TestIdleLeaseIgnoresInactiveGoalsAndPausedLoops(t *testing.T) {
-	for _, status := range []types.GoalStatus{types.GoalPaused, types.GoalBlocked, types.GoalBudgetLimited, types.GoalComplete} {
+	for _, status := range []conversation.GoalStatus{conversation.GoalPaused, conversation.GoalBlocked, conversation.GoalBudgetLimited, conversation.GoalComplete} {
 		t.Run(string(status), func(t *testing.T) {
 			s := idleSession()
 			s.goal.present = true
-			s.goal.record.Goal = types.Goal{Status: status, Objective: "keep saved work"}
-			s.loops = []types.Loop{{ID: "paused", Paused: true}}
+			s.goal.record.Goal = conversation.Goal{Status: status, Objective: "keep saved work"}
+			s.loops = []conversation.Loop{{ID: "paused", Paused: true}}
 			if goals, loops := s.AutonomousWork(); goals != 0 || loops != 0 {
 				t.Fatalf("inactive state counts as autonomous work: goals=%d loops=%d", goals, loops)
 			}

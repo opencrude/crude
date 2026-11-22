@@ -7,12 +7,12 @@ import (
 	"slices"
 
 	"crude/agent/session"
-	ttypes "crude/types"
+	"crude/types/setting"
 )
 
 // SaveAccountChange writes one explicit account operation through the app's
 // atomic config owner. An unwired workspace must fail, never claim success.
-func (w *Workspace) SaveAccountChange(change ttypes.AccountChange) error {
+func (w *Workspace) SaveAccountChange(change setting.AccountChange) error {
 	if w.OnAppAccountChange == nil {
 		return fmt.Errorf("application account persistence is unavailable")
 	}
@@ -22,12 +22,12 @@ func (w *Workspace) SaveAccountChange(change ttypes.AccountChange) error {
 const workspaceSettingsKey = "workspace_settings"
 
 // SetAppDefaults stores the application-layer snapshot from config.json.
-func (w *Workspace) SetAppDefaults(s ttypes.AppSettings) {
-	ttypes.ApplyAppDefaults(&s)
-	s.Analysis = ttypes.DefaultWorkspaceAnalysisSettings()
-	s.Prediction = ttypes.DefaultWorkspacePredictionSettings()
+func (w *Workspace) SetAppDefaults(s setting.App) {
+	setting.ApplyAppDefaults(&s)
+	s.Analysis = setting.DefaultWorkspaceAnalysis()
+	s.Prediction = setting.DefaultWorkspacePrediction()
 	routesChanged := !slices.Equal(w.appDefaults.Capabilities.WebSearchRoutes, s.Capabilities.WebSearchRoutes)
-	w.appDefaults = ttypes.CloneAppSettings(s)
+	w.appDefaults = setting.CloneApp(s)
 	if routesChanged {
 		// The application publishes its search methods to every retained
 		// workspace. Updating them must not reconfigure transports or inspect
@@ -38,17 +38,17 @@ func (w *Workspace) SetAppDefaults(s ttypes.AppSettings) {
 }
 
 // AppDefaults returns the application-layer settings (no workspace overlay).
-func (w *Workspace) AppDefaults() ttypes.AppSettings {
-	s := ttypes.CloneAppSettings(w.appDefaults)
+func (w *Workspace) AppDefaults() setting.App {
+	s := setting.CloneApp(w.appDefaults)
 	s.Accounts = w.AllAccounts()
-	ttypes.ApplyAppDefaults(&s)
-	s.Analysis = ttypes.DefaultWorkspaceAnalysisSettings()
-	s.Prediction = ttypes.DefaultWorkspacePredictionSettings()
+	setting.ApplyAppDefaults(&s)
+	s.Analysis = setting.DefaultWorkspaceAnalysis()
+	s.Prediction = setting.DefaultWorkspacePrediction()
 	return s
 }
 
 // EffectiveAppSettings merges application defaults with workspace overrides.
-func (w *Workspace) EffectiveAppSettings() ttypes.AppSettings {
+func (w *Workspace) EffectiveAppSettings() setting.App {
 	effective := boundWorkspaceSettings(w.AppDefaults(), w.LoadWorkspaceOverrides(), w.analysisRootIdentity)
 	if effective.Analysis.Trusted() && w.LSPMgr != nil {
 		effective.Analysis = w.LSPMgr.AnalysisPolicy()
@@ -59,9 +59,9 @@ func (w *Workspace) EffectiveAppSettings() ttypes.AppSettings {
 // EffectiveAnalysisSettings is EffectiveAppSettings().Analysis without
 // merging every other setting: UI ticks read Trust, and the full merge clones
 // the language catalog.
-func (w *Workspace) EffectiveAnalysisSettings() ttypes.WorkspaceAnalysisSettings {
+func (w *Workspace) EffectiveAnalysisSettings() setting.WorkspaceAnalysis {
 	overrides := w.LoadWorkspaceOverrides()
-	analysis := boundAnalysis(ttypes.WorkspaceAnalysisChoice(overrides), overrides, w.analysisRootIdentity)
+	analysis := boundAnalysis(setting.WorkspaceAnalysisChoice(overrides), overrides, w.analysisRootIdentity)
 	if analysis.Trusted() && w.LSPMgr != nil {
 		analysis = w.LSPMgr.AnalysisPolicy()
 	}
@@ -72,16 +72,16 @@ func (w *Workspace) EffectiveAnalysisSettings() ttypes.WorkspaceAnalysisSettings
 // immutable memory projection. It performs no storage I/O or writer locking.
 // Saves store only explicit choices; the stored overlay is used as is,
 // including explicit values equal to their parent.
-func (w *Workspace) LoadWorkspaceOverrides() ttypes.WorkspaceOverrides {
+func (w *Workspace) LoadWorkspaceOverrides() setting.WorkspaceOverrides {
 	if w == nil || w.WorkspaceDB == nil {
-		return ttypes.WorkspaceOverrides{}
+		return setting.WorkspaceOverrides{}
 	}
-	var overrides ttypes.WorkspaceOverrides
-	if raw := w.WorkspaceDB.GetSetting(workspaceSettingsKey); raw != "" {
+	var overrides setting.WorkspaceOverrides
+	if raw := w.WorkspaceDB.Setting(workspaceSettingsKey); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &overrides); err != nil {
 			// A projection read must remain memory-only, including malformed rows.
 			// Do not synchronously write a log from the actor on every observation.
-			return ttypes.WorkspaceOverrides{}
+			return setting.WorkspaceOverrides{}
 		}
 	}
 	return overrides
@@ -89,7 +89,7 @@ func (w *Workspace) LoadWorkspaceOverrides() ttypes.WorkspaceOverrides {
 
 // SaveWorkspaceSettings persists sparse workspace overrides and reapplies
 // the effective layer to live sessions and the LSP manager.
-func (w *Workspace) SaveWorkspaceSettings(overrides ttypes.WorkspaceOverrides) error {
+func (w *Workspace) SaveWorkspaceSettings(overrides setting.WorkspaceOverrides) error {
 	if w.WorkspaceDB != nil {
 		w.WorkspaceDB.settingsWriteMu.Lock()
 		defer w.WorkspaceDB.settingsWriteMu.Unlock()
@@ -99,7 +99,7 @@ func (w *Workspace) SaveWorkspaceSettings(overrides ttypes.WorkspaceOverrides) e
 	current := w.LoadWorkspaceOverrides()
 	if w.WorkspaceDB != nil {
 		if row := w.WorkspaceDB.committedSettingsRow(); row != "" {
-			var checked ttypes.WorkspaceOverrides
+			var checked setting.WorkspaceOverrides
 			if err := json.Unmarshal([]byte(row), &checked); err != nil {
 				return fmt.Errorf("invalid stored workspace settings: %w", err)
 			}
@@ -115,13 +115,13 @@ func (w *Workspace) SaveWorkspaceSettings(overrides ttypes.WorkspaceOverrides) e
 	overrides.PredictionRootIdentity, overrides.PredictionConnectionIdentity, overrides.PredictionGrantID = current.PredictionRootIdentity, current.PredictionConnectionIdentity, current.PredictionGrantID
 	overrides.Analysis, overrides.AnalysisRootIdentity = current.Analysis, current.AnalysisRootIdentity
 	if overrides.Analysis != nil {
-		if err := ttypes.ValidateAnalysisSettingEdits(ttypes.SettingsScopeWorkspace,
-			[]ttypes.SettingEdit{{Path: []string{"analysis"}, After: overrides.Analysis}}); err != nil {
+		if err := setting.ValidateAnalysisEdits(setting.ScopeWorkspace,
+			[]setting.Edit{{Path: []string{"analysis"}, After: overrides.Analysis}}); err != nil {
 			return err
 		}
 	}
 	if w.WorkspaceDB != nil {
-		data, err := ttypes.MarshalWorkspaceOverridesPreservingToolDecisions(overrides, current.Capabilities)
+		data, err := setting.MarshalWorkspaceOverridesPreservingToolDecisions(overrides, current.Capabilities)
 		if err != nil {
 			return err
 		}
@@ -139,17 +139,17 @@ func (w *Workspace) SaveWorkspaceSettings(overrides ttypes.WorkspaceOverrides) e
 // SaveAppSettings persists application-layer settings to config.json via
 // OnAppSettingsSave. It does not write workspace.db; workspace overrides
 // stay on SaveWorkspaceSettings.
-func (w *Workspace) SaveAppSettings(s ttypes.AppSettings) error {
+func (w *Workspace) SaveAppSettings(s setting.App) error {
 	if len(s.Capabilities.ProjectToolDecisions) != 0 {
 		return fmt.Errorf("project tool decisions belong to Workspace setup")
 	}
-	if s.Analysis.Trust != ttypes.AnalysisUndecided {
+	if s.Analysis.Trust != setting.AnalysisUndecided {
 		return fmt.Errorf("analysis trust belongs to Workspace settings")
 	}
-	if s.Prediction != (ttypes.WorkspacePredictionSettings{}) && s.Prediction != ttypes.DefaultWorkspacePredictionSettings() {
+	if s.Prediction != (setting.WorkspacePrediction{}) && s.Prediction != setting.DefaultWorkspacePrediction() {
 		return fmt.Errorf("prediction consent belongs to Workspace settings")
 	}
-	ttypes.ApplyAppDefaults(&s)
+	setting.ApplyAppDefaults(&s)
 	if w.OnAppSettingsSave != nil {
 		persisted, err := w.OnAppSettingsSave(s)
 		if err != nil {
@@ -179,7 +179,7 @@ func (w *Workspace) applyEffectiveSettings() {
 	w.applySettingsProjection(effective)
 }
 
-func (w *Workspace) applySettingsProjection(effective ttypes.AppSettings) {
+func (w *Workspace) applySettingsProjection(effective setting.App) {
 	w.applyProviderSettings(effective)
 	defer w.configureSuggestions(effective)
 	if w.LSPMgr != nil {
@@ -202,7 +202,7 @@ func (w *Workspace) applySettingsProjection(effective ttypes.AppSettings) {
 		if frontendSession == nil || frontendSession.backend == nil {
 			continue
 		}
-		frontendSession.backend.UpdateWorkspaceDefaults(ttypes.AppSettings{
+		frontendSession.backend.UpdateWorkspaceDefaults(setting.App{
 			Agents:       effective.Agents,
 			Accounts:     effective.Accounts,
 			Memory:       effective.Memory,

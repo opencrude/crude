@@ -4,14 +4,14 @@ import (
 	"testing"
 
 	"crude/tui/ui"
-	roottypes "crude/types"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
 func TestNewTerminalOpensWhereSettingsPlaceIt(t *testing.T) {
 	app, ws := newRealShellApp(t)
 	defaults := ws.AppDefaults()
-	defaults.Terminal.Placement = roottypes.TerminalPlacementFloating
+	defaults.Terminal.Placement = setting.TerminalPlacementFloating
 	ws.SetAppDefaults(defaults)
 	created, ok := app.openNewTerminal()().(terminalCreatedMsg)
 	if !ok || created.err != nil {

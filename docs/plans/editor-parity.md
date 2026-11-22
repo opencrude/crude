@@ -119,7 +119,7 @@ language-aware actions.
 
 **Owners:** `tui/editor/coords.go`, `tui/editor/source_geometry.go`,
 `tui/editor/inline_projection.go`, `tui/editor/buffer.go`,
-`tui/viewmodel/editor_save.go`, `types/types.go`, existing preferences plumbing.
+`tui/viewmodel/editor_save.go`, `types/setting/setting.go`, existing preferences plumbing.
 
 Minimap, indent guides and Word wrap now use the shared scroll and row projection.
 Line numbers, Syntax colors, Show whitespace, Indent guides and Minimap reach
@@ -168,7 +168,7 @@ visible setting actually changes its stated behavior and reset restores inherita
 ## Folding and wrapped lines: one row projection
 
 **Owners:** `tui/editor/render.go`, `tui/editor/chrome.go`,
-`tui/editor/pointer.go`, `tui/editor/movement.go`, `syntax/`, `types/syntax`,
+`tui/editor/pointer.go`, `tui/editor/movement.go`, `insight/syntax/`, `types/syntaxdata`,
 `workspace/insight.go`, and the established LSP request/transport owners.
 
 Implemented: the source-line/visible-row index combines wrapping and folding.
@@ -196,7 +196,7 @@ an all-editor-parity claim.
 After a restart the user reported three regressions. (1) Line numbers were gone:
 the preference had no consumer until display preferences went live, and the
 application layer decoded an absent `line_numbers` as off. Stored editor leaves
-now decode onto `types.DefaultEditorSettings` (numbers on), and application Reset
+now decode onto `setting.DefaultEditor` (numbers on), and application Reset
 uses the same defaults. (2) The view jumped on fold/unfold: every toggle ran the
 caret-reveal path, so a gutter click scrolled back to an offscreen caret and the
 top row lost its wrapped offset. A fold change now keeps the top row and only
@@ -267,7 +267,7 @@ pass/fail criteria for a bundled library.
 ## Completion and signature continuity
 
 **Owners:** existing completion and signature coordinator files in
-`tui/viewmodel/`, `workspace/lsp_completion.go`, `lsp/client/`.
+`tui/viewmodel/`, `workspace/lsp_completion.go`, `lsp/lspclient/`.
 
 - Keep parameter help anchored while typing arguments, changing overloads and
   moving between fields. Refresh on provider-advertised trigger/retrigger input
@@ -308,7 +308,7 @@ screen. Assert the actual displayed signature, not only that intent was queued.
 ## Structural editing and multiple selections
 
 **Owners:** `tui/editor/editops.go`, `tui/editor/movement.go`, source geometry,
-`syntax/`, catalog data, existing document transaction and author undo owners.
+`insight/syntax/`, catalog data, existing document transaction and author undo owners.
 
 - Matching-delimiter paint and navigation are implemented through exact syntax
   results. Smart Enter and closing-delimiter dedent now use VS Code configuration
@@ -340,7 +340,7 @@ overlapping cursors, one-step Undo, peer edits, cancellation and render/hit agre
 ## Navigation, semantic presentation and project editing
 
 **Owners:** existing workspace LSP families, `third_party/powernap/pkg/lsp/`,
-`lsp/client/`, `types/`, `core/port/`, native editor-help windows and review owner.
+`lsp/lspclient/`, `types/`, `core/shellport/`, native editor-help windows and review owner.
 
 Semantic colors negotiate full/range/delta support, validate source-qualified
 legends and bounds, recover a rejected delta, and reproject the theme without a

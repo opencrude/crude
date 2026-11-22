@@ -8,11 +8,11 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/port"
-	"crude/terminalvt"
+	"crude/core/shellport"
+	"crude/internal/terminalvt"
 	"crude/tui/screens/shellterm"
 	"crude/tui/ui"
-	roottypes "crude/types"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -303,7 +303,7 @@ func (m *App) applyTerminalCreated(msg terminalCreatedMsg) tea.Cmd {
 	m.terminalLeases[msg.info.ID] = msg.lease
 	screen := m.ensureTermScreen(info.ID, info.Title)
 	screen.SetControlled(true)
-	if m.ws.LoadAppSettings().Terminal.Placement == roottypes.TerminalPlacementFloating {
+	if m.ws.LoadAppSettings().Terminal.Placement == setting.TerminalPlacementFloating {
 		m.floatTerminalInfo(info)
 	} else {
 		m.dockTerminalInfo(info)

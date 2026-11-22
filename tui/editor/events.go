@@ -12,7 +12,8 @@ import (
 // ClipboardPasteMsg asks the shell to read for this exact editor.
 type ClipboardPasteMsg struct{ Editor *Editor }
 
-type EditorCloseMsg struct {
+// CloseMsg asks the shell to close the editor of a file path.
+type CloseMsg struct {
 	FilePath string
 }
 
@@ -609,6 +610,6 @@ func isHistoryKey(key tea.KeyPressMsg) bool {
 
 func (e *Editor) closeCmd() tea.Cmd {
 	return func() tea.Msg {
-		return EditorCloseMsg{FilePath: e.filePath}
+		return CloseMsg{FilePath: e.filePath}
 	}
 }

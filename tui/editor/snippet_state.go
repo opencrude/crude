@@ -1,5 +1,3 @@
-// Editor-private numeric snippet anchors and mirror planning. Text and history
-// remain owned by the existing buffer and edit transaction.
 package editor
 
 import (
@@ -9,7 +7,7 @@ import (
 	"unicode/utf8"
 
 	"crude/text/snippet"
-	"crude/types"
+	"crude/types/insight"
 )
 
 var errSnippetRetired = errors.New("snippet interaction must retire")
@@ -31,7 +29,7 @@ type snippetSession struct {
 	active      int
 }
 
-func newSnippetSession(text string, plan *types.CompletionSnippet, offset int) (*snippetSession, error) {
+func newSnippetSession(text string, plan *insight.CompletionSnippet, offset int) (*snippetSession, error) {
 	if offset < 0 || offset > int(^uint(0)>>1)-len(text) {
 		return nil, errSnippetRetired
 	}

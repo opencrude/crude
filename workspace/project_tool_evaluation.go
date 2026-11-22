@@ -12,7 +12,7 @@ import (
 	"crude/agent/toolstore"
 	"crude/insight/governor"
 	"crude/internal/fileuri"
-	"crude/types"
+	"crude/types/setting"
 )
 
 const (
@@ -50,7 +50,7 @@ type projectToolEvaluationRetained struct {
 // independent inert root. It reads no project source and supplies no invented
 // semantic expectations. Start owns the actual framed protocol handshake.
 func evaluateProjectTool(ctx context.Context, store projectToolExecutableStore, runtime LSPRuntime,
-	spec types.LSPServerSpec, g *governor.Governor, owner governor.Owner, limit int,
+	spec setting.LSPServerSpec, g *governor.Governor, owner governor.Owner, limit int,
 	admit func(context.Context) error) (status string, retained *projectToolEvaluationRetained, err error) {
 	status = toolEvaluationFailed
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -121,7 +121,7 @@ func evaluateProjectTool(ctx context.Context, store projectToolExecutableStore, 
 		return
 	}
 	// Never pass project-bound configuration scopes into the independent root.
-	spec = types.CloneLSPServerSpec(spec)
+	spec = setting.CloneLSPServerSpec(spec)
 	spec.ConfigurationScopes = nil
 	if err = admit(ctx); err != nil {
 		return
@@ -170,7 +170,7 @@ func evaluateProjectTool(ctx context.Context, store projectToolExecutableStore, 
 func (o *ProjectToolSetupOwner) evaluate(ctx context.Context, authority *projectToolSetupAuthority, id string, tool toolstore.Tool, executableStore projectToolExecutableStore) (string, error) {
 	p, m := authority.p, authority.p.manager
 	m.mu.Lock()
-	settings := types.CloneLSPSettings(m.settings)
+	settings := setting.CloneLSP(m.settings)
 	runtime, g := m.runtime, m.analysisGovernor
 	owner := governor.Owner{Workspace: m.analysisWorkspace, Generation: m.analysisGeneration}
 	limit := m.settings.MaxServers

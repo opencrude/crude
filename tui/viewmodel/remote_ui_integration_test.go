@@ -8,12 +8,12 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/core/port"
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
 	"crude/core/remoteconn"
+	"crude/core/shellport"
 	"crude/tui/screens/connectionpopover"
+	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/screens/shellheader"
-	settingsui "crude/tui/settings"
 	"crude/tui/ui"
 	"github.com/charmbracelet/x/ansi"
 )

@@ -11,13 +11,13 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/editor"
 	"crude/tui/filetree"
-	findinfiles "crude/tui/screens/findinfiles"
+	"crude/tui/screens/findinfiles"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	ttypes "crude/types"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -34,7 +34,7 @@ func newWorkspaceSwitchLifecycleApp(t *testing.T, root string) *App {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 
-	ws := workspace.NewWorkspace(root, "test-model", "tester", ttypes.Settings{}, workspaceSwitchLifecycleLogger{})
+	ws := workspace.NewWorkspace(root, "test-model", "tester", setting.Settings{}, workspaceSwitchLifecycleLogger{})
 	app := NewApp(shellport.Local(ws), nil)
 	app.width = 100
 	app.height = 32
@@ -211,9 +211,9 @@ func TestWorkspaceSwitchAppliesTargetThemeAndClearsProjectDraft(t *testing.T) {
 	app.ActiveSession = &workspace.Session{SessionID: "old-selected-session"}
 
 	target := workspace.NewWorkspace(
-		newRoot, "test-model", "tester", ttypes.Settings{}, workspaceSwitchLifecycleLogger{},
+		newRoot, "test-model", "tester", setting.Settings{}, workspaceSwitchLifecycleLogger{},
 	)
-	if err := target.SaveWorkspaceSettings(ttypes.WorkspaceOverrides{
+	if err := target.SaveWorkspaceSettings(setting.WorkspaceOverrides{
 		Theme: json.RawMessage(`{"preset":"light"}`),
 	}); err != nil {
 		t.Fatal(err)
@@ -377,7 +377,7 @@ func TestWorkspaceSwitchClosesEditorsAndClearsProjectProjections(t *testing.T) {
 	oldSessionRegistry := app.sessionProjections
 	oldSession := &workspace.Session{
 		SessionID: "old-session",
-		Settings:  workspace.NewSessionSettingsState(ttypes.Settings{}, ttypes.Settings{}, nil),
+		Settings:  workspace.NewSessionSettingsState(setting.Settings{}, setting.Settings{}, nil),
 	}
 	oldSessionProjection := oldSessionRegistry.Get(oldSession)
 	oldSubPaneRegistry := app.subPaneProjections

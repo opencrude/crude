@@ -70,7 +70,7 @@
     },
     {
       "id": "settings-search-string",
-      "path": "tui/settings/settings.go",
+      "path": "tui/screens/settingspages/settings.go",
       "status": "migrated",
       "note": "TextField paint via settings screen Host"
     },

@@ -11,9 +11,9 @@ import (
 	"crude/agent/provider"
 	"crude/agent/session"
 	"crude/agent/worktree"
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
 	"crude/types/control"
+	"crude/types/setting"
 	"crude/workspace"
 	"crude/workspace/document"
 )
@@ -41,7 +41,7 @@ func controlExecutionFixture(t *testing.T) *actor {
 	if err := os.WriteFile(filepath.Join(root, "disk.txt"), []byte("human dirty\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ws := workspace.NewWorkspace(root, "", "test", types.Settings{}, coreTestLogger{})
+	ws := workspace.NewWorkspace(root, "", "test", setting.Settings{}, coreTestLogger{})
 	t.Cleanup(ws.Close)
 	cfg := &session.Config{Accounts: map[string]provider.Account{"one": {ID: "one", ProviderID: "openai", APIKey: "secret", Connection: provider.Template{Name: "test", AuthType: provider.AuthBearer, APIStandard: "openai", ProviderURL: "https://example.invalid"}}}, Agents: session.AgentsConfig{ActiveProfile: "default", Profiles: map[string]session.ProfileConfig{"default": {Categories: map[string]session.CategoryConfig{"default": {AccountID: "one", Model: "base"}, "crafter": {AccountID: "one", Model: "role-base"}}}}}}
 	if _, err := ws.CreateSession(cfg, t.TempDir()); err != nil {

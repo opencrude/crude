@@ -7,7 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/agent/provider"
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/editor"
 	"crude/tui/input"
 	"crude/tui/rendering"
@@ -16,8 +16,8 @@ import (
 	"crude/tui/screens/shellterm"
 	"crude/tui/screens/shelltree"
 	"crude/tui/ui"
-	wm "crude/tui/wm"
-	"crude/types"
+	"crude/tui/wm"
+	"crude/types/insight"
 	"crude/types/recovery"
 	"crude/workspace"
 )
@@ -443,13 +443,13 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.openGoToLine()
 				return m, nil
 			case "lsp.definition":
-				return m, m.requestNavigationCmd(types.LSPNavigationDefinition)
+				return m, m.requestNavigationCmd(insight.LSPNavigationDefinition)
 			case "lsp.typeDefinition":
-				return m, m.requestNavigationCmd(types.LSPNavigationTypeDefinition)
+				return m, m.requestNavigationCmd(insight.LSPNavigationTypeDefinition)
 			case "lsp.implementation":
-				return m, m.requestNavigationCmd(types.LSPNavigationImplementation)
+				return m, m.requestNavigationCmd(insight.LSPNavigationImplementation)
 			case "lsp.references":
-				return m, m.requestNavigationCmd(types.LSPNavigationReferences)
+				return m, m.requestNavigationCmd(insight.LSPNavigationReferences)
 			case "lsp.signature":
 				return m, m.requestSignatureHelpCmd()
 			case "lsp.codeActions":
@@ -1094,7 +1094,7 @@ type lspDocumentSymbolsResultMsg struct {
 	revision   uint64
 	generation uint64
 	filePath   string
-	symbols    []editor.LSPSymbol
+	symbols    []insight.LSPSymbol
 }
 
 // lspRenameResultMsg is the response to a "rename" request.
@@ -1227,7 +1227,7 @@ func (m *App) handleRenameResult(msg lspRenameResultMsg) tea.Cmd {
 
 // countSymbols returns the total number of symbols in a tree, including
 // nested children. Used for the outline panel header.
-func countSymbols(syms []editor.LSPSymbol) int {
+func countSymbols(syms []insight.LSPSymbol) int {
 	n := 0
 	for _, s := range syms {
 		n++
@@ -1242,15 +1242,15 @@ const outlinePopupID = "outline-popup"
 
 type outlineRow = OutlineRow
 
-func (m *App) showOutlinePopup(syms []editor.LSPSymbol) {
+func (m *App) showOutlinePopup(syms []insight.LSPSymbol) {
 	if m.windowManager == nil {
 		return
 	}
 
 	// Flatten the symbol tree (preserving depth for indentation).
 	var flat []outlineRow
-	var walk func(syms []editor.LSPSymbol, depth int)
-	walk = func(syms []editor.LSPSymbol, depth int) {
+	var walk func(syms []insight.LSPSymbol, depth int)
+	walk = func(syms []insight.LSPSymbol, depth int) {
 		for _, s := range syms {
 			flat = append(flat, outlineRow{Sym: s, Depth: depth})
 			walk(s.Children, depth+1)

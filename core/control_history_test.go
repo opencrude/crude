@@ -13,7 +13,7 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/worktree"
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
 	"crude/types/control"
 	"crude/workspace"
 	"crude/workspace/localhistory"

@@ -5,7 +5,7 @@ import (
 	"errors"
 
 	"crude/agent/session"
-	"crude/types"
+	"crude/types/setting"
 	"crude/workspace/fileio"
 )
 
@@ -17,8 +17,8 @@ type predictionPreferenceBinding struct {
 	connectionErr error
 }
 
-func predictionEdits(edits []types.SettingEdit) []types.SettingEdit {
-	var result []types.SettingEdit
+func predictionEdits(edits []setting.Edit) []setting.Edit {
+	var result []setting.Edit
 	for _, edit := range edits {
 		if len(edit.Path) > 0 && edit.Path[0] == "prediction" {
 			result = append(result, edit)
@@ -30,14 +30,14 @@ func predictionEdits(edits []types.SettingEdit) []types.SettingEdit {
 // Called within the single workspace-preference transaction after patching the
 // latest committed overlay. There is deliberately no application/session grant,
 // caller-supplied identity, provider request, endpoint probe or inferred budget.
-func bindPredictionPreferences(overrides *types.WorkspaceOverrides, edits []types.SettingEdit, binding predictionPreferenceBinding, analysisRoot string) error {
+func bindPredictionPreferences(overrides *setting.WorkspaceOverrides, edits []setting.Edit, binding predictionPreferenceBinding, analysisRoot string) error {
 	if len(predictionEdits(edits)) == 0 {
 		return nil
 	}
-	choice := types.DefaultWorkspacePredictionSettings()
+	choice := setting.DefaultWorkspacePrediction()
 	if len(overrides.Prediction) != 0 {
 		var err error
-		choice, err = types.DecodeWorkspacePredictionSettings(overrides.Prediction)
+		choice, err = setting.DecodeWorkspacePrediction(overrides.Prediction)
 		if err != nil {
 			return err
 		}
@@ -45,7 +45,7 @@ func bindPredictionPreferences(overrides *types.WorkspaceOverrides, edits []type
 	overrides.PredictionRootIdentity = ""
 	overrides.PredictionConnectionIdentity = ""
 	overrides.PredictionGrantID = ""
-	if choice.Mode == types.PredictionOff {
+	if choice.Mode == setting.PredictionOff {
 		return nil
 	}
 	if binding.connectionErr != nil {

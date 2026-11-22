@@ -3,7 +3,8 @@ package workspace
 import (
 	"bytes"
 	"context"
-	"crude/text/encoding"
+	"crude/text/textencoding"
+	"crude/types/insight"
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
@@ -15,7 +16,6 @@ import (
 	"sort"
 	"sync"
 
-	"crude/types"
 	"crude/workspace/document"
 	"crude/workspace/fileio"
 )
@@ -966,7 +966,7 @@ func (s *DocumentService) Format(ctx context.Context, owner document.Owner, id, 
 // OpenDocumentEvidence is the core's accepted named working set, not a shell's
 // open-tab list. Private buffers, authors, viewport and text are not exported.
 type OpenDocumentEvidence struct {
-	Source   types.InsightSource
+	Source   insight.Source
 	Dirty    bool
 	Conflict bool
 }
@@ -986,20 +986,20 @@ func (s *DocumentService) InspectOpenDocuments() ([]OpenDocumentEvidence, bool) 
 		if b.Path == "" || len(d.owners) == 0 {
 			continue
 		}
-		out = append(out, OpenDocumentEvidence{Source: types.InsightSource{WorkspaceGeneration: b.AnalysisGeneration,
-			Lifetime: b.AnalysisLifetime, DocumentID: b.ID, Path: b.Path, Revision: b.Revision, Kind: types.InsightSourceCanonical}, Dirty: b.Dirty, Conflict: b.Conflict})
+		out = append(out, OpenDocumentEvidence{Source: insight.Source{WorkspaceGeneration: b.AnalysisGeneration,
+			Lifetime: b.AnalysisLifetime, DocumentID: b.ID, Path: b.Path, Revision: b.Revision, Kind: insight.SourceCanonical}, Dirty: b.Dirty, Conflict: b.Conflict})
 	}
 	return out, true
 }
 
-func (s *DocumentService) workingSetBrief(workDir string) *types.WorkingSetEvidence {
+func (s *DocumentService) workingSetBrief(workDir string) *insight.WorkingSetEvidence {
 	// An isolated run must not treat the logical workspace's files as its
 	// own open checkout. A headless logical run can see accepted named files.
 	if workDir != s.root {
 		return nil
 	}
 	docs, available := s.InspectOpenDocuments()
-	brief := &types.WorkingSetEvidence{Available: available, Open: []types.WorkingDocument{}}
+	brief := &insight.WorkingSetEvidence{Available: available, Open: []insight.WorkingDocument{}}
 	sort.Slice(docs, func(i, j int) bool { return docs[i].Source.Path < docs[j].Source.Path })
 	for _, doc := range docs {
 		if len(brief.Open) == 6 {
@@ -1011,7 +1011,7 @@ func (s *DocumentService) workingSetBrief(workDir string) *types.WorkingSetEvide
 			brief.Omitted++
 			continue
 		}
-		brief.Open = append(brief.Open, types.WorkingDocument{Path: filepath.ToSlash(path), Revision: doc.Source.Revision, Dirty: doc.Dirty})
+		brief.Open = append(brief.Open, insight.WorkingDocument{Path: filepath.ToSlash(path), Revision: doc.Source.Revision, Dirty: doc.Dirty})
 	}
 	return brief
 }

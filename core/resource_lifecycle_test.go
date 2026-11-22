@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"crude/core/client"
-	"crude/core/protocol"
-	"crude/terminalvt"
-	"crude/types"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
+	"crude/internal/terminalvt"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -121,7 +121,7 @@ func resourceRuntime(t *testing.T) (*Runtime, string) {
 	setCoreTestHome(t, t.TempDir())
 	root := t.TempDir()
 	r, err := New(func(root string) (*workspace.Workspace, error) {
-		return workspace.NewWorkspace(root, "", "tester", types.Settings{}, coreTestLogger{}), nil
+		return workspace.NewWorkspace(root, "", "tester", setting.Settings{}, coreTestLogger{}), nil
 	}, t.TempDir()+"/receipts.db")
 	if err != nil {
 		t.Fatal(err)

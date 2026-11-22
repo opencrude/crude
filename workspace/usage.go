@@ -6,19 +6,19 @@ import (
 	"time"
 
 	"crude/agent/sessiondb"
-	ttypes "crude/types"
 	"crude/types/accounting"
+	"crude/types/statuscenter"
 )
 
 type usageCacheKey struct {
 	agentID string
-	scope   ttypes.UsageScope
+	scope   statuscenter.UsageScope
 }
 
-func (w *Workspace) recordAgentUsage(agentID string, data any) (ttypes.UsageSummary, bool) {
+func (w *Workspace) recordAgentUsage(agentID string, data any) (statuscenter.UsageSummary, bool) {
 	sess := w.sessionForAgent(agentID)
 	if sess == nil {
-		return ttypes.UsageSummary{}, false
+		return statuscenter.UsageSummary{}, false
 	}
 	parentID := ""
 	if node := w.AgentMgr.Get(agentID); node != nil && node.Parent != nil {
@@ -26,7 +26,7 @@ func (w *Workspace) recordAgentUsage(agentID string, data any) (ttypes.UsageSumm
 	}
 	record, ok := sessiondb.UsageRecordFromEvent(data, sess.SessionID, agentID, parentID, "")
 	if !ok {
-		return ttypes.UsageSummary{}, false
+		return statuscenter.UsageSummary{}, false
 	}
 	sess.usageMu.Lock()
 	if sess.usageRecords == nil {
@@ -35,27 +35,27 @@ func (w *Workspace) recordAgentUsage(agentID string, data any) (ttypes.UsageSumm
 	previous := sess.usageRecords[record.RequestID]
 	if previous.UpdatedAt >= record.UpdatedAt {
 		sess.usageMu.Unlock()
-		return w.UsageSummary(agentID, ttypes.UsageThisAgent)
+		return w.UsageSummary(agentID, statuscenter.UsageThisAgent)
 	}
 	if previous.Outcome.Known() {
 		record.Outcome = previous.Outcome
 	}
 	sess.usageRecords[record.RequestID] = record
-	sess.usageCache = make(map[usageCacheKey]ttypes.UsageSummary)
+	sess.usageCache = make(map[usageCacheKey]statuscenter.UsageSummary)
 	sess.usageVersion++
 	sess.usageMu.Unlock()
 	if w.registryCostWriter != nil && sess.SessionID != "" {
-		total, _ := w.UsageSummary(agentID, ttypes.UsageSession)
+		total, _ := w.UsageSummary(agentID, statuscenter.UsageSession)
 		w.registryCostWriter.Enqueue(sess.SessionID, total.Cost.USD)
 	}
-	return w.UsageSummary(agentID, ttypes.UsageThisAgent)
+	return w.UsageSummary(agentID, statuscenter.UsageThisAgent)
 }
 
 // UsageSummary returns one explicitly scoped, non-overlapping rollup.
-func (w *Workspace) UsageSummary(agentID string, scope ttypes.UsageScope) (ttypes.UsageSummary, bool) {
+func (w *Workspace) UsageSummary(agentID string, scope statuscenter.UsageScope) (statuscenter.UsageSummary, bool) {
 	sess := w.sessionForAgent(agentID)
 	if sess == nil {
-		return ttypes.UsageSummary{}, false
+		return statuscenter.UsageSummary{}, false
 	}
 	cacheKey := usageCacheKey{agentID: agentID, scope: scope}
 	sess.usageMu.RLock()
@@ -71,11 +71,11 @@ func (w *Workspace) UsageSummary(agentID string, scope ttypes.UsageScope) (ttype
 	sess.usageMu.RUnlock()
 	selected := make(map[string]bool)
 	switch scope {
-	case ttypes.UsageSession:
+	case statuscenter.UsageSession:
 		for id := range records {
 			selected[id] = true
 		}
-	case ttypes.UsageSubtree:
+	case statuscenter.UsageSubtree:
 		parents := make(map[string]string)
 		for _, record := range records {
 			parents[record.AgentID] = record.ParentAgentID
@@ -90,7 +90,7 @@ func (w *Workspace) UsageSummary(agentID string, scope ttypes.UsageScope) (ttype
 				seen[owner] = true
 			}
 		}
-	case ttypes.UsageAuxiliary:
+	case statuscenter.UsageAuxiliary:
 		for id, record := range records {
 			selected[id] = record.AgentID == "" || len(record.AgentID) >= 4 && record.AgentID[:4] == "aux:"
 		}
@@ -118,7 +118,7 @@ func (w *Workspace) UsageSummary(agentID string, scope ttypes.UsageScope) (ttype
 	summary := summarizeUsage(scoped, agentID, scope)
 	for key, records := range models {
 		model := summarizeUsage(records, agentID, scope)
-		summary.Models = append(summary.Models, ttypes.ModelUsage{ModelID: key.model, ProviderID: key.provider, AccountID: key.account, Turns: model.Turns, TurnsKnown: model.TurnsKnown, AgentTurns: model.AgentTurns, Requests: model.Requests, Cost: model.Cost})
+		summary.Models = append(summary.Models, statuscenter.ModelUsage{ModelID: key.model, ProviderID: key.provider, AccountID: key.account, Turns: model.Turns, TurnsKnown: model.TurnsKnown, AgentTurns: model.AgentTurns, Requests: model.Requests, Cost: model.Cost})
 	}
 	sort.Slice(summary.Models, func(i, j int) bool {
 		a, b := summary.Models[i], summary.Models[j]
@@ -132,7 +132,7 @@ func (w *Workspace) UsageSummary(agentID string, scope ttypes.UsageScope) (ttype
 	})
 	sess.usageMu.Lock()
 	if sess.usageCache == nil {
-		sess.usageCache = make(map[usageCacheKey]ttypes.UsageSummary)
+		sess.usageCache = make(map[usageCacheKey]statuscenter.UsageSummary)
 	}
 	if version == sess.usageVersion {
 		sess.usageCache[cacheKey] = summary
@@ -141,8 +141,8 @@ func (w *Workspace) UsageSummary(agentID string, scope ttypes.UsageScope) (ttype
 	return summary, summary.Requests > 0
 }
 
-func summarizeUsage(records []sessiondb.UsageRecord, agentID string, scope ttypes.UsageScope) ttypes.UsageSummary {
-	summary := ttypes.UsageSummary{Scope: scope, TurnsKnown: true}
+func summarizeUsage(records []sessiondb.UsageRecord, agentID string, scope statuscenter.UsageScope) statuscenter.UsageSummary {
+	summary := statuscenter.UsageSummary{Scope: scope, TurnsKnown: true}
 	type turnKey struct {
 		agent      string
 		generation uint64
@@ -198,18 +198,18 @@ func summarizeUsage(records []sessiondb.UsageRecord, agentID string, scope ttype
 		}
 	}
 	summary.AgentTurns = len(turns)
-	confidence := ttypes.ConfidenceMeasured
+	confidence := statuscenter.ConfidenceMeasured
 	if anyPartial {
-		confidence = ttypes.ConfidencePartial
+		confidence = statuscenter.ConfidencePartial
 	} else if anyEstimated {
-		confidence = ttypes.ConfidenceEstimated
+		confidence = statuscenter.ConfidenceEstimated
 	}
-	summary.InputTotal = ttypes.UsageValue{Value: summary.InputTotal.Value, Known: true, Confidence: confidence}
-	summary.Output = ttypes.UsageValue{Value: summary.Output.Value, Known: true, Confidence: confidence}
+	summary.InputTotal = statuscenter.UsageValue{Value: summary.InputTotal.Value, Known: true, Confidence: confidence}
+	summary.Output = statuscenter.UsageValue{Value: summary.Output.Value, Known: true, Confidence: confidence}
 	summary.CacheRead.Known, summary.CacheWrite.Known, summary.Reasoning.Known = allCacheReadKnown, allCacheWriteKnown, allReasoningKnown
 	summary.CacheRead.Confidence, summary.CacheWrite.Confidence, summary.Reasoning.Confidence = confidence, confidence, confidence
 	if allCacheReadKnown && allCacheWriteKnown {
-		summary.UncachedInput = ttypes.UsageValue{Value: summary.InputTotal.Value - summary.CacheRead.Value - summary.CacheWrite.Value, Known: true, Confidence: confidence}
+		summary.UncachedInput = statuscenter.UsageValue{Value: summary.InputTotal.Value - summary.CacheRead.Value - summary.CacheWrite.Value, Known: true, Confidence: confidence}
 		if summary.UncachedInput.Value < 0 {
 			summary.UncachedInput.Known = false
 		}
@@ -220,22 +220,22 @@ func summarizeUsage(records []sessiondb.UsageRecord, agentID string, scope ttype
 	summary.Cost.Known = allCostKnown
 	summary.Cost.Source = costSource
 	summary.Cost.Confidence = confidence
-	if anyCostEstimated && summary.Cost.Confidence == ttypes.ConfidenceMeasured {
-		summary.Cost.Confidence = ttypes.ConfidenceEstimated
+	if anyCostEstimated && summary.Cost.Confidence == statuscenter.ConfidenceMeasured {
+		summary.Cost.Confidence = statuscenter.ConfidenceEstimated
 	}
 	if !allCostKnown {
-		summary.Cost.Confidence = ttypes.ConfidencePartial
+		summary.Cost.Confidence = statuscenter.ConfidencePartial
 	}
 	if anyUpper && allCostKnown {
-		summary.Cost.Confidence = ttypes.ConfidenceUpperBound
+		summary.Cost.Confidence = statuscenter.ConfidenceUpperBound
 	}
 	return summary
 }
 
-func knownUsage(value int64, known, estimated bool) ttypes.UsageValue {
-	confidence := ttypes.ConfidenceMeasured
+func knownUsage(value int64, known, estimated bool) statuscenter.UsageValue {
+	confidence := statuscenter.ConfidenceMeasured
 	if estimated {
-		confidence = ttypes.ConfidenceEstimated
+		confidence = statuscenter.ConfidenceEstimated
 	}
-	return ttypes.UsageValue{Value: value, Known: known, Confidence: confidence}
+	return statuscenter.UsageValue{Value: value, Known: known, Confidence: confidence}
 }

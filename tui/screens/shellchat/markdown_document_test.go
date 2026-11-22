@@ -8,7 +8,7 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 // Compare visible block edges, not an internal width constant. The shell may
@@ -17,7 +17,7 @@ func TestMarkdownDocumentReadingEdges(t *testing.T) {
 	const body = "English paragraph.\n\n---\n\n## שלום Header\n\nשלום Body"
 	th := theme.DefaultDark()
 	r := chatprojection.NewRenderer(th)
-	r.SyncMessages([]types.ChatMessage{{InternalID: "edges", Role: types.RoleAssistant, Content: body}}, 1, 1)
+	r.SyncMessages([]conversation.ChatMessage{{InternalID: "edges", Role: conversation.RoleAssistant, Content: body}}, 1, 1)
 	s := New(th)
 	host := ui.NewHost(th, s)
 	for _, width := range []int{100, 45, 100} {
@@ -59,7 +59,7 @@ func TestStreamingRTLParagraphKeepsOrderAndEdgeWhenSettled(t *testing.T) {
 	var first, continuation string
 	for _, live := range []bool{true, false} {
 		r := chatprojection.NewRenderer(th)
-		msg := types.ChatMessage{InternalID: "wrap", Role: types.RoleAssistant, Content: body}
+		msg := conversation.ChatMessage{InternalID: "wrap", Role: conversation.RoleAssistant, Content: body}
 		r.AppendMessage(msg)
 		r.SetStreaming(live)
 		buf := paintMarkdownHost(r, s, host, th, 24)
@@ -82,7 +82,7 @@ func TestStreamingRTLParagraphKeepsOrderAndEdgeWhenSettled(t *testing.T) {
 func TestTableHeaderIgnoresIsolatedInlineCode(t *testing.T) {
 	th := theme.DefaultDark()
 	r := chatprojection.NewRenderer(th)
-	r.AppendMessage(types.ChatMessage{InternalID: "code-header", Role: types.RoleAssistant,
+	r.AppendMessage(conversation.ChatMessage{InternalID: "code-header", Role: conversation.RoleAssistant,
 		Content: "| `API` שלום | Version |\n| --- | --- |\n| First | Second |"})
 	s := New(th)
 	buf := paintMarkdownHost(r, s, ui.NewHost(th, s), th, 80)

@@ -2,7 +2,7 @@ package workspace
 
 import (
 	"crude/agent/collaboration"
-	"crude/types"
+	"crude/types/setting"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,14 +12,14 @@ import (
 func TestWorkspaceStorageFailureStillConstructsShellWithIssue(t *testing.T) {
 	setTestHome(t)
 	root := t.TempDir()
-	path, err := WorkspaceDBPath(root)
+	path, err := DBPath(root)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(path, []byte("not a sqlite database"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	w := NewWorkspace(root, "model", "tester", types.Settings{}, nopLogger{})
+	w := NewWorkspace(root, "model", "tester", setting.Settings{}, nopLogger{})
 	t.Cleanup(w.Close)
 	issues := w.TakeStartupIssues()
 	if w.AgentMgr == nil || w.Documents == nil || len(issues) == 0 {
@@ -35,7 +35,7 @@ func TestWorkspaceStorageFailureStillConstructsShellWithIssue(t *testing.T) {
 
 func TestLauncherMissingTransportDoesNotCreateInvisibleSession(t *testing.T) {
 	setTestHome(t)
-	w := NewWorkspace(t.TempDir(), "model", "tester", types.Settings{}, nopLogger{})
+	w := NewWorkspace(t.TempDir(), "model", "tester", setting.Settings{}, nopLogger{})
 	t.Cleanup(w.Close)
 	w.SetBackendConfig(workspaceToolRootConfig(), t.TempDir())
 	result := w.NewAgentSession()
@@ -50,7 +50,7 @@ func TestLauncherMissingTransportDoesNotCreateInvisibleSession(t *testing.T) {
 
 func TestLauncherRegistrationFailureCleansFailedSession(t *testing.T) {
 	setTestHome(t)
-	w := NewWorkspace(t.TempDir(), "model", "tester", types.Settings{}, nopLogger{})
+	w := NewWorkspace(t.TempDir(), "model", "tester", setting.Settings{}, nopLogger{})
 	t.Cleanup(w.Close)
 	w.SetBackendConfig(workspaceToolRootConfig(), t.TempDir())
 	w.SetEventSender(&historyE2ESender{events: make(chan historyE2EEvent, 1024)})

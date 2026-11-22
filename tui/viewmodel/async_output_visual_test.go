@@ -73,7 +73,7 @@ func (m *asyncOutputWindowVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) 
 	}
 	_, cmd := m.App.Update(msg)
 	m.sawOutput = m.sawOutput || len(m.commandOutputs) != 0
-	projection := m.subPaneProjections.GetExisting(m.agentID)
+	projection := m.subPaneProjections.Existing(m.agentID)
 	for _, msg := range m.ws.AgentMgr().Get(m.agentID).State.Messages.Messages() {
 		if msg.ToolName == "async_execute_command" && projection != nil && projection.renderer.DisclosureExpanded(msg.InternalID) {
 			m.sawReveal = true

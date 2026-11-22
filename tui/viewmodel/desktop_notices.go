@@ -10,9 +10,10 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/port"
-	"crude/desktopnotify"
-	ttypes "crude/types"
+	"crude/core/shellport"
+	"crude/tui/desktopnotify"
+	"crude/types/setting"
+	"crude/types/statuscenter"
 	"crude/workspace"
 )
 
@@ -134,10 +135,10 @@ func (m *App) desktopNoticeEventsCmd() tea.Cmd {
 
 // desktopNoticeSettings returns the user's choices for the attached
 // workspace; the settings replica answers from memory.
-func (m *App) desktopNoticeSettings() ttypes.DesktopNotificationSettings {
+func (m *App) desktopNoticeSettings() setting.DesktopNotifications {
 	if m.ws == nil {
 		off := false
-		return ttypes.DesktopNotificationSettings{Enabled: &off}
+		return setting.DesktopNotifications{Enabled: &off}
 	}
 	return m.ws.LoadAppSettings().UI.DesktopNotifications
 }
@@ -266,21 +267,21 @@ func (m *App) observeDesktopStatus(now time.Time) tea.Cmd {
 // from any agent needs the user. A stop or a finish is news only for an
 // agent that the user started: a child reports to its parent, and the
 // workspace Errand works in the background.
-func desktopNoticeKind(status ttypes.AgentStatusSnapshot, errand func() bool) (noticeKind, bool) {
+func desktopNoticeKind(status statuscenter.AgentStatusSnapshot, errand func() bool) (noticeKind, bool) {
 	if status.Hidden {
 		return 0, false
 	}
 	if status.NeedsAction {
-		if status.Phase == ttypes.AgentApproval {
+		if status.Phase == statuscenter.AgentApproval {
 			return noticeApproval, true
 		}
 		return noticeAnswer, true
 	}
 	var kind noticeKind
 	switch status.Phase {
-	case ttypes.AgentNeedsAttention, ttypes.AgentInterrupted, ttypes.AgentFailed:
+	case statuscenter.AgentNeedsAttention, statuscenter.AgentInterrupted, statuscenter.AgentFailed:
 		kind = noticeStopped
-	case ttypes.AgentCompleted:
+	case statuscenter.AgentCompleted:
 		kind = noticeFinished
 	default:
 		return 0, false
@@ -318,7 +319,7 @@ func (m *App) desktopNews() []*noticeItem {
 }
 
 // desktopNoticeWanted applies the user's choice of news kinds.
-func desktopNoticeWanted(settings ttypes.DesktopNotificationSettings, kind noticeKind) bool {
+func desktopNoticeWanted(settings setting.DesktopNotifications, kind noticeKind) bool {
 	switch kind {
 	case noticeAnswer, noticeApproval:
 		return settings.InputOrDefault()
@@ -416,7 +417,7 @@ func (m *App) applyDesktopNoticeEvent(msg desktopNoticeEventMsg) tea.Cmd {
 			lg.Warn("NOTIFY", "desktop_notification_failed", "error", msg.event.Err.Error())
 		}
 		if msg.event.Key == desktopNoticeTestKey && msg.event.Err != nil {
-			m.notifyStatus(ttypes.SeverityInfo, "desktop-notifications", "Crude cannot show desktop notifications", desktopNoticeProblem(msg.event.Err), m.desktopNoticeOwner())
+			m.notifyStatus(statuscenter.SeverityInfo, "desktop-notifications", "Crude cannot show desktop notifications", desktopNoticeProblem(msg.event.Err), m.desktopNoticeOwner())
 		}
 	case desktopnotify.Activated:
 		if msg.event.Key == d.key && d.key != "" {
@@ -444,10 +445,10 @@ func (m *App) testDesktopNotification() {
 	d := &m.desktop
 	switch {
 	case d.sink == nil:
-		m.notifyStatus(ttypes.SeverityInfo, "desktop-notifications", "Crude cannot show desktop notifications", desktopNoticeProblem(desktopnotify.ErrUnsupported), m.desktopNoticeOwner())
+		m.notifyStatus(statuscenter.SeverityInfo, "desktop-notifications", "Crude cannot show desktop notifications", desktopNoticeProblem(desktopnotify.ErrUnsupported), m.desktopNoticeOwner())
 	case d.readyKnown && d.readyErr != nil && !errors.Is(d.readyErr, desktopnotify.ErrNoService):
 		// No service yet is worth a try: the service may have started.
-		m.notifyStatus(ttypes.SeverityInfo, "desktop-notifications", "Crude cannot show desktop notifications", desktopNoticeProblem(d.readyErr), m.desktopNoticeOwner())
+		m.notifyStatus(statuscenter.SeverityInfo, "desktop-notifications", "Crude cannot show desktop notifications", desktopNoticeProblem(d.readyErr), m.desktopNoticeOwner())
 	default:
 		settings := m.desktopNoticeSettings()
 		body := "Crude shows a message like this when an agent needs you and you are away."
@@ -458,11 +459,11 @@ func (m *App) testDesktopNotification() {
 	}
 }
 
-func (m *App) desktopNoticeOwner() ttypes.ResourceRef {
+func (m *App) desktopNoticeOwner() statuscenter.ResourceRef {
 	if m.ws == nil {
-		return ttypes.ResourceRef{Kind: ttypes.ResourceWorkspace}
+		return statuscenter.ResourceRef{Kind: statuscenter.ResourceWorkspace}
 	}
-	return ttypes.ResourceRef{Kind: ttypes.ResourceWorkspace, ID: m.ws.RootPath()}
+	return statuscenter.ResourceRef{Kind: statuscenter.ResourceWorkspace, ID: m.ws.RootPath()}
 }
 
 // desktopNoticeProblem states why notifications cannot show and what to do.

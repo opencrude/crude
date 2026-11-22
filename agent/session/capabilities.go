@@ -8,30 +8,32 @@ import (
 	"strings"
 	"sync"
 
-	"crude/agent"
 	"crude/agent/collaboration"
 	"crude/agent/provider"
 	"crude/agent/safety"
 	"crude/agent/tools"
+	"crude/agent/turnloop"
 	captypes "crude/types/capability"
 )
 
-func (session *Session) SetCapabilities(runtime captypes.Runtime, ownership *agent.FileOwnership) {
-	session.mu.Lock()
-	defer session.mu.Unlock()
-	session.capabilities = runtime
+// SetCapabilities records the runtime capability handle and, when given, the file ownership scope.
+func (s *Session) SetCapabilities(runtime captypes.Runtime, ownership *turnloop.FileOwnership) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.capabilities = runtime
 	if ownership != nil {
-		session.fileOwnership = ownership
+		s.fileOwnership = ownership
 	}
 }
 
-func (session *Session) FileOwnership() *agent.FileOwnership {
-	session.mu.Lock()
-	defer session.mu.Unlock()
-	if session.fileOwnership == nil {
-		session.fileOwnership = agent.NewFileOwnership()
+// FileOwnership returns the session's claim registry, and creates it on first use.
+func (s *Session) FileOwnership() *turnloop.FileOwnership {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.fileOwnership == nil {
+		s.fileOwnership = turnloop.NewFileOwnership()
 	}
-	return session.fileOwnership
+	return s.fileOwnership
 }
 
 func effectsForPolicy(policy safety.Policy) []captypes.Effect {
@@ -51,22 +53,22 @@ func effectsForPolicy(policy safety.Policy) []captypes.Effect {
 	return effects
 }
 
-func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent, actor captypes.RuntimeActor, name string) {
-	session.mu.Lock()
-	runtime := session.capabilities
-	session.mu.Unlock()
+func (s *Session) bindAgentRuntime(ctx context.Context, live *turnloop.Agent, actor captypes.RuntimeActor, name string) {
+	s.mu.Lock()
+	runtime := s.capabilities
+	s.mu.Unlock()
 	actor.Effects = effectsForPolicy(live.Policy)
-	actor.AllowedTools, actor.DeniedTools = agent.ModelToolSelection(actor.AllowedTools, actor.DeniedTools, live.Model)
+	actor.AllowedTools, actor.DeniedTools = turnloop.ModelToolSelection(actor.AllowedTools, actor.DeniedTools, live.Model)
 	previousPrepare := live.PrepareStep
 	previousFn := live.ToolFn
 	var boundEpoch uint64
 	boundRunID := live.RunID
-	if session.CollaborationStore() != nil {
-		session.mu.Lock()
-		boundEpoch = session.collaborationAgents[actor.ID].RuntimeEpoch
-		session.mu.Unlock()
+	if s.CollaborationStore() != nil {
+		s.mu.Lock()
+		boundEpoch = s.collaborationAgents[actor.ID].RuntimeEpoch
+		s.mu.Unlock()
 	}
-	session.capabilitySharing.join(actor, name)
+	s.capabilitySharing.join(actor, name)
 	var mu sync.RWMutex
 	snapshot := captypes.RuntimeSnapshot{}
 	currentActor := func() captypes.RuntimeActor {
@@ -75,7 +77,7 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 		current.RuntimeEpoch = boundEpoch
 		current.TurnGeneration = live.TurnGeneration
 		current.ExecutionRoot = live.WorkDir
-		current.SessionDisabled = session.DisabledCapabilities()
+		current.SessionDisabled = s.DisabledCapabilities()
 		if live.ControlTarget != nil {
 			current.WorkspaceID = live.ControlTarget.WorkspaceID
 			if live.ControlTarget.Shell != nil {
@@ -93,19 +95,19 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 		} else {
 			definitions = append([]tools.ToolDef(nil), live.FilteredTools...)
 		}
-		for _, text := range session.capabilitySharing.drain(actor.ID) {
+		for _, text := range s.capabilitySharing.drain(actor.ID) {
 			notices = append(notices, runtimeMessage(text))
 		}
 		if runtime != nil && live.PlanInvestigation == nil {
 			prepared, err := runtime.Prepare(ctx, currentActor())
 			if err != nil {
-				session.logger.Warn("CAPABILITY", "prepare_failed", "error", err.Error())
+				s.logger.Warn("CAPABILITY", "prepare_failed", "error", err.Error())
 			} else {
 				mu.Lock()
 				snapshot = prepared
 				mu.Unlock()
 				for _, tool := range prepared.Tools {
-					if !actorToolSelected(actor, tool.Name) || !agent.PolicyAllowsMetadata(live.Policy, tools.ToolMetadata{Name: tool.Name, Effect: tool.Effect, Scope: tool.Scope, Fingerprint: tool.Fingerprint, Dynamic: true}) {
+					if !actorToolSelected(actor, tool.Name) || !turnloop.PolicyAllowsMetadata(live.Policy, tools.ToolMetadata{Name: tool.Name, Effect: tool.Effect, Scope: tool.Scope, Fingerprint: tool.Fingerprint, Dynamic: true}) {
 						continue
 					}
 					definitions = appendUniqueDefinition(definitions, tools.ToolDef{Type: "function", Function: tools.ToolFuncDef{Name: tool.Name, Description: tool.Description, Parameters: tool.InputSchema}})
@@ -120,7 +122,7 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 				}
 			}
 		}
-		for _, definition := range session.collaborationDefinitions(actor.ID) {
+		for _, definition := range s.collaborationDefinitions(actor.ID) {
 			effect := collaborationEffect(definition.Function.Name)
 			selected := runtimeCollaborationToolSelected(actor, definition.Function.Name)
 			if selected && slices.Contains(actor.Effects, effect) {
@@ -152,7 +154,7 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 			return tools.ToolResult{}, err
 		}
 		if boundEpoch != 0 {
-			participant, err := session.CollaborationStore().Agent(callCtx, actor.ID)
+			participant, err := s.CollaborationStore().Agent(callCtx, actor.ID)
 			if err != nil {
 				return tools.ToolResult{}, err
 			}
@@ -160,7 +162,7 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 				participant.Presence != collaboration.RuntimeAttached || participant.State != collaboration.AgentAvailable {
 				return tools.ToolResult{}, collaboration.ErrStale
 			}
-			run, err := session.CollaborationStore().Run(callCtx, boundRunID)
+			run, err := s.CollaborationStore().Run(callCtx, boundRunID)
 			if err != nil {
 				return tools.ToolResult{}, err
 			}
@@ -181,7 +183,7 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 				return previousFn(callCtx, tool, params)
 			}
 		}
-		if result, handled, err := session.executeCollaborationTool(callCtx, actor.ID, tool, params); handled {
+		if result, handled, err := s.executeCollaborationTool(callCtx, actor.ID, tool, params); handled {
 			return result, err
 		}
 		mu.RLock()
@@ -200,7 +202,7 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 			result, err := runtime.Execute(callCtx, currentActor(), requestSnapshot, tool, params)
 			var preparation *captypes.PreparationRequired
 			if errors.As(err, &preparation) {
-				prepared, outcome, prepErr := session.prepareCapabilityPackage(callCtx, live, *preparation)
+				prepared, outcome, prepErr := s.prepareCapabilityPackage(callCtx, live, *preparation)
 				if !prepared {
 					return outcome, prepErr
 				}
@@ -208,7 +210,7 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 			}
 			if err == nil {
 				if operation, id := sharedCapabilityID(tool, params); id != "" {
-					session.capabilitySharing.share(actor.ID, operation, id)
+					s.capabilitySharing.share(actor.ID, operation, id)
 				}
 			}
 			return capabilityMediaResult(result, err, live.MediaReadPolicy)
@@ -216,26 +218,26 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 		if _, native := tools.NativeMetadata(tool); !native && tool != "multi_tool_use.parallel" {
 			return tools.ToolResult{}, fmt.Errorf("tool %q is not available in this request; it may belong to an MCP connection that is disabled, turned off for this session, or reconnecting", tool)
 		}
-		if !agent.PolicyAllows(live.Policy, tool) && tool != "multi_tool_use.parallel" {
+		if !turnloop.PolicyAllows(live.Policy, tool) && tool != "multi_tool_use.parallel" {
 			return tools.ToolResult{}, fmt.Errorf("tool %q is denied by the agent policy", tool)
 		}
 		resolveRelativeParamsAtRoot(live.WorkDir, tool, params)
 		if isWriteTool(tool) {
-			if err := session.validateNoInvestigationMutation(writeToolTargets(tool, params)); err != nil {
+			if err := s.validateNoInvestigationMutation(writeToolTargets(tool, params)); err != nil {
 				return tools.ToolResult{}, err
 			}
 		}
-		if isWriteTool(tool) && actor.ParentID == "" && live.WorkDir != session.WorkDir() {
-			if err := validateExecutionWriteTargets(live.WorkDir, session.TempDir(), writeToolTargets(tool, params)); err != nil {
+		if isWriteTool(tool) && actor.ParentID == "" && live.WorkDir != s.WorkDir() {
+			if err := validateExecutionWriteTargets(live.WorkDir, s.TempDir(), writeToolTargets(tool, params)); err != nil {
 				return tools.ToolResult{}, err
 			}
 		}
-		ownership := session.FileOwnership()
+		ownership := s.FileOwnership()
 		if tool == "read_file" {
-			ownership.RecordRead(agent.AgentID(actor.ID), getStrParam(params, "path"))
+			ownership.RecordRead(turnloop.AgentID(actor.ID), getStrParam(params, "path"))
 		}
 		if isWriteTool(tool) && actor.ParentID == "" {
-			store := session.CollaborationStore()
+			store := s.CollaborationStore()
 			if store == nil {
 				return tools.ToolResult{}, errors.New("workspace collaboration runtime is unavailable")
 			}
@@ -254,7 +256,7 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 				return tools.ToolResult{}, errors.New("filesystem mutation requires an originating tool-call identity")
 			}
 			targets := writeToolTargets(tool, params)
-			if err := ownership.CommitClaimAll(agent.AgentID(actor.ID), name, targets, true, func() error {
+			if err := ownership.CommitClaimAll(turnloop.AgentID(actor.ID), name, targets, true, func() error {
 				_, err := store.AcquireClaims(callCtx, collaboration.AcquireClaimsRequest{
 					AgentID: actor.ID, RunID: boundRunID,
 					RequestID: identity.ToolCallID, Paths: targets,
@@ -263,7 +265,7 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 			}); err != nil {
 				return tools.ToolResult{}, err
 			}
-			release, err := ownership.BeginWrite(agent.AgentID(actor.ID), targets)
+			release, err := ownership.BeginWrite(turnloop.AgentID(actor.ID), targets)
 			if err != nil {
 				return tools.ToolResult{}, err
 			}

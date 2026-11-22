@@ -8,7 +8,7 @@
 results. `types/control/catalog.go` is the command catalog; core owners bind exact
 runtime DTO schemas. `core/` authenticates/adopts callers, resolves actual effects,
 serializes admission and journals mutations. Domain services own effects;
-`coreclient`, `core/port/remote` and the registered TUI Host route shell intents
+`coreclient`, `core/shellport/remote` and the registered TUI Host route shell intents
 through Update, never Paint. `cranemcp` adapts this same API, not a second control
 engine. Native agents discover `crude_commands`, then invoke `crude_control` using
 the returned command ID and exact arguments. Discovery grants no authority.
@@ -76,7 +76,7 @@ restarting the server, the server's own bounded evidence (labelled as server
 data) and the closed-file check.
 `settings.fields` reports that same caller-specific authority. Exact leaf writes
 can create a missing map entry from its declared schema (for example, a new
-language launch command); they share `types.ApplySettingsEdits` with ordinary
+language launch command); they share `setting.ApplyEdits` with ordinary
 settings saves. They do not replace neighboring entries or permit section writes.
 Workspace `analysis` and `analysis.trust` writes and removals are human-only.
 They never inherit application/session authority; a session Code Intelligence
@@ -401,8 +401,8 @@ universal credential-redaction guarantee. MCP stderr uses its owner's redaction.
 
 ## Evidence and limits
 
-`types/control`, `core/control_*_test.go`, `core/client/control_test.go`,
-`core/port/remote/control_test.go`, `cranemcp`, `app/mcp_control_test.go` and
+`types/control`, `core/control_*_test.go`, `core/coreclient/control_test.go`,
+`core/shellport/remote/control_test.go`, `cranemcp`, `app/mcp_control_test.go` and
 `tui/ui/control*_test.go` cover contracts, real transport/admission, receipts,
 component generations and native ownership. TUI journey tests cover selected
 shells/decks/forms; they are not exhaustive UI-family acceptance. A real framed
