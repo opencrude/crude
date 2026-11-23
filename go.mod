@@ -9,6 +9,7 @@ require (
 	github.com/PuerkitoBio/goquery v1.11.0
 	github.com/alecthomas/chroma/v2 v2.20.0
 	github.com/aymanbagabas/go-udiff v0.4.1
+	github.com/bmatcuk/doublestar/v4 v4.8.1
 	github.com/buger/jsonparser v1.2.0
 	github.com/charlievieth/strcase v0.0.6
 	github.com/charmbracelet/ultraviolet v0.0.0-20260416155717-489999b90468

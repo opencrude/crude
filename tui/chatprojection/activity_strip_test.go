@@ -222,7 +222,7 @@ func TestCompactionActivityOwnsStripUntilNextTurn(t *testing.T) {
 		{"compaction_completed", "Context compacted · Ready to continue", false},
 		{"compaction_cancelled", "Compaction cancelled", false},
 		{"compaction_failed", "Compaction failed · details in transcript", false},
-		{"compaction_interrupted", "Compaction interrupted · original context retained", false},
+		{"compaction_interrupted", "Compaction interrupted · original context kept", false},
 	} {
 		view.Active, view.CompactionPhase = phase.active, phase.name
 		strip.Update(view, 100, th, tokens)

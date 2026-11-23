@@ -580,9 +580,11 @@ func (c *Client) makeClientCapabilities(enableSnippets bool) map[string]any {
 			"documentSymbol":     map[string]any{"hierarchicalDocumentSymbolSupport": true},
 			"documentHighlight":  map[string]any{"dynamicRegistration": false},
 			"publishDiagnostics": map[string]any{"versionSupport": true},
+			"diagnostic":         DiagnosticClientCapabilities(),
 		},
 		"workspace": map[string]any{
 			"configuration": true, "workspaceFolders": true, "applyEdit": true,
+			"diagnostics":    map[string]any{"refreshSupport": true},
 			"workspaceEdit":  map[string]any{"documentChanges": true, "resourceOperations": []string{"create"}},
 			"executeCommand": map[string]any{},
 		},

@@ -73,7 +73,7 @@ func TestInlayHintsNativeControlMetadataAndPaint(t *testing.T) {
 				field.Type != ui.FieldCycle || field.Style != ui.StyleSwitch {
 				t.Fatalf("missing ordinary native switch and canonical metadata: %+v %q", field, path)
 			}
-			for _, text := range []string{"Default Off", "read-only inline param/type", "advertised providers", "no commands/edits"} {
+			for _, text := range []string{"parameter names and types", "for reading only"} {
 				if !strings.Contains(field.Description, text) {
 					t.Fatalf("missing behavior constraint %q: %q", text, field.Description)
 				}

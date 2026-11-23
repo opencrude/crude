@@ -240,7 +240,7 @@ func formatAge(unixNano int64) string {
 
 const (
 	historyUserSnippetBytes      = 400
-	historyAssistantSnippetBytes = 700
+	historyAssistantSnippetBytes = 1024
 )
 
 // executeMemoryTool handles the memory tool family. Returns handled=false
@@ -431,8 +431,8 @@ func (s *Session) executeMemoryTool(
 				"session_id": hit.SessionID,
 				"turn":       hit.Turn,
 				"when":       formatAge(hit.CreatedAt),
-				"user":       memory.TruncateBytes(hit.UserText, historyUserSnippetBytes),
-				"assistant":  memory.TruncateBytes(hit.AssistantText, historyAssistantSnippetBytes),
+				"user":       memory.TruncateMiddle(hit.UserText, historyUserSnippetBytes),
+				"assistant":  memory.TruncateMiddle(hit.AssistantText, historyAssistantSnippetBytes),
 				"tools":      hit.ToolNames,
 				"files":      hit.Files,
 			})
@@ -459,7 +459,7 @@ func (s *Session) executeMemoryTool(
 func compactMemoryEvidence(evidence []memory.Evidence) []memory.Evidence {
 	compact := append([]memory.Evidence(nil), evidence...)
 	for index := range compact {
-		compact[index].Summary = memory.TruncateBytes(compact[index].Summary, 160)
+		compact[index].Summary = memory.TruncateMiddle(compact[index].Summary, 160)
 	}
 	return compact
 }

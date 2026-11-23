@@ -559,6 +559,25 @@ Decision checks have a two-second deadline. Chat allows eight seconds for text
 generation, which also bounds an Automatic model-list lookup (cached per
 account). Neither mode falls back to another model or endpoint.
 
+- **The curator sees each turn's outcome.** A long turn states its subject
+  first and its result last, so no stage of the memory pipeline keeps only the
+  beginning. The turn mirror keeps the human text and the final report whole up
+  to 8 KiB, and longer texts keep their beginning and end with an
+  `[... N bytes omitted ...]` marker (`memory.TruncateMiddle`), as command output
+  excerpts do. A turn keeps at most 24 observations; when more exist,
+  `memory.SelectObservations` keeps human statements, then validations and
+  failed or cancelled attempts, then changes, then other tool results, newest
+  first within each group, and stores them in their original order. One curator
+  request takes the oldest pending turns whose transcript and evidence fit
+  40 KiB, always at least one turn, and the next request continues from its
+  watermark until the session is caught up. A full window never cuts its newest
+  turn.
+- **A session summary is a record, not a memory.** It may report a result that
+  only the assistant states, with attribution. It never says that something did
+  not happen only because the excerpts omit it, and newer turns replace what the
+  previous summary said. Agents receive earlier summaries as lossy history and
+  check the workspace (for example Git) before they state what earlier work
+  finished.
 - Memory extraction and maintenance are session-owned cancellable jobs. Closing
   cancels and joins them before the workspace DB closes, without launching new
   provider work. Durable turn mirrors finish, and pending extraction watermarks
@@ -600,6 +619,17 @@ implementation still matched the product:
   scopes usage to the routed envelope. Crude adopts progress-gated recovery and
   connection-scoped capacity while keeping its stricter all-or-nothing checkpoint
   transaction; optional pruning is not a partial commit here.
+
+- **Codex memories**, `177c406276b6757ffaf49da9de52cd7a64c97dd5`:
+  [stage-one rollout input](https://github.com/openai/codex/blob/177c406276b6757ffaf49da9de52cd7a64c97dd5/codex-rs/memories/write/src/rollout_input.rs)
+  selects evidence by provenance tier (human, final answer, other agents,
+  commentary, context, tools), newest first within a tier, renders it in source
+  order with omission markers, and cuts oversized rows in the middle. Its
+  [stage-one prompt](https://github.com/openai/codex/blob/177c406276b6757ffaf49da9de52cd7a64c97dd5/codex-rs/memories/write/templates/memories/stage_one_system.md)
+  lets rollout summaries be more permissive than durable memory while keeping
+  attribution. Crude adopts the tiers, the newest-first selection and the
+  middle cut. It does not drop older turns to fit: its rolling summary takes the
+  next window instead, so every turn reaches the curator once.
 
 ## Validation and limits
 

@@ -149,13 +149,27 @@ func TestIconToolbarAlignmentSemanticsAndTooltips(t *testing.T) {
 				if width >= 3 {
 					right-- // Default content inset leaves one cell at either edge.
 				}
-				start := max(width-right, right-15)
+				// "[ icon ]": a Nerd Font icon keeps one blank cell after it
+				// for the ink terminals draw wider than one cell.
+				full := 5
+				if nerd {
+					full = 6
+				}
+				// One blank cell separates the buttons; a short row drops the
+				// gaps before it shrinks a button.
+				inner := right - (width - right)
+				gap := 1
+				if inner < 3*full+2*gap {
+					gap = 0
+				}
+				toolbar := 3*full + 2*gap
+				start := max(width-right, right-toolbar)
 				for i, button := range s.buttons {
 					bounds := button.Bounds()
 					if bounds.X != start || bounds.Y != 0 || bounds.X+bounds.W > width {
 						t.Fatalf("control %d not packed at right edge: %+v, start=%d", i, bounds, start)
 					}
-					start += bounds.W
+					start += bounds.W + gap
 					// At Fit a large image cannot zoom out; an empty viewport cannot zoom.
 					wantDisabled := i == 0 || i == 1 && s.viewport.Empty()
 					if sem := button.Semantics(); sem.Role != ui.RoleButton || sem.Label != wantLabels[i] || sem.Disabled != wantDisabled || sem.Description != wantTips[i] {
@@ -182,23 +196,21 @@ func TestIconToolbarAlignmentSemanticsAndTooltips(t *testing.T) {
 					if host.Hovered() != button.ID() {
 						t.Fatal("tooltip control is not the actual pointer target")
 					}
-					if ink := rendering.VisibleWidth(wantIcons[i]); ink <= bounds.W {
-						if got := buf.Get(bounds.X+(bounds.W-ink)/2, 0); got.Content != wantIcons[i] && string(got.Char) != wantIcons[i] {
-							t.Fatalf("control %d painted %+v, want centered icon %q", i, got, wantIcons[i])
-						}
+					if bounds.W >= rendering.VisibleWidth(wantIcons[i])+4 {
+						assertBracketedIcon(t, buf, bounds, wantIcons[i], nerd && bounds.W == full)
 					}
-					if width >= 17 && bounds.W != 5 {
-						t.Fatalf("control %d does not share the five-cell slot: %+v", i, bounds)
+					if inner >= 3*full && bounds.W != full {
+						t.Fatalf("control %d is not the full bracketed button: %+v", i, bounds)
 					}
 				}
-				if start != right {
-					t.Fatalf("toolbar end=%d, want right rail %d", start, right)
+				if start-gap != right {
+					t.Fatalf("toolbar end=%d, want right rail %d", start-gap, right)
 				}
 				row := strings.Split(text(buf), "\n")[0]
 				if strings.Contains(row, "Zoom") || strings.Contains(row, "Fit") {
 					t.Fatalf("text labels remain in icon-only toolbar: %q", row)
 				}
-				for x := 0; x < max(0, right-15); x++ {
+				for x := 0; x < max(0, right-toolbar); x++ {
 					if host.HitTest(x, 0) != s.ID() || buf.Get(x, 0).Char != ' ' {
 						t.Fatal("old left-side controls retained paint or hit targets")
 					}
@@ -212,6 +224,46 @@ func TestIconToolbarAlignmentSemanticsAndTooltips(t *testing.T) {
 			})
 		}
 	}
+}
+
+// assertBracketedIcon checks "[ icon ]" with the icon's ink in the middle:
+// the same number of blank cells between each bracket and the ink. inkCell
+// is the blank cell a Nerd Font icon's wide ink covers.
+func assertBracketedIcon(t *testing.T, buf *surface.CellBuffer, bounds ui.Rect, icon string, inkCell bool) {
+	t.Helper()
+	ink := rendering.VisibleWidth(icon)
+	if inkCell {
+		ink++
+	}
+	left, right := bounds.X, bounds.X+bounds.W-1
+	if buf.Get(left, 0).Char != '[' || buf.Get(right, 0).Char != ']' {
+		t.Fatalf("button %+v is not bracketed: %q", bounds, cellText(buf, bounds))
+	}
+	at := left + 2
+	if got := buf.Get(at, 0); got.Content != icon && string(got.Char) != icon {
+		t.Fatalf("button %+v painted %q, want icon %q after one blank cell", bounds, cellText(buf, bounds), icon)
+	}
+	for x := left + 1; x < right; x++ {
+		if (x < at || x >= at+ink) && buf.Get(x, 0).Char != ' ' {
+			t.Fatalf("button %+v has ink outside the icon: %q", bounds, cellText(buf, bounds))
+		}
+	}
+	if before, after := at-left-1, right-(at+ink); before != after {
+		t.Fatalf("icon is not in the middle of %q: %d blank cells before it, %d after", cellText(buf, bounds), before, after)
+	}
+}
+
+func cellText(buf *surface.CellBuffer, r ui.Rect) string {
+	var b strings.Builder
+	for x := r.X; x < r.X+r.W; x++ {
+		c := buf.Get(x, r.Y)
+		if c.Content != "" {
+			b.WriteString(c.Content)
+		} else {
+			b.WriteRune(c.Char)
+		}
+	}
+	return b.String()
 }
 
 func TestToolbarFontPreferenceChangesWithoutChangingImageGeometry(t *testing.T) {

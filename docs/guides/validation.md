@@ -26,7 +26,10 @@ Locally:
 ```bash
 . scripts/libghostty_env.sh          # once per shell; libghostty-vt for terminals
 go install golang.org/x/tools/gopls@v0.22.0 # Linux diagnostic reader fixture; put gopls on PATH
-go run ./internal/wiregen -check      # nonmutating source-cohort freshness
+# A Go version manager (goenv) can put its own newer gopls first while tests
+# run. Then point the visual fixtures at the pinned binary instead:
+# export CRUDE_LSP_VISUAL_GOPLS=/path/to/gopls-v0.22.0
+go run ./tools/wiregen -check      # nonmutating source-cohort freshness
 go build ./...
 go test ./<affected packages>/...     # focused first
 make test-syntax                     # includes the nested native binding suite

@@ -625,11 +625,11 @@ steps:
 				var storage *compactionStorageError
 				if errors.As(err, &storage) {
 					a.setRunFailure(storage.err, rootprompt.RecoveryInterrupted, RecoveryFailureStorage)
-					a.emitError(emit, fmt.Errorf("context compaction commit failed; original context retained: %w", storage.err))
+					a.emitError(emit, fmt.Errorf("context compaction commit failed; original context kept: %w", storage.err))
 					return
 				}
 				a.setRunFailure(err, rootprompt.RecoveryInterrupted, RecoveryFailureCompaction)
-				a.emitError(emit, fmt.Errorf("context compaction failed; original context retained: %w", err))
+				a.emitError(emit, fmt.Errorf("context compaction failed; original context kept: %w", err))
 			}
 
 			// adoptDecay replaces older re-runnable tool results across the

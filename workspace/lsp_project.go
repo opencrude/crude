@@ -234,9 +234,10 @@ func (m *LSPManager) retainDiskViewLocked(path string, doc *lspDocument) {
 }
 
 // reportsProjectLocked reports whether the server reports files that are not
-// open: the catalog says so, or the server was seen doing it.
+// open: the catalog says so, the server was seen doing it, or it offers
+// workspace diagnostics that Crude requests.
 func (m *LSPManager) reportsProjectLocked(key string, state *lspClientState) bool {
-	if state != nil && (state.reportsProject || state.spec.DiagnosticScope == insight.CoverageProject) {
+	if state != nil && (state.reportsProject || state.spec.DiagnosticScope == insight.CoverageProject || m.workspacePullLocked(state)) {
 		return true
 	}
 	_, project := m.projects[key]

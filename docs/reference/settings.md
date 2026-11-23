@@ -1286,9 +1286,12 @@ shared store; it is not another launch configuration or inherited preference
 store.
 
 **Check closed files** (`lsp.project_check`) on Code Intelligence is **When
-idle** (default), **Always** or **Off**. Crude checks files that are not open
-with servers that do not report such files themselves, one file at a time while
-the user does not type. When idle also waits on battery power, while the
+idle** (default), **Always** or **Off**. It is the one control for files that
+are not open, whatever the server's diagnostic model: it starts and repeats the
+workspace diagnostic request of a server that offers one, and Crude checks the
+files of other servers, which do not report closed files themselves, one file at
+a time while the user does not type. There is no setting for push or pull; see
+[pull and push diagnostics](editor.md#pull-and-push-diagnostics). When idle also waits on battery power, while the
 computer is busy and until a new server's memory hint is free. It does not
 restart language servers. See
 [project check](editor.md#project-check-of-closed-files).

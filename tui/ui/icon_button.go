@@ -33,9 +33,6 @@ func (b *IconButton) SetTokens(tokens *TokenSet) {
 	b.Button.SetTokens(tokens)
 }
 
-// SetGlyph replaces the icon without changing the action name or hit target.
-func (b *IconButton) SetGlyph(glyph string) { b.glyph = glyph }
-
 func (b *IconButton) Measure(_ LayoutContext, cs Constraints) Size {
 	width := rendering.VisibleWidth(b.glyph) + 2
 	if b.tabAction {
@@ -53,18 +50,10 @@ func (b *IconButton) Paint(buf *surface.CellBuffer, ox, oy int, ctx PaintContext
 	if b.tabAction {
 		fg, attr = b.tokens.Color(ColorAccent), cell.AttrBold
 	}
-	if b.variantSet {
-		fg = b.idleForeground(b.tokens)
-	}
 	switch ResolveControlState(b.disabled, ctx.Focused, b.selected, false, ctx.Hovered) {
 	case StateDisabled:
 		fg = b.tokens.Color(ColorMuted)
 	case StateFocused:
-		if b.variantSet && !b.selected {
-			// A keyboard stop on a viewer toolbar is not a mode change.
-			bg, attr = b.tokens.Color(ColorHover), cell.AttrUnderline
-			break
-		}
 		attr = cell.AttrUnderline
 		fallthrough
 	case StateSelected:

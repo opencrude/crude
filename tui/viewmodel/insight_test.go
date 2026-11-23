@@ -50,11 +50,23 @@ func TestInsightThreeRenderedShellsEditAuthorUndoAndSave(t *testing.T) {
 		if bufferContainsPlain(shell.app.mainSurf.Buffer(), "Syntax shared") {
 			t.Fatalf("shell %d exposed internal syntax status", i)
 		}
-		// Inspect the actual mounted editor region, not only its cached result.
-		x, y := shell.app.editorRect.X+editors[i].GutterWidth()+2, shell.app.editorRect.Y
+		// Inspect the actual mounted editor region, not only its cached
+		// result. The comment's columns follow the gutter and content inset,
+		// so find its painted text on the first row instead of fixing them.
+		buf, rect := shell.app.mainSurf.Buffer(), shell.app.editorRect
+		x := -1
+		for col := rect.X + editors[i].GutterWidth(); col+2 < rect.X+rect.W; col++ {
+			if buf.Get(col, rect.Y).Char == '#' && buf.Get(col+1, rect.Y).Char == ' ' && buf.Get(col+2, rect.Y).Char == 's' {
+				x = col + 2
+				break
+			}
+		}
+		if x < 0 {
+			t.Fatalf("shell %d did not paint the shared comment on its first row", i)
+		}
 		r, g, b, _ := theme.SyntaxPalette(shell.app.Theme, shell.app.editorSettings.SyntaxTheme).Colors.Code.Comment.RGBA()
 		wantInk := cell.NewTrueColor(uint8(r>>8), uint8(g>>8), uint8(b>>8))
-		if got := shell.app.mainSurf.Buffer().Get(x, y); got.Char != 's' || !got.FG.Equal(wantInk) {
+		if got := buf.Get(x, rect.Y); !got.FG.Equal(wantInk) {
 			t.Fatalf("shell %d failed to paint shared native comment: %+v", i, got)
 		}
 	}

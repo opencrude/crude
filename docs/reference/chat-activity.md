@@ -42,7 +42,16 @@ focus or crossing modal boundaries.
 | --- | --- |
 | Aggregate after success | `exec_command`, `write_stdin`, `execute_command`, `async_execute_command`, `check_async_command`, `read_async_output`, `read_file`, `list_directory`, `glob_files`, `grep_files`, `web_search`, `web_fetch`, `arxiv_search`, `recall_memory`, `search_history`, `wait`, `agent_list`, `agent_inspect`, `agent_wait`, `board_read`, `artifact_read` |
 | Separate rows (expanded by default) | `apply_patch`, `edit_file`, `write_file`, `update_plan`, `get_plan` |
-| Separate rows (settled results closed) | `delete_file`, `move_file`, `copy_file`, `agent_start`, `agent_send`, `agent_respond`, `agent_control`, `publish_report`, `kill_async_command`, `remember`, `update_memory`, `forget_memory`, `question`, `reply` |
+| Separate rows (message open, details closed) | `agent_send`, `agent_respond`, `publish_report` |
+| Separate rows (settled results closed) | `delete_file`, `move_file`, `copy_file`, `agent_start`, `agent_control`, `kill_async_command`, `remember`, `update_memory`, `forget_memory`, `question`, `reply` |
+
+A message that an agent sends to other agents reads like a message it receives.
+After a successful `agent_send`, `agent_respond` or `publish_report`, the row
+shows its title and then the delivered text (the event body or the report body)
+as Markdown under the same rail as a received collaboration message
+(`appendCollaborationBody`). Expansion adds only the delivery details and the
+exact request; it does not repeat the text. A failed or stopped send has no
+delivered text and keeps the closed tool row.
 
 Unknown tools stay visible until intentionally classified. A failed or cancelled call, a child failure reported by an otherwise successful poll, and any required user action remain visible as boundaries. A background command's successful *start* is not evidence that the background job finished; label it as started, not completed. Never imply that all calls passed solely because their tool transport succeeded.
 
@@ -451,7 +460,10 @@ the human invoked it and watches it run.
 Manual compaction owns the activity strip while its boundary is current:
 preparing, extraction, retry, and commit show operation progress without
 rotating an unrelated plan. Completion reports "Context compacted · Ready to
-continue"; failure and cancellation retain their own settled label. A resumed
+continue"; failure and cancellation retain their own settled label. A completed
+`/compact` adds no separate notice, because the boundary row and the strip
+already show the result. Notices answer only what the transcript does not show
+yet, such as "Compaction will start after the current step." A resumed
 boundary provides the same status until the next turn. The old session
 transcript stays in the archive; the new checkpoint is the active context.
 At the next human turn, the session supplies the current plan ID, status and

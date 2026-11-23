@@ -272,7 +272,12 @@ func TestMarkdownSelectedIconStaysLitAfterPointerLeaves(t *testing.T) {
 				_ = app.View()
 				for _, candidate := range modes {
 					box, _ := app.rootHost.ScreenRect(button(candidate))
-					lit := app.mainSurf.Buffer().Get(box.X, box.Y).BG == app.rootHost.Tokens().Color(ui.ColorAccent)
+					// The shared selected-button mark (as on filter chips) covers
+					// the whole "[ icon ]", brackets included.
+					selection := app.rootHost.Tokens().Color(ui.ColorSelection)
+					buf := app.mainSurf.Buffer()
+					lit := buf.Get(box.X, box.Y).BG == selection && buf.Get(box.X+box.W-1, box.Y).BG == selection &&
+						buf.Get(box.X, box.Y).Char == '[' && buf.Get(box.X+box.W-1, box.Y).Char == ']'
 					if lit != (candidate == mode) || md.Mode() != mode {
 						t.Fatalf("clicked %s, %s highlight=%v, current=%s", mode, candidate, lit, md.Mode())
 					}

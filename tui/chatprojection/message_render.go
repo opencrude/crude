@@ -186,13 +186,19 @@ func renderCollaborationMessage(msg conversation.ChatMessage, ctx renderContext)
 	header := PaintLine{Spans: []RowSpan{{Text: headerText, Role: ui.ColorAccent, Attr: cell.AttrBold}}}
 	ml.lines = append(ml.lines, header.PlainText())
 	ml.native = append(ml.native, header)
+	ml.appendCollaborationBody(ctx.markdownContent(msg), msg.InternalID, ctx)
+	return ml
+}
 
-	mapped, isMarkdown := ctx.markdownReflow.render(ctx.markdownContent(msg), msg.InternalID, ctx.mdRenderer, ctx.contentWidth, ctx.tokens, false)
+// appendCollaborationBody paints a message between agents: Markdown under the
+// collaboration rail. Received and sent messages share it.
+func (ml *messageLines) appendCollaborationBody(source, id string, ctx renderContext) {
+	mapped, isMarkdown := ctx.markdownReflow.render(source, id, ctx.mdRenderer, ctx.contentWidth, ctx.tokens, false)
 	var body []PaintLine
 	if isMarkdown {
 		body = mapped
 	} else {
-		body = buildPlainBodyLines(rendering.WrapText(msg.Content, max(1, ctx.contentWidth)))
+		body = buildPlainBodyLines(rendering.WrapText(source, max(1, ctx.contentWidth)))
 	}
 	for _, line := range body {
 		withRail := line
@@ -201,6 +207,27 @@ func renderCollaborationMessage(msg conversation.ChatMessage, ctx renderContext)
 		withRail.Spans = append([]RowSpan{{Text: collaborationRail, Role: ui.ColorMuted}}, line.Spans...)
 		ml.lines = append(ml.lines, withRail.PlainText())
 		ml.native = append(ml.native, withRail)
+	}
+}
+
+// renderSentMessage paints a message this agent sent to other agents the way
+// a received message reads: the tool title, then the message under the same
+// rail. Expansion adds the delivery details, without the message again.
+func renderSentMessage(msg conversation.ChatMessage, body string, ctx renderContext) messageLines {
+	var ml messageLines
+	for _, line := range buildProjectToolTitleLines(msg, conversation.ToolPreviewDone, ctx.spinFrame, ctx.innerW, ctx.disclosure, ctx.projectPaths) {
+		ml.lines = append(ml.lines, line.PlainText())
+		ml.native = append(ml.native, line)
+	}
+	ml.appendCollaborationBody(body, msg.InternalID, ctx)
+	if ctx.disclosure == DisclosureExpanded {
+		details := tools.BuildStructuredResult(msg.ToolName, msg.Content, msg.ToolInput)
+		for i := range details.Sections {
+			if strings.TrimSpace(details.Sections[i].Body) == body {
+				details.Sections[i].Body = ""
+			}
+		}
+		ml.appendStructuredToolBody(details, msg.ToolInput, ctx.innerW, ctx.chatHeight, true)
 	}
 	return ml
 }
@@ -668,7 +695,7 @@ func renderLifecycleMessage(msg conversation.ChatMessage, ctx renderContext) mes
 		}
 		role = ui.ColorAccent
 	case "compaction_failed":
-		label = "Compaction failed · original context retained"
+		label = "Compaction failed · original context kept"
 		role = ui.ColorError
 		marker = "✕"
 		active = false
@@ -961,7 +988,7 @@ func renderManualCompactionMessage(msg conversation.ChatMessage, ctx renderConte
 		}
 		source := "Calculating"
 		if msg.LifecycleBeforeTokens > 0 {
-			source = rendering.FormatTokens(msg.LifecycleBeforeTokens) + " source · original context retained until commit"
+			source = rendering.FormatTokens(msg.LifecycleBeforeTokens) + " tokens"
 		}
 		rows = append(rows, lifecycleBoundaryLine(ctx.innerW, source, trailer, ui.ColorMuted))
 	} else if msg.LifecyclePhase == "compaction_completed" {
@@ -988,7 +1015,7 @@ func renderManualCompactionMessage(msg conversation.ChatMessage, ctx renderConte
 		case "compaction_interrupted":
 			detail = "App stopped before atomic commit"
 		}
-		rows = append(rows, lifecycleBoundaryLine(ctx.innerW, detail, "original context retained", ui.ColorMuted))
+		rows = append(rows, lifecycleBoundaryLine(ctx.innerW, detail, "original context kept", ui.ColorMuted))
 	}
 	rows = append(rows, PaintLine{})
 	lines := make([]string, len(rows))
@@ -1057,6 +1084,12 @@ func renderMessageContent(msg conversation.ChatMessage, ctx renderContext, suppr
 	case conversation.RoleTool:
 		if ctx.planSuperseded && ctx.disclosure != DisclosureExpanded {
 			msg.Content = ""
+		}
+		if msg.ToolStatus == conversation.ToolStatusSuccess {
+			if body := tools.SentMessageBody(msg.ToolName, msg.Content); body != "" {
+				ml = renderSentMessage(msg, body, ctx)
+				break
+			}
 		}
 		ml = renderProjectToolMessageLines(msg, ctx.th, ctx.contentWidth, ctx.innerW, ctx.width, ctx.spinFrame, ctx.chatHeight, ctx.phase, ctx.disclosure, ctx.projectPaths)
 	case conversation.RoleError:

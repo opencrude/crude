@@ -78,6 +78,24 @@ and the no-active-parameter extension are not advertised. The raw response
 preserves optional index presence and both label representations for bounded
 consumer validation; it does not certify semantic quality or project context.
 
+## Pull diagnostics
+
+`DiagnosticClientCapabilities` announces `textDocument.diagnostic` with dynamic
+registration and without related documents or markup messages; initialize also
+announces `workspace.diagnostics.refreshSupport`. `DiagnosticProvider` and
+`ParseDiagnosticSupport` decode the static capability and registration options,
+including document selectors with RelativePattern globs.
+`RequestDocumentDiagnostics` and `RequestWorkspaceDiagnostics` return the raw
+report (4 MiB and 64 MiB bounds) for the consumer to validate; `DiagnosticRetrigger`
+reads `ServerCancelled` and its `retriggerRequest`. Both requests use
+`Connection.CallCancelable`, which picks its own string request ID and sends
+`$/cancelRequest` when the caller stops waiting. Which documents to pull, and
+when, belongs to the caller.
+
+`Router.Route` passes empty params to handlers of requests and notifications
+that have none (`workspace/diagnostic/refresh`); it dereferenced the absent
+member before.
+
 ## Raw manual code-action transport
 
 `RequestCodeActions` and `ResolveCodeAction` preserve original JSON objects,

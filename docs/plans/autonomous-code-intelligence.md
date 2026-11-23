@@ -104,6 +104,8 @@ detail: read the sections that the current checkpoint names.
 | 2026-11-14 | Background diagnostics must be aware of the computer and yield like established background indexers, with references from real projects, not memory: KDE Baloo (pause on battery), Windows Search (backoff under system activity, `DisableBackoff` override), Linux PSI with systemd's pressure threshold, LEDBAT's yield-to-foreground principle. The user keeps an Always override. | User |
 | 2026-11-17 | Check the reported Windows server-launch mismatch and fix it quickly if practical. Keep the correction as tool-independent as possible; no server- or language-named branches. | User |
 | 2026-11-17 | Review the recent work on Linux, especially bidi/RTL, and diagnose the 11 Python errors and five Markdown warnings. Work directly, without agents. | User |
+| 2026-11-23 | Use every diagnostic model that a server offers, automatically: document pull and workspace pull when the server offers them, push for the other servers, and Crude's closed-file check only as the fallback for servers that cover only open files. Design from the specification and established clients, not from memory; reuse the existing owners; no server- or language-named branches. | User |
+| 2026-11-23 | Think about the whole product as its owner, especially Settings: add a setting only when people would actually use it. Applied: the diagnostic model is not a setting; **Diagnostics**, **Update delay** and **Check closed files** govern the new paths. | User; application by the plan |
 
 ### Open decisions
 
@@ -134,6 +136,182 @@ Known exception: the compilation-database and CMake importers in
 them; they are not a template for language-specific modules.
 
 ## Current checkpoint
+
+**Pull diagnostics, with push and the closed-file check as fallbacks
+(2026-11-23): implemented; live acceptance in the product open (see the end
+of this checkpoint).** Generic, no server branch. Contract:
+[pull and push diagnostics](../reference/editor.md#pull-and-push-diagnostics).
+
+*Goal.* Crude uses each server's own diagnostic model without asking the user:
+document pull (`textDocument/diagnostic`) for synchronized documents and disk
+views, workspace pull (`workspace/diagnostic`) for the whole project, push
+(`textDocument/publishDiagnostics`) for servers without pull, and its own
+closed-file check only for servers that cover open files only. The server's
+declared capability, not catalog data, decides what a server covers.
+
+*Evidence (2026-11-23, this computer).* A probe client announced document pull
+with dynamic registration and workspace refresh, accepted every registration,
+opened one file per server and pulled it:
+
+| Server | Offers | Pushes when the client announces pull |
+|---|---|---|
+| vscode-json, -css and -html-language-server | Document pull (static), no workspace pull, no inter-file dependencies | No |
+| pyright | Document pull only through `client/registerCapability` (identifier `Pyright`, inter-file dependencies); sends `workspace/diagnostic/refresh` | No |
+| asm-lsp | Document pull (static, inter-file dependencies), but the pull did not answer within 20 s | Yes |
+| gopls v0.24.0, clangd 18, marksman, bash-, typescript-, yaml- (2.0), docker- and docker-compose-language servers, zls 0.15.1 | Push only | Yes |
+
+No installed server offers workspace pull. A document pull for a file that the
+server had not opened returned a *full, empty* report from vscode-json and
+pyright, although both files contain errors. Pyright answered a repeated pull
+with `unchanged` and the same result identifier.
+
+*Rules that follow from the evidence.*
+
+1. **Announcing pull changes what servers do.** Four servers stop pushing, so
+   Crude announces `textDocument.diagnostic` only in the change that also pulls
+   for every synchronized document. Announcing it alone would empty Problems
+   for JSON, CSS, HTML and Python.
+2. **Never pull a document the server has not opened.** Its empty answer
+   would erase real problems. Closed files get pull results only through a
+   disk view (`didOpen` first, as the closed-file check already does) or from
+   workspace pull.
+3. **Dynamic registration is required.** Crude has no `client/registerCapability`
+   handler today. It must keep the registrations and unregistrations of
+   `textDocument/diagnostic` (by registration ID and identifier) and accept
+   registrations it does not use, as the specification allows.
+4. **A pull without an answer must not block.** Each pull has a deadline;
+   push results for the same file stay. A server whose pulls keep timing out
+   in one launch is treated as push-only for that launch.
+
+*Design (existing owners extended, nothing parallel).*
+
+- `lsp/lspclient` owns the protocol: client capabilities (`diagnostic`
+  with `dynamicRegistration`, `relatedInformation`, `tagSupport`,
+  `codeDescriptionSupport`, `dataSupport`; `relatedDocumentSupport` and markup
+  off, as in VS Code; `workspace.diagnostics.refreshSupport`), the static
+  `diagnosticProvider` and the dynamic registrations.
+- **Document pull** after `didOpen`, after each admitted `didChange` (the
+  manager already debounces with **Update delay**), after save and on
+  `workspace/diagnostic/refresh`. One request per document is in flight; a newer
+  version cancels it and pulls again; `unchanged` keeps the last report; a
+  `ServerCancelled` error pulls again unless `retriggerRequest` is false. With
+  inter-file dependencies, a change also pulls the server's other open
+  documents, one at a time and after the changed one (VS Code's background
+  scheduler waits 500 ms between them).
+- Pull reports enter the existing single publication path
+  (`updateDiagnostics`) as the report for the pulled version. Push and each pull
+  identifier are separate parts of the document's one publication, each
+  replaced only by its own source, as VS Code and Neovim keep separate
+  collections. Problems keeps one result per file.
+- `AwaitDiagnostics` answers from the pull for the pinned version, so the
+  closed-file check and agent `lsp` checks of pull servers get an exact answer
+  instead of a quiet-period guess. "Did not report in time" remains only for
+  push servers.
+- **Workspace pull**: one long-running request per server and identifier, with
+  `previousResultIds` and streamed partial results. Reports for files that no
+  view holds enter `receiveUnopenedDiagnostics`, the existing project-fact path,
+  so the closed-file check skips the server through `reportsProjectLocked`. A
+  document pull wins over a workspace report for an open file, and a higher
+  version wins, as the specification says. When the server ends the request,
+  Crude requests again after a short rest (VS Code: 2 s); after repeated errors
+  (VS Code stops at the sixth in a row) it stops for that launch and the
+  closed-file check covers the server.
+  Stop, restart, root change and settings generation cancel the request.
+- **Fallback order per server:** workspace pull, then a server that pushes
+  closed files (catalog scope or observed), then the closed-file check, which
+  uses document pull on its disk view when the server offers it and the push
+  wait otherwise.
+
+*Product and Settings.* People choose what is checked, not a protocol mode;
+the clients studied choose the model from the server's capabilities.
+
+- **No new setting.** **Diagnostics** gates all paths. **Update delay** paces
+  document pulls. **Check closed files** governs every closed-file path: Off
+  starts no workspace pull; When idle starts and repeats it only when the
+  existing gate allows (not while typing, on battery, on a busy computer or
+  while an agent checks code); Always runs it whenever the server runs. A
+  running workspace request is not cancelled for typing, because a server
+  would start its work again.
+- Language tools, `diagnostics.workspace` and Problems say what each server
+  covers, from the capability: "Checks the whole project." or "Checks open
+  files. Crude checks closed files with it while you do not type." The words
+  pull and push never appear. Problems reuses "while the language server
+  prepares the project" while a workspace pull reports progress.
+- Correct the Code Intelligence copy that is wrong today: **Code
+  intelligence** says "this does not scan the workspace", which is false while
+  **Check closed files** is on; **Inlay hints** says "Default Off—read-only
+  inline param/type; advertised providers; no commands/edits". Both follow
+  [user language](../reference/user-language.md).
+
+*Defects found on 2026-11-23.*
+
+- **Marksman warnings about an existing file: closed.** The cause was not
+  Crude. The layout commit renamed the native dependency's README to
+  `CRUDE.md`, but `.gitignore` still re-included only `README.md` after the
+  `/third_party/libghostty-vt/*/` rule, which Markdown indexers also apply to
+  files. Marksman therefore ignored `CRUDE.md` and reported the two links to it
+  as broken. The re-inclusion now names `CRUDE.md`. The rows were out of date
+  only because Marksman had stopped; its next start reports the links again.
+- **Clean files called unchecked.** The CSS server left
+  `site/assets/crude.css` as "did not report in time"; it now answers by pull.
+  Marksman (push only) can still leave a clean file without a report. For
+  push-only servers this stays an open decision; do not hide it with a longer
+  wait.
+- **A server request without params panicked the connection.** Powernap's router
+  dereferenced absent params; `workspace/diagnostic/refresh` has none. Fixed in
+  the fork with a regression test.
+
+*Exit test.*
+
+1. The protocol fixture (`TestProtocolServerHelper`) gains modes for static
+   pull, dynamic registration with an identifier, no push while pull is
+   announced, `unchanged`, `ServerCancelled` with and without retrigger,
+   refresh, a pull that never answers, and workspace pull with partial
+   results, a closed request and errors. Each test fails before the change.
+2. Workspace regressions: a workspace-pull fixture is covered at initialize and
+   the check queues none of its files; a document-pull fixture's closed file is
+   checked through a disk view with an exact answer; an answer for a file the
+   server has not opened is never published; out-of-date project results
+   always get a new answer or leave Problems.
+3. Real servers on this computer, isolated profile: open, edit and save
+   JSON, CSS, HTML and Python files, and Problems follows within
+   **Update delay** plus server time. Closed files of those languages with
+   injected errors appear through the check without "did not report in time".
+   gopls, clangd, marksman and the other push servers behave as before.
+4. Code Intelligence captures at 160×40 and 80×24 show the corrected copy and
+   no new field; Problems and Language tools show coverage in user language.
+5. Gates: build, affected packages, race paths for `lsp/lspclient` and
+   `workspace`, `wiregen -check`, `make conventions`, docs and bench gates; the
+   check's CPU use does not grow.
+
+*Out of scope.* Notebook cells, related-document reports, markup messages and
+server process priority.
+
+*Evidence (2026-11-23).* Protocol fixtures (`lsp/lspclient/lsp_pull_test.go`)
+cover static and dynamic providers with selectors, refused unrelated
+registrations, no pull before `didOpen`, version-bound reports with code-action
+originals, inter-file pulls, save with `previousResultId`, `ServerCancelled`
+retrigger, refresh without params, a silent provider that keeps its pushes, and
+workspace reports with partial results, open-file precedence and kept result
+IDs; the package passes with `-race`. A workspace regression
+(`lsp_workspace_pull_test.go`) shows a workspace-diagnostics server covering
+the project without one-at-a-time opens, clearing a file it reports clean,
+repeating its request and stopping when **Check closed files** is Off. Real
+servers on this computer: `TestPullOnlyServerAgainstRealJSONServer` (the JSON
+server pushes nothing once pull is announced; clean, broken and fixed files get
+exact answers) and the existing real pyright batch test, which now runs through
+pyright's dynamic registration, pass. No installed server offers workspace
+pull, so that path is proven by fixtures only.
+
+*Sources.* [LSP 3.17 pull diagnostics](https://github.com/microsoft/language-server-protocol/blob/6714b477746a6d4b29fb5510152a3b82206a2e16/_specifications/lsp/3.17/language/pullDiagnostics.md)
+(see its implementation considerations);
+[vscode-languageclient `diagnostic.ts`](https://github.com/microsoft/vscode-languageserver-node/blob/ae863caf433d836cbf6213d415f71165b97859f8/client/src/common/diagnostic.ts)
+(document and workspace pull, background scheduler, 2 s re-request, error
+limit, document results over workspace results);
+[Neovim `diagnostic.lua`](https://github.com/neovim/neovim/blob/c24c59fad003a305b442bb88491aa00106eb3d5a/runtime/lua/vim/lsp/diagnostic.lua)
+(results by identifier, refresh, `ServerCancelled` retrigger, document pull
+wins); [Helix `diagnostics.rs`](https://github.com/helix-editor/helix/blob/1a3fdfda6dfdda4567af6093a6249bb2bb422fc6/helix-term/src/handlers/diagnostics.rs)
+(document pull with inter-file dependencies and refresh; no workspace pull).
 
 **Linux diagnostic review (2026-11-17):** the 11 Python diagnostics came from
 the font builder with fontTools installed, not an LSP transport mismatch.

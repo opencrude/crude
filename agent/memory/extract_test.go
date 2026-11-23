@@ -2,9 +2,11 @@ package memory
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	rootprompt "crude/agent/prompt"
 )
@@ -223,7 +225,7 @@ func TestDecayArchiveOnlyTouchesUnusedAutoRecords(t *testing.T) {
 }
 
 func TestBuildExtractionUserAssemblesSections(t *testing.T) {
-	out := rootprompt.MemoryExtractionUser(PrepareExtractionInput("prior summary", "- Title (fact)", "--- turn 1 ---\nUSER: hi", nil))
+	out := rootprompt.MemoryExtractionUser(PrepareExtractionInput("prior summary", "- Title (fact)", ExtractionWindow{Transcript: "--- turn 1 ---\nUSER: hi"}))
 	for _, want := range []string{"PREVIOUS SUMMARY:", "EXISTING MEMORIES", "NEW TURNS:", "turn 1"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q in:\n%s", want, out)
@@ -254,5 +256,39 @@ func TestNormalizeAndMatchQueryHelpers(t *testing.T) {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("entities %v missing %q", entities, want)
 		}
+	}
+}
+
+func TestTruncateMiddleKeepsBothEndsWithinBound(t *testing.T) {
+	text := "subject: " + strings.Repeat("ثبت تغییرات ", 400) + " result: committed"
+	for _, limit := range []int{64, 200, 1024, 4096} {
+		got := TruncateMiddle(text, limit)
+		if len(got) > limit || !utf8.ValidString(got) {
+			t.Fatalf("limit %d: %d bytes, valid UTF-8 %v", limit, len(got), utf8.ValidString(got))
+		}
+		if !strings.HasPrefix(got, "subject:") || !strings.HasSuffix(got, "result: committed") || !strings.Contains(got, "bytes omitted") {
+			t.Fatalf("limit %d lost an end or the marker: %q", limit, got)
+		}
+	}
+	if got := TruncateMiddle("short", 64); got != "short" {
+		t.Fatalf("fitting text changed: %q", got)
+	}
+}
+
+func TestSelectObservationsKeepsProvingEvidenceInOrder(t *testing.T) {
+	observation := func(id, kind, outcome string) Observation {
+		return Observation{Evidence: Evidence{SessionID: "s", ToolCallID: id, Kind: kind, Summary: id, Outcome: outcome}, Turn: 1}
+	}
+	observations := []Observation{observation("human", EvidenceUser, OutcomeUnmeasured), observation("failed", EvidenceTool, OutcomeFailed),
+		observation("edit", EvidenceChange, OutcomeSucceeded)}
+	for index := range 30 {
+		observations = append(observations, observation(fmt.Sprintf("read-%d", index), EvidenceTool, OutcomeSucceeded))
+	}
+	var ids []string
+	for _, kept := range SelectObservations(observations, 5, 1<<20) {
+		ids = append(ids, kept.ToolCallID)
+	}
+	if got, want := strings.Join(ids, " "), "human failed edit read-28 read-29"; got != want {
+		t.Fatalf("selected %q, want %q", got, want)
 	}
 }

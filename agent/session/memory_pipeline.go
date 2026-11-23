@@ -402,13 +402,22 @@ func (s *Session) maybeExtractMemories(turn int) {
 }
 
 // runExtraction extracts durable memories + a rolling session summary from
-// the unprocessed turn window of sessionID (read from the history mirror,
-// which persists; a run that never happens is picked up by a later
-// maintenance sweep; nothing is ever lost).
+// the unprocessed turns of sessionID (read from the history mirror, which
+// persists; a run that never happens is picked up by a later maintenance
+// sweep; nothing is ever lost). Each curator request covers the oldest
+// pending turns that fit it; the next request continues from its watermark
+// until the session is caught up, a request fails or the job is cancelled.
 func (s *Session) runExtraction(parent context.Context, sessionID string, notify bool) {
+	for parent.Err() == nil && s.extractWindow(parent, sessionID, notify) {
+	}
+}
+
+// extractWindow runs one curator request and reports whether more pending
+// turns remain after its committed window.
+func (s *Session) extractWindow(parent context.Context, sessionID string, notify bool) bool {
 	store := s.MemoryStore()
 	if store == nil {
-		return
+		return false
 	}
 	ctx, cancel := context.WithTimeout(parent, extractTimeout)
 	defer cancel()
@@ -417,22 +426,21 @@ func (s *Session) runExtraction(parent context.Context, sessionID string, notify
 	turns, err := store.TurnsForSession(ctx, sessionID, watermark, extractWindowMaxTurns)
 	if err != nil {
 		s.logger.Warn("MEMORY", "extract_turns_failed", "error", err.Error())
-		return
+		return false
 	}
 	if len(turns) == 0 {
-		return
+		return false
 	}
-	lastTurn := turns[len(turns)-1].Turn
 	generation, err := store.KnowledgeGeneration(ctx)
 	if err != nil {
-		return
+		return false
 	}
-	observations, err := store.ObservationsForSession(ctx, sessionID, watermark, lastTurn)
+	observations, err := store.ObservationsForSession(ctx, sessionID, watermark, turns[len(turns)-1].Turn)
 	if err != nil {
 		s.logger.Warn("MEMORY", "extract_observations_failed", "error", err.Error())
-		return
+		return false
 	}
-	observations = memory.SelectExtractionObservations(observations)
+	window := memory.PlanExtractionWindow(turns, observations)
 
 	previousSummary := ""
 	if summary, found, err := store.SessionSummary(ctx, sessionID); err == nil && found {
@@ -443,24 +451,24 @@ func (s *Session) runExtraction(parent context.Context, sessionID string, notify
 	complete, err := s.memoryCompleter()
 	if err != nil {
 		s.logger.Warn("MEMORY", "extract_no_provider", "error", err.Error())
-		return
+		return false
 	}
 	raw, err := complete(ctx, rootprompt.MemoryExtractionSystem(),
-		rootprompt.MemoryExtractionUser(memory.PrepareExtractionInput(previousSummary, existingTitles, buildTranscript(turns), observations)))
+		rootprompt.MemoryExtractionUser(memory.PrepareExtractionInput(previousSummary, existingTitles, window)))
 	if err != nil {
 		s.logger.Warn("MEMORY", "extract_call_failed", "error", err.Error())
-		return
+		return false
 	}
 	result, err := memory.ParseExtraction(raw)
 	if err != nil {
 		s.logger.Warn("MEMORY", "extract_parse_failed", "error", err.Error())
-		return
+		return false
 	}
 
-	provenance := fmt.Sprintf("session:%s turns:%d-%d (auto)", sessionID, watermark+1, lastTurn)
+	provenance := fmt.Sprintf("session:%s turns:%d-%d (auto)", sessionID, watermark+1, window.ThroughTurn)
 	batch := memory.ExtractionBatch{SessionID: sessionID, ExpectedWatermark: watermark,
-		ThroughTurn: lastTurn, ExpectedGeneration: generation,
-		Records: memory.GroundExtraction(result, observations, sessionID, provenance)}
+		ThroughTurn: window.ThroughTurn, ExpectedGeneration: generation,
+		Records: memory.GroundExtraction(result, window.Observations, sessionID, provenance)}
 	if result.Summary != nil {
 		batch.Summary = &memory.SessionSummary{
 			SessionID: sessionID,
@@ -468,13 +476,13 @@ func (s *Session) runExtraction(parent context.Context, sessionID string, notify
 			Summary:   result.Summary.Summary,
 			KeyFiles:  result.Summary.KeyFiles,
 			Outcome:   result.Summary.Outcome,
-			TurnCount: lastTurn,
+			TurnCount: window.ThroughTurn,
 		}
 	}
 	saved, err := store.CommitExtraction(ctx, batch)
 	if err != nil {
 		s.logger.Warn("MEMORY", "extract_commit_failed", "error", err.Error())
-		return
+		return false
 	}
 	s.refreshMemorySummary(ctx, store)
 	var savedTitles []string
@@ -482,13 +490,14 @@ func (s *Session) runExtraction(parent context.Context, sessionID string, notify
 		savedTitles = append(savedTitles, record.Title)
 	}
 	s.logger.Info("MEMORY", "extract_done",
-		"session", sessionID, "turns", len(turns), "saved", len(saved))
+		"session", sessionID, "through_turn", window.ThroughTurn, "saved", len(saved))
 	if notify && len(saved) > 0 && s.sender != nil {
 		s.sender.SendAgentEvent("memory_saved", map[string]any{
 			"count":  len(saved),
 			"titles": savedTitles,
 		})
 	}
+	return window.ThroughTurn < turns[len(turns)-1].Turn || len(turns) == extractWindowMaxTurns
 }
 
 // existingMemoryTitles renders current memory titles for the extraction
@@ -503,34 +512,6 @@ func (s *Session) existingMemoryTitles(ctx context.Context, store *memory.Store)
 		fmt.Fprintf(&b, "- %s@%d (%s, %s): %s\n", record.ID, record.Revision, record.Kind, record.Status, record.Title)
 	}
 	return strings.TrimSpace(b.String())
-}
-
-// buildTranscript renders mirrored turns as a compact extraction input.
-func buildTranscript(turns []memory.HistoryHit) string {
-	var b strings.Builder
-	for _, turn := range turns {
-		fmt.Fprintf(&b, "--- session %s turn %d ---\n", turn.SessionID, turn.Turn)
-		if turn.UserText != "" {
-			b.WriteString("USER: ")
-			b.WriteString(memory.TruncateBytes(turn.UserText, 1200))
-			b.WriteString("\n")
-		}
-		if turn.ToolNames != "" {
-			b.WriteString("TOOLS: ")
-			b.WriteString(turn.ToolNames)
-			if turn.Files != "" {
-				b.WriteString(" | FILES: ")
-				b.WriteString(turn.Files)
-			}
-			b.WriteString("\n")
-		}
-		if turn.AssistantText != "" {
-			b.WriteString("ASSISTANT CLAIM (not verification): ")
-			b.WriteString(memory.TruncateBytes(turn.AssistantText, 1600))
-			b.WriteString("\n")
-		}
-	}
-	return b.String()
 }
 
 // memoryCompleter builds the one-shot completion function for background

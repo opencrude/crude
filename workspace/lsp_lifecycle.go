@@ -51,9 +51,12 @@ type lspClientState struct {
 	reportedAt     time.Time
 	settled        bool
 	reportsProject bool
-	restarting     bool
-	evidence       []string
-	errorMessage   string
+	// workspacePull is the workspace diagnostic request loop of a server
+	// that offers it (lsp_workspace_pull.go).
+	workspacePull workspacePullState
+	restarting    bool
+	evidence      []string
+	errorMessage  string
 }
 
 type lspDocument struct {
@@ -303,6 +306,7 @@ func (m *LSPManager) runWorker(done chan struct{}) {
 		// existing joined worker, never a detached waiter or a busy retry loop.
 		m.mu.Lock()
 		m.tickProjectCheckLocked(time.Now())
+		m.tickWorkspacePullLocked()
 		cases := []reflect.SelectCase{
 			{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(m.wake)},
 			{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ticker.C)},
@@ -680,6 +684,18 @@ func (c *leasedLSPClient) Stop() error {
 	return nil
 }
 
+func (c *leasedLSPClient) WorkspaceDiagnostics() bool {
+	client, ok := c.LSPClient.(lspWorkspaceDiagnosticsClient)
+	return ok && client.WorkspaceDiagnostics()
+}
+
+func (c *leasedLSPClient) PullWorkspaceDiagnostics(ctx context.Context) error {
+	if client, ok := c.LSPClient.(lspWorkspaceDiagnosticsClient); ok {
+		return client.PullWorkspaceDiagnostics(ctx)
+	}
+	return errors.New("the language server does not offer workspace diagnostics")
+}
+
 func (c *leasedLSPClient) Busy() bool {
 	busy, ok := c.LSPClient.(lspBusyClient)
 	return ok && busy.Busy()
@@ -810,6 +826,10 @@ func (m *LSPManager) retireLocked(state *lspClientState) {
 	}
 	state.closing = true
 	state.waiting, state.restarting, state.errorMessage = false, false, ""
+	if state.workspacePull.cancel != nil {
+		state.workspacePull.cancel()
+		state.workspacePull.cancel = nil
+	}
 	if state.ticket != nil {
 		state.ticket.Cancel() // No effect after Begin; the exact lease stays retained.
 	}
@@ -1264,6 +1284,8 @@ func (m *LSPManager) Close() {
 	if checkDone != nil {
 		<-checkDone
 	}
+	// Retirement cancelled every workspace diagnostic request loop.
+	m.workspacePulls.Wait()
 	// A cancelled listing returns at its next directory; the bound only
 	// protects shutdown from a blocked filesystem call.
 	m.joinAssembly(5 * time.Second)

@@ -114,6 +114,9 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext)
 		if width := segmentsWidth(guidance, " · "); width > 0 {
 			rightBudget = max(0, innerW-width-2)
 		}
+		// The open panel and pills that need attention outrank hints: keep
+		// room for them and More whenever the rail can hold them.
+		rightBudget = max(rightBudget, min(innerW, keptPillsWidth(s.projection.Right, rightSeparator)))
 	} else {
 		rightBudget = max(8, innerW/2)
 	}
@@ -307,6 +310,27 @@ func hasPills(segments []Segment) bool {
 		}
 	}
 	return false
+}
+
+// keptPillsWidth is the width of the pills that never overflow (the open
+// panel and pills that need attention) plus the More pill, measured as the
+// overflow fit measures them. It allocates nothing on the paint path.
+func keptPillsWidth(segments []Segment, separator string) int {
+	width, count := 0, 0
+	for _, segment := range segments {
+		if !segment.Pill || !segment.Active && !segment.Attention {
+			continue
+		}
+		if count > 0 {
+			width += rendering.VisibleWidth(separator)
+		}
+		width += rendering.VisibleWidth(segment.Text) + 2
+		count++
+	}
+	if count == 0 {
+		return 0
+	}
+	return width + rendering.VisibleWidth("More") + 2
 }
 
 func segmentsWidth(segments []Segment, separator string) int {

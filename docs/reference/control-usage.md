@@ -37,7 +37,7 @@ fill. The shared `ui.FormField` painter owns this rule for every consumer.
 | Plan host permission and plan decision | Read-only dock text wraps inside its own scroll area. Page Up, Page Down and the wheel scroll the details without moving the actions. The docked action bar wraps whole labels and shortcuts when it needs more than one row. Enter defaults to **Do not run** for host permission and **Keep planning** for a proposal. | `ui.NewDockedReadingForm`, `ui.ActionBar` |
 | Background command controls | Native `ui.ActionLink` command text reveals and expands the originating chat call. Retained Output and Terminate `ui.Button`s target the exact process lifetime; Terminate alone disappears on completion, and its label becomes the close glyph when constrained. Arrows navigate the row/column grid; Tab follows reading order. Opens passively; explicit interaction alone retains button focus. | same |
 | Chat Latest | Exact-screen native `ui.Button` centered in the existing activity gap when scrolled up; materializes the tail and re-arms follow, without extra transcript height. | same |
-| Footer panel controls | `tui/screens/shellfooter` | Contiguous theme-derived strip in order: `Problems`, `Notices`, `Terminals`, `Git`, `Board`, `Memory`, `Performance`, `Workspace`. The Git pill carries no count; the changed-file count stays in the header Git identity. Board and Memory are workspace-wide; Performance is an app utility with no session slash command. All remain available without an active agent. The selected destination, actionable attention, Board, Memory and Workspace take priority when space is constrained; a reserved `More` target exposes every destination through the footer's shared projection and action path, without clipped pills. Ranked guidance and completion feedback retain up to half the row before navigation overflows. Previous sessions are searchable date-grouped rows inside Workspace. |
+| Footer panel controls | `tui/screens/shellfooter` | Contiguous theme-derived strip in order: `Problems`, `Notices`, `Terminals`, `Git`, `Board`, `Memory`, `Performance`, `Workspace`. The Git pill carries no count; the changed-file count stays in the header Git identity. Board and Memory are workspace-wide; Performance is an app utility with no session slash command. All remain available without an active agent. The selected destination, actionable attention, Board, Memory and Workspace take priority when space is constrained; a reserved `More` target exposes every destination through the footer's shared projection and action path, without clipped pills. Ranked guidance and completion feedback retain up to half the row before navigation overflows, except that the selected destination, actionable attention and `More` always keep their room when the row can hold them. Previous sessions are searchable date-grouped rows inside Workspace. |
 | Text command links | `ui.ActionLink` keeps enabled labels underlined at rest, on hover and on focus. Panel links use `VariantSecondary` (`ColorAccent2`), matching Problems. Focus adds the shared selection fill and bold ink; disabled links stay muted and do not activate. New command links use this control, not a local underline or bracket wrapper. |
 
 ## Collections
@@ -197,9 +197,16 @@ and agent-minimize semantics. Palette operations use the shared ActionRegistry.
 
 Compact header actions use `ui.IconButton`: native Button activation and
 focus, one hover fill (`ColorHover`), and the accessible label as the tooltip.
-Viewer toolbars use centered icons in equal hit targets. The default content
-inset is one cell on each side; the scrollbar and its separator are separate
-from that inset. Pointer activation returns keyboard focus to the owning pane;
+Viewer toolbars (image and Markdown files) use `panelchrome.ViewerButton`, the
+shared bracketed `ui.Button` with an icon label: `[ + ]`, with the icon in the
+middle. A Nerd Font icon keeps one blank cell after it, `[ icon  ]`, because
+terminals draw a symbol up to two cells wide when a blank cell follows it
+(Ghostty `constraintWidth` in `src/renderer/cell.zig`; Kitty `narrow_symbols`;
+the Nerd Fonts non-Mono icons are about 1.5 cells wide). The ink then has one
+blank cell on each side. One blank cell separates the buttons. A toolbar that
+is too short drops the gaps first, as `ui.ActionBar` does, then the ink cell,
+before it drops an icon. The default content inset is one cell on each side; the
+scrollbar and its separator are separate from that inset. Pointer activation returns keyboard focus to the owning pane;
 keyboard traversal can still focus and activate individual actions.
 Dock surfaces expose ⧉ (tab), ⇱ (window), and ⌄ (hide). Destructive terminal
 controls use a bin, not the dismiss glyph. The shell and terminal tab rails

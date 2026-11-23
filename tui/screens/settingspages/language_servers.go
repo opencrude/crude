@@ -63,7 +63,7 @@ func (m *Model) buildLSPForm(lsp setting.LSP) *ui.FormModel {
 	fields := []*ui.FieldState{
 		m.analysisTrustField(m.layerBase.Analysis),
 		ui.SeparatorFieldState("language-intelligence", "General"),
-		ui.BoolFieldState("enabled", "Code intelligence", lsp.Enabled, "Enable services for open source files; this does not scan the workspace."),
+		ui.BoolFieldState("enabled", "Code intelligence", lsp.Enabled, "Use language servers for open files. Check closed files covers the rest."),
 		ui.BoolFieldState("auto-detect", "Detect servers", lsp.AutoDetect, "Choose configured servers by file type; install their executables separately."),
 		ui.BoolFieldState("start-on-open", "Start on open", lsp.StartOnOpen, "Start a language server when its first document opens, not at startup."),
 		lspNumberField("debounce", "Update delay", "ms", lsp.UpdateDebounceMS, 60000, "Pause after typing before the server re-analyzes the document."),
@@ -81,7 +81,7 @@ func (m *Model) buildLSPForm(lsp setting.LSP) *ui.FormModel {
 		ui.BoolFieldState("find-references", "Find references", lsp.References, "List every reference to the symbol."),
 		ui.BoolFieldState("outline", "Document outline", lsp.Outline, "Build the symbol outline for the open file."),
 		ui.BoolFieldState("rename", "Rename symbol", lsp.Rename, "Rename a symbol across the project."),
-		ui.BoolFieldState("inlay-hints", "Inlay hints", lsp.InlayHints, "Default Off—read-only inline param/type; advertised providers; no commands/edits"),
+		ui.BoolFieldState("inlay-hints", "Inlay hints", lsp.InlayHints, "Show parameter names and types in the code. Hints are for reading only."),
 		ui.SeparatorFieldState("completion-behavior", "Suggestions"),
 		ui.BoolFieldState("completions", "Code suggestions", lsp.Completions, "Suggest functions, variables and members from the language server."),
 		ui.BoolFieldState("auto-complete", "Show as you type", lsp.AutoComplete, "Show suggestions as you type. When off, use Ctrl+Space."),
