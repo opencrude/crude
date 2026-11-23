@@ -350,8 +350,8 @@ func (z *DiskUsage) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *Event) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 8
-	o = append(o, 0x98)
+	// array header, size 9
+	o = append(o, 0x99)
 	o = msgp.AppendTime(o, z.At)
 	o = msgp.AppendString(o, z.Group)
 	o = msgp.AppendString(o, z.Series)
@@ -360,6 +360,14 @@ func (z *Event) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.AppendInt64(o, z.Micros)
 	o = msgp.AppendString(o, z.Detail)
 	o = msgp.AppendString(o, z.Severity)
+	if z.Stack == nil { // allownil: if nil
+		o = msgp.AppendNil(o)
+	} else {
+		o = msgp.AppendArrayHeader(o, uint32(len(z.Stack)))
+		for za0001 := range z.Stack {
+			o = msgp.AppendString(o, z.Stack[za0001])
+		}
+	}
 	return
 }
 
@@ -375,8 +383,8 @@ func (z *Event) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 8 {
-		err = msgp.ArrayError{Wanted: 8, Got: zb0001}
+	if zb0001 != 9 {
+		err = msgp.ArrayError{Wanted: 9, Got: zb0001}
 		return
 	}
 	z.At, bts, err = msgp.ReadTimeBytes(bts)
@@ -419,13 +427,43 @@ func (z *Event) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.WrapError(err, "Severity")
 		return
 	}
+	if msgp.IsNil(bts) {
+		bts = bts[1:]
+		z.Stack = nil
+	} else {
+		var zb0002 uint32
+		zb0002, bts, err = msgp.ReadArrayHeaderBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "Stack")
+			return
+		}
+		if uint64(zb0002)*1 > uint64(len(bts)) {
+			err = msgp.ErrShortBytes
+			return
+		}
+		if z.Stack != nil && cap(z.Stack) >= int(zb0002) {
+			z.Stack = (z.Stack)[:zb0002]
+		} else {
+			z.Stack = make([]string, zb0002)
+		}
+		for za0001 := range z.Stack {
+			z.Stack[za0001], bts, err = msgp.ReadStringBytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "Stack", za0001)
+				return
+			}
+		}
+	}
 	o = bts
 	return
 }
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *Event) Msgsize() (s int) {
-	s = 1 + msgp.TimeSize + msgp.StringPrefixSize + len(z.Group) + msgp.StringPrefixSize + len(z.Series) + msgp.StringPrefixSize + len(z.Title) + msgp.StringPrefixSize + len(z.Label) + msgp.Int64Size + msgp.StringPrefixSize + len(z.Detail) + msgp.StringPrefixSize + len(z.Severity)
+	s = 1 + msgp.TimeSize + msgp.StringPrefixSize + len(z.Group) + msgp.StringPrefixSize + len(z.Series) + msgp.StringPrefixSize + len(z.Title) + msgp.StringPrefixSize + len(z.Label) + msgp.Int64Size + msgp.StringPrefixSize + len(z.Detail) + msgp.StringPrefixSize + len(z.Severity) + msgp.ArrayHeaderSize
+	for za0001 := range z.Stack {
+		s += msgp.StringPrefixSize + len(z.Stack[za0001])
+	}
 	return
 }
 

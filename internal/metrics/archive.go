@@ -60,6 +60,7 @@ type ArchiveStall struct {
 	Series   string    `json:"series"`
 	Micros   int64     `json:"us"`
 	Severity string    `json:"severity"`
+	Stack    []string  `json:"stack,omitempty"` // code locations only
 }
 
 type ArchiveProcess struct {
@@ -147,7 +148,7 @@ func CaptureArchiveWindow(from, until int64) ArchiveWindow {
 	for i := range events.n {
 		event := events.ring[(events.next-events.n+i+maxEvents)%maxEvents]
 		if sec := event.At.Unix(); sec >= from && sec < until && event.Series != "" {
-			w.Stalls = append(w.Stalls, ArchiveStall{At: event.At, Series: event.Series, Micros: event.Micros, Severity: event.Severity})
+			w.Stalls = append(w.Stalls, ArchiveStall{At: event.At, Series: event.Series, Micros: event.Micros, Severity: event.Severity, Stack: event.Stack})
 		}
 	}
 	events.mu.Unlock()

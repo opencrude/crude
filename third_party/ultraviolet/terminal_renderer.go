@@ -922,6 +922,14 @@ func (s *TerminalRenderer) transformLine(newbuf *RenderBuffer, y int) {
 				break
 			}
 		}
+		// The loop stops on the first equal cell after the last difference.
+		// When nothing shifted, rewriting that cell is pure waste, and it
+		// would erase external graphics an owner must then restore.
+		if nLastCell == oLastCell && nLastCell > firstCell &&
+			cellEqual(newLine.At(nLastCell), oldLine.At(oLastCell)) {
+			nLastCell--
+			oLastCell--
+		}
 
 		n := min(oLastCell, nLastCell)
 		if n >= firstCell {
@@ -1051,7 +1059,10 @@ func (s *TerminalRenderer) clearBottom(newbuf *RenderBuffer, total int) (top int
 		}
 
 		if top < total {
-			s.move(newbuf, 0, max(0, top-1)) // top is 1-based
+			// top is the first blank row, as in ncurses ClrBottom. Starting
+			// one row higher erased a non-blank row that only the caller's
+			// touched-line pass could restore, and it also erased graphics.
+			s.move(newbuf, 0, top)
 			s.clearToBottom(blank)
 			if s.oldhash != nil && s.newhash != nil &&
 				row < len(s.oldhash) && row < len(s.newhash) {

@@ -159,8 +159,8 @@ var uiBlocking = NewCounter(Meta{Name: "ui.blocking", Group: GroupUI, Title: "Bl
 // MarkUIGoroutine records the calling goroutine as the UI goroutine. The
 // shell calls it from its update loop; only the first call binds.
 func MarkUIGoroutine() {
-	if uiGoroutine.Load() == 0 {
-		uiGoroutine.CompareAndSwap(0, goroutineID())
+	if uiGoroutine.Load() == 0 && uiGoroutine.CompareAndSwap(0, goroutineID()) {
+		bindUISignature()
 	}
 }
 
@@ -182,7 +182,12 @@ func Blocking(kind, label string, d time.Duration) {
 }
 
 // ResetUIGoroutineForTest unbinds the UI goroutine.
-func ResetUIGoroutineForTest() { uiGoroutine.Store(0) }
+func ResetUIGoroutineForTest() {
+	uiGoroutine.Store(0)
+	uiWork.mu.Lock()
+	uiWork.signature, uiWork.last = nil, time.Time{}
+	uiWork.mu.Unlock()
+}
 
 func goroutineID() uint64 {
 	var buf [40]byte

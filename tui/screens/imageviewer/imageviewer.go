@@ -224,6 +224,10 @@ func (s *Screen) refreshPlacement() {
 	if s.visible.W > 297 || s.visible.H > 297 {
 		return
 	}
+	if s.graphics == tea.ImageSixel {
+		s.refreshSixelWindow()
+		return
+	}
 	src := s.img.Bounds()
 	// Kitty preserves aspect inside c/r, rather than stretching. A rounded full
 	// grid may therefore include letterboxing. Do not reinterpret that padding
@@ -249,6 +253,27 @@ func (s *Screen) refreshPlacement() {
 	s.placementGrid = ui.Rect{X: s.virtual.X + x, Y: s.virtual.Y + y, W: w, H: h}
 	s.placement = tea.ImagePlacement{Image: s.resource, Columns: w, Rows: h,
 		SourceX: sx, SourceY: sy, SourceWidth: sw, SourceHeight: sh}
+}
+
+// refreshSixelWindow places a window of up to 297 × 297 cells, the marker
+// range, inside a larger virtual image. The terminal writer fits the image to
+// the whole virtual grid, so the window keeps the exact scale and pan position
+// that the Kitty source crop can represent only at whole source pixels. The
+// window moves in steps of half its spare cells: a pan inside it changes only
+// which cells are visible, so the writer crops the raster it already prepared.
+func (s *Screen) refreshSixelWindow() {
+	axis := func(virtualStart, virtualSize, visibleStart, visibleSize int) (start, size int) {
+		size = min(virtualSize, 297)
+		step := max(1, (size-visibleSize)/2)
+		offset := (visibleStart - virtualStart) / step * step
+		return virtualStart + min(max(0, offset), virtualSize-size), size
+	}
+	x, w := axis(s.virtual.X, s.virtual.W, s.visible.X, s.visible.W)
+	y, h := axis(s.virtual.Y, s.virtual.H, s.visible.Y, s.visible.H)
+	s.placementGrid = ui.Rect{X: x, Y: y, W: w, H: h}
+	s.placement = tea.ImagePlacement{Image: s.resource, Columns: w, Rows: h,
+		VirtualColumns: s.virtual.W, VirtualRows: s.virtual.H,
+		OffsetColumn: x - s.virtual.X, OffsetRow: y - s.virtual.Y}
 }
 
 func gcd(a, b int) int {

@@ -177,7 +177,11 @@ func (l *Latency) Since(start time.Time) { l.ObserveLabeled(now().Sub(start), ""
 
 // ObserveLabeled records one duration; label names the cause in a stall
 // event and is otherwise ignored.
-func (l *Latency) ObserveLabeled(d time.Duration, label string) {
+func (l *Latency) ObserveLabeled(d time.Duration, label string) { l.ObserveStack(d, label, nil) }
+
+// ObserveStack is ObserveLabeled with the stack captured while the observed
+// work was stalled (see EndUIWork). A stall event keeps it as evidence.
+func (l *Latency) ObserveStack(d time.Duration, label string, stack []string) {
 	if l == nil {
 		return
 	}
@@ -198,7 +202,7 @@ func (l *Latency) ObserveLabeled(d time.Duration, label string) {
 	l.total++
 	l.mu.Unlock()
 	if stall := l.meta.stallMicros(); stall > 0 && micros >= stall {
-		recordEvent(Event{At: at, Group: l.meta.Group, Series: l.meta.Name, Title: l.meta.Title, Label: label, Micros: micros})
+		recordEvent(Event{At: at, Group: l.meta.Group, Series: l.meta.Name, Title: l.meta.Title, Label: label, Micros: micros, Stack: stack})
 	}
 }
 
@@ -411,6 +415,9 @@ type Event struct {
 	Detail string    `json:"detail,omitempty"`
 	// Severity is "warn" or "crit"; stalls are "crit" when past Crit.
 	Severity string `json:"severity,omitempty"`
+	// Stack is the stalled goroutine's frames, innermost first, when they
+	// were captured during the stall. Frames name code, never user data.
+	Stack []string `json:"stack,omitempty"`
 }
 
 const maxEvents = 256
@@ -433,6 +440,9 @@ func recordEvent(event Event) {
 	}
 	if len(event.Detail) > 400 {
 		event.Detail = event.Detail[:400]
+	}
+	if len(event.Stack) > maxStallFrames {
+		event.Stack = event.Stack[:maxStallFrames]
 	}
 	events.mu.Lock()
 	if events.n == maxEvents {

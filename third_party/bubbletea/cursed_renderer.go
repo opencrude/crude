@@ -53,13 +53,20 @@ type cursedRenderer struct {
 	kittyInvalid                       bool                      // clear/reset/screen switch requires reupload
 	kittyReveal                        bool                      // first placement needs one extra pass
 	kittyTmux                          bool
-	sixelImages                        []encodedSixel
-	sixelTextDamage                    []uv.CellSpan
-	sixelUncertain                     []image.Rectangle
-	sixelInvalid                       bool
-	sixelWork                          *sixelWork
-	sixelPrepared                      uint64
-	sixelWake                          func()
+	// Sixel physical graphics history: what each terminal cell shows after
+	// the last successful write, and scratch for the frame in progress.
+	sixelShown, sixelNext, sixelDesired []sixelCell
+	sixelAny                            bool // sixelShown has pixels
+	sixelPending                        bool // a wanted raster is not ready
+	sixelBases                          []sixelPrepared
+	sixelHold                           []image.Rectangle // pending tiles keep their cells
+	sixelAttempt                        []image.Rectangle // painted this frame
+	sixelTextDamage                     []uv.CellSpan
+	sixelUncertain                      []image.Rectangle
+	sixelInvalid                        bool
+	sixelWork                           *sixelWork
+	sixelPrepared                       uint64
+	sixelWake                           func()
 }
 
 var _ renderer = &cursedRenderer{}
@@ -295,7 +302,7 @@ func (s *cursedRenderer) close() (err error) {
 	}
 
 	s.commitKittyImages(nil)
-	s.sixelImages, s.sixelUncertain, s.sixelInvalid = nil, nil, false
+	s.forgetSixels()
 	x, y := s.scr.Position()
 
 	// We want to clear the renderer state but not the cursor position. This is
@@ -491,16 +498,17 @@ func (s *cursedRenderer) flush(closing bool) error {
 		// close restores the terminal. Keep the desired view for resume.
 		tiles = nil
 	}
-	sixels := s.prepareSixels(tiles)
+	graphics := s.planSixels(tiles)
 	// Text scroll operations cannot preserve Sixel graphics on every terminal.
-	s.scr.SetScrollOptim(runtime.GOOS != "windows" && len(tiles) == 0 && len(s.sixelImages) == 0 && len(s.sixelUncertain) == 0)
+	s.scr.SetScrollOptim(runtime.GOOS != "windows" && !graphics)
 
 	// Render text first. Physical text damage can extend farther than the
-	// changed cells (line erases, cell shifts), but need not touch the whole row.
-	if len(sixels) > 0 {
+	// changed cells (line erases, cell shifts), but need not touch the whole
+	// row. Cursor moves never rewrite cells while graphics may be visible.
+	if graphics {
 		s.sixelTextDamage = slices.Grow(s.sixelTextDamage[:0], s.cellbuf.Height())[:s.cellbuf.Height()]
 		s.scr.RenderWithDamage(s.cellbuf.RenderBuffer, s.sixelTextDamage)
-		s.paintSixels(sixels)
+		s.paintSixels(tiles)
 	} else {
 		s.scr.Render(s.cellbuf.RenderBuffer)
 	}
@@ -624,13 +632,13 @@ func (s *cursedRenderer) flush(closing bool) error {
 		}
 		if _, err := io.Copy(s.w, buf); err != nil {
 			s.failKittyImages(view.Images)
-			s.failSixels(sixels)
+			s.failSixels()
 			return fmt.Errorf("bubbletea: error flushing update to the writer: %w", err)
 		}
 	}
 
 	s.commitKittyImages(view.Images)
-	s.sixelImages, s.sixelUncertain, s.sixelInvalid = sixels, nil, false
+	s.commitSixels(graphics)
 	s.kittyReveal = false
 	if s.lastView == nil {
 		s.lastView = new(View)
@@ -796,7 +804,7 @@ func reset(s *cursedRenderer) {
 	s.buf.Reset()
 	s.starting = true
 	s.kittyInvalid = len(s.kittyImages) > 0 || len(s.kittyUncertain) > 0
-	s.sixelInvalid = len(s.sixelImages) > 0 || len(s.sixelUncertain) > 0
+	s.sixelInvalid = s.sixelAny || len(s.sixelUncertain) > 0
 	scr := uv.NewTerminalRenderer(&s.buf, s.env)
 	scr.SetColorProfile(s.profile)
 	scr.SetRelativeCursor(true) // Always start in inline mode
@@ -860,7 +868,7 @@ func (s *cursedRenderer) clearScreen() {
 	s.scr.MoveTo(0, 0)
 	s.scr.Erase()
 	s.kittyInvalid = len(s.kittyImages) > 0 || len(s.kittyUncertain) > 0
-	s.sixelInvalid = len(s.sixelImages) > 0 || len(s.sixelUncertain) > 0
+	s.sixelInvalid = s.sixelAny || len(s.sixelUncertain) > 0
 	s.mu.Unlock()
 }
 

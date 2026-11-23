@@ -28,6 +28,15 @@ type Observer interface {
 	ObserveFlush(FlushSample)
 }
 
+// LoopWatcher is an optional Observer extension (Crude addition). BeginLoop
+// runs on the event loop just before Update, EndLoop after the frame handoff
+// or when the loop stops. Between them a watcher can inspect an iteration
+// that is still running, for example to record what a stalled Update does.
+type LoopWatcher interface {
+	BeginLoop()
+	EndLoop()
+}
+
 // WithObserver installs a performance observer (Crude addition).
 func WithObserver(observer Observer) ProgramOption {
 	return func(p *Program) {

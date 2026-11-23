@@ -1059,9 +1059,10 @@ Unicode-placeholder cells carry image identity and source coordinates through
 the ordinary compositor, so moving, resizing, clipping and overlapping windows
 use the same ownership and paint path as text. The single terminal writer uploads
 an immutable PNG once for Kitty, replaces virtual geometry on resize, and deletes
-only its exact image IDs on close/reset/suspend. For Sixel, it encodes the visible
-composited crops with an adaptive, dithered 256-colour palette and restores covered
-text on close or movement. PNG, JPEG, GIF, WebP and BMP decoding and
+only its exact image IDs on close/reset/suspend. For Sixel, it quantizes each
+placement once (adaptive, dithered 256-colour palette) and sends crops of that
+raster. It keeps the current pixels until a replacement raster is ready, and
+resends only the cells that text or a closed overlay covered. PNG, JPEG, GIF, WebP and BMP decoding and
 PNG preparation run off Update with the existing reference owner/epoch checks.
 GIF uses its first frame. Byte limits are 64 MiB and decoded images are bounded
 to 33,554,432 pixels.

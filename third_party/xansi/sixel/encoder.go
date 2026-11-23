@@ -46,99 +46,83 @@ func (e *Encoder) EncodeContext(ctx context.Context, w io.Writer, img image.Imag
 		return nil
 	}
 
-	bounds := img.Bounds()
-	palette, dither, err := newSixelPalette(ctx, img, MaxColors, e.Dither)
+	q, err := e.Quantize(ctx, img)
 	if err != nil {
 		return err
 	}
-	if _, err := WriteRaster(w, 1, 1, bounds.Dx(), bounds.Dy()); err != nil {
-		return fmt.Errorf("error encoding raster: %w", err)
-	}
-	for i, c := range palette.PaletteColors {
-		if _, err := WriteColor(w, i, 2, int(c.Red), int(c.Green), int(c.Blue)); err != nil {
-			return fmt.Errorf("error encoding palette: %w", err)
-		}
-	}
-
-	return encodeBands(ctx, w, img, palette, dither)
-}
-
-func encodeBands(ctx context.Context, w io.Writer, img image.Image, palette sixelPalette, dither bool) error {
-	bounds := img.Bounds()
-	width := bounds.Dx()
-	if bounds.Empty() {
-		_, err := io.WriteString(w, string(LineBreak))
+	data, err := q.AppendEncode(ctx, nil, q.Bounds())
+	if err != nil {
 		return err
 	}
-
-	var diffusion *sixelDiffusion
-	if dither {
-		diffusion = newSixelDiffusion(width, palette.PaletteColors)
+	if _, err := w.Write(data); err != nil {
+		return fmt.Errorf("error encoding sixel: %w", err)
 	}
-	rgba := readSixelRGBA(img)
+	return nil
+}
 
-	// Retain only one band. A mask packs the band's six pixels for one
-	// column/color. Find the occupied range while filling it so a sparse color
-	// neither scans its leading holes nor encodes its trailing holes.
-	mask := make([]byte, width*len(palette.PaletteColors))
-	var first, end [MaxColors]int
-	var band []byte
-	for y := bounds.Min.Y; y < bounds.Max.Y; {
-		for row := 0; row < 6 && y < bounds.Max.Y; row, y = row+1, y+1 {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			for col := range width {
-				r, g, b, a := rgba(bounds.Min.X+col, y)
-				var index uint8
-				if diffusion != nil {
-					index = diffusion.pixel(col, r, g, b)
-				} else {
-					index = palette.paletteIndexes[sixelConvertColor(r, g, b, a)]
-					if palette.PaletteColors[index].Alpha == 0 {
-						continue
-					}
-				}
-				mask[int(index)*width+col] |= 1 << row
-				if end[index] == 0 || col < first[index] {
-					first[index] = col
-				}
-				end[index] = max(end[index], col+1)
-			}
-			if diffusion != nil {
-				diffusion.nextRow()
-			}
-		}
+// sixelBands turns up to six rows of palette entries into one Sixel band.
+// Its scratch is reused across bands; one value serves one goroutine.
+type sixelBands struct {
+	width  int
+	colors []sixelColor
+	// A mask packs the band's six pixels for one column/color. The occupied
+	// range is found while filling it so a sparse color neither scans its
+	// leading holes nor encodes its trailing holes.
+	mask        []byte
+	first, end  [MaxColors]int
+	transparent [MaxColors]bool
+}
 
-		band = band[:0]
-		for index, last := range end[:len(palette.PaletteColors)] {
-			if last == 0 {
+func newSixelBands(width int, colors []sixelColor) *sixelBands {
+	b := &sixelBands{width: width, colors: colors, mask: make([]byte, width*len(colors))}
+	for i, c := range colors {
+		b.transparent[i] = c.Alpha == 0
+	}
+	return b
+}
+
+func (b *sixelBands) append(out []byte, rows [][]uint8) []byte {
+	width := b.width
+	for bit, row := range rows {
+		m := byte(1) << bit
+		for col, index := range row[:width] {
+			if b.transparent[index] {
 				continue
 			}
-			if len(band) != 0 {
-				band = append(band, CarriageReturn)
+			b.mask[int(index)*width+col] |= m
+			if b.end[index] == 0 || col < b.first[index] {
+				b.first[index] = col
 			}
-			band = append(band, ColorIntroducer)
-			band = strconv.AppendInt(band, int64(index), 10)
-			band = appendSixelRun(band, first[index], '?')
-			columns := mask[index*width+first[index] : index*width+last]
-			for from := 0; from < len(columns); {
-				to := from + 1
-				for to < len(columns) && columns[to] == columns[from] {
-					to++
-				}
-				band = appendSixelRun(band, to-from, columns[from]+'?')
-				from = to
+			if col >= b.end[index] {
+				b.end[index] = col + 1
 			}
-			clear(columns)
-			end[index] = 0
-		}
-		band = append(band, LineBreak)
-		if _, err := w.Write(band); err != nil {
-			return fmt.Errorf("error encoding band: %w", err)
 		}
 	}
-	return ctx.Err()
+
+	start := len(out)
+	for index, last := range b.end[:len(b.colors)] {
+		if last == 0 {
+			continue
+		}
+		if len(out) != start {
+			out = append(out, CarriageReturn)
+		}
+		out = append(out, ColorIntroducer)
+		out = strconv.AppendInt(out, int64(index), 10)
+		out = appendSixelRun(out, b.first[index], '?')
+		columns := b.mask[index*width+b.first[index] : index*width+last]
+		for from := 0; from < len(columns); {
+			to := from + 1
+			for to < len(columns) && columns[to] == columns[from] {
+				to++
+			}
+			out = appendSixelRun(out, to-from, columns[from]+'?')
+			from = to
+		}
+		clear(columns)
+		b.end[index] = 0
+	}
+	return append(out, LineBreak)
 }
 
 func appendSixelRun(out []byte, n int, c byte) []byte {

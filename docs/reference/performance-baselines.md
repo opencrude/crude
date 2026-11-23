@@ -1014,6 +1014,48 @@ Encode-only payloads are 491 kB for the typical photo and 1.67 MB near the cap.
 These times separate encoding and writer CPU from ConPTY throughput and emulator
 paint, which are not measured by a counting sink.
 
+#### Quantize once, hold pixels (2026-11-23)
+
+The Sixel image blinked on hover, tooltips, zoom and tab switches: a changed
+raster key dropped the old payload before the new one existed, an overlay split
+re-keyed every tile, and frames without a prepared raster rendered text without
+damage tracking. `third_party/bubbletea/sixel_stability_test.go` replays every
+flushed frame through a modelled terminal (`sixel_screen_test.go`, decoding real
+DCS payloads) and fails if any image cell is blank or shows stale pixels in any
+frame: overlay open/close, zoom with the new raster pending, an image switch,
+and a drag preview handing over to native pixels. All four failed before.
+
+Same host, Windows amd64, Go 1.27.4, i7-9850H, `img29.jpg`, three runs of five
+iterations (`-benchtime=5x -count=3`):
+
+| Stage | Before | After |
+| --- | --- | --- |
+| Encode, 810×560 photo | 103 ms | 39–43 ms |
+| Encode, 1530×1360 near the cap | 333 ms | 85–92 ms |
+| Open until native bytes reach the sink | 88–116 ms | 33–38 ms |
+| Warm frame | 0 bytes | 0 bytes, 0 allocations |
+| Close a tooltip over the image | whole image blank, then a full resend | only the covered cells resent |
+
+The palette's median cut sorted colours with a comparison sort; it now uses a
+counting sort over the 101 Sixel levels (noise fixture 197 → 64 ms to quantize).
+Floyd–Steinberg diffusion runs as a bit-identical parallel wavefront
+(`TestEncoderDitherMatchesStandardDiffusion` still compares every pixel with
+`image/draw`). Crops of a quantized raster encode in 0.24 ms for a tooltip-sized
+area and 3.9 ms for the whole 810×560 raster (`BenchmarkQuantizedEncode`).
+
+Windows Terminal 1.25.3131 on the same host accepted 30 back-to-back
+synchronized Sixel frames from a throwaway probe program at 22.6 ms per
+810×560 frame (523 kB), 6.7 ms per 405×280 frame (157 kB) and 82 ms per
+1530×1360 frame (2.1 MB). Undithered rasters of the photo were only 9–18%
+smaller, so dithering is not what makes moving images expensive; the byte count
+of a photo at Sixel's 256 colours is. Moving a window and panning therefore stay
+native up to 640,000 pixels (about 30 frames per second); a resize drag, which
+needs a new raster per step, and larger images keep the cell preview.
+`TestSixelPanCropsThePreparedMarginWithoutPreparingAgain` requires pans inside
+the prepared margin to send one crop each without reading the source again, and
+`TestSixelImageSwitchNeverMixesImagesAndRevisitsFromCache` requires a switch
+back to a recent image to paint in the same frame from the cache.
+
 `BenchmarkSixelRendererPhoto/SharedRow` used Go's `video-001.jpeg` at 90×28
 cells, 9×20 cell pixels, in three 30-iteration Windows runs. One disjoint changed
 cell fell from 463,446 bytes to 2.1 bytes at the sink. The writer restores
@@ -1024,8 +1066,11 @@ past the changed text.
 of the Windows wallpaper at 176×48 cells. Live cell previews sent 113.9–114.0 kB
 per move and no Sixel DCS; open and release each sent a 643.6 kB native raster.
 Send-to-sink was 1.1–2.6 ms. The shell does not delay gesture mutations; release
-or 180 ms of quiet restores the final native placement. This measures the
-writer sink, not the emulator's paint latency.
+restores the final native placement, and the writer keeps the preview on screen
+until that raster is ready. Wheel and key zoom no longer use the preview: they
+keep native pixels and replace them in one frame. That test's 112×34-cell window
+(685,440 pixels) is above the native-motion limit, so its moves still preview. This measures the writer sink,
+not the emulator's paint latency.
 
 `TestImageWorkingSetManyTabs` opened 24 distinct 2048×1024 images from the file
 tree. Three Windows runs retained one mounted placement and eight decoded
@@ -1113,6 +1158,22 @@ not a session slash command. Third-party Bubble Tea
 hands frames, resizes and control sequences to the renderer under `viewMu`
 only and writes the terminal under `flushMu`, so a slow console never blocks
 the next `Update` (`third_party/bubbletea/observer_test.go`).
+
+A stall event names the message type; it now also names the code. Bubble Tea's
+optional `LoopWatcher` brackets Update, View and the frame handoff of each loop
+iteration (`metrics.BeginUIWork`/`EndUIWork`: one reused timer, reset and
+stopped; no allocation). When an iteration is still running after 50 ms, the
+timer goroutine takes one goroutine profile (`pprof` debug=1, the concurrent
+collector with two brief stop-the-world pauses; not `runtime.Stack` with all
+goroutines, which stops the world for the whole dump), finds the UI goroutine by
+the loop frames it had when it was bound, and keeps at most 32 of its frames.
+`ui.update`, `ui.view`, `ui.present` and `ui.input` stall events of that
+iteration carry the frames in `stack`; `performance.shell` events and the
+archived stall evidence return them. Captures are limited to one per second.
+A continuous execution trace (`runtime/trace.FlightRecorder`, Go 1.25+) would
+also show scheduling, GC and syscalls, but it costs CPU on every event, so it is
+not enabled. `internal/metrics/stall_test.go` proves that a blocked UI goroutine
+is found among decoys and that the frames reach the archive.
 
 **Resources** (second tab) shows what Crude occupies on each attributable machine: resident
 memory and CPU of the shell, the core and every process they started

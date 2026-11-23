@@ -28,9 +28,26 @@ import (
 //     rather than try to split them up between the subcubes.  This allows us to use a slice of unique colors
 //     with a pixel count per color rather than trying to represent each pixel individually.
 type sixelPalette struct {
-	// Lookup to get palette index from image color
-	paletteIndexes map[sixelColor]uint8
-	PaletteColors  []sixelColor
+	// index maps an image color to its palette entry. Diffusion selects
+	// entries from the dithered value instead and leaves it nil.
+	index         *sixelColorIndex
+	colors        []weightedSixelColor // keys to clear when index is released
+	PaletteColors []sixelColor
+}
+
+// lookup returns the palette entry for an exact image color.
+func (p sixelPalette) lookup(c sixelColor) (uint8, bool) {
+	if p.index == nil {
+		return 0, false
+	}
+	v, ok := p.index.get(c)
+	return uint8(v), ok //nolint:gosec // palette entries are below MaxColors
+}
+
+// release returns the pooled lookup table. The palette colors remain valid.
+func (p *sixelPalette) release() {
+	p.index.release(p.colors)
+	p.index, p.colors = nil, nil
 }
 
 type weightedSixelColor struct {
@@ -178,6 +195,7 @@ func (p *sixelPalette) quantize(ctx context.Context, uniqueColors []weightedSixe
 	}
 
 	cubeHeap := make(cubePriorityQueue, 0, maxColors)
+	scratch := make([]weightedSixelColor, len(uniqueColors))
 
 	// Start with a cube that contains all colors
 	heap.Init(&cubeHeap)
@@ -190,22 +208,8 @@ func (p *sixelPalette) quantize(ctx context.Context, uniqueColors []weightedSixe
 		}
 		cubeToSplit := heap.Pop(&cubeHeap).(quantizationCube)
 
-		//nolint:godox
-		// TODO: Use slices.SortFunc and cmp.Compare in the future (>=1.24)
-		// Then can delete palette_sort.go
-		sortFunc(uniqueColors[cubeToSplit.startIndex:cubeToSplit.startIndex+cubeToSplit.length],
-			func(left weightedSixelColor, right weightedSixelColor) int {
-				switch cubeToSplit.sliceChannel { //nolint:exhaustive // alpha channel not used
-				case quantizationRed:
-					return compare(left.Red, right.Red)
-				case quantizationGreen:
-					return compare(left.Green, right.Green)
-				case quantizationBlue:
-					return compare(left.Blue, right.Blue)
-				default:
-					return compare(left.Alpha, right.Alpha)
-				}
-			})
+		sortByChannel(uniqueColors[cubeToSplit.startIndex:cubeToSplit.startIndex+cubeToSplit.length], scratch,
+			cubeToSplit.sliceChannel)
 
 		// We need to split up the colors in this cube so that the pixels are evenly split between the two,
 		// or at least as close as we can reasonably get. What we do is count up the pixels as we go through
@@ -235,6 +239,38 @@ func (p *sixelPalette) quantize(ctx context.Context, uniqueColors []weightedSixe
 		p.loadColor(uniqueColors, bucketToLoad.startIndex, bucketToLoad.length)
 	}
 	return ctx.Err()
+}
+
+// sortByChannel orders colors by one channel with a stable counting sort.
+// Sixel channels have 101 levels, so this is linear in the number of colors,
+// where a comparison sort of a photo's colors dominated palette time.
+func sortByChannel(colors, scratch []weightedSixelColor, channel quantizationChannel) {
+	key := func(c sixelColor) uint8 {
+		switch channel { //nolint:exhaustive // alpha is the remaining channel
+		case quantizationRed:
+			return c.Red
+		case quantizationGreen:
+			return c.Green
+		case quantizationBlue:
+			return c.Blue
+		default:
+			return c.Alpha
+		}
+	}
+	var starts [257]int
+	for _, c := range colors {
+		starts[int(key(c.sixelColor))+1]++
+	}
+	for i := 1; i < len(starts); i++ {
+		starts[i] += starts[i-1]
+	}
+	scratch = scratch[:len(colors)]
+	for _, c := range colors {
+		k := key(c.sixelColor)
+		scratch[starts[k]] = c
+		starts[k]++
+	}
+	copy(colors, scratch)
 }
 
 // loadColor accepts a range of colors representing a single median cut cube. It calculates the
@@ -293,28 +329,44 @@ func readSixelRGBA(img image.Image) func(int, int) (uint32, uint32, uint32, uint
 }
 
 // newSixelPalette accepts an image and produces an N-color quantized color palette using the median cut
-// algorithm. Only the non-dithered path needs a reverse lookup for the unmodified source values.
+// algorithm. Only the non-dithered path needs a reverse lookup for the unmodified source values; the
+// caller releases it.
 func newSixelPalette(ctx context.Context, img image.Image, maxColors int, dither bool) (sixelPalette, bool, error) {
-	colorPositions := make(map[sixelColor]int)
+	index := newSixelColorIndex()
 	var uniqueColors []weightedSixelColor
+	keep := false
+	defer func() {
+		if !keep {
+			index.release(uniqueColors)
+		}
+	}()
 	opaque := true
-	rgba := readSixelRGBA(img)
+	pixels := newSixelPixels(img)
 	bounds := img.Bounds()
+	row := make([]sixelColor, bounds.Dx())
 	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
 		if err := ctx.Err(); err != nil {
 			return sixelPalette{}, false, err
 		}
-		for x := bounds.Min.X; x < bounds.Max.X; x++ {
-			c := sixelConvertColor(rgba(x, y))
-			if i, ok := colorPositions[c]; ok {
-				uniqueColors[i].count++
-			} else {
-				// Stable first-seen order makes median cut's tied splits and
-				// the wire payload deterministic across encodes.
-				colorPositions[c] = len(uniqueColors)
-				uniqueColors = append(uniqueColors, weightedSixelColor{c, 1})
-				opaque = opaque && c.Alpha == 100
+		pixels.colors(y, row)
+		last := -1
+		for x, c := range row {
+			// Runs of one color are common in flat artwork and backgrounds.
+			if last >= 0 && c == row[x-1] {
+				uniqueColors[last].count++
+				continue
 			}
+			if i, ok := index.get(c); ok {
+				last = int(i)
+				uniqueColors[i].count++
+				continue
+			}
+			// Stable first-seen order makes median cut's tied splits and
+			// the wire payload deterministic across encodes.
+			last = len(uniqueColors)
+			index.set(c, int32(last)) //nolint:gosec // bounded by the pixel count of a bounded raster
+			uniqueColors = append(uniqueColors, weightedSixelColor{c, 1})
+			opaque = opaque && c.Alpha == 100
 		}
 	}
 
@@ -326,39 +378,35 @@ func newSixelPalette(ctx context.Context, img image.Image, maxColors int, dither
 		return p, true, nil
 	}
 
-	p.paletteIndexes = make(map[sixelColor]uint8, len(uniqueColors))
-	if len(uniqueColors) == len(p.PaletteColors) {
-		for i, c := range p.PaletteColors {
-			p.paletteIndexes[c] = uint8(i) // at most MaxColors entries
-		}
-		return p, false, ctx.Err()
-	}
-
-	// The average color of a cube is not necessarily the nearest palette color.
-	for i, c := range uniqueColors {
-		if i%256 == 0 {
-			if err := ctx.Err(); err != nil {
-				return sixelPalette{}, false, err
+	// With no more colors than entries, quantize kept first-seen order, so
+	// each color's position is already its palette entry.
+	if len(uniqueColors) > len(p.PaletteColors) {
+		// The average color of a cube is not necessarily the nearest palette color.
+		for i, c := range uniqueColors {
+			if i%256 == 0 {
+				if err := ctx.Err(); err != nil {
+					return sixelPalette{}, false, err
+				}
 			}
-		}
-		var bestColorIndex uint8
-		bestScore := uint32(math.MaxUint32)
+			var bestColorIndex int32
+			bestScore := uint32(math.MaxUint32)
 
-		for paletteIndex, paletteColor := range p.PaletteColors {
-			redDiff := uint32(c.Red) - uint32(paletteColor.Red)
-			greenDiff := uint32(c.Green) - uint32(paletteColor.Green)
-			blueDiff := uint32(c.Blue) - uint32(paletteColor.Blue)
-			alphaDiff := uint32(c.Alpha) - uint32(paletteColor.Alpha)
+			for paletteIndex, paletteColor := range p.PaletteColors {
+				redDiff := uint32(c.Red) - uint32(paletteColor.Red)
+				greenDiff := uint32(c.Green) - uint32(paletteColor.Green)
+				blueDiff := uint32(c.Blue) - uint32(paletteColor.Blue)
+				alphaDiff := uint32(c.Alpha) - uint32(paletteColor.Alpha)
 
-			score := (redDiff * redDiff) + (greenDiff * greenDiff) + (blueDiff * blueDiff) + (alphaDiff * alphaDiff)
-			if score < bestScore {
-				bestColorIndex = uint8(paletteIndex)
-				bestScore = score
+				score := (redDiff * redDiff) + (greenDiff * greenDiff) + (blueDiff * blueDiff) + (alphaDiff * alphaDiff)
+				if score < bestScore {
+					bestColorIndex = int32(paletteIndex) //nolint:gosec // at most MaxColors entries
+					bestScore = score
+				}
 			}
+			index.set(c.sixelColor, bestColorIndex)
 		}
-
-		p.paletteIndexes[c.sixelColor] = bestColorIndex
 	}
-
+	keep = true
+	p.index, p.colors = index, uniqueColors
 	return p, false, ctx.Err()
 }

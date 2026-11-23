@@ -1075,7 +1075,13 @@ geometry changes replace stable placement `p=1` without reuploading the PNG.
 At high zoom, a pane may publish a source-pixel rectangle that expands to exact
 source/cell boundaries, with placeholder coordinates relative to that crop.
 If the exact crop does not fit the protocol's coordinate range, or the rounded
-full grid would change its aspect, the pane uses the cell preview instead.
+full grid would change its aspect, Kitty uses the cell preview instead. Sixel
+does not need a source crop: the pane publishes a window of up to 297 × 297
+cells into the whole virtual grid (`VirtualColumns`, `VirtualRows`,
+`OffsetColumn`, `OffsetRow`), and the writer fits the image to that grid, so
+any zoom keeps native pixels at the exact scale and pan position. The window
+moves in steps of half its spare cells, so a pan inside it reuses the prepared
+raster.
 Every APC uses tmux passthrough when applicable. Failed writes retain exact
 possibly transmitted IDs; close, screen changes, clear/reset and suspend/resume
 delete or recreate only owned IDs, never terminal-wide image deletion. The
@@ -1087,51 +1093,90 @@ or timed-out Kitty query does not disable Sixel. Confirmed Kitty remains preferr
 No terminal-name or environment-variable guess enables graphics. Measured cell
 geometry is required for both protocols, including Windows Terminal 1.22+.
 
-Cached Sixel rasters still need a full DCS when their screen position changes.
-For file-image zoom/pan, image-window move/resize and divider drags that change
-an image pane's layout, the shell uses the existing cell preview during motion.
-The input owner updates the viewport or layout on every event; the cell preview
-paints that same current geometry. Only the affected Sixel views omit their
-native placements and markers. Other images, Kitty and frame cadence do not
-switch modes. A held drag keeps its preview even during a pause. Release or
-capture loss settles a drag; 180 ms of quiet settles wheel and key bursts.
-At most one settle wake is outstanding. An
-unmounted image or a replaced attachment is not reopened by the wake.
+A moved Sixel raster still needs a full DCS at its new screen position. Moving
+an image window or panning reuses the prepared raster, so those drags keep
+native pixels while the pane or window holds at most 640,000 pixels (Windows
+Terminal accepts such a frame in about 25 ms; a 2 MB raster takes 82 ms). A
+drag that resizes an image (window resize, divider drag) needs a new raster at
+every step, so it, and a drag of a larger image, uses the existing cell preview
+during motion. The input owner updates the viewport or layout on every event;
+the cell preview paints that same current geometry. Only the affected Sixel
+views omit their native placements and markers. Other images, Kitty and frame
+cadence do not switch modes. A held drag keeps its preview even during a pause;
+release or capture loss restores native pixels. Discrete changes (wheel or key
+zoom, toolbar buttons, key pan) keep native pixels. An unmounted image or a
+replaced attachment is not reopened.
 
 For Sixel, Bubble Tea derives rectangular runs only from surviving compositor
-markers during the existing synchronous cell snapshot, then substitutes spaces.
-It never resamples pixels on Update or the terminal writer. The writer submits
-the latest terminal-clipped tiles to one renderer-owned worker and can publish
-the composed text while a cold raster is pending. A confirmed Sixel terminal
-uses decoded pixels directly, without encoding a PNG for Kitty. The worker
-resamples only the visible crop with `x/image/draw`, flattens alpha over the composed surface colour
-and encodes it through `x/ansi/sixel`. Its adaptive 256-colour palette retains
-Floyd–Steinberg diffusion for opaque images. Exact nearest-colour lookup
-discards palette entries that cannot win in a region of colour space, and
-encoding stages one six-pixel band at a time. Pixel detail is native, but
-Sixel cannot preserve Kitty's full RGB colour range.
+markers during the existing synchronous cell snapshot, then substitutes spaces
+with one constant foreground, so a pane that switches images keeps identical
+text cells. It never resamples pixels on Update. A confirmed Sixel terminal uses
+decoded pixels directly, without encoding a PNG for Kitty.
 
-Only the latest desired immutable raster keys are retained. A key includes the
-resource, crop, fitted geometry and background, not its position on screen.
-Superseding a crop cancels it; a completed current crop wakes the existing paced
-writer without new input. Only that writer can publish graphics. Moving a pane
-reuses its payload if its raster key is unchanged. Unchanged frames send nothing.
-The text writer records the physical spans it writes, erases or shifts. Only
-intersected rasters need restoring; a disjoint text update on the same row does
-not send pixels. Scroll and cursor-overwrite optimizations are disabled during
-this pass so they cannot erase untracked image cells.
-Removal, movement and occlusion invalidate only exact old graphics rectangles
-in UV's physical-screen history, then repaint the latest composed text. The
-compositor still owns clipping and z-order.
-Resize, reset, screen changes and suspend/resume recreate the current graphics.
-Failed writes retain exact possibly transmitted rectangles until a successful
-repaint; failed close does not forget them. Terminal shutdown or suspend
-cancels preparation, clears owned graphics without waiting for encoding, and
-joins the worker before another terminal lifetime starts. Cursor save/restore
-brackets graphics, and the unused final graphics newline is omitted to avoid
-bottom-edge scrolling. Visible Sixel rasters are capped at 2,097,152 pixels to
-bound preparation and output; larger previews retain the cell fallback. The
-shared 297-cell coordinate limit and exact-crop rules still apply.
+One renderer-owned worker prepares a *base raster* per placement and background:
+first the bounding grid of that placement's visible tiles, then, for a zoomed
+image, a larger grid around it (a margin that shrinks until it fits the raster
+cap), so panning crops the same raster instead of preparing it again. It resamples only that grid
+with `x/image/draw` in parallel stripes, flattens alpha over the composed
+surface colour, and quantizes it once with `x/ansi/sixel` (`Encoder.Quantize`):
+an adaptive 256-colour palette (median cut over a linear counting sort) and
+Floyd–Steinberg diffusion for opaque images. Diffusion runs as a parallel
+wavefront: a row starts a 64-column chunk once the row above has finished the
+next chunk, so every pixel sees the same inputs as a sequential pass and the
+result is bit-identical. Every visible tile and every repaint is a crop of the
+same quantized raster (`Quantized.AppendEncode`), so tiles share one palette and
+one dither pattern and join without seams; a crop defines only the palette
+entries it uses. Screen position and occlusion are not part of the base key, so
+moving a pane or opening a menu over an image never prepares it again. A
+placement keeps painting from the raster it used last while that still covers
+it, because another quantization would shimmer. Up to 16 recent rasters (32
+MiB) stay cached, keyed by image ID and geometry rather than the resource, so a
+tab switch back to an image paints in the same frame without keeping decoded
+source pixels alive. The worker leaves one processor free for the UI. Pixel
+detail is native, but Sixel cannot preserve Kitty's full RGB colour range.
+
+The writer keeps physical graphics history per terminal cell: which base raster
+and which image cell each terminal cell shows after the last successful write.
+Every frame that may show graphics records the physical spans that the text
+pass writes, erases or shifts; those cells lose their pixels. After the text
+pass, the writer sends, per tile, one crop that covers only the cells that do
+not show their wanted raster. Closing a tooltip or menu therefore resends only
+the covered cells; a disjoint text update on a shared row sends nothing.
+Cells that are no longer image cells get their composed text back.
+
+A cell whose replacement raster for the *same image* is still being prepared
+keeps what it shows (paint holding): UV's `HoldArea` copies the physical cells
+into the frame so the text diff leaves them alone. A zoom step, a new crop or
+size, or the end of a drag preview keeps the previous pixels or preview until
+the new raster replaces them in one synchronized frame; the image never goes
+blank in between. A different image is never held: the previous image's cells
+are cleared at once and the new raster appears when it is ready, so two images
+never mix in one pane. A placement
+paints only from a raster that covers all of its visible tiles, never from a
+mix of an old and a new quantization. A completed raster supersedes smaller
+rasters of the same placement and wakes the existing paced writer without new
+input. Superseded work is cancelled; only that writer can publish graphics.
+
+Scroll optimizations are disabled while graphics may be visible so they cannot
+erase untracked image cells. UV's line diff does not rewrite the unchanged cell
+that ends a changed run, and its clear-to-bottom starts at the first blank row,
+so text writes never touch image cells that did not change. The compositor
+still owns clipping and z-order. Resize, reset, screen changes and
+suspend/resume recreate the current graphics. Failed writes retain exact
+possibly transmitted rectangles until a successful repaint; failed close does
+not forget them. Terminal shutdown or suspend cancels preparation, clears owned
+graphics without waiting for encoding, and joins the worker before another
+terminal lifetime starts. Cursor save/restore brackets graphics, and the unused
+final graphics newline is omitted to avoid bottom-edge scrolling. Visible Sixel
+rasters are capped at 2,097,152 pixels to bound preparation and output; larger
+previews retain the cell fallback. The 297-cell marker range limits a Sixel
+window, not the zoom.
+
+Kitty does not need paint holding. Its placeholder cells are ordinary text that
+the terminal composes with the uploaded image itself. A geometry change replaces
+the stable `p=1` placement in the same synchronized frame as the cell text, and
+the PNG is uploaded once per resource, so hover, overlays and zoom never present
+an image-less frame.
 
 ## 10. Key Design Decisions
 

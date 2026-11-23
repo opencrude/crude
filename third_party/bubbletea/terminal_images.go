@@ -72,6 +72,15 @@ type ImagePlacement struct {
 	// the rectangle with the image bounds. Kitty selects it without reupload;
 	// Sixel prepares only the visible crop.
 	SourceX, SourceY, SourceWidth, SourceHeight int
+
+	// VirtualColumns and VirtualRows fit the image into a larger virtual grid
+	// of cells, and OffsetColumn and OffsetRow place this placement's
+	// Columns × Rows window inside it. All zero means the window is the whole
+	// grid. Sixel only: a zoomed image larger than the 297-cell marker range
+	// then paints any window at the exact scale and pan position. Kitty
+	// selects source rectangles instead and rejects these fields.
+	VirtualColumns, VirtualRows int
+	OffsetColumn, OffsetRow     int
 }
 
 // Supports reports whether this immutable resource can be painted by protocol.
@@ -86,12 +95,29 @@ func (p ImagePlacement) valid() bool {
 	if p.Protocol == ImageSixel && (p.CellWidth <= 0 || p.CellWidth > 1024 || p.CellHeight <= 0 || p.CellHeight > 1024) {
 		return false
 	}
+	if p.hasVirtualGrid() && (p.Protocol != ImageSixel || p.OffsetColumn < 0 || p.OffsetRow < 0 ||
+		p.OffsetColumn > p.VirtualColumns-p.Columns || p.OffsetRow > p.VirtualRows-p.Rows) {
+		return false
+	}
 	if !p.hasSourceRect() {
 		return true
 	}
 	return p.SourceX >= 0 && p.SourceY >= 0 && p.SourceWidth > 0 && p.SourceHeight > 0 &&
 		uint64(p.SourceX) <= 1<<32-1 && uint64(p.SourceY) <= 1<<32-1 &&
 		uint64(p.SourceWidth) <= 1<<32-1 && uint64(p.SourceHeight) <= 1<<32-1
+}
+
+func (p ImagePlacement) hasVirtualGrid() bool {
+	return p.VirtualColumns != 0 || p.VirtualRows != 0 || p.OffsetColumn != 0 || p.OffsetRow != 0
+}
+
+// virtualGrid returns the grid the image is fitted to and this placement's
+// origin in it.
+func (p ImagePlacement) virtualGrid() (size, origin image.Point) {
+	if !p.hasVirtualGrid() {
+		return image.Pt(p.Columns, p.Rows), image.Point{}
+	}
+	return image.Pt(p.VirtualColumns, p.VirtualRows), image.Pt(p.OffsetColumn, p.OffsetRow)
 }
 
 func (p ImagePlacement) hasSourceRect() bool {
