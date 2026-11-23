@@ -60,7 +60,10 @@ type ArchiveStall struct {
 	Series   string    `json:"series"`
 	Micros   int64     `json:"us"`
 	Severity string    `json:"severity"`
-	Stack    []string  `json:"stack,omitempty"` // code locations only
+	// Label names the cause for series with code-defined labels: a message
+	// type, request method, actor step or key chord (Meta.SaveLabels).
+	Label string   `json:"label,omitempty"`
+	Stack []string `json:"stack,omitempty"` // code locations only
 }
 
 type ArchiveProcess struct {
@@ -76,12 +79,21 @@ func ArchiveProcessIdentity() ArchiveProcess {
 	return ArchiveProcess{Incarnation: processIncarnation, Started: processStart, PID: os.Getpid(), Hostname: host, HostBootID: boot}
 }
 
-// CaptureArchiveWindow reads existing slots only. It never samples resources,
-// gathers keyed operation names or exports labels, which may hold private data.
+// CaptureArchiveWindow reads existing slots only. It never samples resources
+// or keyed table rows. A stall keeps its stack, and its label only when the
+// series marks its labels as code-defined (Meta.SaveLabels). An event's
+// free-form detail, which can hold paths or errors, is never saved.
 func CaptureArchiveWindow(from, until int64) ArchiveWindow {
 	w := ArchiveWindow{From: from, Until: until, Series: make(map[string]Rollup)}
 	reg.mu.Lock()
 	latencies, counters, gauges := slices.Clone(reg.latencies), slices.Clone(reg.counters), slices.Clone(reg.gauges)
+	labeled := make(map[string]bool)
+	for _, l := range reg.latencies {
+		labeled[l.meta.Name] = l.meta.SaveLabels
+	}
+	for _, t := range reg.tables {
+		labeled[t.meta.Name] = t.meta.SaveLabels
+	}
 	reg.mu.Unlock()
 	for _, l := range latencies {
 		var r Rollup
@@ -148,13 +160,23 @@ func CaptureArchiveWindow(from, until int64) ArchiveWindow {
 	for i := range events.n {
 		event := events.ring[(events.next-events.n+i+maxEvents)%maxEvents]
 		if sec := event.At.Unix(); sec >= from && sec < until && event.Series != "" {
-			w.Stalls = append(w.Stalls, ArchiveStall{At: event.At, Series: event.Series, Micros: event.Micros, Severity: event.Severity, Stack: event.Stack})
+			stall := ArchiveStall{At: event.At, Series: event.Series, Micros: event.Micros, Severity: event.Severity, Stack: event.Stack}
+			if labeled[event.Series] {
+				stall.Label = event.Label
+			}
+			w.Stalls = append(w.Stalls, stall)
 		}
 	}
 	events.mu.Unlock()
 	const maxStalls = 16
 	if len(w.Stalls) > maxStalls {
-		sort.SliceStable(w.Stalls, func(i, j int) bool { return w.Stalls[i].Micros > w.Stalls[j].Micros })
+		sort.SliceStable(w.Stalls, func(i, j int) bool {
+			a, b := w.Stalls[i], w.Stalls[j]
+			if (len(a.Stack) > 0) != (len(b.Stack) > 0) {
+				return len(a.Stack) > 0
+			}
+			return a.Micros > b.Micros
+		})
 		w.StallsOmitted = len(w.Stalls) - maxStalls
 		w.Stalls = w.Stalls[:maxStalls]
 	}

@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	"crude/tui/chatprojection"
+	"crude/tui/ui"
 	"crude/types/conversation"
 	"crude/workspace"
 )
@@ -52,7 +53,7 @@ func (m *App) thinkingOwnerWidth(id string) int {
 		if m.mainPanes != nil {
 			for _, group := range m.mainPanes.groups {
 				if group.view != nil && group.view == m.mainPanes.agentViews[current.ID] && group.chat.W > 0 {
-					_, width := boundedContentGeometry(group.chat.W, m.Theme.Spacing.PadLR)
+					_, width := ui.ContentInset(group.chat.W, m.Theme.Spacing.PadLR)
 					reg.thinkingWidths[node.State] = width
 					return width
 				}
@@ -75,7 +76,7 @@ func (m *App) thinkingOwnerWidth(id string) int {
 	if m.Tree != nil && m.Tree.Visible && m.Tree.Model != nil && m.sidebarScreen != nil {
 		sidebar += m.sidebarPanelWidth() + 1
 	}
-	_, width := boundedContentGeometry(max(0, m.width-m.frameRightCol()-sidebar), m.Theme.Spacing.PadLR)
+	_, width := ui.ContentInset(max(0, m.width-m.frameRightCol()-sidebar), m.Theme.Spacing.PadLR)
 	return width
 }
 func (m *App) dropThinkingPresentation(agent *workspace.AgentState) {

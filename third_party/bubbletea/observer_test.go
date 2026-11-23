@@ -127,6 +127,8 @@ func (o *watchingObserver) BeginLoop() {
 	o.events, o.open = append(o.events, "begin"), true
 }
 
+func (*watchingObserver) SetLoopPhase(LoopPhase) {}
+
 func (o *watchingObserver) EndLoop() {
 	o.mu.Lock()
 	defer o.mu.Unlock()

@@ -28,8 +28,7 @@ type Screen struct {
 	th        *theme.Theme
 	tokens    *ui.TokenSet
 	ed        *editor.Editor
-	padL      int
-	padR      int
+	padLR     int
 	width     int
 	height    int
 	paintSurf *surface.Surface
@@ -62,12 +61,6 @@ func (s *Screen) Bind(ed *editor.Editor) {
 		ed.SetTokens(s.tokens)
 		ed.SetStatusChrome(false)
 	}
-}
-
-// SetPadding sets left/right content padding columns around the editor body.
-func (s *Screen) SetPadding(padL, padR int) {
-	s.padL = padL
-	s.padR = padR
 }
 
 func (s *Screen) SyntaxEditor() *editor.Editor { return s.ed }
@@ -105,6 +98,11 @@ func (s *Screen) Layout(_ ui.LayoutContext, r ui.Rect) {
 	s.SetBounds(r)
 	s.width = r.W
 	s.height = r.H
+	pad, inner := ui.ContentInset(r.W, s.tokens.PadLR())
+	if inner < 10 {
+		pad = 0 // Keep the editor's minimum usable width before taking padding.
+	}
+	s.padLR = pad
 }
 
 func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext) {
@@ -112,18 +110,14 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext)
 	if b.Empty() || buf == nil || s.ed == nil || !s.ed.IsOpen() {
 		return
 	}
-	innerW := b.W - s.padL - s.padR
-	if innerW < 10 {
-		innerW = b.W
-		s.padL, s.padR = 0, 0
-	}
+	innerW := b.W - 2*s.padLR
 	h := b.H
 	if h < 4 {
 		return
 	}
 
 	bg := s.tokens.Color(ui.ColorBg)
-	if s.padL > 0 || s.padR > 0 {
+	if s.padLR > 0 {
 		ui.FillRect(buf, ox, oy, b, cell.BlankCell(bg))
 	}
 
@@ -133,11 +127,11 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext)
 	s.paintSurf.Buffer().Clear()
 	s.ed.SetTokens(s.tokens)
 	s.ed.SetStatusChrome(false)
-	s.ed.SetPadding(s.padL)
+	s.ed.SetPadding(s.padLR)
 	s.ed.SetPointerHovered(ctx.Hovered)
 	wctx := ui.PaintContext{Theme: s.th, Focused: ctx.Focused, Hovered: ctx.Hovered, Frame: ctx.Frame}
 	s.ed.Render(s.paintSurf, wctx)
-	surface.BlitOpaque(buf, ox+b.X+s.padL, oy+b.Y, s.paintSurf.Buffer())
+	surface.BlitOpaque(buf, ox+b.X+s.padLR, oy+b.Y, s.paintSurf.Buffer())
 }
 
 func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
@@ -158,19 +152,19 @@ func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 		msg = evt.Key
 	case ui.EventMouseClick:
 		m := evt.MouseClick
-		m.X, m.Y = ctx.LocalX-s.padL, ctx.LocalY
+		m.X, m.Y = ctx.LocalX-s.padLR, ctx.LocalY
 		msg = m
 	case ui.EventMouseMotion:
 		m := evt.MouseMotion
-		m.X, m.Y = ctx.LocalX-s.padL, ctx.LocalY
+		m.X, m.Y = ctx.LocalX-s.padLR, ctx.LocalY
 		msg = m
 	case ui.EventMouseRelease:
 		m := evt.MouseRelease
-		m.X, m.Y = ctx.LocalX-s.padL, ctx.LocalY
+		m.X, m.Y = ctx.LocalX-s.padLR, ctx.LocalY
 		msg = m
 	case ui.EventMouseWheel:
 		m := evt.MouseWheel
-		m.X, m.Y = ctx.LocalX-s.padL, ctx.LocalY
+		m.X, m.Y = ctx.LocalX-s.padLR, ctx.LocalY
 		msg = m
 	default:
 		// Keyboard remains routed by viewmodel policy into DocumentEditor.

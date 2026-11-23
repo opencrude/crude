@@ -33,10 +33,20 @@ func (m *App) chatFindChord(msg tea.KeyPressMsg) bool {
 // openChatFind shows the find window over the active chat's transcript, at the
 // same top-right anchor the editor's window uses over its buffer.
 func (m *App) openChatFind() {
-	screen := m.chatScreen
-	if screen == nil || m.rootHost == nil || m.chatRect.Empty() || m.windowManager == nil {
+	m.openTranscriptFind(m.chatScreen, m.chatRect, "")
+}
+
+// openTranscriptFind searches any row screen: a conversation, or a rendered
+// document (title names it; an empty title names the chat's agent). rect is
+// the screen's area, which anchors the window.
+func (m *App) openTranscriptFind(screen *shellchat.Screen, rect ui.Rect, title string) {
+	if screen == nil || m.rootHost == nil || rect.Empty() || m.windowManager == nil {
 		return
 	}
+	if m.findChat != nil && m.findChat != screen {
+		m.closeChatFind()
+	}
+	m.findChatRect, m.findChatTitle = rect, title
 	inside := m.findDomain == findInChat && m.findChat == screen &&
 		m.focusedPopup() != nil && m.focusedPopup().ID == string(ui.OverlayFindReplace)
 	fr := m.FindReplace
@@ -110,7 +120,9 @@ func (m *App) syncChatFindCounter() {
 func (m *App) chatFindSpec(fr *popup.FindReplaceState, w int) ui.FindReplaceFrameSpec {
 	count, current := m.findChat.FindCounts()
 	title := "Chat"
-	if node := m.ws.AgentMgr().Get(m.findChat.AgentID()); node != nil {
+	if m.findChatTitle != "" {
+		title = m.findChatTitle
+	} else if node := m.ws.AgentMgr().Get(m.findChat.AgentID()); node != nil {
 		if label := m.agentLabel(node); label != "" {
 			title = label
 		}
@@ -168,8 +180,8 @@ func (m *App) refreshChatFindPopup() {
 	)
 	// Top-right of the transcript, one row below its first line: the editor's
 	// window sits in the same place over the buffer it searches.
-	x := m.chatRect.X + m.chatRect.W - w - 2
-	y := m.chatRect.Y + 1
+	x := m.findChatRect.X + m.findChatRect.W - w - 2
+	y := m.findChatRect.Y + 1
 	fw.SetPosition(x, y)
 	m.clampFindReplaceOnScreen(fw)
 	screen := m.findChat
@@ -180,6 +192,7 @@ func (m *App) refreshChatFindPopup() {
 		screen.CloseFind()
 		if m.findChat == screen {
 			m.findChat = nil
+			m.findChatRect, m.findChatTitle = ui.Rect{}, ""
 		}
 		if m.FindReplace == fr {
 			m.FindReplace = nil
@@ -188,6 +201,18 @@ func (m *App) refreshChatFindPopup() {
 			m.findDomain = findInEditor
 		}
 	})
+}
+
+// reconcileTranscriptFind retires the find window when its Markdown preview
+// no longer owns the active document view.
+func (m *App) reconcileTranscriptFind() {
+	if m.findChat == nil || m.findChatTitle == "" {
+		return
+	}
+	md := m.activeMarkdown()
+	if md == nil || !md.PreviewOwnsKeys() || m.findChat != md.Preview() {
+		m.closeChatFind()
+	}
 }
 
 // closeChatFind drops the chat search. Closing the window runs the same cleanup

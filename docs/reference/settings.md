@@ -1019,6 +1019,10 @@ focus reporting; Crude does not infer window blur from idle time. Workspace Off
 is an explicit override of application On. The palette's Enable/Disable Auto
 Save actions write only that workspace override.
 
+**Markdown files** (`editor.markdown_view`: `preview`, `split` or `source`)
+chooses how a Markdown file opens; absent means Preview. Each tab can switch
+with its viewer toolbar or Alt+V. See [Markdown files](editor.md#markdown-files).
+
 **New file encoding** (`editor.new_file_encoding`) is an application/workspace
 preference for newly created unnamed files. Its UTF-8 default, explicit UTF-8
 override and absence/inheritance are distinct. Other choices are UTF-8 BOM,

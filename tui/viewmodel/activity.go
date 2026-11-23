@@ -13,6 +13,7 @@ import (
 	"crude/tui/screens/backgroundjobs"
 	"crude/tui/screens/imageviewer"
 	historyscreen "crude/tui/screens/localhistory"
+	"crude/tui/screens/markdownview"
 	"crude/tui/screens/panelchrome"
 	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/screens/shelltree"
@@ -395,6 +396,9 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 		if target, ok := action.Payload.(string); ok {
 			return m.openWebLink(target)
 		}
+		return nil
+	case markdownview.ActionMode:
+		m.markdownModeChanged()
 		return nil
 	case imageviewer.CloseAction:
 		if m.activeImageView() != nil {

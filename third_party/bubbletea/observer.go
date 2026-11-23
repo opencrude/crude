@@ -6,12 +6,13 @@ import "time"
 // waited for the loop (input only), and the Update, View and frame handoff
 // costs. All of it runs on the event-loop goroutine.
 type LoopSample struct {
-	Msg     Msg
-	Input   bool
-	Wait    time.Duration
-	Update  time.Duration
-	View    time.Duration
-	Present time.Duration
+	Msg      Msg
+	Input    bool
+	Wait     time.Duration
+	Update   time.Duration
+	Dispatch time.Duration // handing off the command returned by Update
+	View     time.Duration
+	Present  time.Duration
 }
 
 // FlushSample describes one renderer flush: diffing the latest frame and
@@ -34,8 +35,19 @@ type Observer interface {
 // that is still running, for example to record what a stalled Update does.
 type LoopWatcher interface {
 	BeginLoop()
+	SetLoopPhase(LoopPhase)
 	EndLoop()
 }
+
+// LoopPhase identifies the work a watched iteration is doing now.
+type LoopPhase uint32
+
+const (
+	LoopUpdate LoopPhase = iota
+	LoopDispatch
+	LoopView
+	LoopPresent
+)
 
 // WithObserver installs a performance observer (Crude addition).
 func WithObserver(observer Observer) ProgramOption {

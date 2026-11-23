@@ -14,6 +14,25 @@ func (s *Screen) handleScrollInput(evt ui.Event) bool {
 		return false
 	}
 	scroll := s.list.Scroll()
+	if s.document && evt.Kind == ui.EventKey && evt.Key.Mod == 0 {
+		switch evt.Key.Code {
+		case tea.KeyUp:
+			scroll.ScrollBy(-1)
+		case tea.KeyDown:
+			scroll.ScrollBy(1)
+		case tea.KeyPgUp:
+			scroll.ScrollBy(-max(1, scroll.Viewport()-1))
+		case tea.KeyPgDown, tea.KeySpace:
+			scroll.ScrollBy(max(1, scroll.Viewport()-1))
+		case tea.KeyHome:
+			scroll.ScrollTo(0)
+		case tea.KeyEnd:
+			scroll.ScrollTo(max(0, scroll.Content()-scroll.Viewport()))
+		default:
+			return false
+		}
+		return true
+	}
 	switch evt.Kind {
 	case ui.EventKey:
 		switch evt.Key.Code {

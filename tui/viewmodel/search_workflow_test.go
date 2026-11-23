@@ -324,3 +324,37 @@ func TestProjectSearchSeedsSelectionAndReinvocationFocuses(t *testing.T) {
 		t.Fatal("search command unexpectedly closed the search surface")
 	}
 }
+
+func TestGoToFileOpensLiteralAbsolutePathOutsideProject(t *testing.T) {
+	runtime := remoteJourneyRuntime(t, "http://127.0.0.1:1")
+	root := t.TempDir()
+	external := filepath.Join(t.TempDir(), "guide # 25% [draft].md")
+	if err := os.WriteFile(external, []byte("# Outside the project\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// A similarly named project file is not a substitute for an exact path.
+	if err := os.WriteFile(filepath.Join(root, filepath.Base(external)), []byte("Wrong file"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	shell := newRemoteJourneyShell(t, runtime, root)
+	app := shell.app
+	paneJourneySize(app, 120, 32)
+	_, cmd := app.toggleGoToFile()
+	runAppCommand(t, app, cmd)
+	app.findInFiles.SetOptions(true, true, true)
+	_, paste := app.Update(tea.PasteMsg{Content: filepath.ToSlash(external)})
+	runAppCommand(t, app, paste)
+	_ = app.View()
+	if !strings.Contains(frameText(app), "Press Enter to open this exact path.") || app.findInFilesRequest != 0 {
+		t.Fatal("absolute path was treated as a project search")
+	}
+	_, cmd = app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	runAppCommand(t, app, cmd)
+	remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool {
+		ed := app.EditorState.Editor
+		return ed != nil && filepath.Clean(ed.FilePath()) == filepath.Clean(external)
+	})
+	if got := app.EditorState.Editor.Value(); got != "# Outside the project\n" {
+		t.Fatalf("loaded a different document: %q", got)
+	}
+}

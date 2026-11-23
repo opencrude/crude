@@ -2,11 +2,13 @@ package viewmodel
 
 import (
 	"context"
+	"os"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
 	"crude/core/shellport"
+	"crude/internal/buildinfo"
 	"crude/internal/metrics"
 	"crude/internal/perfdata"
 	"crude/tui/screens/perfdash"
@@ -110,14 +112,63 @@ func (m *App) handlePerfAction(action ui.Action) (tea.Cmd, bool) {
 	switch action.ID {
 	case perfdash.ActionRefresh:
 		return m.requestPerfSnapshot(true), true
-	case perfdash.ActionCopy:
-		text, _ := action.Payload.(string)
-		if m.Feedback != nil {
-			m.Feedback.NotifyInfo("Performance report copied")
-		}
-		return m.clipboardCopyCommand(text), true
+	case perfdash.ActionSave:
+		live, _ := action.Payload.(*perfdata.Data)
+		return m.savePerformanceReport(live), true
 	}
 	return nil, false
+}
+
+// perfReportSavedMsg reports a saved performance report file.
+type perfReportSavedMsg struct {
+	owner        shellport.Workspace
+	workspaceGen uint64
+	path         string
+	err          error
+}
+
+// savePerformanceReport writes one Markdown report off the UI goroutine: the
+// panel's live window and this computer's saved history of both processes.
+func (m *App) savePerformanceReport(live *perfdata.Data) tea.Cmd {
+	owner, workspaceGen := m.ws, m.workspaceSwitchGen.Load()
+	return m.clientIOCommand(context.Background(), func(parent context.Context) tea.Msg {
+		ctx, cancel := context.WithTimeout(parent, 10*time.Second)
+		defer cancel()
+		msg := perfReportSavedMsg{owner: owner, workspaceGen: workspaceGen}
+		home, err := buildinfo.Home()
+		if err != nil {
+			msg.err = err
+			return msg
+		}
+		report := perfdata.Report{Created: time.Now(), Host: perfdata.CurrentHost(os.Getenv), Live: live}
+		perfdata.ReadReportHistory(ctx, perfdata.ArchivePath(home), &report)
+		if err := parent.Err(); err != nil {
+			msg.err = err
+			return msg
+		}
+		msg.path, msg.err = perfdata.SaveReport(perfdata.ReportsDir(home), report)
+		return msg
+	})
+}
+
+// applyPerfReportSaved copies the report's path, so it can be attached to a
+// message, and opens the report when this computer can read it.
+func (m *App) applyPerfReportSaved(msg perfReportSavedMsg) tea.Cmd {
+	if msg.owner != m.ws || msg.workspaceGen != m.workspaceSwitchGen.Load() || m.Feedback == nil {
+		return nil
+	}
+	if msg.err != nil {
+		m.Feedback.NotifyError("Could not save the performance report: " + msg.err.Error())
+		return nil
+	}
+	m.Feedback.NotifyInfo("Performance report saved: " + msg.path)
+	commands := []tea.Cmd{m.clipboardCopyCommand(msg.path)}
+	if host, ok := m.ws.(shellport.LocalHostAuthority); !ok || host.LocalHost() {
+		if open, err := m.openEditorTab(msg.path); err == nil {
+			commands = append(commands, open)
+		}
+	}
+	return tea.Batch(commands...)
 }
 
 // syncPerfAttention refreshes the footer pill's state at most once a second
@@ -140,7 +191,7 @@ func (m *App) syncPerfAttention(now time.Time) {
 	m.perf.attention = perfdash.SeverityOK
 	for _, event := range metrics.EventsSince(now.Add(-time.Minute)) {
 		switch event.Series {
-		case "ui.update", "ui.view", "ui.blocking":
+		case "ui.update", "ui.command.wait", "ui.view", "ui.blocking":
 			m.perf.attention = perfdash.SeverityCrit
 		case "ui.input.wait", "render.flush":
 			m.perf.attention = max(m.perf.attention, perfdash.SeverityWarn)

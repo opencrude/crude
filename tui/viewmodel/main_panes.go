@@ -7,6 +7,7 @@ import (
 	"crude/tui/input"
 	"crude/tui/rendering"
 	"crude/tui/screens/imageviewer"
+	"crude/tui/screens/markdownview"
 	"crude/tui/screens/shellchat"
 	"crude/tui/screens/shelleditor"
 	"crude/tui/screens/shellinput"
@@ -68,6 +69,7 @@ type mainPaneView struct {
 	planBar                      *ui.NoticeBar
 	image                        *imageviewer.Screen
 	imageState                   paneImageViewState
+	markdown                     *markdownview.Screen // a Markdown file's editor tab
 	deck                         *deckMount
 	reflowContentW, reflowInnerW int
 	chatSource, chatGeneration   uint64
@@ -134,6 +136,7 @@ func (p *mainPaneLayout) view(tab *window.Tab) *mainPaneView {
 			v.editor = shelleditor.NewWithID(p.app.Theme, ui.NewID(base, "editor"))
 		}
 		v.editor.Bind(p.app.editorForTab(tab.ID))
+		v.markdown = p.markdownScreen(tab)
 	}
 	p.views[tab.ID] = v
 	return v
@@ -336,8 +339,11 @@ func (p *mainPaneLayout) configure() {
 	}
 	// A close must release retained rendering references, not retain documents
 	// through an unreachable pane cache until the workspace next switches.
-	for id := range p.views {
+	for id, v := range p.views {
 		if m.Win.IndexOf(id) < 0 {
+			if v.markdown != nil {
+				v.markdown.Close()
+			}
 			delete(p.views, id)
 		}
 	}
@@ -389,7 +395,7 @@ func (p *mainPaneLayout) configureGroup(g *mainPaneGroup, r ui.Rect, x, y int) {
 	g.view = p.view(tab)
 	switch {
 	case tab == nil && !m.Win.IsFloating(id) && m.mainAreaEmpty() && m.launcherScreen != nil:
-		pad, inner := boundedContentGeometry(body.W, m.Theme.Spacing.PadLR)
+		pad, inner := ui.ContentInset(body.W, m.Theme.Spacing.PadLR)
 		if inner >= 20 && body.H >= 3 {
 			g.add(m.launcherScreen, ui.Rect{X: pad, Y: body.Y, W: inner, H: body.H})
 		}
@@ -409,12 +415,6 @@ func (p *mainPaneLayout) configureGroup(g *mainPaneGroup, r ui.Rect, x, y int) {
 	case m.isEditorTabTitle(tab.Title):
 		ed := m.editorForTab(tab.ID)
 		g.view.editor.Bind(ed)
-		pad := min(m.Theme.Spacing.PadLR, body.W/2)
-		left := pad
-		if m.sidebarHostVisible() || len(m.Win.GroupIDs()) > 1 || m.Win.IsFloating(id) {
-			left = 0
-		}
-		g.view.editor.SetPadding(left, pad)
 		editorRect := body
 		if bar := m.editorDiskBar(g.view, tab.ID, ed); bar != nil && body.H > 2 {
 			bar.SetTokens(m.rootHost.Tokens())
@@ -425,6 +425,10 @@ func (p *mainPaneLayout) configureGroup(g *mainPaneGroup, r ui.Rect, x, y int) {
 			bar.SetTokens(m.rootHost.Tokens())
 			g.add(bar, ui.Rect{Y: editorRect.Y, W: body.W, H: 1})
 			editorRect.Y, editorRect.H = editorRect.Y+1, editorRect.H-1
+		}
+		if g.view.markdown != nil {
+			m.configureMarkdown(g, g.view.markdown, ed, editorRect)
+			break
 		}
 		g.add(g.view.editor, editorRect)
 		g.editor = g.screen(editorRect)
@@ -576,6 +580,10 @@ func (p *mainPaneLayout) SetTokens(t *ui.TokenSet) {
 		}
 		if v.image != nil {
 			v.image.SetTokens(t)
+		}
+		if v.markdown != nil {
+			v.markdown.SetTheme(p.app.Theme)
+			v.markdown.SetTokens(t)
 		}
 	}
 	for _, v := range p.agentViews {

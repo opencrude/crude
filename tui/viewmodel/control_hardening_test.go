@@ -87,9 +87,9 @@ func TestConnectedPanelNavigationCannotLaunchTerminal(t *testing.T) {
 	if paint := ansi.Strip(one.app.View().RenderContent()); !strings.Contains(paint, "Performance") || !strings.Contains(paint, "Pause") {
 		t.Fatal("Performance not painted through dock", paint)
 	}
-	// Do not add broad perfdash.* write authority: clipboard export is a host
-	// effect and remains unavailable through generic local controls.
-	node := localControlNode(t, one.app, string(perfdash.CopyID))
+	// Do not add broad perfdash.* write authority: saving a report writes a
+	// file and the clipboard, host effects unavailable to generic controls.
+	node := localControlNode(t, one.app, string(perfdash.SaveID))
 	if _, _, err := one.app.describeShellControl(shellControlIntent{ComponentID: node.ID, Operation: ui.ControlOperation{Verb: "activate"}}, target); err == nil {
 		t.Fatal("Performance navigation broadened generic clipboard authority")
 	}

@@ -13,12 +13,12 @@ import (
 // slow case in its loop delays every agent event, request and broadcast of
 // that workspace, so its work is attributed by kind.
 var (
-	coreRequests = metrics.NewTable(metrics.Meta{Name: "core.requests", Group: metrics.GroupCore, Title: "Requests by method",
+	coreRequests = metrics.NewTable(metrics.Meta{Name: "core.requests", SaveLabels: true, Group: metrics.GroupCore, Title: "Requests by method",
 		Help: "Core time from admission to response for each request method.", Warn: 100_000, Crit: 1_000_000})
-	coreActor = metrics.NewLatency(metrics.Meta{Name: "core.actor", Group: metrics.GroupCore, Title: "Workspace actor step",
+	coreActor = metrics.NewLatency(metrics.Meta{Name: "core.actor", SaveLabels: true, Group: metrics.GroupCore, Title: "Workspace actor step",
 		Help: "One step of a workspace actor. While a step runs, that workspace's agent events and requests wait.",
 		Warn: 10_000, Crit: 50_000})
-	coreActorWork = metrics.NewTable(metrics.Meta{Name: "core.actor.work", Group: metrics.GroupCore, Title: "Actor time by work",
+	coreActorWork = metrics.NewTable(metrics.Meta{Name: "core.actor.work", SaveLabels: true, Group: metrics.GroupCore, Title: "Actor time by work",
 		Help: "Workspace actor time per kind of work (request method, agent event, service event, tick).", Warn: 10_000, Crit: 50_000})
 	_ = metrics.NewGauge(metrics.Meta{Name: "core.queue", Group: metrics.GroupCore, Title: "Actor backlog", Unit: "items",
 		Help: "Aggregate requests, agent events and service events waiting across retained workspace actors. A growing backlog means actors cannot keep up.",

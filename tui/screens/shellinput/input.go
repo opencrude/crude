@@ -126,8 +126,7 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext)
 	}
 	if first, last, total := s.model.ComposerViewport(); first > 0 && last-first+1 < total {
 		hint := fmt.Sprintf("↑↓ %d–%d/%d", first, last, total)
-		pad := min(s.tokens.PadLR(), b.W/2)
-		available := b.W - 2*pad
+		pad, available := ui.ContentInset(b.W, s.tokens.PadLR())
 		if rendering.VisibleWidth(hint) <= available {
 			buf.WriteString(ox+b.X+pad, oy+b.Y, hint, s.tokens.Color(ui.ColorMuted), bg, 0)
 		}

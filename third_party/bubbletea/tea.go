@@ -950,7 +950,13 @@ func (p *Program) eventLoop(model Model, cmds chan Cmd) (Model, error) {
 			updateStart := time.Now()
 			model, cmd = model.Update(msg) // run update
 			sample.Update = time.Since(updateStart)
-
+			if watched {
+				watcher.SetLoopPhase(LoopDispatch)
+			}
+			var dispatchStart time.Time
+			if p.observer != nil {
+				dispatchStart = time.Now()
+			}
 			select {
 			case <-p.ctx.Done():
 				if watched {
@@ -961,9 +967,16 @@ func (p *Program) eventLoop(model Model, cmds chan Cmd) (Model, error) {
 			}
 
 			if p.observer != nil {
+				sample.Dispatch = time.Since(dispatchStart)
+				if watched {
+					watcher.SetLoopPhase(LoopView)
+				}
 				viewStart := time.Now()
 				view := p.viewOf(model)
 				sample.View = time.Since(viewStart)
+				if watched {
+					watcher.SetLoopPhase(LoopPresent)
+				}
 				handoff := time.Now()
 				p.present(view)
 				sample.Present = time.Since(handoff)

@@ -615,6 +615,27 @@ type Editor struct {
 	// EditorTextDirectionLTR (every line is a left-to-right paragraph).
 	// Empty means by line. See docs/reference/bidi.md.
 	TextDirection string `json:"text_direction,omitempty"`
+	// MarkdownView is how a Markdown file opens: MarkdownViewPreview (the
+	// default), MarkdownViewSplit or MarkdownViewSource. Each tab can change
+	// it. See docs/reference/editor.md.
+	MarkdownView string `json:"markdown_view,omitempty"`
+}
+
+// Markdown file views.
+const (
+	MarkdownViewPreview = "preview"
+	MarkdownViewSplit   = "split"
+	MarkdownViewSource  = "source"
+)
+
+// MarkdownViewOrDefault returns a supported Markdown view. An absent or
+// unknown choice is MarkdownViewPreview.
+func (s Editor) MarkdownViewOrDefault() string {
+	switch s.MarkdownView {
+	case MarkdownViewSplit, MarkdownViewSource:
+		return s.MarkdownView
+	}
+	return MarkdownViewPreview
 }
 
 // Editor line directions.

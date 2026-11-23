@@ -72,8 +72,21 @@ server. SVG remains editable source. GIF shows its first frame. The image fits
 the pane at first; the right-aligned zoom-out, zoom-in and fit icons and the
 `-`, `+`/`=`, `0` keys change the view. Hover shows each icon's name and shortcut.
 The mouse wheel zooms around the pointer. Arrows and dragging pan a zoomed
-image; Shift+wheel and horizontal wheel pan sideways. The body shows pixel
-dimensions and zoom; Esc or Ctrl+W closes the tab.
+image; Shift+wheel and horizontal wheel pan sideways. The shell header shows pixel dimensions and zoom. The shell footer owns the
+interaction hints. The whole area below the toolbar belongs to the image.
+Clicking a zoom or Fit action returns keys to the image; it does not select the
+action. Esc or Ctrl+W closes the tab.
+Zoom steps are Fit times powers of √2 and stop where a step would no longer
+change the picture: zoom in stops at 16 terminal pixels per image pixel (or at
+Fit, when Fit already magnifies more) and zoom out stops at Fit (or at actual
+size, for an image smaller than the pane). At either end the button is
+disabled and the status says Maximum zoom or Actual size; further wheel or key
+input changes neither the number nor the picture. The way back to Fit is as
+many steps as the way in. A pane that is briefly too large for the chosen zoom
+shows the nearest zoom it can and returns to the choice.
+For large Sixel images, a rapid sequence of wheel or key steps uses the live
+cell preview. Stop moving and Crude restores the native image at the final
+zoom. A single step keeps native pixels.
 Zoom and pan are private to each view. Splitting a pane opens a separate view,
 and image tabs follow the normal move, window, close and remembered-pane paths.
 On restart or workspace return an image opens at Fit; floating windows are not

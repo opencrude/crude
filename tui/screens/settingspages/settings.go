@@ -398,6 +398,7 @@ func NewScoped(th *theme.Theme, current setting.App, presets []setting.ProviderP
 			ui.BoolFieldState("indent-guides", "Indent guides", editor.IndentGuides, "Show lines at each indentation step."),
 			ui.BoolFieldState("minimap", "Minimap", editor.Minimap, "Show a compact source map when the pane has room."),
 			ui.SegmentedFieldState("text-direction", "Line direction", []ui.FormOption{{ID: setting.EditorTextDirectionByLine, Label: "By line"}, {ID: setting.EditorTextDirectionLTR, Label: "Left to right"}}, editor.TextDirectionOrDefault(), "Keep all lines at the left margin. By line follows the reading direction of the text inside code."),
+			ui.SegmentedFieldState("markdown-view", "Markdown files", []ui.FormOption{{ID: setting.MarkdownViewPreview, Label: "Preview"}, {ID: setting.MarkdownViewSplit, Label: "Side by side"}, {ID: setting.MarkdownViewSource, Label: "Source"}}, editor.MarkdownViewOrDefault(), "How a Markdown file opens. Change one tab with its strip or Alt+V."),
 			ui.SeparatorFieldState("indentation", "Indentation"),
 			ui.SegmentedFieldState("indent-style", "Indent with", []ui.FormOption{{ID: "auto", Label: "Detect"}, {ID: "space", Label: "Spaces"}, {ID: "tab", Label: "Tabs"}}, defaultString(editor.IndentStyle, "auto"), "EditorConfig and this file's choices take priority."),
 			ui.NumberFieldState("indent-size", "Indent size", editor.IndentSize, "columns", "Use 0 to detect from text, or 1 to 32 columns."),
@@ -2988,6 +2989,7 @@ func (m *Model) collectEditor(cfg *setting.Editor) {
 	cfg.IndentSize = parseOpt(m.value(catEditor, "indent-size"), 0)
 	cfg.NewFileEncoding = textencoding.FromKey(m.value(catEditor, "new-file-encoding"))
 	cfg.TextDirection = explicitChoice(m.value(catEditor, "text-direction"), setting.EditorTextDirectionByLine)
+	cfg.MarkdownView = explicitChoice(m.value(catEditor, "markdown-view"), setting.MarkdownViewPreview)
 }
 
 func (m *Model) collectUI(cfg *setting.UI) {

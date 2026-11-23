@@ -1830,8 +1830,8 @@ func (z *Edit) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *Editor) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 14
-	o = append(o, 0x9e)
+	// array header, size 15
+	o = append(o, 0x9f)
 	o = msgp.AppendString(o, z.IndentStyle)
 	o = msgp.AppendInt(o, z.IndentSize)
 	o = msgp.AppendInt(o, z.TabSize)
@@ -1850,6 +1850,7 @@ func (z *Editor) MarshalMsg(b []byte) (o []byte, err error) {
 		return
 	}
 	o = msgp.AppendString(o, z.TextDirection)
+	o = msgp.AppendString(o, z.MarkdownView)
 	return
 }
 
@@ -1865,8 +1866,8 @@ func (z *Editor) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 14 {
-		err = msgp.ArrayError{Wanted: 14, Got: zb0001}
+	if zb0001 != 15 {
+		err = msgp.ArrayError{Wanted: 15, Got: zb0001}
 		return
 	}
 	z.IndentStyle, bts, err = msgp.ReadStringBytes(bts)
@@ -1943,13 +1944,18 @@ func (z *Editor) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.WrapError(err, "TextDirection")
 		return
 	}
+	z.MarkdownView, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "MarkdownView")
+		return
+	}
 	o = bts
 	return
 }
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *Editor) Msgsize() (s int) {
-	s = 1 + msgp.StringPrefixSize + len(z.IndentStyle) + msgp.IntSize + msgp.IntSize + msgp.BoolSize + msgp.BoolSize + msgp.StringPrefixSize + len(z.SyntaxTheme) + msgp.BoolSize + msgp.BoolSize + msgp.StringPrefixSize + len(string(z.AutoSave)) + msgp.IntSize + msgp.StringPrefixSize + len(z.RenderWhitespace) + msgp.BoolSize + z.NewFileEncoding.Msgsize() + msgp.StringPrefixSize + len(z.TextDirection)
+	s = 1 + msgp.StringPrefixSize + len(z.IndentStyle) + msgp.IntSize + msgp.IntSize + msgp.BoolSize + msgp.BoolSize + msgp.StringPrefixSize + len(z.SyntaxTheme) + msgp.BoolSize + msgp.BoolSize + msgp.StringPrefixSize + len(string(z.AutoSave)) + msgp.IntSize + msgp.StringPrefixSize + len(z.RenderWhitespace) + msgp.BoolSize + z.NewFileEncoding.Msgsize() + msgp.StringPrefixSize + len(z.TextDirection) + msgp.StringPrefixSize + len(z.MarkdownView)
 	return
 }
 

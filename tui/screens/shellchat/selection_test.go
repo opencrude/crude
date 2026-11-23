@@ -222,7 +222,7 @@ func TestRenderedPlanEveryLineToggles(t *testing.T) {
 			r.AppendMessage(message)
 		}
 		rows, _, h := r.ExportMessageRows(width)
-		if len(rows) != 1 || !rows[0].Toggle || !strings.Contains(strings.Join(rows[0].Lines, "\n"), "evidence that") {
+		if len(rows) != 1 || !rows[0].Toggle || !strings.Contains(strings.Join(rows[0].Lines, "\n"), "expanded") {
 			t.Fatalf("default plan does not show its full body: %q", rows[0].Lines)
 		}
 		screen := New(th)
@@ -247,7 +247,7 @@ func TestRenderedPlanEveryLineToggles(t *testing.T) {
 		}
 		r.ToggleDisclosure("plan")
 		expanded, _, _ := r.ExportMessageRows(width)
-		if !strings.Contains(strings.Join(expanded[0].Lines, "\n"), "evidence that") {
+		if strings.Join(expanded[0].Lines, "\n") != strings.Join(rows[0].Lines, "\n") {
 			t.Fatalf("expanded plan lost full text: %q", expanded[0].Lines)
 		}
 	}

@@ -344,6 +344,15 @@ func TestWrap(t *testing.T) {
 	}
 }
 
+func TestWrapKeepsASCIIBasedGraphemeAtLineBoundary(t *testing.T) {
+	// An ASCII base at the right edge must carry its combining mark with it.
+	const word = "界e\u0301👩‍💻"
+	want := "界e\u0301\n👩‍💻"
+	if got := ansi.Wrap(word, 3, ""); got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
 func BenchmarkWrap(b *testing.B) {
 	input := "the quick brown foxxxxxxxxxxxxxxxx jumped over the lazy dog."
 	limit := 16

@@ -355,7 +355,7 @@ func (w *sixelWork) run(ctx context.Context, wake func(), tmux bool) {
 				w.nextID++
 				base.id = w.nextID
 				w.bases = append(w.bases, base)
-				w.evict()
+				w.evict(base)
 				w.revision.Add(1)
 			}
 			cancel()
@@ -376,6 +376,11 @@ func (w *sixelWork) nextJob() (sixelWant, bool) {
 		if w.covering(want.key(), want.grid) == nil {
 			return want, true
 		}
+	}
+	// Panning margins are speculative. Do not compete for slots with a
+	// scene that already needs the full cache for visible placements.
+	if len(w.wanted) >= sixelCacheItems {
+		return sixelWant{}, false
 	}
 	for _, want := range w.wanted {
 		key := want.key()
@@ -433,7 +438,7 @@ func (w *sixelWork) known(image uint32) bool {
 
 // evict drops least recently used rasters over the cache bounds. Rasters
 // painted by the latest prepare call are never evicted.
-func (w *sixelWork) evict() {
+func (w *sixelWork) evict(fresh *sixelBase) {
 	total := 0
 	for _, base := range w.bases {
 		total += base.bytes()
@@ -441,8 +446,14 @@ func (w *sixelWork) evict() {
 	for len(w.bases) > 1 && (total > sixelCacheBytes || len(w.bases) > sixelCacheItems) {
 		oldest := -1
 		for i, base := range w.bases {
-			if base.used != w.clock && (oldest < 0 || base.used < w.bases[oldest].used ||
-				base.used == w.bases[oldest].used && base.id < w.bases[oldest].id) {
+			// The newly finished result is not old merely because the writer
+			// has not seen it. Dropping it here makes nextJob spin on the
+			// same missing placement forever at the cache limit.
+			if base == fresh || base.used == w.clock || w.wantedBase(base) {
+				continue
+			}
+			if oldest < 0 || base.used < w.bases[oldest].used ||
+				base.used == w.bases[oldest].used && base.id < w.bases[oldest].id {
 				oldest = i
 			}
 		}
@@ -452,6 +463,17 @@ func (w *sixelWork) evict() {
 		total -= w.bases[oldest].bytes()
 		w.bases = slices.Delete(w.bases, oldest, oldest+1)
 	}
+}
+
+// wantedBase pins each current placement's usable raster even if another
+// result finishes before the single writer can observe this one.
+func (w *sixelWork) wantedBase(base *sixelBase) bool {
+	for _, want := range w.wanted {
+		if base.key == want.key() && w.covering(base.key, want.grid) == base {
+			return true
+		}
+	}
+	return false
 }
 
 // sixelWants groups tiles by placement. Each want covers the bounding grid of
@@ -483,29 +505,48 @@ type sixelPrepared struct {
 	known bool
 }
 
-// prepare publishes the latest tiles and returns the raster for each tile.
-// Steady frames allocate nothing.
-func (w *sixelWork) prepare(tiles []sixelTile, out []sixelPrepared) ([]sixelPrepared, uint64) {
+// publish replaces the pending scene. The handoff calls it even while the
+// single terminal writer is blocked. Only this scene can admit new work.
+func (w *sixelWork) publish(tiles []sixelTile) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.scratch = sixelWants(w.scratch, tiles)
+	if slices.Equal(w.scratch, w.wanted) {
+		return
+	}
+	w.wanted, w.scratch = w.scratch, w.wanted
+	if w.cancelActive != nil {
+		useful := false
+		key := w.active.key()
+		for _, want := range w.wanted {
+			if want.key() == key && want.grid.In(w.active.grid) {
+				useful = true
+				break
+			}
+		}
+		if !useful {
+			w.cancelActive()
+		}
+	}
+	select {
+	case w.changed <- struct{}{}:
+	default:
+	}
+}
+
+// ready reads the cache for exactly the writer's scene. A newer handoff may
+// have superseded it after drawFrame; never publish or paint its stale raster.
+func (w *sixelWork) ready(tiles []sixelTile, out []sixelPrepared) ([]sixelPrepared, uint64) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.clock++
 	w.scratch = sixelWants(w.scratch, tiles)
 	if !slices.Equal(w.scratch, w.wanted) {
-		w.wanted = append(w.wanted[:0], w.scratch...)
-		if w.cancelActive != nil {
-			useful := false
-			key := w.active.key()
-			for _, want := range w.wanted {
-				useful = useful || want.key() == key && want.grid.In(w.active.grid) && w.covering(key, w.active.grid) == nil
-			}
-			if !useful {
-				w.cancelActive()
-			}
+		out = slices.Grow(out[:0], len(tiles))[:len(tiles)]
+		for i, tile := range tiles {
+			out[i] = sixelPrepared{known: w.known(tile.placement.Image.ID())}
 		}
-		select {
-		case w.changed <- struct{}{}:
-		default:
-		}
+		return out, w.revision.Load()
 	}
 	// A placement paints from one raster that covers all its visible tiles,
 	// never from a mix of an old raster and a new one: mixed quantizations
@@ -557,14 +598,13 @@ func (s *cursedRenderer) planSixels(tiles []sixelTile) bool {
 	if len(tiles) == 0 && !s.sixelAny && len(s.sixelUncertain) == 0 {
 		s.sixelBases, s.sixelPending = s.sixelBases[:0], false
 		if s.sixelWork != nil {
-			s.sixelBases, s.sixelPrepared = s.sixelWork.prepare(nil, s.sixelBases)
+			s.sixelBases, s.sixelPrepared = s.sixelWork.ready(nil, s.sixelBases)
 		}
 		return false
 	}
-	if len(tiles) > 0 && s.sixelWork == nil {
-		s.sixelWork = newSixelWork(s.sixelWake, s.kittyTmux)
+	if s.sixelWork != nil {
+		s.sixelBases, s.sixelPrepared = s.sixelWork.ready(tiles, s.sixelBases)
 	}
-	s.sixelBases, s.sixelPrepared = s.sixelWork.prepare(tiles, s.sixelBases)
 
 	s.sixelDesired = slices.Grow(s.sixelDesired[:0], n)[:n]
 	clear(s.sixelDesired)

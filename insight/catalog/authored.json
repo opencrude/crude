@@ -1137,11 +1137,20 @@
     },
     "markdown": {
       "note": "Blocks end by dedent: VS Code's built-in language configuration sets folding.offSide (microsoft/vscode extensions/markdown-basics/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Indent guides use it for blank lines before a dedent. Region markers: VS Code's built-in language configuration folding.markers (microsoft/vscode extensions/markdown-basics/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Folding uses them for regions that ignore indentation.",
+      "markdown_preview": true,
       "off_side": true,
       "folding_markers": {
         "start": "^\\s*<!--\\s*#?region\\b.*-->",
         "end": "^\\s*<!--\\s*#?endregion\\b.*-->"
       }
+    },
+    "quarto": {
+      "note": "Offer the Markdown preview for document text. Do not run its executable blocks.",
+      "markdown_preview": true
+    },
+    "rmarkdown": {
+      "note": "Offer the Markdown preview for document text. Do not run its executable blocks.",
+      "markdown_preview": true
     },
     "pug": {
       "note": "Blocks end by dedent: VS Code's built-in language configuration sets folding.offSide (microsoft/vscode extensions/pug/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Indent guides use it for blank lines before a dedent.",

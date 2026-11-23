@@ -8,6 +8,7 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
+	"crude/tui/ui"
 	"crude/types/conversation"
 )
 
@@ -24,7 +25,7 @@ func TestMarkdownParagraphReflowKeepsPaintAndSource(t *testing.T) {
 	var retainedText *rendering.CopyText
 	for _, width := range []int{20, 27, 34, 53, 24} {
 		t.Run(fmt.Sprint(width), func(t *testing.T) {
-			r.SetSize(width+2*th.Spacing.PadLR+scrollbarFootprint(r.ScrollbarWidth()), 40)
+			r.SetSize(width+2*th.Spacing.PadLR+ui.ScrollbarFootprint(r.ScrollbarWidth()), 40)
 			plain, native := r.renderSingleMessage(msg)
 			got := native[2:] // transcript spacer and assistant header
 			want, ok := renderMarkdownRows(body, rendering.MakeMdRenderer(width, th), r.Tokens(), msg.InternalID, true)

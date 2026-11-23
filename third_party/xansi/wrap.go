@@ -424,9 +424,20 @@ func wrapInto(m Method, s string, limit int, breakpoints string, out *wrapLines)
 	i := 0
 	for i < len(s) {
 		state, action := parser.Table.Transition(pstate, s[i])
-		if state == parser.Utf8State { //nolint:nestif
-			var width int
+		// A printable ASCII base can start a multi-byte grapheme (e.g. é or
+		// a keycap). Do not flush the base at the right edge before reading
+		// its combining suffix. Keep single-byte spaces/breakpoints on their
+		// normal path when the next codepoint starts a separate cluster.
+		asciiCluster := false
+		var width int
+		if action == parser.PrintAction && pstate == parser.GroundState && i+1 < len(s) && s[i+1] >= utf8.RuneSelf {
 			cluster, width = FirstGraphemeCluster(s[i:], m)
+			asciiCluster = len(cluster) > 1
+		}
+		if state == parser.Utf8State || asciiCluster { //nolint:nestif
+			if !asciiCluster {
+				cluster, width = FirstGraphemeCluster(s[i:], m)
+			}
 			i += len(cluster)
 			start := offset
 			offset += len(cluster)

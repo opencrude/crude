@@ -397,6 +397,9 @@ func (m *App) treeFilterBlocksEscPop() bool {
 
 func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	m.clearDiagHoverPopup()
+	if m.markdownPreviewOwnsKeys() {
+		return m.dispatchMarkdownPreviewKey(m.activeMarkdown(), msg)
+	}
 	msg = ui.EditorClipboardKey(msg)
 	if cmd, handled := m.routeCompletionKey(msg); handled {
 		return m, cmd
@@ -421,6 +424,9 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.closeCompletionPopup()
 				m.closeSignatureHelp()
 				return m, m.EditorState.Editor.HandleEvent(editor.ActionMsg{ID: match.ID})
+			}
+			if m.handleMarkdownCommand(string(match.ID)) {
+				return m, nil
 			}
 			switch match.ID {
 			case "file.save":
@@ -973,6 +979,9 @@ func (m *App) dispatchPasteMsg(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 
 	switch m.focusTarget() {
 	case FocusEditor:
+		if m.markdownPreviewOwnsKeys() {
+			return m, nil // the rendered document is read-only
+		}
 		if m.EditorState.ActiveView != "" && m.EditorState.Editor.IsOpen() {
 			cmd := m.EditorState.Editor.HandleEvent(msg)
 			return m, cmd

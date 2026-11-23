@@ -57,6 +57,8 @@ type LanguageRecord struct {
 	// token (VS Code language configuration folding.offSide). Indent guides
 	// then give a blank line before a dedent the depth of the line below.
 	OffSide bool `json:"off_side,omitempty"`
+	// MarkdownPreview offers the Markdown document view, independent of syntax.
+	MarkdownPreview bool `json:"markdown_preview,omitempty"`
 	// FoldingMarkers start and end a region that folds whatever its
 	// indentation (VS Code language configuration folding.markers). Both are
 	// RE2 patterns matched against one line without its terminator.

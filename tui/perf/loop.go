@@ -15,21 +15,23 @@ import (
 // handoff for every message; these name which message types consume it and
 // how long user input waited behind them.
 var (
-	uiUpdate = metrics.NewLatency(metrics.Meta{Name: "ui.update", Group: metrics.GroupUI, Title: "Update",
+	uiUpdate = metrics.NewLatency(metrics.Meta{Name: "ui.update", SaveLabels: true, Group: metrics.GroupUI, Title: "Update",
 		Help: "UI goroutine time applying one message. Over 16 ms delays the next frame; over 50 ms is a visible freeze.",
 		Warn: 8_000, Crit: 50_000})
-	uiMessages = metrics.NewTable(metrics.Meta{Name: "ui.messages", Group: metrics.GroupUI, Title: "UI time by message",
+	uiMessages = metrics.NewTable(metrics.Meta{Name: "ui.messages", SaveLabels: true, Group: metrics.GroupUI, Title: "UI time by message",
 		Help: "Update time per message type. The top rows own the UI goroutine.", Warn: 16_000, Crit: 50_000})
-	uiInput = metrics.NewLatency(metrics.Meta{Name: "ui.input", Group: metrics.GroupUI, Title: "Input latency",
+	uiInput = metrics.NewLatency(metrics.Meta{Name: "ui.input", SaveLabels: true, Group: metrics.GroupUI, Title: "Input latency",
 		Help: "Key, click or paste until its frame is handed to the terminal: queue wait + Update + paint.",
 		Warn: 16_000, Crit: 50_000})
-	uiInputWait = metrics.NewLatency(metrics.Meta{Name: "ui.input.wait", Group: metrics.GroupUI, Title: "Input queue wait",
+	uiInputWait = metrics.NewLatency(metrics.Meta{Name: "ui.input.wait", SaveLabels: true, Group: metrics.GroupUI, Title: "Input queue wait",
 		Help: "Time input waited for the UI goroutine to finish earlier work. Nonzero means the loop was saturated.",
 		Warn: 8_000, Crit: 33_000, Stall: 100_000})
-	uiView = metrics.NewLatency(metrics.Meta{Name: "ui.view", Group: metrics.GroupRender, Title: "Frame paint",
+	uiDispatch = metrics.NewLatency(metrics.Meta{Name: "ui.command.wait", SaveLabels: true, Group: metrics.GroupUI, Title: "Command handoff",
+		Help: "Time the event loop waited to hand off the command returned by Update.", Warn: 8_000, Crit: 50_000})
+	uiView = metrics.NewLatency(metrics.Meta{Name: "ui.view", SaveLabels: true, Group: metrics.GroupRender, Title: "Frame paint",
 		Help: "Composing the shell frame (layout, paint, ANSI). Runs after every message.",
 		Warn: 8_000, Crit: 33_000})
-	uiPresent = metrics.NewLatency(metrics.Meta{Name: "ui.present", Group: metrics.GroupRender, Title: "Frame handoff",
+	uiPresent = metrics.NewLatency(metrics.Meta{Name: "ui.present", SaveLabels: true, Group: metrics.GroupRender, Title: "Frame handoff",
 		Help: "Handing the frame to the renderer. It must never wait for terminal output.",
 		Warn: 1_000, Crit: 16_000})
 	renderFlush = metrics.NewLatency(metrics.Meta{Name: "render.flush", Group: metrics.GroupRender, Title: "Terminal write",
@@ -41,16 +43,23 @@ var (
 
 // LoopObserver records Bubble Tea loop and flush samples into metrics.
 type LoopObserver struct {
-	names     map[reflect.Type]string
-	displayNS atomic.Int64
-	stalled   []string // UI stack captured during the iteration that just ended
+	names      map[reflect.Type]string
+	displayNS  atomic.Int64
+	stallPhase uint32
+	stalled    []string // UI stack captured during the iteration that just ended
 }
 
 // BeginLoop runs on the event-loop goroutine before Update.
-func (o *LoopObserver) BeginLoop() { metrics.BeginUIWork() }
+func (o *LoopObserver) BeginLoop() {
+	metrics.MarkUIGoroutine()
+	metrics.BeginUIWork()
+}
+
+// SetLoopPhase attributes a watchdog sample only to the phase it observed.
+func (o *LoopObserver) SetLoopPhase(phase tea.LoopPhase) { metrics.SetUIWorkPhase(uint32(phase)) }
 
 // EndLoop runs on the event-loop goroutine after the frame handoff.
-func (o *LoopObserver) EndLoop() { o.stalled = metrics.EndUIWork() }
+func (o *LoopObserver) EndLoop() { o.stallPhase, o.stalled = metrics.EndUIWork() }
 
 // NewLoopObserver returns the shell's event-loop observer.
 func NewLoopObserver() *LoopObserver {
@@ -59,21 +68,27 @@ func NewLoopObserver() *LoopObserver {
 
 // ObserveLoop runs on the event-loop goroutine.
 func (o *LoopObserver) ObserveLoop(sample tea.LoopSample) {
-	metrics.MarkUIGoroutine()
 	name := o.typeName(sample.Msg)
 	stack := o.stalled
 	o.stalled = nil
-	uiUpdate.ObserveStack(sample.Update, name, stack)
+	stackFor := func(phase tea.LoopPhase) []string {
+		if uint32(phase) == o.stallPhase {
+			return stack
+		}
+		return nil
+	}
+	uiUpdate.ObserveStack(sample.Update, name, stackFor(tea.LoopUpdate))
 	uiMessages.Observe(name, sample.Update)
-	uiView.ObserveStack(sample.View, name, stack)
-	uiPresent.ObserveStack(sample.Present, name, stack)
+	uiDispatch.ObserveStack(sample.Dispatch, name, stackFor(tea.LoopDispatch))
+	uiView.ObserveStack(sample.View, name, stackFor(tea.LoopView))
+	uiPresent.ObserveStack(sample.Present, name, stackFor(tea.LoopPresent))
 	if sample.Input {
-		total := sample.Wait + sample.Update + sample.View + sample.Present
+		total := sample.Wait + sample.Update + sample.Dispatch + sample.View + sample.Present
 		label := inputKind(sample.Msg)
 		if sample.Wait > time.Millisecond {
 			label += " · waited " + strconv.FormatInt(sample.Wait.Milliseconds(), 10) + " ms"
 		}
-		uiInput.ObserveStack(total, label, stack)
+		uiInput.ObserveLabeled(total, label)
 		uiInputWait.ObserveLabeled(sample.Wait, inputKind(sample.Msg))
 	}
 }
@@ -112,10 +127,14 @@ func inputKind(msg tea.Msg) string {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		// Printable text is never recorded; only chords and named keys.
-		if key := msg.Key(); key.Text != "" && key.Mod&^tea.ModShift == 0 {
-			return "typing"
+		key := msg.Key()
+		if key.Text != "" {
+			if key.Mod&^tea.ModShift == 0 {
+				return "typing"
+			}
+			return "modified typing"
 		}
-		return "key " + msg.String()
+		return "key " + key.Keystroke()
 	case tea.KeyReleaseMsg:
 		return "key release"
 	case tea.MouseClickMsg:

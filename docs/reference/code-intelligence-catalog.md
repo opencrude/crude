@@ -15,7 +15,7 @@ language, a server or a tool itself.
 
 | Entry | What it says |
 |---|---|
-| Language | One LSP language identity: the files it covers (extensions, file names and patterns), its Linguist names, its `languageId`, root markers, workspace root markers, its servers in order of preference, and editor data: line comment tokens, block comment delimiters, the syntax grammar name, a formatter and declarative editing rules. A language without a server stays for its editor data. |
+| Language | One LSP language identity: the files it covers (extensions, file names and patterns), its Linguist names, its `languageId`, root markers, workspace root markers, its servers in order of preference, and editor data: line comment tokens, block comment delimiters, the syntax grammar name, a formatter, declarative editing rules and whether the Markdown document preview is available (`markdown_preview`). A language without a server stays for its editor data. |
 | Server | How to start a language server: command, arguments, environment, settings, initialization options, the package that provides the command, resource hints, and the declared diagnostic scope. |
 | Package | How to install a tool: package URL, license, languages, and release assets for each platform. |
 

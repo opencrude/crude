@@ -22,6 +22,7 @@ func TestMountedEditorBackwardDragIncludesPressedCharacterAndRetainsPaint(t *tes
 	}{{"desktop", 80, 20}, {"constrained", 24, 6}} {
 		t.Run(size.name, func(t *testing.T) {
 			th := theme.DefaultDark()
+			th.Spacing.PadLR = 2
 			path := filepath.Join(t.TempDir(), "anchor.txt")
 			if err := os.WriteFile(path, []byte("abcdef"), 0o600); err != nil {
 				t.Fatal(err)
@@ -33,7 +34,6 @@ func TestMountedEditorBackwardDragIncludesPressedCharacterAndRetainsPaint(t *tes
 			t.Cleanup(ed.Close)
 			screen := shelleditor.New(th)
 			screen.Bind(ed)
-			screen.SetPadding(2, 2)
 			host := ui.NewHost(th, screen)
 			host.Resize(size.w, size.h)
 			host.Focus(screen.ID())
@@ -88,11 +88,11 @@ func TestMountedEditorBackwardDragIncludesPressedCharacterAndRetainsPaint(t *tes
 
 func TestMountedEditorPointerScrollUsesCaptureAndPaintsScrolledRows(t *testing.T) {
 	th := theme.DefaultDark()
+	th.Spacing.PadLR = 2
 	ed := editor.NewPreview(th, "pointer.txt", strings.Repeat("alpha beta\n", 80), 1)
 	t.Cleanup(ed.Close)
 	screen := shelleditor.New(th)
 	screen.Bind(ed)
-	screen.SetPadding(2, 2)
 	host := ui.NewHost(th, screen)
 	host.Resize(40, 8)
 	buf := surface.NewCellBuffer(40, 8)

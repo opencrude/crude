@@ -1,11 +1,15 @@
 package perf
 
 import (
+	"io"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+
+	"crude/internal/metrics"
 )
 
 func TestDisplayCadenceMeasuresWritesNotIdleGaps(t *testing.T) {
@@ -40,4 +44,70 @@ func TestDisplayCadenceMeasuresWritesNotIdleGaps(t *testing.T) {
 		_ = observer.DisplayInterval()
 	}
 	wg.Wait()
+}
+
+// stallModel stalls the UI goroutine once, in a function whose name the
+// saved evidence must carry.
+type stallModel struct{ stalled bool }
+
+type stallMsg struct{}
+
+func (m *stallModel) Init() tea.Cmd { return func() tea.Msg { return stallMsg{} } }
+
+func (m *stallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if _, ok := msg.(stallMsg); ok && !m.stalled {
+		m.stalled = true
+		holdTheUIThread()
+		return m, tea.Quit
+	}
+	return m, nil
+}
+
+func (m *stallModel) View() tea.View { return tea.NewView("") }
+
+//go:noinline
+func holdTheUIThread() { time.Sleep(150 * time.Millisecond) }
+
+// A stall before ObserveLoop has ever run must still capture a stack.
+func TestFirstLoopBindsBeforeWork(t *testing.T) {
+	metrics.ResetUIGoroutineForTest()
+	t.Cleanup(metrics.ResetUIGoroutineForTest)
+	o := NewLoopObserver()
+	o.BeginLoop()
+	holdTheUIThread()
+	o.EndLoop()
+	if !strings.Contains(strings.Join(o.stalled, "\n"), "holdTheUIThread") {
+		t.Fatalf("first iteration stack: %v", o.stalled)
+	}
+}
+
+// A real program loop that stalls in Update records a stall event that names
+// the stalling function, so the Performance panel and the saved history show
+// the code, not only the message type.
+func TestStalledUpdateRecordsTheStalledCode(t *testing.T) {
+	metrics.ResetForTest()
+	metrics.ResetUIGoroutineForTest()
+	t.Cleanup(metrics.ResetUIGoroutineForTest)
+	started := time.Now()
+	p := tea.NewProgram(&stallModel{}, tea.WithInput(nil), tea.WithOutput(io.Discard), tea.WithoutRenderer(),
+		tea.WithObserver(NewLoopObserver()))
+	// Windows startup messages can run before the deliberately stalled input.
+	if _, err := p.Run(); err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range metrics.EventsSince(started) {
+		if event.Series != "ui.update" {
+			continue
+		}
+		if event.Label != "perf.stallMsg" {
+			t.Fatalf("the stall names %q, want the message type", event.Label)
+		}
+		for _, frame := range event.Stack {
+			if strings.Contains(frame, "holdTheUIThread") && strings.Contains(frame, "loop_test.go:") {
+				return
+			}
+		}
+		t.Fatalf("the stall stack does not name the stalling function:\n%s", strings.Join(event.Stack, "\n"))
+	}
+	t.Fatal("a 150 ms Update recorded no stall")
 }
