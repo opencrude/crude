@@ -1,8 +1,6 @@
 package viewmodel
 
 import (
-	"time"
-
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/screens/imageviewer"
@@ -13,18 +11,25 @@ import (
 	"crude/tui/wm"
 )
 
-// A Sixel move can resend hundreds of kilobytes even with a cached raster.
-// Keep current cell frames throughout a captured drag, including pauses.
-// Quiet time settles wheel and key bursts, not a held pointer.
-const sixelMotionQuiet = 180 * time.Millisecond
-
-type pixelMotionWakeMsg time.Time
+// A Sixel image that moves must be sent again at every new position. Moving a
+// window or panning reuses the prepared raster, so those drags stay native
+// while the visible raster is small enough for the terminal to accept a frame
+// quickly (sixelNativeMotionPixels). A drag that resizes an image (window
+// resize, divider drag) needs a new raster at every step; it, and a drag of a
+// larger image, paints only the affected view's cell preview. Release or
+// capture loss restores native pixels; the terminal writer keeps the preview
+// on screen until the native raster replaces it. Discrete changes such as
+// wheel or key zoom keep native pixels: the writer holds the current picture
+// until the new raster is ready.
+//
+// Windows Terminal 1.25 on an i7-9850H accepted an 810×560 raster (523 kB) in
+// 22 ms and a 1530×1360 raster (2.1 MB) in 82 ms per frame.
+const sixelNativeMotionPixels = 640_000
 
 type pixelMotionState struct {
-	active []pixelMotionPreview
+	active []pixelMotionTarget
 	probe  []pixelMotionSample // input scratch, not a second viewport
 	split  []pixelMotionSample // before the next ordinary layout
-	wake   bool                // at most one wake command
 }
 
 type pixelMotionTarget struct {
@@ -35,12 +40,6 @@ type pixelMotionTarget struct {
 	frame *wm.FloatingWindow
 }
 
-type pixelMotionPreview struct {
-	target pixelMotionTarget
-	until  time.Time
-	drag   bool
-}
-
 type pixelMotionSample struct {
 	target   pixelMotionTarget
 	viewport ui.Rect
@@ -48,11 +47,11 @@ type pixelMotionSample struct {
 }
 
 type pixelMotionInput struct {
-	moving pixelMotionTarget
-	before ui.Rect
-	split  *ui.SplitModel
-	first  int
-	drag   bool
+	moving   pixelMotionTarget
+	resizing bool
+	before   ui.Rect
+	split    *ui.SplitModel
+	first    int
 }
 
 // Observe the real input handlers, so no duplicated hit test or capture can
@@ -60,16 +59,6 @@ type pixelMotionInput struct {
 // for the native detail to return.
 func (m *App) updateWithPixelMotion(msg tea.Msg) (tea.Model, tea.Cmd) {
 	p := &m.pixelMotion
-	if wake, ok := msg.(pixelMotionWakeMsg); ok {
-		p.wake = false
-		now := time.Time(wake)
-		if m.finishPixelMotion(func(preview pixelMotionPreview) bool {
-			return !preview.drag && !now.Before(preview.until)
-		}) {
-			m.presentImmediateFrame()
-		}
-		return m, m.schedulePixelMotionWake(now)
-	}
 	if m.terminalImages.protocol() != tea.ImageSixel && len(p.active) == 0 && len(p.split) == 0 {
 		return m.update(msg)
 	}
@@ -80,34 +69,25 @@ func (m *App) updateWithPixelMotion(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if len(p.probe) == 0 && len(p.active) == 0 && len(p.split) == 0 && input.moving.frame == nil {
 		return model, cmd
 	}
-	now := time.Now()
 	cancel := gen != m.workspaceSwitchGen.Load() || m.terminalImages.protocol() != tea.ImageSixel
 	switch msg.(type) {
 	case tea.BlurMsg, tea.WindowSizeMsg, tea.ResumeMsg:
 		cancel = true
 	}
 	release, released := msg.(tea.MouseReleaseMsg)
-	endDrag := released && release.Button == tea.MouseLeft
-	if !cancel && !endDrag {
-		for _, active := range p.active {
-			if active.drag {
-				endDrag = !m.pixelMotionCaptureHeld()
-				break
-			}
-		}
-	}
-	if cancel || endDrag {
+	end := cancel || released && release.Button == tea.MouseLeft ||
+		len(p.active) > 0 && !m.pixelMotionCaptureHeld()
+	if end {
 		clear(p.split)
 		p.split = p.split[:0]
-		if m.finishPixelMotion(func(preview pixelMotionPreview) bool { return cancel || preview.drag }) {
+		if m.finishPixelMotion(func(pixelMotionTarget) bool { return true }) {
 			m.presentImmediateFrame()
 		}
 	}
 	if !cancel {
-		until := now.Add(sixelMotionQuiet)
 		if input.moving.frame != nil && input.before != pixelMotionFrameRect(input.moving.frame) &&
-			m.pixelMotionMounted(input.moving) {
-			m.startPixelMotion(input.moving, until, true)
+			m.pixelMotionMounted(input.moving) && (input.resizing || !m.sixelNativeMotion(input.moving)) {
+			m.startPixelMotion(input.moving)
 		}
 		if input.split != nil && input.split.FirstSize() != input.first {
 			// Compare the actual body rectangles after the existing layout.
@@ -116,17 +96,18 @@ func (m *App) updateWithPixelMotion(msg tea.Msg) (tea.Model, tea.Cmd) {
 				p.split = append(p.split[:0], p.probe...)
 			}
 		} else if input.split == nil {
+			// A captured pan crops the prepared raster.
 			for _, sample := range p.probe {
 				if viewport, ok := sample.target.file.SixelMotionGeometry(); ok &&
-					viewport != sample.viewport && m.pixelMotionMounted(sample.target) {
-					m.startPixelMotion(sample.target, until, input.drag)
+					viewport != sample.viewport && m.pixelMotionMounted(sample.target) && !m.sixelNativeMotion(sample.target) {
+					m.startPixelMotion(sample.target)
 				}
 			}
 		}
 	}
 	clear(p.probe)
 	p.probe = p.probe[:0]
-	return model, tea.Batch(cmd, m.schedulePixelMotionWake(now))
+	return model, cmd
 }
 
 func (m *App) pixelMotionCaptureHeld() bool {
@@ -134,51 +115,44 @@ func (m *App) pixelMotionCaptureHeld() bool {
 		m.windowManager != nil && m.windowManager.IsDragging() || m.capturingWindow() != nil
 }
 
+// Only pointer drags sample motion. A wheel or key step is one change, which
+// the terminal writer replaces in place without an intermediate frame.
 func (m *App) samplePixelMotionInput(msg tea.Msg) pixelMotionInput {
 	p := &m.pixelMotion
-	switch msg.(type) {
-	case tea.MouseWheelMsg, tea.KeyPressMsg, tea.MouseClickMsg:
-		// A wheel gesture may be retained by the Host, and the toolbar can
-		// change zoom via either a key or click. Compare actual viewports.
-		m.samplePixelMotionFiles(false)
-	case tea.MouseMotionMsg:
-		if m.windowManager == nil || m.rootHost == nil {
-			break
+	if _, ok := msg.(tea.MouseMotionMsg); !ok || m.windowManager == nil || m.rootHost == nil {
+		return pixelMotionInput{}
+	}
+	if m.windowManager.IsDragging() {
+		for _, fw := range m.windowManager.Windows() {
+			if fw.IsDragging() || fw.IsResizing() {
+				if target := m.pixelMotionWindow(fw); target.file != nil || target.ref != nil {
+					return pixelMotionInput{moving: target, resizing: fw.IsResizing(), before: pixelMotionFrameRect(fw)}
+				}
+				break
+			}
 		}
-		if m.windowManager.IsDragging() {
-			for _, fw := range m.windowManager.Windows() {
-				if fw.IsDragging() || fw.IsResizing() {
-					if target := m.pixelMotionWindow(fw); target.file != nil || target.ref != nil {
-						return pixelMotionInput{moving: target, before: pixelMotionFrameRect(fw)}
-					}
-					break
+		return pixelMotionInput{}
+	}
+	if owner, _, ok := m.rootHost.CapturedPointer(); ok {
+		switch captured := m.rootHost.Component(owner).(type) {
+		case *ui.SplitDivider:
+			if captured.Model().Dragging() && (m.mainViewResizeActive() || owner == termdock.DividerID) {
+				m.samplePixelMotionFiles()
+				if len(p.probe) != 0 {
+					return pixelMotionInput{split: captured.Model(), first: captured.Model().FirstSize()}
 				}
 			}
-			break
+		case *imageviewer.Screen:
+			m.samplePixelMotionFiles()
 		}
-		if owner, _, ok := m.rootHost.CapturedPointer(); ok {
-			switch captured := m.rootHost.Component(owner).(type) {
-			case *ui.SplitDivider:
-				if captured.Model().Dragging() && (m.mainViewResizeActive() || owner == termdock.DividerID) {
-					m.samplePixelMotionFiles(true)
-					if len(p.probe) != 0 {
-						return pixelMotionInput{split: captured.Model(), first: captured.Model().FirstSize(), drag: true}
-					}
-				}
-			case *imageviewer.Screen:
-				m.samplePixelMotionFiles(true)
-				return pixelMotionInput{drag: true}
-			}
-			break
-		}
-		if fw := m.capturingWindow(); fw != nil {
-			if target := m.pixelMotionWindow(fw); target.file != nil {
-				owner, _, _ := windowContentHost(fw).CapturedPointer()
-				if owner == target.file.ID() {
-					if viewport, ok := target.file.SixelMotionGeometry(); ok {
-						p.probe = append(p.probe, pixelMotionSample{target: target, viewport: viewport})
-						return pixelMotionInput{drag: true}
-					}
+		return pixelMotionInput{}
+	}
+	if fw := m.capturingWindow(); fw != nil {
+		if target := m.pixelMotionWindow(fw); target.file != nil {
+			owner, _, _ := windowContentHost(fw).CapturedPointer()
+			if owner == target.file.ID() {
+				if viewport, ok := target.file.SixelMotionGeometry(); ok {
+					p.probe = append(p.probe, pixelMotionSample{target: target, viewport: viewport})
 				}
 			}
 		}
@@ -186,24 +160,21 @@ func (m *App) samplePixelMotionInput(msg tea.Msg) pixelMotionInput {
 	return pixelMotionInput{}
 }
 
-func (m *App) samplePixelMotionFiles(dockedOnly bool) {
+// samplePixelMotionFiles records the docked image views a root capture can
+// move. Floating windows are sampled through their own capture.
+func (m *App) samplePixelMotionFiles() {
 	p := m.mainPanes
 	if p == nil || m.Win == nil {
 		return
 	}
 	for id, group := range p.groups {
-		if group.view == nil || group.view.image == nil || group.body.Empty() {
+		if group.view == nil || group.view.image == nil || group.body.Empty() || p.windows[id] != nil {
+			continue
+		}
+		if _, visible := p.placements[id]; !visible {
 			continue
 		}
 		target := pixelMotionTarget{file: group.view.image, group: id}
-		if pane := p.windows[id]; pane != nil {
-			if dockedOnly || !pane.fw.Visible() {
-				continue
-			}
-			target.frame = pane.fw
-		} else if _, visible := p.placements[id]; !visible {
-			continue
-		}
 		if viewport, ok := target.file.SixelMotionGeometry(); ok && m.pixelMotionMounted(target) {
 			m.pixelMotion.probe = append(m.pixelMotion.probe, pixelMotionSample{target: target, viewport: viewport, body: group.body})
 		}
@@ -248,6 +219,23 @@ func (m *App) pixelMotionMounted(target pixelMotionTarget) bool {
 	return true
 }
 
+// sixelNativeMotion reports whether a drag of target can keep native pixels:
+// the area it can show is small enough for the terminal to accept a frame
+// quickly. The pane body or window bounds the visible raster.
+func (m *App) sixelNativeMotion(target pixelMotionTarget) bool {
+	cells := ui.Rect{}
+	switch {
+	case target.frame != nil:
+		cells = pixelMotionFrameRect(target.frame)
+	case m.mainPanes != nil:
+		if group := m.mainPanes.groups[target.group]; group != nil {
+			cells = group.body
+		}
+	}
+	cw, ch := m.terminalImages.cellWidth, m.terminalImages.cellHeight
+	return !cells.Empty() && cw > 0 && ch > 0 && cells.W*cw*cells.H*ch <= sixelNativeMotionPixels
+}
+
 func pixelMotionFrameRect(fw *wm.FloatingWindow) ui.Rect {
 	x, y := fw.Position()
 	w, h := fw.Size()
@@ -258,11 +246,11 @@ func pixelMotionFrameRect(fw *wm.FloatingWindow) ui.Rect {
 // Only the existing shell layout can tell which image cells actually changed.
 func (m *App) applyPixelMotionLayout() {
 	p := &m.pixelMotion
-	m.finishPixelMotion(func(preview pixelMotionPreview) bool { return !m.pixelMotionMounted(preview.target) })
+	m.finishPixelMotion(func(target pixelMotionTarget) bool { return !m.pixelMotionMounted(target) })
 	for _, sample := range p.split {
 		if m.pixelMotionMounted(sample.target) {
 			if group := m.mainPanes.groups[sample.target.group]; group != nil && group.body != sample.body {
-				m.startPixelMotion(sample.target, time.Time{}, true)
+				m.startPixelMotion(sample.target)
 			}
 		}
 	}
@@ -270,27 +258,25 @@ func (m *App) applyPixelMotionLayout() {
 	p.split = p.split[:0]
 }
 
-func (m *App) startPixelMotion(target pixelMotionTarget, until time.Time, drag bool) {
+func (m *App) startPixelMotion(target pixelMotionTarget) {
 	m.setPixelMotionPreview(target, true)
-	p := &m.pixelMotion
-	for i := range p.active {
-		if preview := &p.active[i]; preview.target == target {
-			preview.until, preview.drag = until, drag || preview.drag
+	for _, active := range m.pixelMotion.active {
+		if active == target {
 			return
 		}
 	}
-	p.active = append(p.active, pixelMotionPreview{target: target, until: until, drag: drag})
+	m.pixelMotion.active = append(m.pixelMotion.active, target)
 }
 
-func (m *App) finishPixelMotion(finished func(pixelMotionPreview) bool) bool {
+func (m *App) finishPixelMotion(finished func(pixelMotionTarget) bool) bool {
 	p := &m.pixelMotion
 	old := p.active
 	p.active = old[:0]
-	for _, preview := range old {
-		if finished(preview) {
-			m.setPixelMotionPreview(preview.target, false)
+	for _, target := range old {
+		if finished(target) {
+			m.setPixelMotionPreview(target, false)
 		} else {
-			p.active = append(p.active, preview)
+			p.active = append(p.active, target)
 		}
 	}
 	clear(old[len(p.active):])
@@ -314,25 +300,4 @@ func (m *App) setPixelMotionPreview(target pixelMotionTarget, preview bool) {
 	if target.frame != nil {
 		target.frame.MarkContentDirty()
 	}
-}
-
-func (m *App) schedulePixelMotionWake(now time.Time) tea.Cmd {
-	p := &m.pixelMotion
-	if p.wake {
-		return nil
-	}
-	var earliest time.Time
-	for _, preview := range p.active {
-		if preview.drag {
-			continue
-		}
-		if earliest.IsZero() || preview.until.Before(earliest) {
-			earliest = preview.until
-		}
-	}
-	if earliest.IsZero() {
-		return nil
-	}
-	p.wake = true
-	return tea.Tick(max(time.Millisecond, earliest.Sub(now)), func(at time.Time) tea.Msg { return pixelMotionWakeMsg(at) })
 }

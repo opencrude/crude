@@ -622,7 +622,9 @@ func TestRendererSwitchBuffer(t *testing.T) {
 	}
 
 	output := buf.String()
-	expected := "\x1b[HX\r\n\n\x1b[J\x1bMX\x1b[K\r\n\n\n\n"
+	// Rows 2..5 are blank in the new frame; only rows 3..5 changed, so the
+	// erase starts at row 3 and leaves the already blank row 2 alone.
+	expected := "\x1b[HX\r\n\n\n\x1b[J\x1b[2dX\x1b[K\r\n\n\n\n"
 	if output != expected {
 		t.Errorf("expected output after resize to be %q, got: %q", expected, output)
 	}

@@ -27,3 +27,24 @@ func (s *TerminalRenderer) recordDamage(y, start, end int) {
 	}
 	span.Start, span.End = min(span.Start, start), max(span.End, end)
 }
+
+// HoldArea keeps what the terminal shows in area through the next Render by
+// copying the physical cells into newbuf, so the diff leaves them alone. An
+// external graphics owner uses it to keep the previous picture until its
+// replacement is ready instead of presenting an intermediate blank state.
+// Unknown, invalidated and wide cells are not held, and nothing is held while
+// a full erase is pending or the geometry differs.
+func (s *TerminalRenderer) HoldArea(newbuf *RenderBuffer, area Rectangle) {
+	if s.clear || s.curbuf == nil || newbuf == nil || s.curbuf.Bounds() != newbuf.Bounds() {
+		return
+	}
+	area = area.Intersect(newbuf.Bounds())
+	for y := area.Min.Y; y < area.Max.Y; y++ {
+		held, line := s.curbuf.Lines[y], newbuf.Lines[y]
+		for x := area.Min.X; x < area.Max.X; x++ {
+			if old := held[x]; old.Width == 1 && old.Content != "\x00" && line[x].Width == 1 {
+				line[x] = old
+			}
+		}
+	}
+}

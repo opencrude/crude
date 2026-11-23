@@ -86,6 +86,7 @@ func runTests(t *testing.T, img image.Image, testCases map[string]testCase) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			defer palette.release()
 			if len(palette.PaletteColors) != len(test.expectedPalette) {
 				t.Errorf("Expected colors %+v in palette, but got %+v", test.expectedPalette, palette.PaletteColors)
 				return
@@ -107,7 +108,7 @@ func runTests(t *testing.T, img image.Image, testCases map[string]testCase) {
 			for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
 				for x := bounds.Min.X; x < bounds.Max.X; x++ {
 					c := sixelConvertColor(img.At(x, y).RGBA())
-					i, ok := palette.paletteIndexes[c]
+					i, ok := palette.lookup(c)
 					if !ok || int(i) >= len(palette.PaletteColors) {
 						t.Fatalf("no valid palette index for %+v", c)
 					}

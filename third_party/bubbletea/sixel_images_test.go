@@ -92,6 +92,14 @@ func (r *sixelTestRenderer) show(tb testing.TB, v View) {
 	r.awaitRasters(tb)
 }
 
+// shown returns what the renderer recorded for a terminal cell.
+func (r *sixelTestRenderer) shown(x, y int) sixelCell {
+	if !r.sixelAny {
+		return sixelCell{}
+	}
+	return r.sixelShown[y*r.cellbuf.Width()+x]
+}
+
 func (r *sixelTestRenderer) awaitRasters(tb testing.TB) {
 	tb.Helper()
 	deadline := time.NewTimer(5 * time.Second)
@@ -100,7 +108,7 @@ func (r *sixelTestRenderer) awaitRasters(tb testing.TB) {
 		if err := r.flush(false); err != nil {
 			tb.Fatal(err)
 		}
-		if len(r.sixelImages) == len(r.lastView.sixels) {
+		if !r.sixelPending {
 			return
 		}
 		select {
@@ -171,7 +179,7 @@ func TestSixelRendererClipOccludeMoveAndRemove(t *testing.T) {
 	v := sixelView(p, source)
 	r.show(t, v)
 	images := sixelPayloads(t, output.String())
-	if len(images) != 1 || images[0].Bounds().Dx() != 6 || r.sixelImages[0].tile.column != 1 {
+	if len(images) != 1 || images[0].Bounds().Dx() != 6 || r.shown(0, 2).column != 1 {
 		t.Fatal("left clipping changed source coordinates or raster dimensions")
 	}
 	source.Clear()
@@ -184,9 +192,11 @@ func TestSixelRendererClipOccludeMoveAndRemove(t *testing.T) {
 	if len(sixelPayloads(t, output.String())) != 4 || !strings.Contains(output.String(), "XX") {
 		t.Fatal("ordinary opaque window did not split and cover the image")
 	}
-	for _, entry := range r.sixelImages {
-		if !entry.tile.rect.Intersect(cover).Empty() {
-			t.Fatal("Sixel output crossed the compositor's window cover")
+	for y := cover.Min.Y; y < cover.Max.Y; y++ {
+		for x := cover.Min.X; x < cover.Max.X; x++ {
+			if r.shown(x, y).base != 0 {
+				t.Fatal("Sixel output crossed the compositor's window cover")
+			}
 		}
 	}
 	source.Clear()
@@ -194,7 +204,7 @@ func TestSixelRendererClipOccludeMoveAndRemove(t *testing.T) {
 	source.generation++
 	output.Reset()
 	r.show(t, v)
-	if len(sixelPayloads(t, output.String())) != 1 || len(r.sixelImages) != 1 || r.sixelImages[0].tile.rect.Min != image.Pt(7, 5) {
+	if len(sixelPayloads(t, output.String())) != 1 || r.sixelShownArea() != image.Rect(7, 5, 11, 8) || r.shown(7, 5).column != 0 {
 		t.Fatal("moving the image left stale crops or ignored its new position")
 	}
 	source.Clear()
@@ -202,7 +212,7 @@ func TestSixelRendererClipOccludeMoveAndRemove(t *testing.T) {
 	v.Images = nil
 	output.Reset()
 	r.show(t, v)
-	if len(r.sixelImages) != 0 || output.Len() == 0 || len(sixelPayloads(t, output.String())) != 0 ||
+	if r.sixelAny || output.Len() == 0 || len(sixelPayloads(t, output.String())) != 0 ||
 		strings.Contains(output.String(), ansi.EraseEntireScreen) {
 		t.Fatal("removing an image did not repaint only its old cells")
 	}
@@ -279,6 +289,7 @@ func TestSixelRendererRestoresRasterAfterTerminalLineErase(t *testing.T) {
 	// renderer replaces them with spaces. A real EL can erase both.
 	blank := *source.CellAt(2, 3)
 	blank.Content = " "
+	blank.Style.Fg = sixelCellForeground
 	for x := range source.Width() {
 		if x < 2 || x >= 2+p.Columns {
 			source.SetCell(x, 3, &blank)
@@ -335,16 +346,14 @@ func TestSixelRendererResizeResetFailureAndClose(t *testing.T) {
 			if len(sixelPayloads(t, output.String())) != 1 {
 				t.Fatal("image was not restored after terminal invalidation")
 			}
-			for _, entry := range r.sixelImages {
-				if !entry.tile.rect.In(r.cellbuf.Bounds()) {
-					t.Fatal("stale resize geometry escaped the actual terminal")
-				}
+			if len(r.sixelShown) != r.cellbuf.Width()*r.cellbuf.Height() || !r.sixelShownArea().In(r.cellbuf.Bounds()) {
+				t.Fatal("stale resize geometry escaped the actual terminal")
 			}
 			output.Reset()
 			if err := r.close(); err != nil {
 				t.Fatal(err)
 			}
-			if len(r.sixelImages) != 0 || len(r.sixelUncertain) != 0 {
+			if r.sixelAny || len(r.sixelUncertain) != 0 {
 				t.Fatal("closed terminal retained image resources")
 			}
 		})
@@ -386,7 +395,7 @@ func TestSixelCloseFailureKeepsExactDamageUntilSuccessfulCleanup(t *testing.T) {
 	r := newSixelTestRenderer(t, io.Discard, 12, 8)
 	r.show(t, sixelView(p, source))
 	r.w = kittyFailWriter{}
-	if err := r.close(); err == nil || len(r.sixelImages) != 1 {
+	if err := r.close(); err == nil || !r.sixelAny {
 		t.Fatal("failed close forgot the terminal image that can still be visible")
 	}
 	var output bytes.Buffer
@@ -394,7 +403,7 @@ func TestSixelCloseFailureKeepsExactDamageUntilSuccessfulCleanup(t *testing.T) {
 	if err := r.close(); err != nil {
 		t.Fatal(err)
 	}
-	if len(r.sixelImages) != 0 || output.Len() == 0 {
+	if r.sixelAny || output.Len() == 0 {
 		t.Fatal("successful close did not finish image cleanup")
 	}
 }
@@ -406,7 +415,7 @@ func BenchmarkSixelEncodeVisibleRaster(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
-		if _, err := encodeSixel(context.Background(), tile); err != nil {
+		if _, err := prepareSixelBase(context.Background(), sixelWant{tile.placement, tile.background, tile.grid()}, false); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -454,11 +463,11 @@ func BenchmarkSixelEncodePhoto(b *testing.B) {
 			b.ResetTimer()
 			var n int
 			for range b.N {
-				s, err := encodeSixel(context.Background(), tile)
+				base, err := prepareSixelBase(context.Background(), sixelWant{tile.placement, tile.background, tile.grid()}, false)
 				if err != nil {
 					b.Fatal(err)
 				}
-				n += len(s)
+				n += len(base.full)
 			}
 			b.ReportMetric(float64(n)/float64(b.N), "wire-B/op")
 		})
@@ -818,7 +827,7 @@ func TestSixelRendererHandoffWhileWriterStalled(t *testing.T) {
 	if err := r.flush(false); err != nil {
 		t.Fatal(err)
 	}
-	if len(r.sixelImages) != 0 {
+	if r.sixelAny {
 		t.Fatal("superseded image survived the latest completed frame")
 	}
 }

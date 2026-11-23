@@ -95,6 +95,8 @@ Retention runs on writes. The database has a page cap; its WAL is separate.
 A write failure or a process crash can leave a gap. Neither pauses the UI nor
 causes a missing figure to become a confirmed zero. No tool labels, source text,
 terminal output or paths are included in the measurements or stall records.
+A UI stall record can carry the stalled UI goroutine's frames: Crude function
+names with a source file base name and line, never directories or arguments.
 
 Compare counts and coverage as well as percentiles. Summaries merge histogram
 counts, not calculated percentiles. Observation from everyday work cannot prove

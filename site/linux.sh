@@ -9,8 +9,6 @@
 #
 #   curl -fsSL https://opencrude.github.io/linux.sh | sh -s -- --yes --gui
 #
-# The installer is read completely before it starts, so a broken download
-# installs nothing. Its questions go to your terminal.
 main() {
     url='https://github.com/opencrude/crude/releases/latest/download/install.sh'
     if ! command -v bash >/dev/null 2>&1; then

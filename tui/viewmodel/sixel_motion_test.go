@@ -19,7 +19,10 @@ import (
 	"crude/tui/wm"
 )
 
-func TestSixelFileWheelShowsCurrentPreviewThenSettles(t *testing.T) {
+// Wheel zoom is a discrete change: each step publishes the native image at
+// the new zoom, and the terminal writer holds the current pixels until the new
+// raster replaces them. Only a held pointer drag paints the cell preview.
+func TestSixelFileWheelZoomsNativeImageAndDragPreviews(t *testing.T) {
 	app, ws := newRealShellApp(t)
 	paneJourneySize(app, 132, 40)
 	app.terminalImages = terminalImageState{sixel: true, cellWidth: 8, cellHeight: 20}
@@ -34,28 +37,24 @@ func TestSixelFileWheelShowsCurrentPreviewThenSettles(t *testing.T) {
 		t.Fatal("file image was not mounted")
 	}
 	x, y := rect.X+rect.W/3, rect.Y+rect.H/2
-	var commands []tea.Cmd
-	previous := ""
+	columns := original.Columns
 	for range 2 {
 		_, cmd := app.Update(tea.MouseWheelMsg{X: x, Y: y, Button: tea.MouseWheelUp})
-		commands = append(commands, cmd)
+		if cmd != nil {
+			runAppCommand(t, app, cmd)
+		}
 		view := app.View()
 		content := view.RenderContent()
-		if len(view.Images) != 0 || strings.ContainsRune(content, kitty.Placeholder) || !strings.ContainsRune(content, '▀') {
-			t.Fatal("wheel published an intermediate native raster instead of the live image preview")
+		if len(view.Images) != 1 || view.Images[0].Image != original.Image || strings.ContainsRune(content, '▀') ||
+			!strings.ContainsRune(content, kitty.Placeholder) {
+			t.Fatal("wheel zoom replaced the native image with the cell preview")
 		}
-		if content == previous {
+		if view.Images[0].Columns <= columns {
 			t.Fatal("wheel input did not change the displayed image geometry")
 		}
-		previous = content
+		columns = view.Images[0].Columns
 	}
-
-	runAppCommand(t, app, tea.Batch(commands...))
 	settled := app.View()
-	if len(settled.Images) != 1 || settled.Images[0].Image != original.Image ||
-		settled.Images[0].Columns <= original.Columns || !strings.ContainsRune(settled.RenderContent(), kitty.Placeholder) {
-		t.Fatal("settle did not publish the same resource at the latest wheel zoom")
-	}
 	grid := uv.NewScreenBuffer(rect.X+rect.W, rect.Y+rect.H)
 	settled.Surface.Draw(grid, settled.Surface.Bounds())
 	anchor := []rune(grid.CellAt(x, y).Content)
@@ -83,9 +82,9 @@ func TestSixelFileWheelShowsCurrentPreviewThenSettles(t *testing.T) {
 		}
 		last = text
 	}
-	// A settle wake must not blank the preview while the user pauses with
-	// the button down and the real image pane still owns pointer capture.
-	app.Update(pixelMotionWakeMsg(time.Now().Add(time.Second)))
+	// A pause with the button down keeps the preview while the real image
+	// pane still owns pointer capture.
+	app.presentImmediateFrame()
 	if held := app.View(); len(held.Images) != 0 || !strings.ContainsRune(held.RenderContent(), '▀') {
 		t.Fatal("a pause during capture replaced the live preview with a native raster")
 	}
@@ -101,6 +100,90 @@ func TestSixelFileWheelShowsCurrentPreviewThenSettles(t *testing.T) {
 	runAppCommand(t, app, close)
 	if len(app.View().Images) != 0 || strings.ContainsRune(app.View().RenderContent(), kitty.Placeholder) {
 		t.Fatal("closed image left a native placement")
+	}
+}
+
+// A pane small enough for quick terminal frames pans natively: every captured
+// motion publishes the same resource at the new crop, never the cell preview.
+func TestSixelFileSmallPanePansNatively(t *testing.T) {
+	app, ws := newRealShellApp(t)
+	paneJourneySize(app, 100, 30)
+	app.terminalImages = terminalImageState{sixel: true, cellWidth: 6, cellHeight: 12}
+	openImageFromTree(t, app, writeImageFixture(t, ws.RootPath, "pan-sixel.png"))
+	if len(app.View().Images) != 1 {
+		t.Fatal("fixture did not start with native Sixel")
+	}
+	rect, ok := app.screenRectOf(app.activeImageView().ID())
+	if !ok || rect.W*6*rect.H*12 > sixelNativeMotionPixels {
+		t.Fatalf("fixture pane %v is not small enough for native motion", rect)
+	}
+	x, y := rect.X+rect.W/2, rect.Y+rect.H/2
+	for range 3 {
+		_, cmd := app.Update(tea.MouseWheelMsg{X: x, Y: y, Button: tea.MouseWheelUp})
+		if cmd != nil {
+			runAppCommand(t, app, cmd)
+		}
+	}
+	zoomed := app.View()
+	if len(zoomed.Images) != 1 {
+		t.Fatal("zoomed image is not native")
+	}
+	app.Update(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
+	last := zoomed.RenderContent()
+	for _, dx := range []int{3, 6, 9} {
+		app.Update(tea.MouseMotionMsg{X: x + dx, Y: y + 1, Button: tea.MouseLeft})
+		app.presentImmediateFrame()
+		frame := app.View()
+		text := frame.RenderContent()
+		if len(frame.Images) != 1 || frame.Images[0].Image != zoomed.Images[0].Image ||
+			strings.ContainsRune(text, '▀') || text == last {
+			t.Fatal("a small pane's pan did not stay native at the new crop")
+		}
+		last = text
+	}
+	app.Update(tea.MouseReleaseMsg{X: x + 9, Y: y + 1, Button: tea.MouseLeft})
+	if released := app.View(); len(released.Images) != 1 || released.RenderContent() != last {
+		t.Fatal("release changed the natively panned image")
+	}
+}
+
+// Zooming past the 297-cell marker range keeps native Sixel pixels: the pane
+// publishes a window into the virtual image instead of the reduced preview, and
+// a small pan inside that window keeps the same placement.
+func TestSixelFileHighZoomStaysNative(t *testing.T) {
+	app, ws := newRealShellApp(t)
+	paneJourneySize(app, 132, 40)
+	app.terminalImages = terminalImageState{sixel: true, cellWidth: 8, cellHeight: 20}
+	openImageFromTree(t, app, writeImageFixture(t, ws.RootPath, "zoom-sixel.png"))
+	if len(app.View().Images) != 1 {
+		t.Fatal("fixture did not start with native Sixel")
+	}
+	rect, _ := app.screenRectOf(app.activeImageView().ID())
+	x, y := rect.X+rect.W/2, rect.Y+rect.H/2
+	var placement tea.ImagePlacement
+	for range 40 {
+		_, cmd := app.Update(tea.MouseWheelMsg{X: x, Y: y, Button: tea.MouseWheelUp})
+		if cmd != nil {
+			runAppCommand(t, app, cmd)
+		}
+		view := app.View()
+		if len(view.Images) != 1 || strings.Contains(view.RenderContent(), "Reduced detail") {
+			t.Fatalf("zoom fell back to the cell preview: %+v", view.Images)
+		}
+		if placement = view.Images[0]; placement.VirtualColumns > 297 {
+			break
+		}
+	}
+	if placement.VirtualColumns <= 297 || placement.Columns > 297 || placement.SourceWidth != 0 {
+		t.Fatalf("high zoom did not publish a window into the virtual image: %+v", placement)
+	}
+	before := app.View().RenderContent()
+	app.Update(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
+	app.Update(tea.MouseMotionMsg{X: x + 3, Y: y, Button: tea.MouseLeft})
+	app.Update(tea.MouseReleaseMsg{X: x + 3, Y: y, Button: tea.MouseLeft})
+	panned := app.View()
+	if len(panned.Images) != 1 || panned.Images[0] != placement || panned.RenderContent() == before {
+		t.Fatalf("a small pan did not move inside the same window: %+v, was %+v", panned.Images, placement)
 	}
 }
 
@@ -188,12 +271,15 @@ func TestSixelAttachmentResizeAndCloseDuringMotion(t *testing.T) {
 	if len(after.Images) != 1 || after.Images[0].Image != before.Image || after.Images[0].Rows >= before.Rows {
 		t.Fatal("released attachment did not return to its original native pixels at the final size")
 	}
+	// Moving the smaller window reuses its prepared raster, so it stays native.
 	x, y = fw.Position()
 	app.Update(tea.MouseClickMsg{X: x + 6, Y: y, Button: tea.MouseLeft})
 	_, move := app.Update(tea.MouseMotionMsg{X: x + 10, Y: y + 1, Button: tea.MouseLeft})
 	app.presentImmediateFrame()
-	if len(app.View().Images) != 0 {
-		t.Fatal("new drag did not remove the intermediate native placement")
+	moved := app.View()
+	if movedX, _ := fw.Position(); movedX == x || len(moved.Images) != 1 || moved.Images[0] != after.Images[0] ||
+		strings.ContainsRune(moved.RenderContent(), '▀') {
+		t.Fatal("moving a small image window dropped its native pixels")
 	}
 	_, close := app.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	runAppCommand(t, app, tea.Batch(wake, move, close))

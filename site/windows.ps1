@@ -4,8 +4,7 @@
 #
 # This runs the installer of the latest published release,
 # https://github.com/opencrude/crude/releases/latest/download/install.ps1
-# The installer is read completely before it starts, so a broken download
-# installs nothing. It asks its questions in this window.
+#
 & {
     $url = 'https://github.com/opencrude/crude/releases/latest/download/install.ps1'
     $installer = ''

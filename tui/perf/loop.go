@@ -43,7 +43,14 @@ var (
 type LoopObserver struct {
 	names     map[reflect.Type]string
 	displayNS atomic.Int64
+	stalled   []string // UI stack captured during the iteration that just ended
 }
+
+// BeginLoop runs on the event-loop goroutine before Update.
+func (o *LoopObserver) BeginLoop() { metrics.BeginUIWork() }
+
+// EndLoop runs on the event-loop goroutine after the frame handoff.
+func (o *LoopObserver) EndLoop() { o.stalled = metrics.EndUIWork() }
 
 // NewLoopObserver returns the shell's event-loop observer.
 func NewLoopObserver() *LoopObserver {
@@ -54,17 +61,19 @@ func NewLoopObserver() *LoopObserver {
 func (o *LoopObserver) ObserveLoop(sample tea.LoopSample) {
 	metrics.MarkUIGoroutine()
 	name := o.typeName(sample.Msg)
-	uiUpdate.ObserveLabeled(sample.Update, name)
+	stack := o.stalled
+	o.stalled = nil
+	uiUpdate.ObserveStack(sample.Update, name, stack)
 	uiMessages.Observe(name, sample.Update)
-	uiView.ObserveLabeled(sample.View, name)
-	uiPresent.ObserveLabeled(sample.Present, name)
+	uiView.ObserveStack(sample.View, name, stack)
+	uiPresent.ObserveStack(sample.Present, name, stack)
 	if sample.Input {
 		total := sample.Wait + sample.Update + sample.View + sample.Present
 		label := inputKind(sample.Msg)
 		if sample.Wait > time.Millisecond {
 			label += " · waited " + strconv.FormatInt(sample.Wait.Milliseconds(), 10) + " ms"
 		}
-		uiInput.ObserveLabeled(total, label)
+		uiInput.ObserveStack(total, label, stack)
 		uiInputWait.ObserveLabeled(sample.Wait, inputKind(sample.Msg))
 	}
 }
