@@ -15,6 +15,7 @@ type Button struct {
 	label      string
 	actionID   string
 	disabled   bool
+	selected   bool
 	tokens     *TokenSet
 	variant    ButtonVariant
 	variantSet bool
@@ -36,6 +37,9 @@ func (b *Button) SetTokens(ts *TokenSet) { b.tokens = ts }
 
 // SetDisabled enables/disables the button.
 func (b *Button) SetDisabled(d bool) { b.disabled = d }
+
+// SetSelected marks the current choice in a group of buttons.
+func (b *Button) SetSelected(v bool) { b.selected = v }
 
 // SetVariant selects the semantic treatment used by ActionBar buttons.
 func (b *Button) SetVariant(v ButtonVariant) { b.variant, b.variantSet = v, true }
@@ -74,7 +78,7 @@ func (b *Button) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintC
 	if r.Empty() {
 		return
 	}
-	st := ResolveControlState(b.disabled, ctx.Focused, false, false, ctx.Hovered)
+	st := ResolveControlState(b.disabled, ctx.Focused, b.selected, false, ctx.Hovered)
 	tokens := b.tokenSet()
 	// Idle surface is the surrounding surface (dialog/form bg), with the
 	// variant-colored label carrying identity; the accent/variant FILL is
@@ -92,6 +96,8 @@ func (b *Button) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintC
 		// Hover language: subtle tinted fill, never the accent/variant fill
 		// (reserved for keyboard focus, as in ButtonColors()).
 		bg = tokens.Color(ColorHover)
+	case StateSelected:
+		bg, attr = tokens.Color(ColorSelection), cell.AttrBold
 	case StateFocused, StatePressed:
 		bg = b.variantFill(tokens)
 		fg = cell.ContrastColor(bg)
@@ -156,5 +162,6 @@ func (b *Button) Semantics() Semantics {
 		Role:     RoleButton,
 		Label:    b.label,
 		Disabled: b.disabled,
+		Selected: b.selected,
 	}
 }

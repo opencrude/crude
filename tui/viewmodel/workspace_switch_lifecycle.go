@@ -162,6 +162,7 @@ func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
 	m.thinkingPresentations = nil
 	m.thinkingLatch = nil
 	m.resetImageResidency()
+	m.closeMarkdownViews()
 	m.mainPanes = nil
 	m.paneFilePicker = nil
 	if m.sessionProjections != nil {

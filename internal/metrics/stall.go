@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -30,13 +31,15 @@ const (
 )
 
 var uiWork struct {
-	mu       sync.Mutex
-	timer    *time.Timer
-	seq      uint64 // current iteration
-	busy     bool
-	stack    []string // captured during iteration stackSeq
-	stackSeq uint64
-	last     time.Time
+	mu         sync.Mutex
+	timer      *time.Timer
+	seq        uint64 // current iteration
+	busy       bool
+	stack      []string // captured during iteration stackSeq
+	stackPhase uint32
+	phase      atomic.Uint32
+	started    time.Time
+	last       time.Time
 	// Functions on the UI goroutine's stack when it was bound. They identify
 	// it among all goroutines; a stalled UI stack shares its loop frames.
 	signature map[string]struct{}
@@ -48,6 +51,8 @@ func BeginUIWork() {
 	uiWork.mu.Lock()
 	uiWork.seq++
 	uiWork.busy, uiWork.stack = true, nil
+	uiWork.started = time.Now()
+	uiWork.phase.Store(0)
 	if uiWork.signature != nil {
 		if uiWork.timer == nil {
 			uiWork.timer = time.AfterFunc(uiStallCapture, captureUIStall)
@@ -60,20 +65,20 @@ func BeginUIWork() {
 
 // EndUIWork ends the iteration. It returns the UI goroutine's stack captured
 // while the iteration was stalled, or nil.
-func EndUIWork() []string {
+func EndUIWork() (uint32, []string) {
 	uiWork.mu.Lock()
 	defer uiWork.mu.Unlock()
 	uiWork.busy = false
 	if uiWork.timer != nil {
 		uiWork.timer.Stop()
 	}
-	if uiWork.stackSeq != uiWork.seq {
-		return nil
-	}
 	stack := uiWork.stack
 	uiWork.stack = nil
-	return stack
+	return uiWork.stackPhase, stack
 }
+
+// SetUIWorkPhase marks the current phase of the watched iteration.
+func SetUIWorkPhase(phase uint32) { uiWork.phase.Store(phase) }
 
 // bindUISignature runs once, on the UI goroutine, when it is bound.
 func bindUISignature() {
@@ -102,7 +107,14 @@ func captureUIStall() {
 		uiWork.mu.Unlock()
 		return
 	}
-	seq, signature := uiWork.seq, uiWork.signature
+	// A callback already queued at Stop can run in the next iteration.
+	// Never record that iteration before it reaches the capture threshold.
+	if remaining := uiStallCapture - time.Since(uiWork.started); remaining > 0 {
+		uiWork.timer.Reset(remaining)
+		uiWork.mu.Unlock()
+		return
+	}
+	seq, phase, signature := uiWork.seq, uiWork.phase.Load(), uiWork.signature
 	uiWork.last = at
 	uiWork.mu.Unlock()
 
@@ -114,8 +126,8 @@ func captureUIStall() {
 	stack := uiStack(profile.Bytes(), signature)
 
 	uiWork.mu.Lock()
-	if uiWork.busy && uiWork.seq == seq && stack != nil {
-		uiWork.stack, uiWork.stackSeq = stack, seq
+	if uiWork.busy && uiWork.seq == seq && uiWork.phase.Load() == phase && stack != nil {
+		uiWork.stack, uiWork.stackPhase = stack, phase
 	}
 	uiWork.mu.Unlock()
 }

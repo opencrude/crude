@@ -26,6 +26,12 @@ const (
 	zoomOut = "imageviewer.zoom-out"
 	zoomIn  = "imageviewer.zoom-in"
 	fit     = "imageviewer.fit"
+
+	// maxPixelScale is the largest magnification: one image pixel covers
+	// 16 × 16 terminal pixels. More shows no further detail, only larger
+	// blocks of one color, so zoom stops where every step still changes
+	// what the user sees.
+	maxPixelScale = 16
 )
 
 // Screen retains immutable source pixels, not a document editor. Image resources
@@ -39,6 +45,7 @@ type Screen struct {
 	sixelPreview          bool
 	cellWidth, cellHeight int
 	zoom                  float64 // multiplier of the current fit scale
+	minZoom, maxZoom      float64 // zoom range for the current image and viewport
 	centerX, centerY      float64 // normalized source point at viewport center
 	scale                 float64 // source pixels to terminal pixels
 	viewport, virtual     ui.Rect
@@ -72,12 +79,8 @@ func NewWithID(th *theme.Theme, id ui.ComponentID) *Screen {
 		{"zoom-in", "Zoom in", "+", "\uf00e", "+", zoomIn},
 		{"fit", "Fit image", "0", "\uf065", "↔", fit},
 	} {
-		b := &imageButton{
-			Button: ui.NewButton(ui.NewID(id, spec.segment), spec.fallback, spec.action), owner: s,
-			label: spec.label, tooltip: spec.label + " (" + spec.shortcut + ")",
-			icon: spec.icon, fallback: spec.fallback,
-		}
-		b.SetVariant(ui.VariantGhost)
+		b := &imageButton{ViewerButton: panelchrome.NewViewerButton(ui.NewID(id, spec.segment), id, spec.action,
+			spec.label, spec.shortcut, spec.icon, spec.fallback), owner: s}
 		s.buttons[i] = b
 		s.children = append(s.children, b)
 	}
@@ -154,15 +157,8 @@ func (s *Screen) SetTokens(tokens *ui.TokenSet) {
 		return
 	}
 	s.tokens = tokens
-	nerdFont := panelchrome.NerdFont(tokens.Theme())
 	for _, b := range s.buttons {
 		b.SetTokens(tokens)
-		b.SetSurfaceBackground(tokens.Color(ui.ColorBg))
-		label := b.fallback
-		if nerdFont {
-			label = b.icon
-		}
-		b.SetLabel(label)
 	}
 }
 
@@ -178,25 +174,9 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 		s.CancelPointerCapture()
 	}
 	s.SetBounds(r)
-	var widths [3]int
-	total := 0
-	for i, b := range s.buttons {
-		widths[i] = b.Measure(ctx, ui.Loose(r.W, 1)).W
-		total += widths[i]
-	}
-	if total > r.W {
-		widths = [3]int{r.W / 3, r.W / 3, r.W - 2*(r.W/3)}
-		total = r.W
-	}
-	x := r.W - total
-	for i, b := range s.buttons {
-		b.Layout(ctx, ui.Rect{X: x, W: widths[i], H: min(1, r.H)})
-		x += widths[i]
-	}
+	pad, inner := ui.ContentInset(r.W, s.tokens.PadLR())
+	panelchrome.LayoutViewerActions(ctx, ui.Rect{X: pad, W: inner, H: r.H}, s.children)
 	s.viewport = ui.Rect{Y: min(1, r.H), W: r.W, H: max(0, r.H-1)}
-	if r.H >= 3 {
-		s.viewport.H-- // dimensions, zoom and interaction hint
-	}
 	s.refresh()
 }
 
@@ -283,15 +263,43 @@ func gcd(a, b int) int {
 	return a
 }
 
+// effectiveZoom is the requested zoom held inside the current range. The
+// request itself survives a resize: a pane that is briefly too large or too
+// small for it shows the nearest zoom it can and returns to the request.
+func (s *Screen) effectiveZoom() float64 {
+	return min(s.maxZoom, max(s.minZoom, s.zoom))
+}
+
+// zoomStep returns the next zoom level towards dir (+1 in, -1 out). Levels
+// are Fit times powers of √2, so stepping back always returns to Fit; the
+// range ends are levels too.
+func (s *Screen) zoomStep(dir int) float64 {
+	halfOctaves := 2 * math.Log2(s.effectiveZoom())
+	if dir > 0 {
+		halfOctaves = math.Floor(halfOctaves+1e-9) + 1
+	} else {
+		halfOctaves = math.Ceil(halfOctaves-1e-9) - 1
+	}
+	return min(s.maxZoom, max(s.minZoom, math.Exp2(halfOctaves/2)))
+}
+
 func (s *Screen) refreshViewport() {
 	s.virtual, s.visible, s.scale = ui.Rect{}, ui.Rect{}, 0
+	s.minZoom, s.maxZoom = 1, 1
 	if s.img != nil && !s.img.Bounds().Empty() && !s.viewport.Empty() {
 		src, v := s.img.Bounds(), s.viewport
 		cw, ch := s.cellWidth, s.cellHeight
 		if cw <= 0 || ch <= 0 {
 			cw, ch = 1, 2
 		}
-		s.scale = math.Min(float64(v.W)*float64(cw)/float64(src.Dx()), float64(v.H)*float64(ch)/float64(src.Dy())) * s.zoom
+		fitScale := math.Min(float64(v.W)*float64(cw)/float64(src.Dx()), float64(v.H)*float64(ch)/float64(src.Dy()))
+		// Zoom out stops at Fit, or at actual size for an image smaller
+		// than the pane. Zoom in stops at maxPixelScale, or at Fit when Fit
+		// already magnifies more. Outside that range a step changes the
+		// number but not the picture.
+		s.minZoom = math.Min(1, 1/fitScale)
+		s.maxZoom = math.Max(1, maxPixelScale/fitScale)
+		s.scale = fitScale * s.effectiveZoom()
 		w := max(1, int(math.Ceil(float64(src.Dx())*s.scale/float64(cw)-1e-9)))
 		h := max(1, int(math.Ceil(float64(src.Dy())*s.scale/float64(ch)-1e-9)))
 		axis := func(extent, view int, center *float64) int {
@@ -319,9 +327,11 @@ func (s *Screen) refresh() {
 		s.placement.Protocol = tea.ImageSixel
 		s.placement.CellWidth, s.placement.CellHeight = s.cellWidth, s.cellHeight
 	}
-	for _, b := range s.buttons {
-		b.SetDisabled(s.img == nil || s.img.Bounds().Empty())
-	}
+	empty := s.img == nil || s.img.Bounds().Empty()
+	zoom := s.effectiveZoom()
+	s.buttons[0].SetDisabled(empty || zoom <= s.minZoom)
+	s.buttons[1].SetDisabled(empty || zoom >= s.maxZoom)
+	s.buttons[2].SetDisabled(empty)
 	s.status = "No image"
 	if s.img == nil {
 		if s.emptyStatus != "" {
@@ -336,10 +346,15 @@ func (s *Screen) refresh() {
 			} else {
 				// Without measured cell pixels a source-pixel percentage would
 				// be invented. State the known fit-relative zoom instead.
-				s.status += fmt.Sprintf(" · %.0f%% of fit", s.zoom*100)
+				s.status += fmt.Sprintf(" · %.0f%% of fit", zoom*100)
 			}
-			if s.zoom == 1 {
+			switch {
+			case zoom == 1:
 				s.status += " · Fit"
+			case zoom >= s.maxZoom:
+				s.status += " · Maximum zoom"
+			case zoom <= s.minZoom && s.cellWidth > 0 && s.cellHeight > 0:
+				s.status += " · Actual size"
 			}
 			if !s.useGraphics() && !s.sixelPreview {
 				s.status += " · Reduced detail"
@@ -401,13 +416,9 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 			s.paintPreview(buf, ox, oy, bg)
 		}
 	}
-	if r.H >= 3 {
-		text := s.status
-		hint := " · Wheel: zoom · Drag / arrows: pan"
-		if rendering.VisibleWidth(text)+rendering.VisibleWidth(hint) <= r.W {
-			text += hint
-		}
-		buf.WriteString(ox, oy+r.H-1, rendering.TruncateVisual(text, r.W, "…"), s.tokens.Color(ui.ColorMuted), bg, 0)
+	if s.img == nil && !s.viewport.Empty() {
+		pad, inner := ui.ContentInset(r.W, s.tokens.PadLR())
+		buf.WriteString(ox+pad, oy+s.viewport.Y, rendering.TruncateVisual(s.status, inner, "…"), s.tokens.Color(ui.ColorMuted), bg, 0)
 	}
 }
 
@@ -428,21 +439,26 @@ func (s *Screen) paintPreview(buf *surface.CellBuffer, ox, oy int, bg cell.Color
 	}
 }
 
-func (s *Screen) changeZoom(factor float64) {
+func (s *Screen) changeZoom(dir int) bool {
+	next := s.zoomStep(dir)
+	if next == s.effectiveZoom() {
+		return false
+	}
 	s.CancelPointerCapture()
-	s.zoom = min(64, max(.125, s.zoom*factor))
+	s.zoom = next
 	s.refresh()
+	return true
 }
 
 // zoomAt keeps the source point under the pointer in place, except where
 // centering a small image or clamping at an edge takes precedence.
-func (s *Screen) zoomAt(factor float64, x, y int) {
+func (s *Screen) zoomAt(dir int, x, y int) bool {
 	if s.virtual.Empty() {
-		return
+		return false
 	}
-	next := min(64, max(.125, s.zoom*factor))
-	if next == s.zoom {
-		return
+	next := s.zoomStep(dir)
+	if next == s.effectiveZoom() {
+		return false
 	}
 	sourceX := (float64(x-s.virtual.X) + .5) / float64(s.virtual.W)
 	sourceY := (float64(y-s.virtual.Y) + .5) / float64(s.virtual.H)
@@ -452,6 +468,7 @@ func (s *Screen) zoomAt(factor float64, x, y int) {
 	s.centerX = sourceX + (float64(s.viewport.W)/2-float64(x-s.viewport.X)-.5)/float64(s.virtual.W)
 	s.centerY = sourceY + (float64(s.viewport.H)/2-float64(y-s.viewport.Y)-.5)/float64(s.virtual.H)
 	s.refresh()
+	return true
 }
 
 func (s *Screen) pan(dx, dy int) {
@@ -465,10 +482,12 @@ func (s *Screen) pan(dx, dy int) {
 
 func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
 	switch action.ID {
-	case zoomOut:
-		s.changeZoom(1 / math.Sqrt2)
-	case zoomIn:
-		s.changeZoom(math.Sqrt2)
+	case zoomOut, zoomIn:
+		dir := 1
+		if action.ID == zoomOut {
+			dir = -1
+		}
+		return zoomResult(s.changeZoom(dir))
 	case fit:
 		s.CancelPointerCapture()
 		s.zoom, s.centerX, s.centerY = 1, .5, .5
@@ -477,6 +496,14 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 		return ui.EventResult{}
 	}
 	return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+}
+
+func zoomResult(changed bool) ui.EventResult {
+	r := ui.EventResult{Handled: true}
+	if changed {
+		r.Invalidate = ui.InvalidatePaint
+	}
+	return r
 }
 
 func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
@@ -537,13 +564,13 @@ func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 			if evt.MouseWheel.Mod.Contains(tea.ModShift) {
 				s.pan(-3, 0)
 			} else {
-				s.zoomAt(math.Sqrt2, ctx.LocalX, ctx.LocalY)
+				return zoomResult(s.zoomAt(1, ctx.LocalX, ctx.LocalY))
 			}
 		case tea.MouseWheelDown:
 			if evt.MouseWheel.Mod.Contains(tea.ModShift) {
 				s.pan(3, 0)
 			} else {
-				s.zoomAt(1/math.Sqrt2, ctx.LocalX, ctx.LocalY)
+				return zoomResult(s.zoomAt(-1, ctx.LocalX, ctx.LocalY))
 			}
 		case tea.MouseWheelLeft:
 			s.pan(-3, 0)
@@ -570,6 +597,9 @@ func focusResult(id ui.ComponentID) ui.EventResult {
 		Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 }
 
+// Status describes the current image for the shell header.
+func (s *Screen) Status() string { return s.status }
+
 func (s *Screen) Semantics() ui.Semantics {
 	return ui.Semantics{Role: ui.RoleGroup, Label: "Image", Value: s.status,
 		Description: "Read-only image. Wheel or plus and minus zoom. 0 fits. Arrows and drag pan. Shift+wheel pans horizontally."}
@@ -578,26 +608,8 @@ func (s *Screen) Semantics() ui.Semantics {
 // Native buttons remain discoverable in the Host tree. Their ordinary
 // activation bubbles to Screen; image navigation also works with toolbar focus.
 type imageButton struct {
-	*ui.Button
-	owner          *Screen
-	label, tooltip string
-	icon, fallback string
-}
-
-var _ ui.TooltipSource = (*imageButton)(nil)
-
-func (b *imageButton) Semantics() ui.Semantics {
-	sem := b.Button.Semantics()
-	sem.Label, sem.Description = b.label, b.tooltip
-	return sem
-}
-
-func (b *imageButton) Tooltip() (string, ui.Rect, bool) {
-	r := b.Bounds()
-	if r.Empty() {
-		return "", ui.Rect{}, false
-	}
-	return b.tooltip, ui.Rect{W: r.W, H: r.H}, true
+	*panelchrome.ViewerButton
+	owner *Screen
 }
 
 func (b *imageButton) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
@@ -621,5 +633,5 @@ func (b *imageButton) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 			return result
 		}
 	}
-	return b.Button.Handle(ctx, evt)
+	return b.ViewerButton.Handle(ctx, evt)
 }

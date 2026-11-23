@@ -1090,7 +1090,7 @@ func (c *Client) deliverPrivateEffects() {
 func (c *Client) CapabilityHostRequests() <-chan captypes.HostRequest { return c.hosts.requests }
 
 var (
-	clientRequests = metrics.NewTable(metrics.Meta{Name: "link.requests", Group: metrics.GroupRPC, Title: "Shell requests by method",
+	clientRequests = metrics.NewTable(metrics.Meta{Name: "link.requests", SaveLabels: true, Group: metrics.GroupRPC, Title: "Shell requests by method",
 		Help: "Round trip from the shell to the core and back, per method. Compare with the core's own time to separate transport from work.",
 		Warn: 100_000, Crit: 1_000_000})
 	linkResumes = metrics.NewCounter(metrics.Meta{Name: "link.resume", Group: metrics.GroupRPC, Title: "Session resumes",

@@ -1511,7 +1511,7 @@ func (r *Renderer) renderItem(idx int, item *renderItem, width int) []string {
 		if maxH < 5 {
 			maxH = 5
 		}
-		paneWidth := max(0, width-scrollbarFootprint(r.ScrollbarWidth()+r.paneScrollbarW))
+		paneWidth := max(0, width-ui.ScrollbarFootprint(r.ScrollbarWidth()+r.paneScrollbarW))
 		expanded := r.disclosureState(msg) == DisclosureExpanded
 		paneLines := r.subPaneContentFn(msg.SubPaneID, paneWidth, maxH, r.spinFrame, expanded)
 		frameSensitive := false
@@ -1612,7 +1612,8 @@ func (r *Renderer) availableMessageWidths() (contentWidth, innerW int) {
 	if r.thinkingBodyOnly {
 		padLR = 0
 	}
-	innerW = max(0, r.width-padLR*2-scrollbarFootprint(r.ScrollbarWidth()))
+	_, bodyW := ui.ContentInset(r.width, padLR)
+	innerW = max(0, bodyW-ui.ScrollbarFootprint(r.ScrollbarWidth()))
 	if r.thinkingBodyOnly {
 		// The parent pane owns chrome. Reserve only the body gutter so text
 		// reaches one column before its own scrollbar footprint.
@@ -1620,17 +1621,6 @@ func (r *Renderer) availableMessageWidths() (contentWidth, innerW int) {
 	}
 	contentWidth = max(0, innerW-messageBodyChromeWidth)
 	return contentWidth, innerW
-}
-
-// scrollbarFootprint is the shared horizontal contract for chat content:
-// every visible scrollbar occupies one column, and the group has one blank
-// separator immediately before the outermost scrollbar. Ordinary rows pass
-// the main scrollbar; pane rows add their nested pane scrollbar.
-func scrollbarFootprint(scrollbars int) int {
-	if scrollbars <= 0 {
-		return 0
-	}
-	return scrollbars + 1
 }
 
 func (r *Renderer) buildRenderContext(msg *conversation.ChatMessage, suppressHeader bool) renderContext {

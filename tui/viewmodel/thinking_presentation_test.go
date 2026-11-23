@@ -79,7 +79,7 @@ func TestThinkingGeometryUsesExactOwnerAndRetainsHiddenWidth(t *testing.T) {
 	background, selected := &mainPaneView{}, &mainPaneView{}
 	panes.agentViews["background"], panes.agentViews["selected"] = background, selected
 	panes.groups = map[window.GroupID]*mainPaneGroup{1: {view: background, chat: ui.Rect{W: 40}}, 2: {view: selected, chat: ui.Rect{W: 180}}}
-	_, expected := boundedContentGeometry(40, app.Theme.Spacing.PadLR)
+	_, expected := ui.ContentInset(40, app.Theme.Spacing.PadLR)
 	if app.thinkingOwnerWidth("background") != expected {
 		t.Fatal("background owner borrowed selected split width")
 	}

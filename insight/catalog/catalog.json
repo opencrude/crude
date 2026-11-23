@@ -5194,6 +5194,7 @@
       },
       "grammar": "markdown",
       "off_side": true,
+      "markdown_preview": true,
       "folding_markers": {
         "start": "^\\s*<!--\\s*#?region\\b.*-->",
         "end": "^\\s*<!--\\s*#?endregion\\b.*-->"
@@ -6727,7 +6728,9 @@
         "end": "-->"
       },
       "grammar": "markdown",
+      "markdown_preview": true,
       "sources": [
+        "crude-authored",
         "helix",
         "linguist"
       ]
@@ -6939,7 +6942,9 @@
         "end": "-->"
       },
       "grammar": "markdown",
+      "markdown_preview": true,
       "sources": [
+        "crude-authored",
         "helix",
         "linguist"
       ]

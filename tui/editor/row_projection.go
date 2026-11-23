@@ -255,6 +255,36 @@ func (e *Editor) setScrollRow(row int) {
 	e.scrollY, e.wrapOffset = e.prepareRows().at(row)
 }
 
+// TopLine is the source line at the top of the view. When the top row is a
+// continuation of a wrapped line, the fraction of that line's rows above the
+// view is added, so a long wrapped paragraph scrolls smoothly in line units.
+func (e *Editor) TopLine() float64 {
+	if !e.usesRows() {
+		return float64(e.scrollY)
+	}
+	p := e.prepareRows()
+	if len(p.lines) == 0 {
+		return 0
+	}
+	line := min(max(0, e.scrollY), len(p.lines)-1)
+	count := max(1, p.lines[line].count)
+	return float64(line) + float64(min(max(0, e.wrapOffset), count-1))/float64(count)
+}
+
+// ScrollToLine puts a source line, which may be fractional, at the top of
+// the view without moving the caret, as TopLine reads it back.
+func (e *Editor) ScrollToLine(line float64) {
+	whole := min(max(0, int(line)), max(0, e.LineCount()-1))
+	row := whole
+	if e.usesRows() {
+		p := e.prepareRows()
+		if whole < len(p.lines) {
+			row = p.before(whole) + int(max(0, line-float64(whole))*float64(max(1, p.lines[whole].count)))
+		}
+	}
+	e.scrollViewport(row - e.scrollRow())
+}
+
 type visibleRow struct {
 	line, start, end, index int
 	continues               bool

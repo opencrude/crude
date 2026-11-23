@@ -180,3 +180,14 @@ func SyncScrollModel(s *ScrollModel, content, viewport, offset int) *ScrollModel
 	s.ScrollTo(offset)
 	return s
 }
+
+// ScrollbarFootprint is the shared horizontal contract for reading panes:
+// every visible scrollbar occupies one column, and the group has one blank
+// separator immediately before the outermost scrollbar. Ordinary rows pass
+// the main scrollbar; pane rows add their nested pane scrollbar.
+func ScrollbarFootprint(scrollbars int) int {
+	if scrollbars <= 0 {
+		return 0
+	}
+	return scrollbars + 1
+}

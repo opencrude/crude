@@ -290,7 +290,8 @@ func (d *PanelDeck) contentPad(width int) int {
 	if d.tokens == nil || width < 1 {
 		return 0
 	}
-	return min(max(0, d.tokens.PadLR()), width/2)
+	pad, _ := ContentInset(width, d.tokens.PadLR())
+	return pad
 }
 
 // contentWidth is the active panel's column for a deck of the given width;

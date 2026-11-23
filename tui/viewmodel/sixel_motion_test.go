@@ -26,7 +26,7 @@ func TestSixelFileWheelZoomsNativeImageAndDragPreviews(t *testing.T) {
 	app, ws := newRealShellApp(t)
 	paneJourneySize(app, 132, 40)
 	app.terminalImages = terminalImageState{sixel: true, cellWidth: 8, cellHeight: 20}
-	openImageFromTree(t, app, writeImageFixture(t, ws.RootPath, "wheel-sixel.png"))
+	openImageFromTree(t, app, writeSizedImageFixture(t, ws.RootPath, "wheel-sixel.png", 800, 400))
 	before := app.View()
 	if len(before.Images) != 1 {
 		t.Fatal("fixture did not start with native Sixel")
@@ -154,7 +154,7 @@ func TestSixelFileHighZoomStaysNative(t *testing.T) {
 	app, ws := newRealShellApp(t)
 	paneJourneySize(app, 132, 40)
 	app.terminalImages = terminalImageState{sixel: true, cellWidth: 8, cellHeight: 20}
-	openImageFromTree(t, app, writeImageFixture(t, ws.RootPath, "zoom-sixel.png"))
+	openImageFromTree(t, app, writeSizedImageFixture(t, ws.RootPath, "zoom-sixel.png", 800, 400))
 	if len(app.View().Images) != 1 {
 		t.Fatal("fixture did not start with native Sixel")
 	}
@@ -435,4 +435,46 @@ func TestSixelAttachmentPacedDragThroughTerminalWriter(t *testing.T) {
 		}
 		return bytes.Contains(w.data, []byte("sixel-motion-frame-8!"))
 	})
+}
+
+// A run of large wheel updates remains visible at its live geometry, does
+// not enqueue native frames per step, and returns to native without another
+// input after the last step.
+func TestSixelFileWheelBurstSettlesAtLastZoom(t *testing.T) {
+	app, ws := newRealShellApp(t)
+	paneJourneySize(app, 160, 44)
+	app.terminalImages = terminalImageState{sixel: true, cellWidth: 9, cellHeight: 20}
+	openImageFromTree(t, app, writeSizedImageFixture(t, ws.RootPath, "burst.png", 1920, 1056))
+	view := app.View()
+	if len(view.Images) != 1 {
+		t.Fatal("fixture is not using native Sixel")
+	}
+	original := view.Images[0].Image
+	pane := app.activeImageView()
+	r, ok := app.screenRectOf(pane.ID())
+	if !ok {
+		t.Fatal("image pane did not mount")
+	}
+	wheel := tea.MouseWheelMsg{X: r.X + r.W/2, Y: r.Y + r.H/2, Button: tea.MouseWheelUp}
+	var cmds []tea.Cmd
+	for i := range 7 {
+		before, _ := pane.SixelMotionGeometry()
+		_, cmd := app.Update(wheel)
+		cmds = append(cmds, cmd)
+		app.presentImmediateFrame()
+		view = app.View()
+		after, _ := pane.SixelMotionGeometry()
+		if after.W <= before.W {
+			t.Fatalf("wheel step %d did not change zoom", i+1)
+		}
+		if i >= 2 && (len(view.Images) != 0 || !strings.ContainsRune(view.RenderContent(), '▀')) {
+			t.Fatalf("burst step %d did not show the live preview", i+1)
+		}
+	}
+	geometry, _ := pane.SixelMotionGeometry()
+	runAppCommand(t, app, tea.Batch(cmds...))
+	view = app.View()
+	if after, _ := pane.SixelMotionGeometry(); len(view.Images) != 1 || view.Images[0].Image != original || after != geometry {
+		t.Fatal("after motion the native image did not settle at the last geometry")
+	}
 }

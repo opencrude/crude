@@ -72,21 +72,21 @@ func key(host *ui.Host, code rune) ui.EventResult {
 }
 
 func TestGraphicsFitZoomCropAndResetThroughHost(t *testing.T) {
-	s, host := mount(40, 22) // image viewport is 40 × 20
+	s, host := mount(40, 21) // image viewport is 40 × 20
 	img := image.NewNRGBA(image.Rect(0, 0, 320, 160))
 	res := resource(t, img)
 	s.SetImage(img, res)
 	if !s.SetImageGraphics(tea.ImageKitty, 8, 16) || s.SetImageGraphics(tea.ImageKitty, 8, 16) {
 		t.Fatal("capability change result is not stable")
 	}
-	buf := paint(host, 40, 22)
+	buf := paint(host, 40, 21)
 	if p := s.ImagePlacement(); p.Image != res || p.Columns != 40 || p.Rows != 10 {
 		t.Fatalf("2:1 source must fit into 40 × 10 measured cells: %+v", p)
 	}
 	if buf.Get(0, 6).Char != kitty.Placeholder || buf.Get(0, 5).Char == kitty.Placeholder {
 		t.Fatal("initial image is not vertically centered in the body")
 	}
-	if !strings.Contains(text(buf), "320 × 160 · 100% · Fit") {
+	if s.Status() != "320 × 160 · 100% · Fit" || strings.Contains(text(buf), "320 × 160") {
 		t.Fatalf("dimensions, scale or zoom control absent:\n%s", text(buf))
 	}
 	for i := 0; i < 2; i++ {
@@ -94,7 +94,7 @@ func TestGraphicsFitZoomCropAndResetThroughHost(t *testing.T) {
 			t.Fatal("zoom shortcut not handled")
 		}
 	}
-	buf = paint(host, 40, 22)
+	buf = paint(host, 40, 21)
 	if p := s.ImagePlacement(); p.Image != res || p.Columns != 80 || p.Rows != 20 {
 		t.Fatalf("zoom must retain one full-sized placement, not a crop upload: %+v", p)
 	}
@@ -105,7 +105,7 @@ func TestGraphicsFitZoomCropAndResetThroughHost(t *testing.T) {
 		t.Fatalf("first clipped placeholder=%+v, want content %q", got, want)
 	}
 	key(host, tea.KeyRight)
-	buf = paint(host, 40, 22)
+	buf = paint(host, 40, 21)
 	want = string([]rune{kitty.Placeholder, kitty.Diacritic(0), kitty.Diacritic(23), kitty.Diacritic(int(res.ID() >> 24))})
 	if buf.Get(0, 1).Content != want {
 		t.Fatal("right arrow did not reveal pixels to the right")
@@ -113,7 +113,7 @@ func TestGraphicsFitZoomCropAndResetThroughHost(t *testing.T) {
 	for i := 0; i < 50; i++ {
 		key(host, tea.KeyRight)
 	}
-	buf = paint(host, 40, 22)
+	buf = paint(host, 40, 21)
 	if got := []rune(buf.Get(39, 1).Content); len(got) != 4 || got[2] != kitty.Diacritic(79) {
 		t.Fatal("pan did not clamp at final image column")
 	}
@@ -145,14 +145,20 @@ func TestIconToolbarAlignmentSemanticsAndTooltips(t *testing.T) {
 				}
 				wantLabels := []string{"Zoom out", "Zoom in", "Fit image"}
 				wantTips := []string{"Zoom out (-)", "Zoom in (+)", "Fit image (0)"}
-				start := max(0, width-15)
+				right := width
+				if width >= 3 {
+					right-- // Default content inset leaves one cell at either edge.
+				}
+				start := max(width-right, right-15)
 				for i, button := range s.buttons {
 					bounds := button.Bounds()
 					if bounds.X != start || bounds.Y != 0 || bounds.X+bounds.W > width {
 						t.Fatalf("control %d not packed at right edge: %+v, start=%d", i, bounds, start)
 					}
 					start += bounds.W
-					if sem := button.Semantics(); sem.Role != ui.RoleButton || sem.Label != wantLabels[i] || sem.Disabled || sem.Description != wantTips[i] {
+					// At Fit a large image cannot zoom out; an empty viewport cannot zoom.
+					wantDisabled := i == 0 || i == 1 && s.viewport.Empty()
+					if sem := button.Semantics(); sem.Role != ui.RoleButton || sem.Label != wantLabels[i] || sem.Disabled != wantDisabled || sem.Description != wantTips[i] {
 						t.Fatalf("icon control %d has no descriptive accessible name/shortcut: %+v", i, sem)
 					}
 					source, ok := ui.Component(button).(ui.TooltipSource)
@@ -176,23 +182,23 @@ func TestIconToolbarAlignmentSemanticsAndTooltips(t *testing.T) {
 					if host.Hovered() != button.ID() {
 						t.Fatal("tooltip control is not the actual pointer target")
 					}
-					if width >= 15 {
-						if got := buf.Get(bounds.X+2, 0); got.Content != wantIcons[i] && string(got.Char) != wantIcons[i] {
-							t.Fatalf("control %d painted %+v, want icon %q", i, got, wantIcons[i])
-						}
-						if bounds.W != rendering.VisibleWidth(wantIcons[i])+4 {
-							t.Fatalf("control %d not content-sized: %+v", i, bounds)
+					if ink := rendering.VisibleWidth(wantIcons[i]); ink <= bounds.W {
+						if got := buf.Get(bounds.X+(bounds.W-ink)/2, 0); got.Content != wantIcons[i] && string(got.Char) != wantIcons[i] {
+							t.Fatalf("control %d painted %+v, want centered icon %q", i, got, wantIcons[i])
 						}
 					}
+					if width >= 17 && bounds.W != 5 {
+						t.Fatalf("control %d does not share the five-cell slot: %+v", i, bounds)
+					}
 				}
-				if start != width {
-					t.Fatalf("toolbar end=%d, want right edge %d", start, width)
+				if start != right {
+					t.Fatalf("toolbar end=%d, want right rail %d", start, right)
 				}
 				row := strings.Split(text(buf), "\n")[0]
 				if strings.Contains(row, "Zoom") || strings.Contains(row, "Fit") {
 					t.Fatalf("text labels remain in icon-only toolbar: %q", row)
 				}
-				for x := 0; x < max(0, width-15); x++ {
+				for x := 0; x < max(0, right-15); x++ {
 					if host.HitTest(x, 0) != s.ID() || buf.Get(x, 0).Char != ' ' {
 						t.Fatal("old left-side controls retained paint or hit targets")
 					}
@@ -254,9 +260,9 @@ func TestRightAlignedIconToolbarActionsThroughHost(t *testing.T) {
 				if s.zoom != 1 || s.dragging {
 					t.Fatal("empty toolbar space changed the image")
 				}
-				for i, wantZoom := range []float64{1 / math.Sqrt2, 1, 1} {
-					if i == 2 {
-						key(host, '+') // Fit must undo a real zoom.
+				for i, wantZoom := range []float64{1, math.Sqrt2, 1} {
+					if i != 1 {
+						key(host, '+') // Zoom out and Fit must undo a real zoom.
 					}
 					bounds := s.buttons[i].Bounds()
 					x := bounds.X + bounds.W/2
@@ -267,9 +273,13 @@ func TestRightAlignedIconToolbarActionsThroughHost(t *testing.T) {
 					}
 					host.Handle(tea.MouseClickMsg{X: x, Y: 0, Button: tea.MouseLeft})
 					host.Handle(tea.MouseReleaseMsg{X: x, Y: 0, Button: tea.MouseLeft})
-					if math.Abs(s.zoom-wantZoom) > 1e-8 || host.Focused() != s.buttons[i].ID() {
+					if math.Abs(s.zoom-wantZoom) > 1e-8 || host.Focused() != s.ID() {
 						t.Fatalf("right-aligned control %d failed actual click/focus: zoom=%g (before=%g), focus=%s",
 							i, s.zoom, before, host.Focused())
+					}
+					host.Handle(tea.MouseMotionMsg{X: 0, Y: 0})
+					if b := paint(host, width, 8); b.Get(x, 0).BG != s.tokens.Color(ui.ColorBg) || s.buttons[i].Semantics().Selected {
+						t.Fatalf("momentary action %d retained a highlight after click", i)
 					}
 				}
 				// Every tooltip's advertised key acts with native toolbar focus.
@@ -311,8 +321,8 @@ func TestNativeButtonsKeyboardAndReadOnlyBehavior(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 20, 20))
 	s.SetImage(img, nil)
 	buf := paint(host, 80, 20)
-	if !strings.Contains(text(buf), "Wheel: zoom · Drag / arrows: pan") {
-		t.Fatal("mouse zoom and pan interactions are not discoverable")
+	if strings.Contains(text(buf), "zoom") || s.viewport.Y+s.viewport.H != 20 {
+		t.Fatal("image still paints a hint or reserves a footer row")
 	}
 	in := s.buttons[1].Bounds()
 	host.Handle(tea.MouseClickMsg{X: in.X + 2, Y: 0, Button: tea.MouseLeft})
@@ -320,14 +330,16 @@ func TestNativeButtonsKeyboardAndReadOnlyBehavior(t *testing.T) {
 	if math.Abs(s.zoom-math.Sqrt2) > 1e-8 {
 		t.Fatal("native zoom button action did not bubble to image owner")
 	}
-	if host.Focused() != s.buttons[1].ID() {
-		t.Fatal("native toolbar focus was not retained")
+	if host.Focused() != s.ID() {
+		t.Fatal("click did not return keys to the image")
 	}
 	key(host, '-')
 	if math.Abs(s.zoom-1) > 1e-8 {
 		t.Fatal("image keyboard shortcuts failed with toolbar focus")
 	}
-	key(host, tea.KeyEnter) // native button activation
+	key(host, tea.KeyTab)
+	key(host, tea.KeyTab)
+	key(host, tea.KeyEnter) // keyboard focus still activates a native button
 	if s.zoom <= 1 {
 		t.Fatal("focused native button did not activate")
 	}
@@ -371,7 +383,7 @@ func TestNativeButtonsKeyboardAndReadOnlyBehavior(t *testing.T) {
 }
 
 func TestDragWheelAndCaptureCancellation(t *testing.T) {
-	s, host := mount(40, 22)
+	s, host := mount(40, 21)
 	s.SetImage(image.NewNRGBA(image.Rect(0, 0, 80, 80)), nil)
 	for i := 0; i < 4; i++ {
 		key(host, '+')
@@ -435,7 +447,7 @@ func TestImageResidencyRestoresTheCurrentViewport(t *testing.T) {
 
 func TestWheelZoomAnchorsPointerAndIgnoresChrome(t *testing.T) {
 	for _, graphics := range []bool{false, true} {
-		s, host := mount(80, 42)
+		s, host := mount(80, 41)
 		img := image.NewNRGBA(image.Rect(0, 0, 640, 640))
 		res := resource(t, img)
 		s.SetImage(img, res)
@@ -457,7 +469,7 @@ func TestWheelZoomAnchorsPointerAndIgnoresChrome(t *testing.T) {
 			math.Abs(float64(y-s.virtual.Y)+.5-sourceY*float64(s.virtual.H)) > 1 {
 			t.Fatal("zoom moved the source point away from the pointer")
 		}
-		buf := paint(host, 80, 42)
+		buf := paint(host, 80, 41)
 		if graphics && (s.ImagePlacement().Image != res || !strings.ContainsRune(text(buf), kitty.Placeholder)) {
 			t.Fatal("mouse zoom lost the native image")
 		}
@@ -466,9 +478,9 @@ func TestWheelZoomAnchorsPointerAndIgnoresChrome(t *testing.T) {
 		}
 		zoom := s.zoom
 		host.Handle(tea.MouseWheelMsg{X: 1, Y: 0, Button: tea.MouseWheelUp})
-		host.Handle(tea.MouseWheelMsg{X: 1, Y: 41, Button: tea.MouseWheelUp})
+		host.Handle(tea.MouseWheelMsg{X: 1, Y: 42, Button: tea.MouseWheelUp})
 		if s.zoom != zoom {
-			t.Fatal("wheel over toolbar or status changed the image")
+			t.Fatal("wheel over toolbar or outside the pane changed the image")
 		}
 		host.Handle(tea.MouseWheelMsg{X: x, Y: y, Button: tea.MouseWheelDown})
 		host.Handle(tea.MouseWheelMsg{X: x, Y: y, Button: tea.MouseWheelDown})
@@ -479,7 +491,7 @@ func TestWheelZoomAnchorsPointerAndIgnoresChrome(t *testing.T) {
 }
 
 func TestFallbackSamplesSourceAlphaNonzeroBoundsAndPan(t *testing.T) {
-	s, host := mount(8, 6)
+	s, host := mount(8, 5)
 	img := image.NewNRGBA(image.Rect(3, 5, 11, 13))
 	red, blue := color.NRGBA{R: 255, A: 255}, color.NRGBA{B: 255, A: 255}
 	for y := 5; y < 13; y++ {
@@ -492,7 +504,7 @@ func TestFallbackSamplesSourceAlphaNonzeroBoundsAndPan(t *testing.T) {
 	}
 	img.SetNRGBA(3, 5, color.NRGBA{})
 	s.SetImage(img, nil)
-	buf := paint(host, 8, 6)
+	buf := paint(host, 8, 5)
 	if s.ImagePlacement().Image != nil || strings.ContainsRune(text(buf), kitty.Placeholder) {
 		t.Fatal("unsupported terminal received graphics")
 	}
@@ -508,7 +520,7 @@ func TestFallbackSamplesSourceAlphaNonzeroBoundsAndPan(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		key(host, tea.KeyRight)
 	}
-	buf = paint(host, 8, 6)
+	buf = paint(host, 8, 5)
 	for y := 1; y < 5; y++ {
 		for x := 0; x < 8; x++ {
 			if got := buf.Get(x, y); got.Char != '▀' || got.FG.B != 255 || got.BG.B != 255 {
@@ -519,7 +531,7 @@ func TestFallbackSamplesSourceAlphaNonzeroBoundsAndPan(t *testing.T) {
 }
 
 func TestGraphicsCoordinateLimitUnknownMetricsAndReplacement(t *testing.T) {
-	s, host := mount(297, 4)
+	s, host := mount(297, 3)
 	img := image.NewNRGBA(image.Rect(0, 0, 297, 4))
 	first := resource(t, img)
 	s.SetImage(img, first)
@@ -527,55 +539,55 @@ func TestGraphicsCoordinateLimitUnknownMetricsAndReplacement(t *testing.T) {
 	if p := s.ImagePlacement(); p.Columns != 297 || p.Rows != 2 {
 		t.Fatalf("coordinate limit should include 297 cells: %+v", p)
 	}
-	buf := paint(host, 297, 4)
+	buf := paint(host, 297, 3)
 	last := []rune(buf.Get(296, 1).Content)
 	if len(last) != 4 || last[2] != kitty.Diacritic(296) {
 		t.Fatal("final valid coordinate was not encoded")
 	}
 	key(host, '+')
-	buf = paint(host, 297, 4)
+	buf = paint(host, 297, 3)
 	if s.ImagePlacement().Image != nil || strings.ContainsRune(text(buf), kitty.Placeholder) || !strings.ContainsRune(text(buf), '▀') {
 		t.Fatal("unrepresentable crop emitted invalid graphics instead of fallback")
 	}
 	key(host, '0')
 	second := resource(t, img)
 	s.SetImage(img, second)
-	buf = paint(host, 297, 4)
+	buf = paint(host, 297, 3)
 	if s.ImagePlacement().Image != second || buf.Get(0, 1).FG != renderingIdentity(second.ID()) {
 		t.Fatal("same-sized replacement retained stale terminal identity")
 	}
 	s.SetImageGraphics(tea.ImageKitty, 0, 0)
-	buf = paint(host, 297, 4)
+	buf = paint(host, 297, 3)
 	if s.ImagePlacement().Image != nil || strings.ContainsRune(text(buf), kitty.Placeholder) {
 		t.Fatal("unknown cell metrics did not fall back safely")
 	}
 	s.SetImage(nil, nil)
-	buf = paint(host, 297, 4)
+	buf = paint(host, 297, 3)
 	if s.resource != nil || s.placeholders != nil || strings.ContainsRune(text(buf), '▀') || !strings.Contains(text(buf), "No image") {
 		t.Fatal("cleared pane retained image state")
 	}
 }
 
 func TestGraphicsRowLimitAndResize(t *testing.T) {
-	s, host := mount(4, 299)
+	s, host := mount(4, 298)
 	img := image.NewNRGBA(image.Rect(0, 0, 4, 594))
 	s.SetImage(img, resource(t, img))
 	s.SetImageGraphics(tea.ImageKitty, 1, 2)
 	if p := s.ImagePlacement(); p.Rows != 297 || p.Columns != 4 {
 		t.Fatalf("last valid row geometry: %+v", p)
 	}
-	buf := paint(host, 4, 299)
+	buf := paint(host, 4, 298)
 	last := []rune(buf.Get(0, 297).Content)
 	if len(last) != 4 || last[1] != kitty.Diacritic(296) {
 		t.Fatal("final valid row was not encoded")
 	}
 	key(host, '+')
-	buf = paint(host, 4, 299)
+	buf = paint(host, 4, 298)
 	if s.ImagePlacement().Image != nil || strings.ContainsRune(text(buf), kitty.Placeholder) {
 		t.Fatal("unrepresentable row crop did not use safe fallback")
 	}
 	key(host, '0')
-	host.Resize(2, 100)
+	host.Resize(2, 99)
 	host.Layout()
 	if p := s.ImagePlacement(); p.Rows != 98 || p.Columns != 2 {
 		t.Fatalf("fit did not recompute after resize: %+v", p)
@@ -624,7 +636,7 @@ func TestTinyAndParentLocalBounds(t *testing.T) {
 }
 
 func TestGraphicsSurvivesCompositorClippingAndOcclusion(t *testing.T) {
-	s, host := mount(40, 22)
+	s, host := mount(40, 21)
 	img := image.NewNRGBA(image.Rect(0, 0, 320, 160))
 	s.SetImage(img, resource(t, img))
 	s.SetImageGraphics(tea.ImageKitty, 8, 16)
@@ -653,7 +665,7 @@ func TestGraphicsSurvivesCompositorClippingAndOcclusion(t *testing.T) {
 }
 
 func TestHighZoomKeepsOriginalSourceAndCellStepPan(t *testing.T) {
-	s, host := mount(40, 22)
+	s, host := mount(40, 21)
 	// Nonzero Go bounds must not leak into PNG-relative source coordinates.
 	img := image.NewNRGBA(image.Rect(3, 5, 323, 165))
 	for y := 5; y < 165; y++ {
@@ -669,14 +681,14 @@ func TestHighZoomKeepsOriginalSourceAndCellStepPan(t *testing.T) {
 	s.SetImage(img, res)
 	s.SetImageGraphics(tea.ImageKitty, 8, 16)
 	for i := 0; i < 12; i++ {
-		key(host, '+')
+		key(host, '+') // stops at the largest zoom, 16 terminal pixels per image pixel
 	}
-	if s.virtual.W != 2560 || s.virtual.H != 640 {
-		t.Fatalf("64× fit geometry=%+v", s.virtual)
+	if s.virtual.W != 640 || s.virtual.H != 160 {
+		t.Fatalf("maximum zoom geometry=%+v", s.virtual)
 	}
 	check := func(wantX, wantY float64) {
 		t.Helper()
-		buf := paint(host, 40, 22)
+		buf := paint(host, 40, 21)
 		p := s.ImagePlacement()
 		if p.Image != res || s.img != img || p.Columns > 297 || p.Rows > 297 ||
 			p.SourceWidth <= 0 || p.SourceHeight <= 0 || p.SourceX < 0 || p.SourceY < 0 ||
@@ -695,22 +707,22 @@ func TestHighZoomKeepsOriginalSourceAndCellStepPan(t *testing.T) {
 					t.Fatalf("invalid crop-relative placeholder %d,%d: %+v (placement %+v)", x, y, c, p)
 				}
 				// Decode the actual placement transform, not the crop helper.
-				// The independently specified 64× geometry is 8 cells/source
-				// pixel horizontally and 4 cells/source pixel vertically.
+				// The independently specified 16× geometry is 2 cells/source
+				// pixel horizontally and 1 cell/source pixel vertically.
 				gotX := float64(p.SourceX) + (float64(col)+.5)*float64(p.SourceWidth)/float64(p.Columns)
 				gotY := float64(p.SourceY) + (float64(row)+.5)*float64(p.SourceHeight)/float64(p.Rows)
-				if gotX != wantX+float64(x)/8 || gotY != wantY+float64(y)/4 {
+				if gotX != wantX+float64(x)/2 || gotY != wantY+float64(y) {
 					t.Fatalf("source landmark jumped or changed scale at %d,%d: (%g,%g), want (%g,%g)",
-						x, y, gotX, gotY, wantX+float64(x)/8, wantY+float64(y)/4)
+						x, y, gotX, gotY, wantX+float64(x)/2, wantY+float64(y))
 				}
 			}
 		}
 	}
-	check(157.5625, 77.625)
+	check(150.25, 70.5)
 	for step := 1; step <= 20; step++ {
 		key(host, tea.KeyRight) // crosses source-aligned crop boundaries repeatedly
 		key(host, tea.KeyDown)
-		check(157.5625+float64(step)*3/8, 77.625+float64(step)*2/4)
+		check(150.25+float64(step)*3/2, 70.5+float64(step)*2)
 	}
 	p := s.ImagePlacement()
 	// The rightward pan now exposes the blue landmark, retaining its alpha.
@@ -722,12 +734,12 @@ func TestHighZoomKeepsOriginalSourceAndCellStepPan(t *testing.T) {
 		key(host, tea.KeyRight)
 		key(host, tea.KeyDown)
 	}
-	check(315.0625, 155.125)
+	check(300.25, 140.5)
 	for i := 0; i < 1000; i++ {
 		key(host, tea.KeyLeft)
 		key(host, tea.KeyUp)
 	}
-	check(.0625, .125)
+	check(.25, .5)
 	key(host, '0')
 	if p := s.ImagePlacement(); p != (tea.ImagePlacement{Image: res, Columns: 40, Rows: 10}) {
 		t.Fatalf("Fit did not restore unchanged uncropped placement: %+v", p)
@@ -735,7 +747,7 @@ func TestHighZoomKeepsOriginalSourceAndCellStepPan(t *testing.T) {
 }
 
 func TestHighZoomResizeAndExactCropLimits(t *testing.T) {
-	s, host := mount(40, 22)
+	s, host := mount(40, 21)
 	img := image.NewNRGBA(image.Rect(0, 0, 320, 160))
 	res := resource(t, img)
 	s.SetImage(img, res)
@@ -747,20 +759,20 @@ func TestHighZoomResizeAndExactCropLimits(t *testing.T) {
 		p.SourceX != 140 || p.SourceY != 60 || p.SourceWidth != 40 || p.SourceHeight != 40 {
 		t.Fatalf("initial 8× crop=%+v", p)
 	}
-	host.Resize(80, 42)
+	host.Resize(80, 41)
 	host.Layout()
 	if p := s.ImagePlacement(); p.Image != res || p.Columns != 80 || p.Rows != 40 ||
 		p.SourceX != 140 || p.SourceY != 60 || p.SourceWidth != 40 || p.SourceHeight != 40 {
 		t.Fatalf("resize changed source center instead of fit-relative scale: %+v", p)
 	}
-	paint(host, 80, 42)
-	host.Resize(298, 42)
+	paint(host, 80, 41)
+	host.Resize(298, 41)
 	host.Layout()
-	buf := paint(host, 298, 42)
+	buf := paint(host, 298, 41)
 	if s.ImagePlacement().Image != nil || strings.ContainsRune(text(buf), kitty.Placeholder) || !strings.ContainsRune(text(buf), '▀') {
 		t.Fatal("viewport beyond diacritic range did not fall back")
 	}
-	host.Resize(80, 42)
+	host.Resize(80, 41)
 	host.Layout()
 	if s.ImagePlacement().Image != res {
 		t.Fatal("resize into representable bounds did not restore original resource")
@@ -770,7 +782,7 @@ func TestHighZoomResizeAndExactCropLimits(t *testing.T) {
 	// hit exact source pixel boundaries, despite a small visible viewport.
 	odd := image.NewNRGBA(image.Rect(0, 0, 317, 317))
 	s.SetImage(odd, resource(t, odd))
-	host.Resize(40, 22)
+	host.Resize(40, 21)
 	host.Layout()
 	for i := 0; i < 6; i++ {
 		key(host, '+')
@@ -789,7 +801,7 @@ func TestHighZoomResizeAndExactCropLimits(t *testing.T) {
 }
 
 func TestHighZoomCropSurvivesCompositorOcclusion(t *testing.T) {
-	s, host := mount(40, 22)
+	s, host := mount(40, 21)
 	img := image.NewNRGBA(image.Rect(0, 0, 320, 160))
 	res := resource(t, img)
 	s.SetImage(img, res)
@@ -813,7 +825,9 @@ func TestHighZoomCropSurvivesCompositorOcclusion(t *testing.T) {
 	if out.CellAt(8, 6).Content != "X" {
 		t.Fatal("cropped image painted over the covering surface")
 	}
-	want := string([]rune{kitty.Placeholder, kitty.Diacritic(2), kitty.Diacritic(6), kitty.Diacritic(int(res.ID() >> 24))})
+	// Maximum zoom is 2 cells per source pixel across and 1 down; the crop
+	// starts at the first visible cell, which the surface shift hides.
+	want := string([]rune{kitty.Placeholder, kitty.Diacritic(0), kitty.Diacritic(2), kitty.Diacritic(int(res.ID() >> 24))})
 	if got := out.CellAt(0, 2).Content; got != want {
 		t.Fatalf("clipping lost crop-relative row/column: %q, want %q", got, want)
 	}
@@ -865,5 +879,86 @@ func TestHighZoomGraphicsDoesNotReadOrReencodePixels(t *testing.T) {
 	buf := paint(host, 80, 24)
 	if s.ImagePlacement().Image != res || !strings.ContainsRune(text(buf), kitty.Placeholder) || img.reads != 0 {
 		t.Fatalf("high-zoom graphics read pixels or replaced the loader resource: reads=%d placement=%+v", img.reads, s.ImagePlacement())
+	}
+}
+
+// Zoom stops where a step no longer changes the picture. Past the range, a
+// wheel or key changes neither the zoom number nor the image, and the way
+// back to Fit is exactly as many steps as the way in.
+func TestZoomStopsAtTheUsefulRange(t *testing.T) {
+	s, host := mount(80, 41)
+	img := image.NewNRGBA(image.Rect(0, 0, 1920, 1056))
+	s.SetImageGraphics(tea.ImageSixel, 9, 20)
+	s.SetImage(img, resource(t, img))
+	x, y := 40, 20
+	wheel := func(button tea.MouseButton) {
+		host.Handle(tea.MouseWheelMsg{X: x, Y: y, Button: button})
+	}
+	steps := 0
+	for ; steps < 100 && !s.buttons[1].Semantics().Disabled; steps++ {
+		wheel(tea.MouseWheelUp)
+	}
+	if steps == 100 || math.Abs(s.scale-maxPixelScale) > 1e-9 || !strings.Contains(s.status, "Maximum zoom") {
+		t.Fatalf("zoom in did not stop at the largest useful zoom: steps=%d scale=%g status=%q", steps, s.scale, s.status)
+	}
+	status, virtual, placement := s.status, s.virtual, s.ImagePlacement()
+	for range 5 {
+		wheel(tea.MouseWheelUp)
+		key(host, '+')
+	}
+	if s.status != status || s.virtual != virtual || s.ImagePlacement() != placement {
+		t.Fatalf("zoom past the limit changed the view: %q -> %q", status, s.status)
+	}
+	for i := range steps {
+		if s.effectiveZoom() == 1 {
+			t.Fatalf("returned to Fit after %d of %d steps", i, steps)
+		}
+		wheel(tea.MouseWheelDown)
+	}
+	if s.effectiveZoom() != 1 || !strings.Contains(s.status, "Fit") || !s.buttons[0].Semantics().Disabled {
+		t.Fatalf("the same number of steps out did not return to Fit: zoom=%g status=%q", s.effectiveZoom(), s.status)
+	}
+	fitted := s.virtual
+	wheel(tea.MouseWheelDown)
+	key(host, '-')
+	if s.virtual != fitted || s.effectiveZoom() != 1 {
+		t.Fatal("a large image zoomed out past Fit")
+	}
+
+	// An image smaller than the pane can shrink to its actual size, and no
+	// further. Fit already magnifies past the zoom limit, so it cannot grow.
+	icon := image.NewNRGBA(image.Rect(0, 0, 16, 16))
+	s.SetImage(icon, resource(t, icon))
+	if !s.buttons[1].Semantics().Disabled {
+		t.Fatal("a magnified small image can still zoom in")
+	}
+	for range 20 {
+		wheel(tea.MouseWheelDown)
+	}
+	if math.Abs(s.scale-1) > 1e-9 || !strings.Contains(s.status, "Actual size") || !s.buttons[0].Semantics().Disabled {
+		t.Fatalf("small image did not stop at actual size: scale=%g status=%q", s.scale, s.status)
+	}
+}
+
+// A resize that narrows the range shows the nearest zoom, and the requested
+// zoom returns with the original geometry.
+func TestZoomRequestSurvivesATemporaryResize(t *testing.T) {
+	s, host := mount(80, 41)
+	img := image.NewNRGBA(image.Rect(0, 0, 1920, 1056))
+	s.SetImageGraphics(tea.ImageSixel, 9, 20)
+	s.SetImage(img, resource(t, img))
+	for range 4 {
+		key(host, '+')
+	}
+	before, status := s.virtual, s.status
+	host.Resize(300, 120)
+	host.Layout()
+	if s.scale > maxPixelScale+1e-9 {
+		t.Fatalf("a larger pane exceeded the zoom limit: %g", s.scale)
+	}
+	host.Resize(80, 41)
+	host.Layout()
+	if s.virtual != before || s.status != status {
+		t.Fatalf("resize lost the requested zoom: %+v %q, want %+v %q", s.virtual, s.status, before, status)
 	}
 }

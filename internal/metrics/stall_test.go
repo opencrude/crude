@@ -16,10 +16,12 @@ func decoyWorkForTest(release <-chan struct{}) { <-release }
 func uiLoopForTest(release <-chan struct{}, quick, stalled chan<- []string) {
 	MarkUIGoroutine()
 	BeginUIWork()
-	quick <- EndUIWork()
+	_, stack := EndUIWork()
+	quick <- stack
 	BeginUIWork()
 	stalledUIWorkForTest(release)
-	stalled <- EndUIWork()
+	_, stack = EndUIWork()
+	stalled <- stack
 }
 
 func TestUIStallRecordsTheStalledStackAndArchivesIt(t *testing.T) {

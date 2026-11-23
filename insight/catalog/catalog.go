@@ -39,14 +39,15 @@ type Language struct {
 	WorkspaceRoots []string
 	Servers        []string
 	// Editor data; see LanguageRecord.
-	CommentTokens  []string
-	BlockComment   *BlockComment
-	Grammar        string
-	Formatter      *Formatter
-	OffSide        bool
-	FoldingMarkers *FoldingMarkers
-	Editing        *LanguageEditing
-	Provenance     []Provenance
+	CommentTokens   []string
+	BlockComment    *BlockComment
+	Grammar         string
+	Formatter       *Formatter
+	OffSide         bool
+	MarkdownPreview bool
+	FoldingMarkers  *FoldingMarkers
+	Editing         *LanguageEditing
+	Provenance      []Provenance
 }
 
 // Formatter formats a document through standard input and output.
@@ -414,7 +415,7 @@ func (c *Catalog) language(record LanguageRecord) Language {
 		Interpreters: slices.Clone(record.Interpreters), LSPLanguageID: record.LSPLanguageID, Roots: slices.Clone(record.Roots),
 		WorkspaceRoots: slices.Clone(record.WorkspaceRoots), Servers: slices.Clone(record.Servers),
 		CommentTokens: slices.Clone(record.CommentTokens), Grammar: record.Grammar,
-		OffSide: record.OffSide, Provenance: c.provenance(record.Sources),
+		OffSide: record.OffSide, MarkdownPreview: record.MarkdownPreview, Provenance: c.provenance(record.Sources),
 	}
 	out.Editing = cloneEditing(record.Editing)
 	if record.BlockComment != nil {

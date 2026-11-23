@@ -3,6 +3,7 @@ package viewmodel
 import (
 	"crude/tui/screens/settingspages"
 	"crude/tui/theme"
+	"crude/tui/ui"
 )
 
 type LayoutInfo struct {
@@ -146,7 +147,7 @@ func (m *App) computeLayout() LayoutInfo {
 	// shell content column. Sidebar hit policy has its own geometry owner.
 	if m.isEditorActive() && !m.editorRect.Empty() {
 		r := m.editorRect
-		padLR, innerW = boundedContentGeometry(r.W, m.Theme.Spacing.PadLR)
+		padLR, innerW = ui.ContentInset(r.W, m.Theme.Spacing.PadLR)
 		return LayoutInfo{SidebarW: r.X, ContentW: r.W, InnerW: innerW, EditorW: innerW, ChatAreaTop: r.Y, ChatH: r.H, PadLR: padLR}
 	}
 

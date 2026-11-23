@@ -52,6 +52,8 @@ type CLIFlags struct {
 	MCPEffects           string
 	MCPShell             string
 	MCPShellEpoch        uint64
+	// PerformanceReport saves a report from the saved performance history.
+	PerformanceReport bool
 }
 
 // ParseFlags parses os.Args flags into CLIFlags.
@@ -86,6 +88,7 @@ func ParseFlags() CLIFlags {
 	mcpEffectsFlag := flag.String("mcp-effects", "", "With --mcp: immutable allowed effects, comma-separated (default read)")
 	mcpShellFlag := flag.String("mcp-shell", "", "With --mcp: exact registered target shell client ID (never inferred)")
 	mcpShellEpochFlag := flag.Uint64("mcp-shell-epoch", 0, "With --mcp-shell: exact registered shell epoch")
+	performanceReportFlag := flag.Bool("performance-report", false, "Save a performance report from this computer's saved history, print its path and exit")
 	flag.Parse()
 
 	return CLIFlags{
@@ -119,6 +122,7 @@ func ParseFlags() CLIFlags {
 		MCPEffects:           *mcpEffectsFlag,
 		MCPShell:             *mcpShellFlag,
 		MCPShellEpoch:        *mcpShellEpochFlag,
+		PerformanceReport:    *performanceReportFlag,
 	}
 }
 
@@ -299,6 +303,21 @@ func Main() int {
 	if home, err := buildinfo.Home(); err == nil {
 		catalog.UsePacks(filepath.Join(DataDir(home), "catalog"))
 	}
+	if flags.PerformanceReport {
+		home, err := buildinfo.Home()
+		path := ""
+		if err == nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			path, err = WritePerformanceReport(ctx, home)
+			cancel()
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "crude: could not save the performance report: %v\n", err)
+			return 1
+		}
+		fmt.Println(path)
+		return 0
+	}
 	if err := validateCoreRestartInvocation(flags); err != nil {
 		fmt.Fprintf(os.Stderr, "crude: %v\n", err)
 		return 1
@@ -379,7 +398,7 @@ func crashReportRole(flags CLIFlags) string {
 		return "core"
 	}
 	if flags.CoreStatus || flags.CoreStop || flags.CoreStdio || flags.CoreHandoverIdentity ||
-		flags.MCP || flags.ListSessions || flags.DeleteSession != "" {
+		flags.MCP || flags.ListSessions || flags.DeleteSession != "" || flags.PerformanceReport {
 		return ""
 	}
 	return "tui"

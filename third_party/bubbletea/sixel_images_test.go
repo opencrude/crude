@@ -831,3 +831,71 @@ func TestSixelRendererHandoffWhileWriterStalled(t *testing.T) {
 		t.Fatal("superseded image survived the latest completed frame")
 	}
 }
+
+// Zoom past the cache's resident raster count, then go back to Fit. Every
+// completed view must reach the writer, including the evicted Fit raster.
+func TestSixelRepeatedZoomSurvivesCachePressure(t *testing.T) {
+	p, source := sixelFixture(t)
+	var output bytes.Buffer
+	r := newSixelTestRenderer(t, &output, 12, 8)
+	r.show(t, sixelView(p, source))
+	for step := 1; step <= 2*sixelCacheItems; step++ {
+		zoom := p
+		zoom.VirtualRows, zoom.VirtualColumns = p.Rows+step, p.Columns+step
+		zoom.OffsetColumn = step / 2
+		output.Reset()
+		r.show(t, sixelView(zoom, source))
+		if got := len(sixelPayloads(t, output.String())); got != 1 {
+			t.Fatalf("zoom %d wrote %d rasters; want one", step, got)
+		}
+	}
+	output.Reset()
+	r.show(t, sixelView(p, source))
+	if got := sixelPayloads(t, output.String()); len(got) != 1 || got[0].Bounds() != image.Rect(0, 0, 8, 12) {
+		t.Fatalf("Fit did not restore the whole image: %v", got)
+	}
+}
+
+func TestSixelHandoffSupersedesRasterWhileTerminalIsBlocked(t *testing.T) {
+	p, source := sixelFixture(t)
+	old := &gatedSixelPixels{Image: p.Image.pixels, entered: make(chan struct{}), release: make(chan struct{})}
+	p.Image.pixels = old
+	gate := &gatedWriter{entered: make(chan struct{}), release: make(chan struct{})}
+	r := newSixelTestRenderer(t, gate, 12, 8)
+	r.render(sixelView(p, source))
+	gate.armed.Store(true)
+	finished := make(chan error, 1)
+	go func() { finished <- r.flush(false) }()
+	openWriter := sync.OnceFunc(func() { close(gate.release) })
+	openPixels := sync.OnceFunc(func() { close(old.release) })
+	defer openWriter()
+	defer openPixels()
+	awaitSixelStage(t, gate.entered)
+	awaitSixelStage(t, old.entered)
+
+	// The raster worker must make progress on the latest scale even with
+	// no second flush. The only admitted raster must be for that scale.
+	latest := p
+	latest.SourceWidth, latest.SourceHeight = 5, 7
+	r.render(sixelView(latest, source))
+	openPixels()
+	awaitSixelStage(t, r.ready)
+	work := r.sixelWork
+	work.mu.Lock()
+	var keys []sixelBaseKey
+	for _, base := range work.bases {
+		keys = append(keys, base.key)
+	}
+	work.mu.Unlock()
+	if len(keys) != 1 || keys[0].source.Dx() != 5 {
+		t.Fatalf("obsolete work was admitted: %+v", keys)
+	}
+	openWriter()
+	if err := <-finished; err != nil {
+		t.Fatal(err)
+	}
+	r.awaitRasters(t)
+	if r.shown(2, 2).base == 0 {
+		t.Fatal("latest raster did not reach the terminal")
+	}
+}

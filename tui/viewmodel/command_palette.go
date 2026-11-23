@@ -458,6 +458,9 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 	if cmd, handled := m.handleMainPaneCommand(cmdID); handled {
 		return cmd
 	}
+	if m.handleMarkdownCommand(cmdID) {
+		return nil
+	}
 	var cmds []tea.Cmd
 
 	switch cmdID {

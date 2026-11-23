@@ -641,9 +641,7 @@ func (m Model) ShellHeight(width int) int {
 const MaxComposerTextRows = 6
 
 func (m Model) inputGeometry(width int) (pad, areaWidth int) {
-	width = max(0, width)
-	pad = min(max(0, m.theme.Spacing.PadLR), width/2)
-	return pad, width - 2*pad
+	return ui.ContentInset(width, m.theme.Spacing.PadLR)
 }
 
 func (m Model) textWidthFor(width int) int {

@@ -37,7 +37,7 @@ func DefaultFrameInsets() Insets {
 // in component structure or state behavior.
 func newTheme(c Colors) *Theme {
 	spacing := Spacing{
-		PadLR:        2,
+		PadLR:        1,
 		FieldGap:     1,
 		ButtonGap:    2,
 		DialogPad:    2,

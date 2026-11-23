@@ -966,6 +966,7 @@ func (m *App) stopAsyncIO() {
 	state.detachedCommands.Wait()
 	state.clientIOWG.Wait()
 	m.stopImageResidency()
+	m.closeMarkdownViews()
 	for _, cache := range caches {
 		_ = os.RemoveAll(cache)
 	}

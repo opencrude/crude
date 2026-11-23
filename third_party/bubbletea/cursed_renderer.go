@@ -197,12 +197,15 @@ func (s *cursedRenderer) start() {
 func (s *cursedRenderer) close() (err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if work := s.sixelWork; work != nil {
+	s.viewMu.Lock()
+	work := s.sixelWork
+	s.sixelWork, s.sixelPrepared = nil, 0
+	s.viewMu.Unlock()
+	if work != nil {
 		work.cancel()
 		// Clear the physical screen without waiting for a resample in flight.
 		// Join it before a new terminal lifetime can start.
 		defer func() { <-work.done }()
-		s.sixelWork, s.sixelPrepared = nil, 0
 	}
 	s.deleteKittyImages()
 	s.clearSixels()
@@ -709,6 +712,16 @@ func (s *cursedRenderer) render(v View) {
 			v.Images = append([]ImagePlacement(nil), v.Images...)
 		}
 	}
+	if w := s.sixelWork; w != nil {
+		// These tiles already come from the detached producer surface.
+		// Cancel obsolete work here, while a slow terminal write cannot
+		// hold us back. For string views the writer does extraction.
+		if v.Surface != nil && v.surfaceFrame != s.view.surfaceFrame {
+			w.publish(v.sixels)
+		} else if v.Surface == nil && (s.view.Surface != nil || v.Content != s.view.Content || !imagePlacementsEqual(v.Images, s.view.Images)) {
+			w.publish(nil)
+		}
+	}
 	s.view = v
 }
 
@@ -790,6 +803,18 @@ func (s *cursedRenderer) drawFrame(closing bool) (View, bool) {
 		s.cellbuf.Lines = s.cellbuf.Lines[frameHeight-s.height:]
 	}
 	view.sixels = clipSixelTiles(view.sixels, s.cellbuf.Bounds())
+	tiles := view.sixels
+	if closing {
+		tiles = nil
+	}
+	// Creation, producer handoff, and resize clipping use viewMu, in
+	// frame order. Once drawFrame returns the writer only reads the cache.
+	if s.sixelWork == nil && len(tiles) > 0 {
+		s.sixelWork = newSixelWork(s.sixelWake, s.kittyTmux)
+	}
+	if w := s.sixelWork; w != nil {
+		w.publish(tiles)
+	}
 	return view, false
 }
 

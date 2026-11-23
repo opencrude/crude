@@ -166,9 +166,9 @@ func TestPanelDeckReadableWidthClampsContent(t *testing.T) {
 		deckW        int
 		wantContentW int
 	}{
-		{deckW: 100, wantContentW: 96}, // narrow: full (padded) width
-		{deckW: 120, wantContentW: 58}, // wide: half of 116
-		{deckW: 210, wantContentW: 68}, // ultra wide: third of 206
+		{deckW: 100, wantContentW: 98}, // narrow: full (padded) width
+		{deckW: 120, wantContentW: 59}, // wide: half of 118
+		{deckW: 210, wantContentW: 69}, // ultra wide: third of 208
 	}
 	for _, tc := range cases {
 		deck := NewPanelDeck("deck", NewTokenSet(theme.DefaultDark()))
@@ -176,8 +176,8 @@ func TestPanelDeckReadableWidthClampsContent(t *testing.T) {
 		deck.Open(PanelEntry{ID: "settings", Title: "Settings", Content: content, Policy: PanelInteractive, Width: PanelReadableWidth})
 		deck.Layout(LayoutContext{}, Rect{W: tc.deckW, H: 8})
 		got := content.Bounds()
-		if got.W != tc.wantContentW || got.X != 2 {
-			t.Fatalf("deckW=%d content bounds=%+v, want X=2 W=%d", tc.deckW, got, tc.wantContentW)
+		if got.W != tc.wantContentW || got.X != 1 {
+			t.Fatalf("deckW=%d content bounds=%+v, want X=1 W=%d", tc.deckW, got, tc.wantContentW)
 		}
 	}
 }
@@ -187,7 +187,7 @@ func TestPanelDeckFullWidthPanelIgnoresReadableWidth(t *testing.T) {
 	content := NewLabel("deck/jobs", "Jobs", theme.DefaultDark())
 	deck.Open(PanelEntry{ID: "jobs", Title: "Jobs", Content: content, Policy: PanelPassive})
 	deck.Layout(LayoutContext{}, Rect{W: 210, H: 8})
-	if got := content.Bounds(); got.X != 2 || got.W != 206 {
+	if got := content.Bounds(); got.X != 1 || got.W != 208 {
 		t.Fatalf("default panel must keep the padded deck width, bounds=%+v", got)
 	}
 }
@@ -200,8 +200,8 @@ func TestPanelDeckReadableWidthFeedsRuleBleed(t *testing.T) {
 	form := NewDockedForm("deck/form", model, strings.Repeat("T", 90), "", tokens)
 	deck.Open(PanelEntry{ID: "settings", Title: "Settings", Content: form, Policy: PanelInteractive, Width: PanelReadableWidth})
 	deck.Layout(LayoutContext{}, Rect{W: 120, H: 6})
-	if form.Bounds().W != 58 || form.Bounds().X != 2 {
-		t.Fatalf("readable panel form bounds=%+v, want X=2 W=58", form.Bounds())
+	if form.Bounds().W != 59 || form.Bounds().X != 1 {
+		t.Fatalf("readable panel form bounds=%+v, want X=1 W=59", form.Bounds())
 	}
 	buf := surface.NewCellBuffer(120, 6)
 	form.Paint(buf, 0, 0, PaintContext{})

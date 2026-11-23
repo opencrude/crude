@@ -33,7 +33,7 @@ Crude.
 |--------|-------------------|-------|
 | Command palette | Ctrl+Alt+P | Not Ctrl+P; tmux Shift issue. The single discovery surface for global commands and their shortcuts; there is no Help window. |
 | Find in Files | Ctrl+Alt+F | Not Ctrl+Shift+F under tmux 3.4 |
-| Go to File | Ctrl+Alt+Y | File-name mode of the Find in Files window; not Ctrl+Shift+N (new window in Windows Terminal) |
+| Go to File | Ctrl+Alt+Y | Find project files by name. Enter a full path to open an existing file on the core host, including outside the project. Not Ctrl+Shift+N (new window in Windows Terminal). |
 | Replace in Files | Ctrl+Alt+H | Sibling of Find in Files; not Ctrl+Shift+H under tmux |
 | Toggle sidebar | Ctrl+B | Hides/shows the sidebar body; the 8-col activity rail (outer gutter plus padding before the panel left border) stays |
 | Files / Agents / Terminals / Git | Ctrl+Shift+E / A / U, Ctrl+Alt+G | Files and Agents are rail destinations; Terminals and Git are bottom-dock destinations (footer pills). Rail and panel bodies expose destination-aware context menus |
@@ -100,6 +100,7 @@ on return or restart. Header telemetry follows the focused group.
 | Split/move/merge/open/new/resize/focus/close | Shortcuts above; tab context menu for split/move/merge | Registry-backed operations retain modal and terminal input ownership |
 | Too-small terminal | Automatic compact layout | Preserves the recursive tree and selection; shows focused group only, restores all groups on enlargement |
 | Close agent tab | Tab × / close action | Minimizes, never terminates; explicit Terminate is separate |
+| Markdown file | File tree, Open File or a Markdown link; icon toolbar, Alt+V or the palette's Markdown commands switch Preview / Side by side / Source | Preview keys scroll the rendered document (arrows, Page Up/Down, Space, Home/End), Ctrl+F finds in it, Ctrl+S saves and edit keys do nothing. Side by side keeps the keys in the editor; the preview follows the pointer and the wheel, and each side follows the other. |
 | Image file viewer | File tree or Open File in Pane; wheel or `+`/`-` zoom, `0` fits, arrows / drag pan, Shift+wheel pans sideways, Esc or Ctrl+W closes | Mouse zoom keeps the source point under the pointer where bounds permit. Read-only PNG, JPEG, GIF first frame, WebP and BMP tabs; SVG remains source. Independent pane views use Kitty or Sixel pixels when supported and a cell preview otherwise. Close and reopen to read external file changes. |
 
 Main chats retain independent projections, including per-main-agent inline

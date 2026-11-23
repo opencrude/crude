@@ -1067,8 +1067,12 @@ of the Windows wallpaper at 176×48 cells. Live cell previews sent 113.9–114.0
 per move and no Sixel DCS; open and release each sent a 643.6 kB native raster.
 Send-to-sink was 1.1–2.6 ms. The shell does not delay gesture mutations; release
 restores the final native placement, and the writer keeps the preview on screen
-until that raster is ready. Wheel and key zoom no longer use the preview: they
-keep native pixels and replace them in one frame. That test's 112×34-cell window
+until that raster is ready. Isolated wheel and key steps stay native. Three
+changing steps in a large pane within a burst use the same preview; it keeps
+following input until the pane has been quiet for 160 ms. Snapshot handoff
+replaces the raster request even when a terminal write is still in flight.
+The raster cache retains newly finished and visible rasters before evicting
+older entries, so it does not keep rebuilding an evicted current view. That test's 112×34-cell window
 (685,440 pixels) is above the native-motion limit, so its moves still preview. This measures the writer sink,
 not the emulator's paint latency.
 
@@ -1088,6 +1092,34 @@ conversion. Removal took 0.48–0.60 ms after the change. The paced-renderer
 regression requires the removal to reach the sink while the gate is still
 closed and rejects stale Sixel output. Resize and stop/restart tests also fence
 pending work. Existing bench-gate ceilings are unchanged.
+
+## Markdown file preview (2026-11-23)
+
+The chat's whole-message Markdown path (`RenderMapped` + `BridgeSourceRows`) is
+superlinear on long documents. On this host (i7-9850H, Windows, Go 1.27.4) at
+100 columns it took 38 ms for `AGENTS.md` (20 KB), 153–166 ms for
+`docs/reference/editor.md` (149 KB) and 650–910 ms for
+`docs/plans/autonomous-code-intelligence.md` (157 KB). Rendering the same
+documents block by block through the same renderer costs 212 ms single-threaded
+for the 157 KB plan, whose largest block, a table, takes 20 ms.
+
+`BenchmarkLargeDocument` (`tui/screens/markdownview`) renders that plan on the
+projector's worker: cold 70 ms/op (110 MB, 535k allocations; parallel blocks on
+all but one processor), and an edit that changes one block 11.9 ms/op (4.9 MB,
+40k allocations), most of it the whole-document parse that resolves link
+definitions. None of it runs on the UI goroutine; Configure compares the editor
+revision, width and theme, and copies the text only when one changed.
+`TestBlockRenderingEqualsWholeDocument` keeps block rendering equal to whole
+rendering in text, styles, links, copy sources and actions over the fixture and
+the three documents above at 36 and 100 columns.
+
+## Performance reports (2026-11-23)
+
+Save report reads the saved history off the UI goroutine with a read-only
+SQLite connection, at most 4,096 process-hours and 40 stalls per role.
+`TestStalledUpdateRecordsTheStalledCode` (`tui/perf`) runs a real program loop
+whose Update sleeps 150 ms and requires the `ui.update` stall to name the
+message type and the sleeping function's file and line.
 
 ## Protocol v2 terminal hot paths (2026-10-23)
 
@@ -1153,23 +1185,26 @@ allocation, no I/O). Dashboard snapshots are taken off `Update` and only while t
 is visible; explicit semantic diagnostic reads collect on demand without opening
 it. The footer's Performance pill is always available, including without
 a session, and moves into **More** on narrow terminals. Recent UI stalls
-(`ui.update`, `ui.view`, `ui.blocking`) or slow input change its severity. It is
+(`ui.update`, `ui.command.wait`, `ui.view`, `ui.blocking`) or slow input change its severity. It is
 not a session slash command. Third-party Bubble Tea
 hands frames, resizes and control sequences to the renderer under `viewMu`
 only and writes the terminal under `flushMu`, so a slow console never blocks
 the next `Update` (`third_party/bubbletea/observer_test.go`).
 
 A stall event names the message type; it now also names the code. Bubble Tea's
-optional `LoopWatcher` brackets Update, View and the frame handoff of each loop
+optional `LoopWatcher` binds before the first Update and marks Update, command
+handoff, View and frame handoff of each loop
 iteration (`metrics.BeginUIWork`/`EndUIWork`: one reused timer, reset and
 stopped; no allocation). When an iteration is still running after 50 ms, the
 timer goroutine takes one goroutine profile (`pprof` debug=1, the concurrent
 collector with two brief stop-the-world pauses; not `runtime.Stack` with all
 goroutines, which stops the world for the whole dump), finds the UI goroutine by
 the loop frames it had when it was bound, and keeps at most 32 of its frames.
-`ui.update`, `ui.view`, `ui.present` and `ui.input` stall events of that
-iteration carry the frames in `stack`; `performance.shell` events and the
-archived stall evidence return them. Captures are limited to one per second.
+Only the phase sampled during the stall carries the frames in `stack`;
+combined input latency and RPC round trips do not borrow a UI stack.
+`performance.shell` events and the archived stall evidence return the frames.
+Captures are limited to one per second; the archive prioritizes traced stalls
+when a window has more stall events than it can keep.
 A continuous execution trace (`runtime/trace.FlightRecorder`, Go 1.25+) would
 also show scheduling, GC and syscalls, but it costs CPU on every event, so it is
 not enabled. `internal/metrics/stall_test.go` proves that a blocked UI goroutine

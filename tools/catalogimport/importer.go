@@ -112,8 +112,9 @@ type authoredLanguage struct {
 	Servers          *[]string `json:"servers"`
 	ServersPrepend   []string  `json:"servers_prepend"`
 	// Formatter replaces the upstream formatter; an empty command removes it.
-	Formatter *catalog.FormatterRecord `json:"formatter"`
-	OffSide   *bool                    `json:"off_side"`
+	Formatter       *catalog.FormatterRecord `json:"formatter"`
+	OffSide         *bool                    `json:"off_side"`
+	MarkdownPreview bool                     `json:"markdown_preview"`
 	// FoldingMarkers replaces the region markers; it has no upstream source.
 	FoldingMarkers *catalog.FoldingMarkers  `json:"folding_markers"`
 	Editing        *catalog.LanguageEditing `json:"editing"`
@@ -273,6 +274,7 @@ func Import(pins Pins, helixTOML, masonJSON, authoredJSON []byte) (catalog.Docum
 				record.Formatter = &catalog.FormatterRecord{Command: patch.Formatter.Command, Args: slices.Clone(patch.Formatter.Args)}
 			}
 		}
+		record.MarkdownPreview = patch.MarkdownPreview
 		if patch.OffSide != nil {
 			record.OffSide = *patch.OffSide
 		}

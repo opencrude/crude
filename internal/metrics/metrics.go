@@ -54,6 +54,11 @@ type Meta struct {
 	// Stall records an event for any single observation at or above this
 	// many microseconds (latency and table series). Zero uses Crit.
 	Stall int64 `json:"stall,omitempty"`
+	// SaveLabels marks labels and keys that are code-defined categories:
+	// message types, request methods, actor steps, input kinds, Git
+	// subcommands. Only their stall labels are saved in the performance
+	// archive; tool, model and other user-named labels stay in memory.
+	SaveLabels bool `json:"save_labels,omitempty"`
 }
 
 func (m Meta) stallMicros() int64 {
@@ -73,6 +78,25 @@ type registry struct {
 }
 
 var reg = registry{byName: make(map[string]any)}
+
+// MetaOf returns the description of a registered series. Every Crude
+// process links the same series, so a saved series can be described by any
+// process of the same build.
+func MetaOf(name string) (Meta, bool) {
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	switch series := reg.byName[name].(type) {
+	case *Latency:
+		return series.meta, true
+	case *Counter:
+		return series.meta, true
+	case *Gauge:
+		return series.meta, true
+	case *Table:
+		return series.meta, true
+	}
+	return Meta{}, false
+}
 
 // lookup returns an existing series of the requested type so independent
 // registrations of one name (tests, repeated init) share a single series.

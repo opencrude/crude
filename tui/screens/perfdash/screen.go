@@ -3,7 +3,6 @@ package perfdash
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -22,16 +21,17 @@ const (
 	ScrollbarID ui.ComponentID = "perfdash/scrollbar"
 	WindowID    ui.ComponentID = "perfdash/window"
 	PauseID     ui.ComponentID = "perfdash/pause"
-	CopyID      ui.ComponentID = "perfdash/copy"
+	SaveID      ui.ComponentID = "perfdash/save"
 )
 
-// Actions. ActionRefresh and ActionCopy bubble to the viewmodel.
+// Actions. ActionRefresh and ActionSave bubble to the viewmodel.
 const (
 	ActionSection = "perfdash.section"
 	ActionWindow  = "perfdash.window"
 	ActionPause   = "perfdash.pause"
-	// ActionCopy carries the plain-text report as its payload.
-	ActionCopy = "perfdash.copy"
+	// ActionSave asks the owner to save a report file. Its payload is the
+	// displayed perfdata.Data; the owner adds the saved history.
+	ActionSave = "perfdash.save"
 	// ActionRefresh asks the owner to fetch fresh snapshots now.
 	ActionRefresh = "perfdash.refresh"
 )
@@ -47,7 +47,7 @@ type Screen struct {
 	scrollbar *ui.ScrollbarControl
 	window    *ui.Button
 	pause     *ui.Button
-	copy      *ui.Button
+	save      *ui.Button
 
 	section         string
 	windowIndex     int
@@ -73,7 +73,7 @@ func New(th *theme.Theme) *Screen {
 	s.scrollbar.SetSurfaceBackground(ui.ColorBg)
 	s.window = s.newButton(WindowID, "", ActionWindow)
 	s.pause = s.newButton(PauseID, "Pause", ActionPause)
-	s.copy = s.newButton(CopyID, "Copy report", ActionCopy)
+	s.save = s.newButton(SaveID, "Save report", ActionSave)
 	s.syncButtons()
 	return s
 }
@@ -164,7 +164,7 @@ func (s *Screen) SetTokens(tokens *ui.TokenSet) {
 	s.tokens = tokens
 	s.tabs.SetTokens(tokens)
 	s.scrollbar.SetTokens(tokens)
-	for _, button := range []*ui.Button{s.window, s.pause, s.copy} {
+	for _, button := range []*ui.Button{s.window, s.pause, s.save} {
 		button.SetTokens(tokens)
 		button.SetSurfaceBackground(tokens.Color(ui.ColorBg))
 	}
@@ -181,7 +181,7 @@ func (s *Screen) PreferredFocus() ui.ComponentID { return BodyID }
 func (s *Screen) Children() []ui.Component {
 	kids := []ui.Component{s.tabs, s.body, s.scrollbar}
 	if s.window.Bounds().W > 0 {
-		kids = append(kids, s.window, s.pause, s.copy)
+		kids = append(kids, s.window, s.pause, s.save)
 	}
 	return kids
 }
@@ -197,7 +197,7 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	stripW := max(0, width-s.dockHeaderInset)
 	s.tabs.Layout(ctx, ui.Rect{X: 0, Y: 0, W: stripW, H: min(ui.StripHeight, height)})
 	// Buttons sit after the tab labels when they fit, else on their own row.
-	buttons := []*ui.Button{s.window, s.pause, s.copy}
+	buttons := []*ui.Button{s.window, s.pause, s.save}
 	buttonsW := 0
 	for _, button := range buttons {
 		buttonsW += button.Measure(ctx, ui.Loose(width, 1)).W + 1
@@ -244,8 +244,8 @@ func (s *Screen) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
 		return s.HandleAction(ui.EventContext{}, ui.Action{ID: ActionPause})
 	case evt.Key.Text == "w":
 		return s.HandleAction(ui.EventContext{}, ui.Action{ID: ActionWindow})
-	case evt.Key.Text == "c":
-		return s.HandleAction(ui.EventContext{}, ui.Action{ID: ActionCopy})
+	case evt.Key.Text == "s":
+		return s.HandleAction(ui.EventContext{}, ui.Action{ID: ActionSave})
 	case evt.Key.Code == tea.KeyLeft || evt.Key.Code == tea.KeyRight:
 		delta := 1
 		if evt.Key.Code == tea.KeyLeft {
@@ -288,8 +288,13 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 			result.Action = &ui.Action{ID: ActionRefresh}
 		}
 		return result
-	case ActionCopy:
-		return ui.EventResult{Handled: true, Action: &ui.Action{ID: ActionCopy, Payload: s.Report()}}
+	case ActionSave:
+		var data *perfdata.Data
+		if s.hasData {
+			d := perfdata.Data(s.data)
+			data = &d
+		}
+		return ui.EventResult{Handled: true, Action: &ui.Action{ID: ActionSave, Payload: data}}
 	}
 	return ui.EventResult{Action: &action}
 }
@@ -303,87 +308,15 @@ func (s *Screen) statusLine() string {
 	return window
 }
 
-// Report renders the diagnosis and headline numbers as plain text for the
-// clipboard (and for agents asked to investigate).
+// Report renders the live diagnosis and measurements as the shareable
+// Markdown report, without the saved history that Save report adds.
 func (s *Screen) Report() string {
 	if !s.hasData {
 		return "Crude performance: no measurements yet."
 	}
-	return Report(s.data)
-}
-
-// Report renders a plain-text summary of d.
-func Report(d Data) string {
 	var b strings.Builder
-	findings := Diagnose(d)
-	_, verdict := Verdict(findings)
-	fmt.Fprintf(&b, "Crude performance report — %s (%s)\n", d.Fetched.Format(time.DateTime), windowLabel(d))
-	fmt.Fprintf(&b, "Verdict: %s\n", verdict)
-	for _, f := range findings {
-		mark := "warn"
-		if f.Severity == SeverityUnknown {
-			mark = "unknown"
-		}
-		if f.Severity == SeverityCrit {
-			mark = "CRIT"
-		}
-		fmt.Fprintf(&b, "  [%s] %s — %s\n", mark, f.Title, f.Detail)
-	}
-	for _, t := range overviewTiles(d) {
-		fmt.Fprintf(&b, "%s: %s\n", t.label, t.value)
-	}
-	for _, view := range resources(d) {
-		b.WriteString("\nResources\n")
-		for _, t := range resourceTiles(view) {
-			fmt.Fprintf(&b, "  %s: %s\n", t.label, t.value)
-		}
-		for _, row := range processRows(view) {
-			fmt.Fprintf(&b, "  %-20s %-36s %10s cpu %s\n", row.label, row.detail, row.value, row.extra)
-		}
-		if disk := view.Disk; disk != nil {
-			fmt.Fprintf(&b, "  %s\n", diskHeading(disk, d.Fetched))
-			for _, row := range diskPartRows(disk) {
-				fmt.Fprintf(&b, "    %-34s %10s\n", row.label, row.value)
-			}
-			for _, row := range workspaceRows(disk) {
-				fmt.Fprintf(&b, "    %-34s %10s  %s\n", row.label, row.value, row.detail)
-			}
-			if note := orphanNote(disk); note != "" {
-				fmt.Fprintf(&b, "  %s\n", note)
-			}
-		}
-	}
-	for _, p := range d.processes() {
-		snapshot := d.snapshot(p)
-		fmt.Fprintf(&b, "\n%s process (pid %d)\n", p.Label(), snapshot.PID)
-		for _, series := range snapshot.Latencies {
-			if series.Window.Count == 0 {
-				continue
-			}
-			w := series.Window
-			fmt.Fprintf(&b, "  %-22s p50 %-7s p95 %-7s p99 %-7s max %-7s n=%d\n", series.Meta.Name,
-				formatMicros(w.P50), formatMicros(w.P95), formatMicros(w.P99), formatMicros(w.Max), w.Count)
-		}
-		for _, table := range snapshot.Tables {
-			fmt.Fprintf(&b, "  %s:\n", table.Meta.Name)
-			for i, row := range table.Rows {
-				if i == 6 {
-					break
-				}
-				fmt.Fprintf(&b, "    %-40s %-7s n=%-6d max %s\n", shortKey(row.Key), formatMicros(row.Sum), row.Count, formatMicros(row.Max))
-			}
-		}
-	}
-	if events := d.events(); len(events) > 0 {
-		b.WriteString("\nEvents (newest first)\n")
-		for i, event := range events {
-			if i == 20 {
-				break
-			}
-			fmt.Fprintf(&b, "  %s %s %s %s %s %s\n", event.At.Format("15:04:05"), event.Process.Label(), event.Title,
-				formatMicros(event.Micros), shortKey(event.Label), event.Detail)
-		}
-	}
+	d := perfdata.Data(s.data)
+	_ = perfdata.WriteReport(&b, perfdata.Report{Created: d.Fetched, Host: perfdata.CurrentHost(nil), Live: &d})
 	return b.String()
 }
 

@@ -73,7 +73,7 @@ them, are in [code layout](../reference/code-layout.md).
 | `internal/retry/` | The single automatic-cooldown contract (five-minute ceiling). |
 | `internal/metrics/` | Bounded per-process performance history (latency, counters, gauges, keyed tables, stall events) and, per snapshot, OS resource usage (memory, CPU, started processes, disk via a registered source) read by the Performance surface ([performance baselines](../reference/performance-baselines.md)). |
 | `internal/sysload/` | Observes the computer for background work: power source, CPU/memory/I/O pressure (Linux PSI) or idle cores, and available memory. Read off the UI goroutine by the closed-file check ([editor](../reference/editor.md#project-check-of-closed-files)). |
-| `internal/perfdata/` | Neutral canonical performance findings, headlines and host-qualified resource projection, shared by dashboard and semantic inspection. Owns the host-local durable performance archive, not the live registry. |
+| `internal/perfdata/` | Neutral canonical performance findings, headlines and host-qualified resource projection, shared by dashboard and semantic inspection. Owns the host-local durable performance archive, its history reads and the shareable Markdown performance report, not the live registry. |
 | `types/inspect/` | Owner-bound immutable diagnostic pages with encoded-byte/range/retention bounds; no telemetry registry, authorization or background collector. |
 | `internal/network/` | Shared outbound HTTP transport, proxy, trust and client identity. |
 | `agent/toolstore/` | Read-only folders for acquired code-intelligence tools under `CRUDE_HOME`: bounded downloads, safe extraction, manifests, usage, history and previewed removal ([tool store](../reference/tool-store.md)). Records the caller's approval; owns no approval or language knowledge. |
@@ -141,7 +141,8 @@ them, are in [code layout](../reference/code-layout.md).
 | `tui/theme/` | Themes and design tokens; the only place for hard-coded hex. |
 | `tui/termview/` | Terminal scrollback, selection and copy projection. |
 | `tui/tools/` | Tool-result presentation helpers. |
-| `tui/screens/perfdash/` | Performance presentation: sections (including Resources), charts, owner tables and copyable report, consuming canonical `internal/perfdata/` findings. |
+| `tui/screens/perfdash/` | Performance presentation: sections (including Resources), charts, owner tables and Save report, consuming canonical `internal/perfdata/` findings and its Markdown report writer. |
+| `tui/screens/markdownview/` | Markdown file tab: Preview / Side by side / Source strip, block-wise off-UI rendering with the chat's Markdown renderer, source-line scroll sync. |
 | `tui/perf/`, `tui/uitest/` | Perf logging and the UI test harness. |
 | `internal/console/` | Console setup before the program starts (the UTF-8 code page on Windows). |
 

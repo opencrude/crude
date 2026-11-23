@@ -60,7 +60,7 @@ func TestReferenceThemesShareMetricsAndGlyphs(t *testing.T) {
 		if th.Type != DefaultTypography() {
 			t.Fatalf("%s typography diverged: %#v", th.Name, th.Type)
 		}
-		if th.Spacing.PadLR != 2 || th.Spacing.ButtonGap != 2 {
+		if th.Spacing.PadLR != 1 || th.Spacing.ButtonGap != 2 {
 			t.Fatalf("%s spacing diverged: %#v", th.Name, th.Spacing)
 		}
 	}

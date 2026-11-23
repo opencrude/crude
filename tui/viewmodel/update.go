@@ -33,6 +33,7 @@ import (
 	"crude/tui/screens/inlay"
 	"crude/tui/screens/launcher"
 	historyscreen "crude/tui/screens/localhistory"
+	"crude/tui/screens/markdownview"
 	"crude/tui/screens/memorybrowser"
 	"crude/tui/screens/navigation"
 	"crude/tui/screens/operationissue"
@@ -429,6 +430,10 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyPastedText(msg)
 	case paneImageLoadedMsg:
 		m.applyPaneImageLoaded(msg)
+	case markdownview.RenderedMsg:
+		m.applyMarkdownRendered(msg)
+	case perfReportSavedMsg:
+		return m, m.applyPerfReportSaved(msg)
 	case referenceContentLoadedMsg:
 		m.applyReferenceContent(msg)
 	case desktopPathOpenedMsg:
@@ -2107,9 +2112,10 @@ func (m *App) handleTabSwitch() {
 		}
 		// A chat search is bound to the conversation it describes, exactly as
 		// the editor's window is bound to its buffer.
-		if prevAgentID != m.AgentView.ActiveID() || m.EditorState.ActiveView != "" {
+		if m.findChatTitle == "" && (prevAgentID != m.AgentView.ActiveID() || m.EditorState.ActiveView != "") {
 			m.closeChatFind()
 		}
+		m.reconcileTranscriptFind()
 	}()
 	defer m.openNextAgentPrompt()
 	// Always reset before re-deriving. This is the single source of

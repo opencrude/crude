@@ -259,6 +259,13 @@ type PointerPolicyProvider interface {
 	PointerPolicy() PointerPolicy
 }
 
+// PointerFocusRedirect lets a toolbar action return keyboard focus to its
+// owning ancestor on click without moving the action's hit or capture target.
+// It does not affect focus set by keyboard navigation.
+type PointerFocusRedirect interface {
+	PointerFocusTarget() ComponentID
+}
+
 // PointerHitBoundsProvider lets a narrow control enlarge only its pointer hit
 // target. Paint and layout continue to use Component.Bounds; Host clips the
 // returned screen-space rectangle to the component's parent.

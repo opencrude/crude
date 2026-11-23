@@ -381,26 +381,22 @@ func (s *Screen) searchOptions() fileio.ProjectSearchOptions {
 func (s *Screen) queryChanged() tea.Cmd {
 	s.generation++
 	s.notice = ""
-	s.loading = s.Query() != ""
+	s.loading = s.Query() != "" && s.exactPath() == ""
 	s.errText = ""
 	// Rows belong to the query that produced them. Never activate or replace
 	// an old result while a new query is still being debounced/searched.
 	s.setResults(nil)
 	s.sync()
-	if s.Query() == "" {
-		s.setResults(nil)
-		s.loading = false
-		s.sync()
+	if !s.loading {
 		return func() tea.Msg { return SearchCancelMsg{Screen: s} }
 	}
-	s.syncStatus()
 	return nil
 }
 
 // HandleSearchDebounced converts an accepted shared SearchField notification
 // into this screen's owner-tagged domain-search intent.
 func (s *Screen) HandleSearchDebounced(msg ui.SearchDebouncedMsg) tea.Cmd {
-	if !s.queryField.field.AcceptsDebounce(msg) || !s.AcceptsSearch(s, s.generation) {
+	if !s.queryField.field.AcceptsDebounce(msg) || !s.AcceptsSearch(s, s.generation) || s.exactPath() != "" {
 		return nil
 	}
 	request := SearchRequestMsg{
@@ -568,6 +564,10 @@ func (s *Screen) syncStatus() {
 		return
 	}
 	if s.mode == ModeFiles {
+		if s.exactPath() != "" {
+			s.status.SetText("Press Enter to open this exact path.")
+			return
+		}
 		switch n := len(s.results); n {
 		case 0:
 			s.status.SetText(fmt.Sprintf("No file matches %q. Try a shorter name.", s.Query()))
@@ -611,7 +611,7 @@ func (s *Screen) syncStatus() {
 
 func (s *Screen) rebuildActions() {
 	s.actions = ui.NewActionBar(ActionsID, s.tokens,
-		ui.ActionBarButton{ID: ui.NewID(ActionsID, "open"), Label: "Open", Action: "find.open", Variant: ui.VariantPrimary, Enabled: s.selected >= 0},
+		ui.ActionBarButton{ID: ui.NewID(ActionsID, "open"), Label: "Open", Action: "find.open", Variant: ui.VariantPrimary, Enabled: s.selected >= 0 || s.exactPath() != ""},
 		ui.ActionBarButton{ID: ui.NewID(ActionsID, "close"), Label: "Close", Action: "find.close", Variant: ui.VariantGhost, Enabled: true},
 	)
 	s.actions.SetCancelAction("find.close")
@@ -631,7 +631,7 @@ func (s *Screen) rebuildReplaceActions() {
 
 func (s *Screen) syncActionEnabled() {
 	if s.actions != nil {
-		s.actions.SetEnabled("find.open", s.selected >= 0)
+		s.actions.SetEnabled("find.open", s.selected >= 0 || s.exactPath() != "")
 	}
 	if s.replaceActions != nil {
 		s.replaceActions.SetEnabled("find.replace.one", s.canReplaceSelected())
@@ -656,12 +656,35 @@ func (s *Screen) replaceableCount() int {
 	return n
 }
 
+// exactPath recognizes rooted paths without using the shell's host OS or
+// the search filters. The file opener validates the literal path on the
+// core host when the user activates Open.
+func (s *Screen) exactPath() string {
+	value := s.Query()
+	if s.mode != ModeFiles || strings.ContainsAny(value, "\r\n\x00") {
+		return ""
+	}
+	if strings.HasPrefix(value, "/") && !strings.HasPrefix(value, "//") {
+		return value
+	}
+	if len(value) >= 3 && value[1] == ':' && (value[2] == '/' || value[2] == '\\') &&
+		('A' <= value[0] && value[0] <= 'Z' || 'a' <= value[0] && value[0] <= 'z') {
+		return value
+	}
+	return ""
+}
+
 func (s *Screen) openSelected() tea.Cmd {
-	if s.selected < 0 || s.selected >= len(s.results) {
-		return nil
+	var match fileio.ProjectSearchMatch
+	if path := s.exactPath(); path != "" {
+		match = fileio.ProjectSearchMatch{Path: path, NameOnly: true}
+	} else {
+		if s.selected < 0 || s.selected >= len(s.results) {
+			return nil
+		}
+		match = s.results[s.selected]
 	}
 	queryHistory.Add(s.Query())
-	match := s.results[s.selected]
 	generation := s.generation
 	return func() tea.Msg { return OpenMsg{Screen: s, Generation: generation, Match: match} }
 }

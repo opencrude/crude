@@ -71,6 +71,9 @@ type Screen struct {
 	// onFindChanged tells the owner of the find window that a count or the
 	// selected match moved.
 	onFindChanged func()
+	// document shows a read-only document instead of a conversation: rows
+	// start at the top and nothing follows new rows to the bottom.
+	document bool
 }
 
 func (s *Screen) SetAgentID(id string) { s.agentID = id }
@@ -87,6 +90,16 @@ func (s *Screen) copyText(text string) tea.Cmd {
 
 // AgentID is the agent whose conversation this chat shows.
 func (s *Screen) AgentID() string { return s.agentID }
+
+// SetDocument makes the screen a reader for one document, such as a rendered
+// Markdown file. Rows start at the top, the view never follows new rows to
+// the bottom, and Up and Down scroll by one row. Selection, copy, links and
+// find work as in a conversation.
+func (s *Screen) SetDocument(document bool) {
+	s.document = document
+	s.list.SetBottomGravity(!document)
+	s.list.Scroll().SetAutoScroll(!document)
+}
 
 // SetActivity stores the activity view that the chat screen shows.
 func (s *Screen) SetActivity(activity statuscenter.AgentActivityView) {
@@ -441,6 +454,9 @@ func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 
 func (s *Screen) syncScrollAfterUserScroll() {
 	scroll := s.list.Scroll()
+	if s.document {
+		return
+	}
 	if scroll.NearBottom(0) {
 		scroll.SetAutoScroll(true)
 	} else {

@@ -23,9 +23,16 @@ import (
 
 func writeImageFixture(t *testing.T, root, name string) string {
 	t.Helper()
-	img := image.NewNRGBA(image.Rect(0, 0, 80, 40))
-	for y := 0; y < 40; y++ {
-		for x := 0; x < 80; x++ {
+	return writeSizedImageFixture(t, root, name, 80, 40)
+}
+
+// writeSizedImageFixture writes a gradient PNG. Zoom journeys need an image
+// larger than the pane: Fit already magnifies a small one to the zoom limit.
+func writeSizedImageFixture(t *testing.T, root, name string, width, height int) string {
+	t.Helper()
+	img := image.NewNRGBA(image.Rect(0, 0, width, height))
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
 			img.SetNRGBA(x, y, color.NRGBA{R: uint8(x * 3), G: uint8(y * 6), B: 80, A: 255})
 		}
 	}
@@ -74,6 +81,17 @@ func TestImageFileTreeJourneyUsesReadOnlyPaneAndZoom(t *testing.T) {
 	view := app.View()
 	if len(view.Images) != 1 || !strings.ContainsRune(view.RenderContent(), kitty.Placeholder) {
 		t.Fatalf("the image pane did not paint Kitty graphics: placements=%d", len(view.Images))
+	}
+	status, _, target := app.activeHeaderContext()
+	if !strings.Contains(status, "80 × 40") || target != tab.Title {
+		t.Fatalf("image header = %q %q", status, target)
+	}
+	body, ok := app.screenRectOf(app.activeImageView().ID())
+	if !ok {
+		t.Fatal("image pane not mounted")
+	}
+	if text := paneJourneyText(app, body); strings.Contains(text, "80 × 40") || strings.Contains(text, "Wheel") || strings.Contains(text, "pan") {
+		t.Fatal("image pane duplicated shell status or hints")
 	}
 	before := view.Images[0]
 	_, command := app.Update(tea.KeyPressMsg{Code: '+', Text: "+"})

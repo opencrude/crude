@@ -197,6 +197,10 @@ and agent-minimize semantics. Palette operations use the shared ActionRegistry.
 
 Compact header actions use `ui.IconButton`: native Button activation and
 focus, one hover fill (`ColorHover`), and the accessible label as the tooltip.
+Viewer toolbars use centered icons in equal hit targets. The default content
+inset is one cell on each side; the scrollbar and its separator are separate
+from that inset. Pointer activation returns keyboard focus to the owning pane;
+keyboard traversal can still focus and activate individual actions.
 Dock surfaces expose ⧉ (tab), ⇱ (window), and ⌄ (hide). Destructive terminal
 controls use a bin, not the dismiss glyph. The shell and terminal tab rails
 share `ui.NewTabButton`: accent bold **+**, five columns, content-adjacent

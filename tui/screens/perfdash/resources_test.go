@@ -142,7 +142,7 @@ func TestResourcesNeverPaintCrossHostAggregate(t *testing.T) {
 				t.Fatalf("mixed machines painted aggregate:\n%s", text)
 			}
 			report := screen.Report()
-			if !strings.Contains(report, "Shell memory: 200 MiB") || !strings.Contains(report, "Core memory: 730 MiB") || strings.Contains(report, "Crude memory:") {
+			if !strings.Contains(report, "| Shell memory | 200 MiB |") || !strings.Contains(report, "| Core memory | 730 MiB |") || strings.Contains(report, "| Crude memory |") {
 				t.Fatalf("report mixed host totals:\n%s", report)
 			}
 		}

@@ -129,8 +129,8 @@ func TestScreenPaintsGutterDiagnosticsAndScrollbar(t *testing.T) {
 	if sbX < 0 {
 		t.Fatal("expected scrollbar column painted")
 	}
-	if sbX != 39 {
-		t.Fatalf("scrollbar column = %d, want 39", sbX)
+	if sbX != 38 {
+		t.Fatalf("scrollbar column = %d, want 38", sbX)
 	}
 }
 

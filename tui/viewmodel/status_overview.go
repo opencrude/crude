@@ -276,6 +276,9 @@ func (m *App) activeHeaderContext() (context, metrics, target string) {
 	if m.terminalDockOwnsKeys() && m.termDock != nil && m.termDock.ActiveID() != "" {
 		return m.terminalHeaderContext(m.termDock.ActiveID())
 	}
+	if img := m.activeImageView(); img != nil {
+		return img.Status(), "", m.Win.ActiveTab().Title
+	}
 	if path := m.EditorState.ActiveView; path != "" && m.EditorState.Editor != nil {
 		ed := m.EditorState.Editor
 		state := fmt.Sprintf("%d:%d", ed.CursorLine()+1, ed.CursorCol()+1)
@@ -540,6 +543,12 @@ func (m *App) compactContextHelpSegments() []ui.HintSegment {
 	case FocusLauncher:
 		return nil
 	case FocusEditor:
+		if m.markdownPreviewOwnsKeys() {
+			return []ui.HintSegment{ui.ActionSeg("markdown.cycle"), ui.ActionSeg("edit.find"), ui.ChordSeg("PgUp/PgDn", "scroll"), ui.ActionSeg("tabs.next")}
+		}
+		if m.activeMarkdown() != nil {
+			return []ui.HintSegment{ui.ActionSeg("markdown.cycle"), ui.ActionSeg("edit.find"), ui.ActionSeg("edit.gotoLine"), ui.ActionSeg("tabs.next")}
+		}
 		return []ui.HintSegment{ui.ActionSeg("edit.find"), ui.ActionSeg("edit.gotoLine"), ui.ActionSeg("tabs.next"), ui.ActionSeg("view.focus.sidebar")}
 	case FocusTabBar:
 		return []ui.HintSegment{ui.ActionSeg("tabbar.previous"), ui.ActionSeg("tabbar.next"), ui.ActionSeg("tabbar.select")}
@@ -552,7 +561,7 @@ func (m *App) compactContextHelpSegments() []ui.HintSegment {
 }
 
 func imageViewerHelpSegments() []ui.HintSegment {
-	return []ui.HintSegment{ui.ChordSeg("+/-", "zoom"), ui.ChordSeg("Wheel", "zoom"), ui.ChordSeg("0", "fit"), ui.ChordSeg("Drag", "pan")}
+	return []ui.HintSegment{ui.ChordSeg("+/-", "zoom"), ui.ChordSeg("Wheel", "zoom"), ui.ChordSeg("0", "fit"), ui.ChordSeg("Drag/arrows", "pan"), ui.ChordSeg("Shift+Wheel", "pan sideways")}
 }
 
 func (m *App) hintSegmentText(segment ui.HintSegment) string {

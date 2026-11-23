@@ -842,8 +842,8 @@ func (z *LatencySeries) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *Meta) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 8
-	o = append(o, 0x98)
+	// array header, size 9
+	o = append(o, 0x99)
 	o = msgp.AppendString(o, z.Name)
 	o = msgp.AppendString(o, z.Group)
 	o = msgp.AppendString(o, z.Title)
@@ -852,6 +852,7 @@ func (z *Meta) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.AppendInt64(o, z.Warn)
 	o = msgp.AppendInt64(o, z.Crit)
 	o = msgp.AppendInt64(o, z.Stall)
+	o = msgp.AppendBool(o, z.SaveLabels)
 	return
 }
 
@@ -867,8 +868,8 @@ func (z *Meta) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 8 {
-		err = msgp.ArrayError{Wanted: 8, Got: zb0001}
+	if zb0001 != 9 {
+		err = msgp.ArrayError{Wanted: 9, Got: zb0001}
 		return
 	}
 	z.Name, bts, err = msgp.ReadStringBytes(bts)
@@ -911,13 +912,18 @@ func (z *Meta) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.WrapError(err, "Stall")
 		return
 	}
+	z.SaveLabels, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "SaveLabels")
+		return
+	}
 	o = bts
 	return
 }
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *Meta) Msgsize() (s int) {
-	s = 1 + msgp.StringPrefixSize + len(z.Name) + msgp.StringPrefixSize + len(z.Group) + msgp.StringPrefixSize + len(z.Title) + msgp.StringPrefixSize + len(z.Unit) + msgp.StringPrefixSize + len(z.Help) + msgp.Int64Size + msgp.Int64Size + msgp.Int64Size
+	s = 1 + msgp.StringPrefixSize + len(z.Name) + msgp.StringPrefixSize + len(z.Group) + msgp.StringPrefixSize + len(z.Title) + msgp.StringPrefixSize + len(z.Unit) + msgp.StringPrefixSize + len(z.Help) + msgp.Int64Size + msgp.Int64Size + msgp.Int64Size + msgp.BoolSize
 	return
 }
 

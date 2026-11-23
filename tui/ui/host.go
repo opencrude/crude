@@ -691,7 +691,7 @@ func (h *Host) Handle(msg tea.Msg) EventResult {
 		hit := h.HitTest(m.X, m.Y)
 		id := h.resolvePointerTarget(hit)
 		if id != RootID {
-			h.Focus(id)
+			h.focusPointerTarget(id)
 		}
 		res := h.dispatchTo(id, m.X, m.Y, msg)
 		if m.Button == tea.MouseLeft && res.Handled {
@@ -811,6 +811,20 @@ func (h *Host) resolvePointerTarget(hit ComponentID) ComponentID {
 		return h.root.ID()
 	}
 	return id
+}
+
+// Focus redirects are restricted to mounted ancestors in this Host.
+func (h *Host) focusPointerTarget(id ComponentID) {
+	if redirect, ok := h.registry[id].(PointerFocusRedirect); ok {
+		wanted := redirect.PointerFocusTarget()
+		for owner := h.parent[id]; owner != RootID; owner = h.parent[owner] {
+			if owner == wanted {
+				h.Focus(owner)
+				return
+			}
+		}
+	}
+	h.Focus(id)
 }
 
 func (h *Host) dispatchTo(id ComponentID, sx, sy int, msg tea.Msg) EventResult {

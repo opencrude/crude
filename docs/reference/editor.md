@@ -312,6 +312,51 @@ selection, history, the savepoint or dirty state.
 **Indent with** and **Indent size** supply inherited policy. Detect and zero
 select source detection; project/file choices still take priority.
 
+### Markdown files
+
+A Markdown file (marked `markdown_preview` in the language catalog, such as
+`.md` or `.markdown`) opens in an ordinary
+editor tab with the same compact icon toolbar as image files: **Preview**,
+**Side by side** and **Source**. The active mode stays highlighted when the pointer
+leaves. Hover over an icon for its name. The
+**Markdown files** setting (`editor.markdown_view`) chooses how a tab opens;
+Preview is the default. The toolbar, Alt+V (next view) and the palette's Markdown
+Preview, Markdown Side by Side and Markdown Source commands change one tab.
+
+- The editor stays the only owner of the text, save, undo, recovery and
+  language features. The preview renders the editor's buffer, unsaved edits
+  included, with the chat's Markdown renderer (`tui/rendering`, Glamour over
+  Goldmark) and paints it with the chat's row screen (`shellchat.Screen` in
+  document mode). A file and an assistant reply therefore show headings,
+  lists, tables, code, links, copy, selection and Ctrl+F find the same way.
+- Rendering never runs on the UI goroutine. `markdownview.Projector` parses the
+  whole document once, so link definitions resolve, then renders each
+  top-level block on its own and caches it by its source text and the
+  link destinations resolved into that block. An edit renders only the changed block; blocks
+  that need rendering render in parallel on all but one processor. One
+  rendering runs at a time and only the newest request waits, so typing never
+  queues stale work. The preview keeps showing the previous rendering until
+  the next arrives; it never goes blank.
+- Every block keeps the source line where it starts, recorded when the
+  parser opens it (or, for a table or setext heading made from a paragraph,
+  from its first text). Side by side follows the VS Code preview's source-line
+  mapping: positions inside a block move in proportion to its lines. The side
+  that scrolled leads and the other follows. A new rendering, a resize or a
+  mode change keeps the same source line at the top.
+- Only the rendered document is on screen in Preview, so keys scroll it (Up,
+  Down, Page Up, Page Down, Space, Home, End), Ctrl+F finds in it, Esc clears a
+  selection and Ctrl+S saves. Keys that would edit the hidden source do nothing.
+  Go to Line and a heading link move the caret and reveal its line. Leaving
+  Preview opens the source at the line that was on screen. In Side by side the
+  editor keeps the keys; the preview follows the pointer and the wheel.
+- Relative links and images resolve from the file's folder and open in Crude;
+  `#heading` links open the heading's line. Web links ask before they open.
+- Side by side splits left and right when the pane has 61 columns, otherwise
+  top and bottom; the divider drags. A divider or window drag keeps the
+  rendered width until it ends, then the document rewraps once.
+- Exactly one blank row separates top-level blocks. Short documents use the full content width. A scrolling preview reserves
+  the chat scrollbar footprint, including one blank column before its track.
+
 ### Wrapped and folded rows
 
 `sourceRows` is the one source-line/visible-row index for wrapping and folding.

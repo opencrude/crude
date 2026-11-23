@@ -182,15 +182,6 @@ type contentLayout struct {
 	TermDockRect   ui.Rect
 }
 
-// boundedContentGeometry turns theme padding into effective per-frame
-// padding. Normal widths keep the requested padding exactly; narrow widths
-// spend at most half the real content columns on each side.
-func boundedContentGeometry(contentW, requestedPad int) (padLR, innerW int) {
-	contentW = max(0, contentW)
-	padLR = min(max(0, requestedPad), contentW/2)
-	return padLR, contentW - 2*padLR
-}
-
 // computeContentLayout computes the shell geometry for one frame. It keeps
 // every side effect the legacy buildMainView produced (window width, input
 // shell height, chat/editor/input/deck rects, tree height messages, message
@@ -198,7 +189,7 @@ func boundedContentGeometry(contentW, requestedPad int) (padLR, innerW int) {
 func (m *App) computeContentLayout() contentLayout {
 	bounds := m.mainPaneBounds()
 	left, width := bounds.X, bounds.W
-	pad, inner := boundedContentGeometry(width, m.Theme.Spacing.PadLR)
+	pad, inner := ui.ContentInset(width, m.Theme.Spacing.PadLR)
 	dockH := m.termDockHeightClamped()
 	bottom := bounds.Y + bounds.H
 	p := m.ensureMainPanes()
@@ -377,6 +368,12 @@ func (m *App) syncRootFocus() {
 			id = m.tabScreen.TabsControl().ID()
 		case FocusEditor:
 			id = m.editorScreen.ID()
+			if md := m.activeMarkdown(); md != nil && md.PreviewOwnsKeys() {
+				id = md.Preview().ID()
+				if current := m.mainHost().Focused(); md.ToolbarOwnsFocus(current) {
+					id = current
+				}
+			}
 		case FocusLauncher:
 			id = launcher.ScreenID
 			if m.launcherScreen != nil && m.rootHost.Focused() == launcher.ScreenID {
@@ -563,7 +560,7 @@ func (m *App) configureSidebarScreen() {
 // computeContentLayout result.
 func (m *App) configureChatScreen() {
 	contentW := max(0, m.chatRect.W)
-	padLR, innerW := boundedContentGeometry(contentW, m.Theme.Spacing.PadLR)
+	padLR, innerW := ui.ContentInset(contentW, m.Theme.Spacing.PadLR)
 	m.configureChatScreenWithLayout(contentLayout{
 		ContentW: contentW,
 		InnerW:   innerW,
@@ -583,13 +580,13 @@ func (m *App) configurePaneChat(agentID string, view *mainPaneView, rect ui.Rect
 		return
 	}
 	screen := view.chat
-	if m.findDomain == findInChat && m.findChat != nil && m.findChat != screen {
+	if m.findDomain == findInChat && m.findChat != nil && m.findChat != screen && m.findChatTitle == "" {
 		// Another pane shows a different chat: the open search belongs to the
 		// conversation it was started in.
 		m.closeChatFind()
 	}
 	screen.SetAgentID(agentID)
-	pad, inner := boundedContentGeometry(rect.W, m.Theme.Spacing.PadLR)
+	pad, inner := ui.ContentInset(rect.W, m.Theme.Spacing.PadLR)
 	layout := contentLayout{ContentW: rect.W, InnerW: inner, PadLR: pad}
 	projection := m.subPaneProjections.Existing(agentID)
 	if projection == nil {

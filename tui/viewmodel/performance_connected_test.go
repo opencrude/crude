@@ -3,6 +3,7 @@ package viewmodel
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -11,6 +12,7 @@ import (
 
 	"crude/core/shellport"
 	"crude/core/shellport/remote"
+	"crude/internal/buildinfo"
 	"crude/internal/metrics"
 	"crude/internal/perfdata"
 	"crude/tui/rendering"
@@ -18,6 +20,56 @@ import (
 	"crude/tui/screens/shellfooter"
 	"crude/tui/screens/termdock"
 )
+
+func TestPerformanceSaveReportThroughDashboard(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv(buildinfo.HomeEnv, home)
+	app, _ := newRealShellApp(t)
+	paneJourneySize(app, 160, 46)
+	sink := make(markdownSink, 64)
+	app.eventBus.SetSink(sink)
+	copied := make(chan string, 1)
+	t.Cleanup(installAsyncClipboardBackendForTest(app, clipboardAsyncBackend{
+		writeText: func(text string) error { copied <- text; return nil },
+	}))
+	panel := app.perfDashboard()
+	app.toggleWorkspacePanel(termdock.PanelPerformance)
+	panel.SetData(perfdash.Data{Shell: metrics.Take(metrics.Query{Seconds: 60})})
+	app.forceFrame()
+	_ = app.View()
+	r, ok := app.rootHost.ScreenRect(perfdash.SaveID)
+	if !ok || r.Empty() {
+		t.Fatal("Save report did not mount on the dashboard")
+	}
+	_, press := app.Update(tea.MouseClickMsg{X: r.X + 1, Y: r.Y, Button: tea.MouseLeft})
+	_, release := app.Update(tea.MouseReleaseMsg{X: r.X + 1, Y: r.Y, Button: tea.MouseLeft})
+	runAppCommand(t, app, tea.Batch(press, release))
+	matches, err := filepath.Glob(filepath.Join(perfdata.ReportsDir(home), "*.md"))
+	if err != nil || len(matches) != 1 {
+		t.Fatalf("Save report did not produce exactly one file: %v, %v", matches, err)
+	}
+	data, err := os.ReadFile(matches[0])
+	if err != nil || !strings.Contains(string(data), "## Current window") || !strings.Contains(string(data), "## Stalls") {
+		t.Fatalf("saved report is missing the live window or stall timeline: %v", err)
+	}
+	select {
+	case got := <-copied:
+		if got != matches[0] {
+			t.Fatalf("copied %q, want %q", got, matches[0])
+		}
+	default:
+		t.Fatal("the report path was not copied")
+	}
+	_ = app.View()
+	md := app.activeMarkdown()
+	if md == nil {
+		t.Fatal("the saved report did not open as a Markdown tab")
+	}
+	pumpMarkdown(t, app, sink, func() bool { return md.Document() != nil })
+	if text := paneJourneyText(app, app.mainScreenRect(md.PreviewRect())); !strings.Contains(text, "Crude performance report") {
+		t.Fatalf("the opened report did not render its title: %q", text)
+	}
+}
 
 func TestConnectedPerformanceSnapshotLifecycle(t *testing.T) {
 	runtime := remoteJourneyRuntime(t, "http://127.0.0.1:1")
@@ -275,7 +327,7 @@ func TestConnectedPerformanceSnapshotLifecycle(t *testing.T) {
 	}
 	selectSection("Overview", perfdash.SectionOverview)
 	paint("Core metrics unavailable")
-	if !strings.Contains(app.perf.screen.Report(), "Core metrics unavailable") || strings.Contains(app.perf.screen.Report(), "\nCore process (pid ") {
+	if !strings.Contains(app.perf.screen.Report(), "Core metrics unavailable") || strings.Contains(app.perf.screen.Report(), "- Core process (pid ") {
 		t.Fatal("failed core phase retained a successful core snapshot or hid its failure")
 	}
 	if app.ActiveSession != nil {

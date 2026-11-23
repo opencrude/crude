@@ -160,14 +160,17 @@ func freezeFinding(d Data) Finding {
 	label := ""
 	count := 0
 	for _, event := range d.Shell.Events {
-		if event.Series != "ui.update" && event.Series != "ui.view" {
+		if event.Series != "ui.update" && event.Series != "ui.view" && event.Series != "ui.command.wait" {
 			continue
 		}
 		count++
 		if event.Micros > worst {
 			worst, label = event.Micros, event.Label
-			if event.Series == "ui.view" {
+			switch event.Series {
+			case "ui.view":
 				label = "frame paint after " + label
+			case "ui.command.wait":
+				label = "command handoff after " + label
 			}
 		}
 	}

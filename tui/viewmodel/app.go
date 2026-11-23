@@ -100,25 +100,28 @@ type App struct {
 	FindReplace               *popup.FindReplaceState
 	findDomain                findDomain
 	findChat                  *shellchat.Screen
-	LastContextMenu           *ui.ContextMenuState
-	ContextMenuOpenedAt       time.Time
-	TextPrompt                *ui.TextPromptState
-	TreeDeletePending         string
-	treeDeletes               []*treeDeleteOperation
-	treeMovePending           *treeMoveRequest
-	treeClip                  *treeClipboard
-	treeLastMove              *treeMove
-	TreeDeleteChoice          int
-	GitDiscardPending         *workspace.GitChange
-	gitDiscardPreview         *workspace.GitDiscardPreview
-	gitDiscardSequence        uint64
-	FilePicker                *filepickerscreen.Screen
-	diagnosticDetail          *diagnosticPopover
-	diagnosticHover           *diagnosticPopover
-	planHover                 *planHoverState
-	connectionHover           *connectionHoverState
-	remotes                   *remoteManagerState
-	remoteUICommands          []tea.Cmd
+	// findChatRect and findChatTitle place and name the open transcript find.
+	findChatRect        ui.Rect
+	findChatTitle       string
+	LastContextMenu     *ui.ContextMenuState
+	ContextMenuOpenedAt time.Time
+	TextPrompt          *ui.TextPromptState
+	TreeDeletePending   string
+	treeDeletes         []*treeDeleteOperation
+	treeMovePending     *treeMoveRequest
+	treeClip            *treeClipboard
+	treeLastMove        *treeMove
+	TreeDeleteChoice    int
+	GitDiscardPending   *workspace.GitChange
+	gitDiscardPreview   *workspace.GitDiscardPreview
+	gitDiscardSequence  uint64
+	FilePicker          *filepickerscreen.Screen
+	diagnosticDetail    *diagnosticPopover
+	diagnosticHover     *diagnosticPopover
+	planHover           *planHoverState
+	connectionHover     *connectionHoverState
+	remotes             *remoteManagerState
+	remoteUICommands    []tea.Cmd
 
 	// Composer state changes at session activation, never from Paint. Warm
 	// sessions retain their editor; cold persisted drafts load asynchronously.

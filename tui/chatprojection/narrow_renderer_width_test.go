@@ -16,7 +16,10 @@ func TestRendererDerivesNarrowWidthsFromActualBounds(t *testing.T) {
 	for _, width := range []int{-5, 0, 1, 3, 7, 20, 39} {
 		r.SetSize(width, 10)
 		wantWidth := max(0, width)
-		wantInner := max(0, wantWidth-2*padLR)
+		wantInner := wantWidth
+		if wantWidth > 2*padLR {
+			wantInner -= 2 * padLR
+		}
 		wantContent := max(0, wantInner-messageBodyChromeWidth)
 		contentW, innerW := r.availableMessageWidths()
 		if r.width != wantWidth {
