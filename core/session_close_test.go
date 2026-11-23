@@ -110,6 +110,13 @@ func TestSessionCoreCloseIsConsumedAndConcurrentCloseJoins(t *testing.T) {
 		go func() { defer joined.Done(); retained.Close() }()
 	}
 	joined.Wait()
+	// The client reads the core's ending on its own goroutine. Wait for it
+	// instead of racing it with the client's own Close.
+	select {
+	case <-c.Done():
+	case <-time.After(time.Second):
+		t.Fatal("client did not observe the core ending the session")
+	}
 	if err := c.Close(); err != nil || !errors.Is(c.Err(), coreclient.ErrSessionLost) {
 		t.Fatalf("core ending was lost: close=%v client=%v", err, c.Err())
 	}

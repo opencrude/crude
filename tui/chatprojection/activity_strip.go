@@ -95,7 +95,7 @@ func (s *ActivityStrip) Update(source statuscenter.AgentActivityView, width int,
 		case "compaction_failed":
 			label, role = "Compaction failed · details in transcript", ui.ColorError
 		case "compaction_interrupted":
-			label = "Compaction interrupted · original context retained"
+			label = "Compaction interrupted · original context kept"
 		}
 		s.add(PaintLine{Spans: []RowSpan{{Text: label, Role: role}}})
 		return

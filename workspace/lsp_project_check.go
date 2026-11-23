@@ -380,8 +380,8 @@ func (m *LSPManager) needsProjectCheckLocked(path string) (string, bool) {
 	if !ok || spec.DiagnosticScope == insight.CoverageProject {
 		return "", false
 	}
-	for _, state := range m.states {
-		if state.cmd == spec.Command && state.reportsProject {
+	for key, state := range m.states {
+		if state.cmd == spec.Command && m.reportsProjectLocked(key, state) {
 			return "", false
 		}
 	}

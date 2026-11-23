@@ -92,8 +92,8 @@ uses the release profile. Tests do not call `SelectHome`; `internal/testhome`
 isolates them.
 
 ```sh
-go run ./internal/wiregen       # explicit generation after production-source edits
-go run ./internal/wiregen -check # nonmutating freshness check
+go run ./tools/wiregen       # explicit generation after production-source edits
+go run ./tools/wiregen -check # nonmutating freshness check
 go run .                        # development profile ~/.crude-dev
 CRUDE_HOME=~/crude-review go run .  # another isolated profile
 ```

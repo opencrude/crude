@@ -104,14 +104,18 @@ func TestThinkingScrollbarGeometry(t *testing.T) {
 	mainBefore := app.chatScreen.ScrollModel().Offset()
 	paneBefore := scroll.Offset()
 
-	// Find an actual pane content row: scan the painted buffer for rows whose
-	// col 10 has the pane border '│' AND col 14 has 'x' (thinking content).
+	// Find an actual pane content row: the pane border '│' with thinking
+	// content ('x') four cells inside it. The columns follow the shell's
+	// content inset (one cell since the 2026-11-23 token change), so they are
+	// found, not fixed.
 	paneRow := -1
 	buf := app.mainSurf.Buffer()
-	for y := app.chatRect.Y; y < app.chatRect.Y+app.chatRect.H; y++ {
-		if buf.Get(10, y).Char == '│' && buf.Get(14, y).Char == 'x' {
-			paneRow = y
-			break
+	for y := app.chatRect.Y; y < app.chatRect.Y+app.chatRect.H && paneRow < 0; y++ {
+		for x := app.chatRect.X; x+4 < app.chatRect.X+app.chatRect.W; x++ {
+			if buf.Get(x, y).Char == '│' && buf.Get(x+4, y).Char == 'x' {
+				paneRow = y
+				break
+			}
 		}
 	}
 	if paneRow < 0 {

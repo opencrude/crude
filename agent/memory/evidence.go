@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -208,14 +209,12 @@ func supportedLessonObservations(observations []evidenceObservation) bool {
 	return false
 }
 
+// SanitizeObservations redacts and bounds one turn's observations and keeps
+// at most MaxObservationsPerTurn of them within MaxObservationBytes.
 func SanitizeObservations(observations []Observation) []Observation {
 	var result []Observation
-	spent := 0
 	for _, observation := range observations {
-		if len(result) >= MaxObservationsPerTurn {
-			break
-		}
-		observation.Summary = TruncateBytes(Redact(strings.TrimSpace(observation.Summary)), MaxEvidenceSummaryBytes)
+		observation.Summary = TruncateMiddle(Redact(strings.TrimSpace(observation.Summary)), MaxEvidenceSummaryBytes)
 		observation.Method = TruncateBytes(Redact(observation.Method), 512)
 		observation.Conditions = TruncateBytes(Redact(observation.Conditions), 1024)
 		if err := validateEvidence([]Evidence{observation.Evidence}); err != nil || observation.Turn <= 0 {
@@ -227,14 +226,65 @@ func SanitizeObservations(observations []Observation) []Observation {
 		for index, path := range observation.Paths {
 			observation.Paths[index] = TruncateBytes(Redact(path), 512)
 		}
-		payload, err := json.Marshal(observation)
-		if err != nil || spent+len(payload) > MaxObservationBytes {
-			continue
-		}
-		spent += len(payload)
 		result = append(result, observation)
 	}
-	return result
+	return SelectObservations(result, MaxObservationsPerTurn, MaxObservationBytes)
+}
+
+// SelectObservations keeps at most count observations within bytes of JSON
+// and returns them in their original order. When not all fit, it chooses by
+// what the observation can prove, then the newest first, as Codex's memory
+// extraction selects rollout evidence: human statements; validations and
+// failed or cancelled attempts; changes; then other tool results. A long
+// turn's outcome (its last checks, commit and push) therefore survives, where
+// keeping the first observations kept only its early exploration.
+func SelectObservations(observations []Observation, count, bytes int) []Observation {
+	sizes := make([]int, len(observations))
+	total := 0
+	for index, observation := range observations {
+		payload, err := json.Marshal(observation)
+		if err != nil {
+			sizes[index] = -1
+			continue
+		}
+		sizes[index] = len(payload)
+		total += len(payload)
+	}
+	if len(observations) <= count && total <= bytes && !slices.Contains(sizes, -1) {
+		return observations
+	}
+	keep := make([]bool, len(observations))
+	kept, spent := 0, 0
+	for tier := range 4 {
+		for index := len(observations) - 1; index >= 0 && kept < count; index-- {
+			if keep[index] || sizes[index] < 0 || observationTier(observations[index]) != tier || spent+sizes[index] > bytes {
+				continue
+			}
+			keep[index], kept, spent = true, kept+1, spent+sizes[index]
+		}
+	}
+	selected := make([]Observation, 0, kept)
+	for index, observation := range observations {
+		if keep[index] {
+			selected = append(selected, observation)
+		}
+	}
+	return selected
+}
+
+// observationTier orders observations by what they can prove: what the human
+// said, measured outcomes, changes, then everything else.
+func observationTier(observation Observation) int {
+	switch {
+	case observation.Kind == EvidenceUser:
+		return 0
+	case observation.Kind == EvidenceValidation || observation.Outcome == OutcomeFailed || observation.Outcome == OutcomeCancelled:
+		return 1
+	case observation.Kind == EvidenceChange:
+		return 2
+	default:
+		return 3
+	}
 }
 
 func episodeForObservation(situation string, observation Observation) Episode {

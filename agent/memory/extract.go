@@ -38,13 +38,71 @@ type ExtractionResult struct {
 	Summary  *ExtractedSummary `json:"summary"`
 }
 
-func PrepareExtractionInput(previousSummary, existingTitles, transcript string, observations []Observation) rootprompt.MemoryExtractionInput {
-	input := rootprompt.MemoryExtractionInput{
-		PreviousSummary: TruncateBytes(Redact(previousSummary), 4096),
-		ExistingTitles:  TruncateBytes(Redact(existingTitles), 4096),
-		Transcript:      TruncateBytes(Redact(transcript), 16<<10),
-	}
+// extractionInputBytes bounds the turns and evidence of one curator request,
+// as the earlier fixed transcript and evidence limits did together.
+const extractionInputBytes = 40 << 10
+
+// ExtractionWindow is the part of a session's pending turns that one curator
+// request covers: their rendered transcript, their evidence and the last turn.
+type ExtractionWindow struct {
+	Transcript   string
+	Observations []Observation
+	ThroughTurn  int
+}
+
+// PlanExtractionWindow takes pending turns, oldest first, while their
+// transcript and evidence fit one request, and always at least one turn. The
+// other turns wait for the next request, so a full window never cuts its
+// newest turn. A first turn that does not fit alone keeps its transcript and
+// the evidence SelectObservations prefers.
+func PlanExtractionWindow(turns []HistoryHit, observations []Observation) ExtractionWindow {
+	byTurn := make(map[int][]Observation)
 	for _, observation := range observations {
+		byTurn[observation.Turn] = append(byTurn[observation.Turn], observation)
+	}
+	var window ExtractionWindow
+	var transcript strings.Builder
+	spent := 0
+	for index, turn := range turns {
+		text := TruncateMiddle(rootprompt.MemoryExtractionTurn(rootprompt.MemoryTurn{SessionID: turn.SessionID, Turn: turn.Turn,
+			User: Redact(turn.UserText), Tools: Redact(turn.ToolNames), Files: Redact(turn.Files), Report: Redact(turn.AssistantText)}), extractionInputBytes/2)
+		evidence := byTurn[turn.Turn]
+		cost := len(text) + observationBytes(evidence)
+		if index > 0 && spent+cost > extractionInputBytes {
+			break
+		}
+		if cost > extractionInputBytes {
+			evidence = SelectObservations(evidence, len(evidence), extractionInputBytes-len(text))
+			cost = len(text) + observationBytes(evidence)
+		}
+		spent += cost
+		transcript.WriteString(text)
+		window.Observations = append(window.Observations, evidence...)
+		window.ThroughTurn = turn.Turn
+	}
+	window.Transcript = transcript.String()
+	return window
+}
+
+func observationBytes(observations []Observation) int {
+	total := 0
+	for _, observation := range observations {
+		if payload, err := json.Marshal(observation); err == nil {
+			total += len(payload)
+		}
+	}
+	return total
+}
+
+// PrepareExtractionInput builds one curator request from the previous summary,
+// the existing memory titles and a planned window.
+func PrepareExtractionInput(previousSummary, existingTitles string, window ExtractionWindow) rootprompt.MemoryExtractionInput {
+	input := rootprompt.MemoryExtractionInput{
+		PreviousSummary: TruncateMiddle(Redact(previousSummary), maxTurnTextBytes),
+		ExistingTitles:  TruncateBytes(Redact(existingTitles), 4096),
+		Transcript:      window.Transcript,
+	}
+	for _, observation := range window.Observations {
 		payload, err := json.Marshal(observation)
 		if err != nil {
 			continue
@@ -52,20 +110,6 @@ func PrepareExtractionInput(previousSummary, existingTitles, transcript string, 
 		input.Observations = append(input.Observations, string(payload))
 	}
 	return input
-}
-
-func SelectExtractionObservations(observations []Observation) []Observation {
-	var selected []Observation
-	spent := 0
-	for _, observation := range observations {
-		payload, err := json.Marshal(observation)
-		if err != nil || len(selected) >= 48 || spent+len(payload) > 24<<10 {
-			continue
-		}
-		spent += len(payload)
-		selected = append(selected, observation)
-	}
-	return selected
 }
 
 func GroundExtraction(result ExtractionResult, observations []Observation, sessionID, provenance string) []Record {

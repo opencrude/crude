@@ -44,6 +44,8 @@ type LSPManager struct {
 	checkPath    string
 	check        projectCheckProgress
 	checkResults map[string]projectCheckResult
+	// workspacePulls joins the workspace diagnostic request loops.
+	workspacePulls sync.WaitGroup
 	// checkRetryAt delays a pass that stopped because a busy computer or
 	// server left files without an answer; any explicit request clears it.
 	checkRetryAt time.Time
@@ -373,7 +375,7 @@ func (m *LSPManager) ServerHealthSnapshots() []statuscenter.LSPServerHealth {
 		// Coverage: what this producer checks. A project producer reports
 		// files that are not open; any other server checks open files only.
 		health.Scope, health.Coverage = insight.CoverageOpenFiles, openFilesCoverage(m.settings)
-		if _, project := m.projects[id]; project && state.spec.DiagnosticScope == insight.CoverageProject || state.reportsProject {
+		if _, project := m.projects[id]; project && state.spec.DiagnosticScope == insight.CoverageProject || state.reportsProject || m.workspacePullLocked(state) {
 			health.Scope, health.Coverage = insight.CoverageProject, "Checks the whole project, including files that are not open."
 			if m.projectWatchUnreliable {
 				health.Coverage = "Project file observation is incomplete; results may be out of date."

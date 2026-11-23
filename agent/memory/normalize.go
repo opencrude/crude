@@ -3,6 +3,7 @@ package memory
 import (
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -263,4 +264,30 @@ func TruncateBytes(s string, n int) string {
 		n--
 	}
 	return s[:n]
+}
+
+// TruncateMiddle bounds s to at most n bytes and keeps its beginning and its
+// end, as command output excerpts do. A report states its subject first and
+// its result and open work last, so cutting the end loses the outcome. The
+// marker tells a reader how much was left out.
+func TruncateMiddle(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	// No omitted count has more digits than len(s), so this marker size
+	// bounds the real one.
+	budget := n - len(omittedMarker(len(s)))
+	if budget < 2 {
+		return TruncateBytes(s, n)
+	}
+	head := TruncateBytes(s, budget/2)
+	tail := len(s) - (budget - len(head))
+	for tail < len(s) && !utf8.RuneStart(s[tail]) {
+		tail++
+	}
+	return head + omittedMarker(tail-len(head)) + s[tail:]
+}
+
+func omittedMarker(bytes int) string {
+	return "\n[... " + strconv.Itoa(bytes) + " bytes omitted ...]\n"
 }

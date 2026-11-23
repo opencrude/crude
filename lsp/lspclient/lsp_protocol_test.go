@@ -40,6 +40,8 @@ func TestProtocolServerHelper(t *testing.T) {
 		}
 	}
 	var trace []map[string]any
+	versions := map[string]float64{}
+	pulled := map[string]bool{}
 	for {
 		length := 0
 		for {
@@ -117,8 +119,25 @@ func TestProtocolServerHelper(t *testing.T) {
 			if strings.HasPrefix(mode, "rename-") {
 				capabilities["renameProvider"] = true
 			}
+			switch mode {
+			case "pull-static", "pull-refresh":
+				capabilities["diagnosticProvider"] = map[string]any{"identifier": "fixture", "interFileDependencies": true, "workspaceDiagnostics": false}
+			case "pull-silent":
+				capabilities["diagnosticProvider"] = map[string]any{"interFileDependencies": false, "workspaceDiagnostics": false}
+			case "pull-workspace":
+				capabilities["diagnosticProvider"] = map[string]any{"identifier": "ws", "interFileDependencies": false, "workspaceDiagnostics": true}
+			}
 			write(map[string]any{"jsonrpc": "2.0", "id": msg["id"], "result": map[string]any{"capabilities": capabilities}})
 		case "initialized":
+			if mode == "pull-dynamic" {
+				write(map[string]any{"jsonrpc": "2.0", "id": "register-1", "method": "client/registerCapability", "params": map[string]any{"registrations": []any{
+					map[string]any{"id": "pull-go", "method": "textDocument/diagnostic", "registerOptions": map[string]any{
+						"identifier": "dyn", "documentSelector": []any{map[string]any{"language": "go"}}, "interFileDependencies": false, "workspaceDiagnostics": false}},
+				}}})
+				write(map[string]any{"jsonrpc": "2.0", "id": "register-2", "method": "client/registerCapability", "params": map[string]any{"registrations": []any{
+					map[string]any{"id": "watch", "method": "workspace/didChangeWatchedFiles", "registerOptions": map[string]any{}},
+				}}})
+			}
 			if mode == "scoped-configuration" {
 				root, _ := os.Getwd()
 				scope := func(rel string) string { return string(protocol.URIFromPath(filepath.Join(root, rel))) }
@@ -240,7 +259,63 @@ func TestProtocolServerHelper(t *testing.T) {
 			write(map[string]any{"jsonrpc": "2.0", "id": msg["id"], "result": nil})
 		case "exit":
 			os.Exit(0)
+		case "textDocument/diagnostic":
+			params := msg["params"].(map[string]any)
+			uri := params["textDocument"].(map[string]any)["uri"].(string)
+			identifier, _ := params["identifier"].(string)
+			resultID := fmt.Sprintf("r%v", versions[uri])
+			if mode == "pull-silent" {
+				continue
+			}
+			if mode == "pull-refresh" && !pulled["retriggered"] {
+				pulled["retriggered"] = true
+				write(map[string]any{"jsonrpc": "2.0", "id": msg["id"], "error": map[string]any{"code": -32802, "message": "busy", "data": map[string]any{"retriggerRequest": true}}})
+				continue
+			}
+			if previous, _ := params["previousResultId"].(string); previous == resultID {
+				write(map[string]any{"jsonrpc": "2.0", "id": msg["id"], "result": map[string]any{"kind": "unchanged", "resultId": resultID}})
+			} else {
+				write(map[string]any{"jsonrpc": "2.0", "id": msg["id"], "result": map[string]any{"kind": "full", "resultId": resultID, "items": []any{
+					map[string]any{"range": map[string]any{"start": map[string]any{"line": 0, "character": 0}, "end": map[string]any{"line": 0, "character": 1}},
+						"message": fmt.Sprintf("pulled v%v %s %s", versions[uri], identifier, filepath.Base(uri)), "severity": 1, "data": map[string]any{"fix": 1}},
+				}}})
+			}
+			if mode == "pull-refresh" && !pulled["refreshed"] {
+				pulled["refreshed"] = true
+				write(map[string]any{"jsonrpc": "2.0", "id": "refresh-1", "method": "workspace/diagnostic/refresh"})
+			}
+		case "workspace/diagnostic":
+			params := msg["params"].(map[string]any)
+			root, _ := os.Getwd()
+			closed := func(name string) string { return string(protocol.URIFromPath(filepath.Join(root, name))) }
+			item := func(uri, kind, resultID, message string) map[string]any {
+				report := map[string]any{"uri": uri, "kind": kind, "resultId": resultID, "version": nil}
+				if kind == "full" {
+					report["items"] = []any{map[string]any{"range": map[string]any{"start": map[string]any{"line": 0, "character": 0}, "end": map[string]any{"line": 0, "character": 1}}, "message": message, "severity": 1}}
+				}
+				return report
+			}
+			if !pulled["workspace"] {
+				pulled["workspace"] = true
+				write(map[string]any{"jsonrpc": "2.0", "method": "$/progress", "params": map[string]any{"token": params["partialResultToken"],
+					"value": map[string]any{"items": []any{item(closed("closed-a.go"), "full", "a1", "closed a")}}}})
+				items := []any{item(closed("closed-b.go"), "full", "b1", "closed b")}
+				for uri := range versions {
+					items = append(items, item(uri, "full", "open", "workspace report for an open file"))
+				}
+				write(map[string]any{"jsonrpc": "2.0", "id": msg["id"], "result": map[string]any{"items": items}})
+				continue
+			}
+			write(map[string]any{"jsonrpc": "2.0", "id": msg["id"], "result": map[string]any{"items": []any{item(closed("closed-a.go"), "unchanged", "a1", "")}}})
 		case "textDocument/didOpen":
+			if doc := msg["params"].(map[string]any)["textDocument"].(map[string]any); strings.HasPrefix(mode, "pull-") {
+				versions[doc["uri"].(string)] = doc["version"].(float64)
+				if mode == "pull-silent" {
+					write(map[string]any{"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": map[string]any{"uri": doc["uri"], "version": doc["version"], "diagnostics": []any{
+						map[string]any{"range": map[string]any{"start": map[string]any{"line": 0, "character": 0}, "end": map[string]any{"line": 0, "character": 1}}, "message": "pushed", "severity": 2}}}})
+				}
+				continue
+			}
 			if strings.HasPrefix(mode, "publication-") {
 				doc := msg["params"].(map[string]any)["textDocument"].(map[string]any)
 				writeProtocolPublications(write, mode, doc)
@@ -260,6 +335,10 @@ func TestProtocolServerHelper(t *testing.T) {
 			write(map[string]any{"jsonrpc": "2.0", "method": "$/progress", "params": map[string]any{"token": 7, "value": map[string]any{"kind": "end"}}})
 		case "textDocument/didChange":
 			doc := msg["params"].(map[string]any)["textDocument"].(map[string]any)
+			if strings.HasPrefix(mode, "pull-") {
+				versions[doc["uri"].(string)] = doc["version"].(float64)
+				continue
+			}
 			if strings.HasPrefix(mode, "publication-") {
 				writeProtocolPublications(write, mode, doc)
 				continue
@@ -385,10 +464,16 @@ func TestLSPProtocolConfigurationAndDuplicateOpen(t *testing.T) {
 				workspace["executeCommand"] == nil || workspace["workspaceEdit"] == nil {
 				t.Fatalf("unsupported capabilities: %v", caps)
 			}
-			for _, feature := range caps["textDocument"].(map[string]any) {
-				if feature.(map[string]any)["dynamicRegistration"] == true {
-					t.Fatal("unsupported dynamic registration")
+			// Dynamic registration is announced only where Crude keeps the
+			// registrations: pull diagnostics.
+			for name, feature := range caps["textDocument"].(map[string]any) {
+				if feature.(map[string]any)["dynamicRegistration"] == true && name != "diagnostic" {
+					t.Fatalf("unsupported dynamic registration: %s", name)
 				}
+			}
+			if diagnostic, _ := caps["textDocument"].(map[string]any)["diagnostic"].(map[string]any); diagnostic["dynamicRegistration"] != true ||
+				workspace["diagnostics"].(map[string]any)["refreshSupport"] != true {
+				t.Fatalf("pull diagnostics not announced: %v", caps)
 			}
 			if p["rootPath"] != root || p["rootUri"] != string(protocol.URIFromPath(root)) {
 				t.Fatalf("root params: %v", p)

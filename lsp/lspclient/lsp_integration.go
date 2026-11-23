@@ -93,7 +93,9 @@ func WithServerEnv(env map[string]string) LSPIntegrationOption {
 }
 
 type lspLaunch struct {
-	evidence   *serverEvidence
+	evidence *serverEvidence
+	// pull is this launch's pull diagnostic state; its work ends with Stop.
+	pull       *pullState
 	cancel     context.CancelFunc
 	done       chan struct{}
 	client     *lsp.Client
@@ -141,6 +143,13 @@ type openFileState struct {
 	syncedAt    time.Time
 	publishedAt time.Time
 	publication insight.DiagnosticPublication
+	// parts are this version's reports by source (push, each pull provider);
+	// publication is their union. pulls keep each provider's pull state
+	// across versions. changed marks a version from an edit, whose pull is
+	// followed by the other open documents of inter-file providers.
+	parts   map[string]diagnosticPart
+	pulls   map[string]*documentPull
+	changed bool
 	// This immutable adjunct is original protocol evidence at this publication,
 	// not a second diagnostic projection or shell-visible provider-data cache.
 	actionDiagnostics codeActionDiagnosticAdjunct
@@ -251,7 +260,7 @@ func (l *LSPIntegration) Start(ctx context.Context) error {
 	}
 	started := time.Now()
 	initCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	launch := &lspLaunch{cancel: cancel, done: make(chan struct{}), evidence: &serverEvidence{}}
+	launch := &lspLaunch{cancel: cancel, done: make(chan struct{}), evidence: &serverEvidence{}, pull: newPullState()}
 	l.evidence = launch.evidence
 	l.launch = launch
 	l.mu.Unlock()
@@ -293,6 +302,7 @@ func (l *LSPIntegration) Start(ctx context.Context) error {
 			client.RegisterNotificationHandler("textDocument/publishDiagnostics", func(_ context.Context, _ string, params json.RawMessage) {
 				l.receiveDiagnostics(launch, params)
 			})
+			l.registerPullHandlers(launch, client)
 			client.RegisterHandler("window/workDoneProgress/create", func(context.Context, string, json.RawMessage) (any, error) {
 				return nil, nil
 			})
@@ -311,13 +321,23 @@ func (l *LSPIntegration) Start(ctx context.Context) error {
 			})
 			client.RegisterNotificationHandler("$/progress", func(_ context.Context, _ string, params json.RawMessage) {
 				var progress struct {
-					Token any `json:"token"`
-					Value struct {
-						Kind string `json:"kind"`
-					} `json:"value"`
+					Token any             `json:"token"`
+					Value json.RawMessage `json:"value"`
 				}
-				if json.Unmarshal(params, &progress) == nil {
-					l.updateProgress(launch, fmt.Sprint(progress.Token), progress.Value.Kind)
+				if json.Unmarshal(params, &progress) != nil {
+					return
+				}
+				token := fmt.Sprint(progress.Token)
+				// Partial results of a workspace diagnostic pull share
+				// $/progress with work-done progress; the token tells them apart.
+				if l.receivePartialResult(launch, token, progress.Value) {
+					return
+				}
+				var value struct {
+					Kind string `json:"kind"`
+				}
+				if json.Unmarshal(progress.Value, &value) == nil {
+					l.updateProgress(launch, token, value.Kind)
 				}
 			})
 			err = client.Initialize(initCtx, true)
@@ -331,6 +351,9 @@ func (l *LSPIntegration) Start(ctx context.Context) error {
 	} else if err == nil {
 		l.client = client
 		l.pipe = pipe
+		if launch.pull != nil {
+			installStaticProviderLocked(launch, client)
+		}
 	}
 	l.mu.Unlock()
 	if err != nil && client != nil {
@@ -343,6 +366,9 @@ func (l *LSPIntegration) Start(ctx context.Context) error {
 	}
 	l.mu.Lock()
 	launch.err = err
+	if err != nil && launch.pull != nil {
+		launch.pull.stopWork()
+	}
 	l.teardownErr = errors.Join(l.teardownErr, launch.cleanupErr)
 	if err != nil && launch.cleanupErr == nil && l.launch == launch {
 		l.launch = nil
@@ -386,7 +412,7 @@ func (l *LSPIntegration) OpenFile(ctx context.Context, filePath, languageID, tex
 		return 0, err
 	}
 	if state := l.openFiles[fp]; state != nil {
-		return l.updateFileLocked(ctx, state, text, boundary)
+		return l.updateFileLocked(ctx, fp, state, text, boundary)
 	}
 	if l.versionCounter == math.MaxInt32 {
 		return 0, errors.New("LSP wire version exhausted")
@@ -403,6 +429,7 @@ func (l *LSPIntegration) OpenFile(ctx context.Context, filePath, languageID, tex
 	l.openFiles[fp] = state
 	l.versionCounter = version
 	l.signalLocked()
+	l.pullDocumentLocked(l.launch, fp, state, "")
 	return version, nil
 }
 
@@ -421,10 +448,10 @@ func (l *LSPIntegration) UpdateFile(ctx context.Context, filePath, text string, 
 	if state == nil {
 		return 0, errors.New("LSP document is not open")
 	}
-	return l.updateFileLocked(ctx, state, text, boundary)
+	return l.updateFileLocked(ctx, fp, state, text, boundary)
 }
 
-func (l *LSPIntegration) updateFileLocked(ctx context.Context, state *openFileState, text string, boundary insight.Boundary) (int, error) {
+func (l *LSPIntegration) updateFileLocked(ctx context.Context, path string, state *openFileState, text string, boundary insight.Boundary) (int, error) {
 	if state.text == text && equalBoundary(state.boundary, boundary) {
 		return state.version, nil
 	}
@@ -439,8 +466,10 @@ func (l *LSPIntegration) updateFileLocked(ctx context.Context, state *openFileSt
 	}
 	state.text, state.boundary = text, cloneBoundary(boundary)
 	state.resetVersion(version)
+	state.changed = true
 	l.versionCounter = version
 	l.signalLocked()
+	l.pullDocumentLocked(l.launch, path, state, "")
 	return version, nil
 }
 
@@ -470,6 +499,11 @@ func (l *LSPIntegration) CloseFile(ctx context.Context, filePath string) {
 		return
 	}
 	delete(l.openFiles, fp)
+	for _, pull := range state.pulls {
+		if pull.inFlight {
+			pull.cancel()
+		}
+	}
 	l.signalLocked()
 	uri := state.uri
 	client := l.client
@@ -488,6 +522,9 @@ func (l *LSPIntegration) NotifySave(ctx context.Context, path, text string, reas
 		return
 	}
 	_ = l.client.NotifyDocumentSave(ctx, state.uri, text, reason, before)
+	if !before {
+		l.pullDocumentLocked(l.launch, filepath.Clean(path), state, "")
+	}
 }
 
 // RequestDocumentSymbols returns a hierarchical outline (functions, types,
@@ -674,6 +711,9 @@ func (l *LSPIntegration) Stop() error {
 	var starting *lsp.Client
 	if launch != nil {
 		launch.cancel()
+		if launch.pull != nil {
+			launch.pull.stopWork()
+		}
 		starting = launch.client
 	}
 	l.mu.Unlock()
@@ -691,6 +731,10 @@ func (l *LSPIntegration) Stop() error {
 	if launch != nil {
 		<-launch.done
 		teardownErr = errors.Join(teardownErr, launch.cleanupErr)
+		// Pull goroutines end with the work context and the closed connection.
+		if launch.pull != nil {
+			launch.pull.wg.Wait()
+		}
 	}
 	l.mu.Lock()
 	l.teardownErr = errors.Join(l.teardownErr, teardownErr)
@@ -776,7 +820,6 @@ func (l *LSPIntegration) updateDiagnostics(launch *lspLaunch, uri protocol.Docum
 		l.mu.Unlock()
 		return
 	}
-	client := l.client
 	state := l.openFiles[filePath]
 	if state == nil && version == nil && l.onUnopened != nil && l.sequence != math.MaxUint64 {
 		l.sequence++
@@ -794,35 +837,13 @@ func (l *LSPIntegration) updateDiagnostics(launch *lspLaunch, uri protocol.Docum
 		l.mu.Unlock()
 		return
 	}
-	publication := insight.DiagnosticPublication{
-		Boundary: cloneBoundary(state.boundary), WireVersion: state.version,
-		Sequence: l.sequence + 1,
+	if state.parts == nil {
+		state.parts = map[string]diagnosticPart{}
 	}
-	if version != nil {
-		reported := int(*version)
-		publication.ReportedVersion = &reported
-	}
-	// Only one bounded transient publication per synchronized document is kept
-	// for protocol waiters. Product fact identity and validity live upstream.
-	publication.Diagnostics, publication.Limited, publication.Detail = transportDiagnostics(diags)
-	l.sequence = publication.Sequence
-	state.publishedAt, state.publication = time.Now(), publication
-	state.actionDiagnostics = qualifyActionDiagnostics(state.text, publication, originals)
-	l.signalLocked()
-	cb := l.onDiagnostics
-	// The callback gets its own mutable containers, not the waiter's storage.
-	publication = clonePublication(publication)
+	state.parts[pushPart] = pushDiagnosticPart(diags, version, originals)
+	deliver := l.publishPartsLocked(launch, filePath, state)
 	l.mu.Unlock()
-	if cb != nil {
-		l.mu.Lock()
-		current := l.launch == launch && l.client == client && l.openFiles[filePath] == state &&
-			state.version == publication.WireVersion && equalBoundary(state.boundary, publication.Boundary) &&
-			state.publication.Sequence == publication.Sequence
-		l.mu.Unlock()
-		if current {
-			cb(publication)
-		}
-	}
+	deliver()
 }
 
 // transportDiagnostics converts one publication within the transport bounds.
@@ -857,7 +878,7 @@ func diagnosticCode(code any) string {
 
 func (s *openFileState) resetVersion(version int) {
 	s.version, s.syncedAt = version, time.Now()
-	s.publishedAt, s.publication = time.Time{}, insight.DiagnosticPublication{}
+	s.publishedAt, s.publication, s.parts = time.Time{}, insight.DiagnosticPublication{}, nil
 	s.actionDiagnostics = codeActionDiagnosticAdjunct{}
 }
 

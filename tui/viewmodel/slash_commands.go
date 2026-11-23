@@ -164,8 +164,10 @@ func (m *App) handleSlashBackendResult(msg slashBackendResultMsg) {
 }
 
 // presentCompactResult shows the session's own words for a /compact outcome.
-// The boundary row in the chat carries progress and the final result; this is
-// the immediate answer to the command.
+// The boundary row in the chat and the activity strip carry progress and the
+// final result, so a completed compaction adds no notice. A notice answers
+// only what the transcript does not show, such as a request that waits for
+// the current step.
 func (m *App) presentCompactResult(agentID string, result conversation.CompactResultMsg) {
 	switch {
 	case result.Cancelled:
@@ -174,8 +176,10 @@ func (m *App) presentCompactResult(agentID string, result conversation.CompactRe
 		m.ws.Logger().Error("COMPACT", "slash_failed", "error", result.Error)
 		m.Feedback.NotifyError(result.Error)
 	case result.Desc != "":
-		m.ws.Logger().Info("COMPACT", "slash_ok", "operation_id", result.OperationID, "before", result.Before, "after", result.After)
+		m.ws.Logger().Info("COMPACT", "slash_answer", "operation_id", result.OperationID, "answer", result.Desc)
 		m.Feedback.NotifyAgentTransient(agentID, result.Desc, statuscenter.SeverityInfo)
+	default:
+		m.ws.Logger().Info("COMPACT", "slash_ok", "operation_id", result.OperationID, "before", result.Before, "after", result.After)
 	}
 }
 

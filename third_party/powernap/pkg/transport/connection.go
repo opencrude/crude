@@ -7,8 +7,10 @@ import (
 	"io"
 	"log"
 	"log/slog"
+	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/sourcegraph/jsonrpc2"
 )
@@ -29,6 +31,9 @@ type Connection struct {
 	// Request tracking
 	requestMu sync.Mutex
 	requests  map[jsonrpc2.ID]chan *Message
+
+	// cancelable numbers requests that CallCancelable can cancel by ID.
+	cancelable atomic.Uint64
 }
 
 // NewConnection creates a new managed connection.
@@ -69,6 +74,29 @@ func (c *Connection) Call(ctx context.Context, method string, params any, result
 	}
 
 	return c.conn.Call(ctx, method, params, result) //nolint:wrapcheck
+}
+
+// CallCancelable is Call for requests whose caller may stop waiting, such as
+// a diagnostic pull superseded by a newer document version. It picks its own
+// string ID, which never collides with the default numeric sequence, and when
+// ctx ends before the response it sends $/cancelRequest for that ID so the
+// server can stop the work, as the LSP base protocol describes.
+func (c *Connection) CallCancelable(ctx context.Context, method string, params any, result any) error {
+	if c.closed.Load() {
+		return fmt.Errorf("connection is closed")
+	}
+	id := jsonrpc2.ID{Str: "cancelable-" + strconv.FormatUint(c.cancelable.Add(1), 10), IsString: true}
+	waiter, err := c.conn.DispatchCall(ctx, method, params, jsonrpc2.PickID(id))
+	if err != nil {
+		return err //nolint:wrapcheck
+	}
+	err = waiter.Wait(ctx, result)
+	if ctx.Err() != nil && !c.closed.Load() {
+		notify, cancel := context.WithTimeout(context.Background(), time.Second)
+		_ = c.conn.Notify(notify, "$/cancelRequest", map[string]any{"id": id.Str})
+		cancel()
+	}
+	return err //nolint:wrapcheck
 }
 
 // Notify sends a notification to the language server.

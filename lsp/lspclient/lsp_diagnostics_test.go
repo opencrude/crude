@@ -201,7 +201,7 @@ func TestEqualTextBoundaryClearsTransientPublication(t *testing.T) {
 	// The transport lock spans admission and installation. Inspect from the
 	// send owner before a real server response could supersede the reset.
 	l.mu.Lock()
-	wire, err := l.updateFileLocked(ctx, l.openFiles[path], "unchanged", b)
+	wire, err := l.updateFileLocked(ctx, path, l.openFiles[path], "unchanged", b)
 	state := l.openFiles[path]
 	if err != nil || wire != 2 || !state.publishedAt.IsZero() || state.publication.Sequence != 0 {
 		t.Errorf("old settled publication survived equal-text revision: %+v, %v", state, err)

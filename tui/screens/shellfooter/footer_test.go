@@ -210,6 +210,36 @@ func TestPillNavigationPreservesGuidanceAndFeedback(t *testing.T) {
 	}
 }
 
+// The open panel's pill and pills that need attention stay on a narrow rail;
+// hints and quieter destinations give way to them, not the other way round.
+func TestNarrowFooterKeepsTheOpenPanelAndAttentionPills(t *testing.T) {
+	right := []Segment{
+		{Text: "Problems: off", Pill: true, Action: "problems", Priority: 1},
+		{Text: "2 Notices", Pill: true, Attention: true, Action: "notices", Priority: 1},
+		{Text: "Terminals", Pill: true, Action: "terminals", Priority: 1},
+		{Text: "Git", Pill: true, Action: "git", Priority: 1},
+		{Text: "Board", Pill: true, Action: "board"},
+		{Text: "Memory", Pill: true, Action: "memory"},
+		{Text: "Performance", Pill: true, Action: "performance"},
+		{Text: "Workspace", Pill: true, Active: true, Action: "workspace"},
+	}
+	left := []Segment{
+		{Text: "Ctrl+F find", Priority: 3}, {Text: "Ctrl+G go to line", Priority: 3},
+		{Text: "Ctrl+] next tab", Priority: 3}, {Text: "Ctrl+1 focus file tree", Priority: 3},
+	}
+	for _, width := range []int{60, 52, 80} {
+		_, row := paintFooter(t, Projection{Left: left, Right: right}, width)
+		for _, want := range []string{"2 Notices", "Workspace", "More"} {
+			if !strings.Contains(row, want) {
+				t.Fatalf("width %d dropped %q: %q", width, want, row)
+			}
+		}
+		if !strings.Contains(row, "Ctrl+F find") {
+			t.Fatalf("width %d dropped every hint: %q", width, row)
+		}
+	}
+}
+
 func TestNarrowFooterKeepsTheStartOfLongFeedback(t *testing.T) {
 	right := []Segment{
 		{Text: "Notices", Pill: true, Action: "notices"},

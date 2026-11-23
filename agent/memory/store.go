@@ -14,11 +14,13 @@ import (
 )
 
 // Size caps (bytes). Content beyond these is rejected (memories must stay
-// prompt-sized); history mirror text is truncated instead.
+// prompt-sized); history mirror text keeps its beginning and end instead.
+// One mirrored text is about the size of Codex's 10,000-byte memory
+// extraction row, so a typical final report fits whole.
 const (
 	MaxTitleBytes    = 256
 	MaxContentBytes  = 64 << 10
-	maxTurnTextBytes = 4 << 10
+	maxTurnTextBytes = 8 << 10
 )
 
 // MetaFTSFault is the memory_meta key recording why FTS5 was disabled.

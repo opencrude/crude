@@ -360,7 +360,7 @@ func TestRedactedBoundedObservationsRetainOrigin(t *testing.T) {
 	if err != nil || len(observations) != 1 || strings.Contains(observations[0].Summary, "hunter2") || strings.Contains(observations[0].Summary, "do-not-store-me") || observations[0].MessageID != "human" {
 		t.Fatalf("unsafe or untraceable observation: %+v %v", observations, err)
 	}
-	rendered := rootprompt.MemoryExtractionUser(PrepareExtractionInput("", "", observation.Summary, observations))
+	rendered := rootprompt.MemoryExtractionUser(PrepareExtractionInput("", "", PlanExtractionWindow([]HistoryHit{{SessionID: "redacted", Turn: 1, UserText: observation.Summary}}, observations)))
 	if strings.Contains(rendered, "hunter2") || !strings.Contains(rendered, `"message_id":"human"`) {
 		t.Fatalf("unsafe extraction prompt: %s", rendered)
 	}

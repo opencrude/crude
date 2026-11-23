@@ -115,10 +115,17 @@ func TestPerformanceFooterToggleWithoutSession(t *testing.T) {
 func TestFooterMoreOpensPerformanceWithoutSession(t *testing.T) {
 	app := newFullTestApp(t)
 	wsOf(app).Logger = stubLogger{}
-	app.width, app.height = 48, 24
+	app.height = 24
 	app.ActiveSession = nil
-	app.paintShellFrame()
-	footer := rowText(app, app.height-1)
+	// Find the widest footer that moves Performance into More; the exact
+	// width follows the shell's content inset and pill set.
+	footer := ""
+	for app.width = 48; app.width > 20; app.width-- {
+		app.paintShellFrame()
+		if footer = rowText(app, app.height-1); !strings.Contains(footer, "Performance") {
+			break
+		}
+	}
 	if strings.Contains(footer, "Performance") {
 		t.Fatalf("fixture must overflow the Performance control: %q", footer)
 	}

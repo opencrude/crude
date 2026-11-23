@@ -101,7 +101,7 @@ them, are in [code layout](../reference/code-layout.md).
 | `workspace/localhistory/` | Immutable snapshots, restore plans, verification, retention ([local history](../reference/local-history.md)). |
 | `text/textdiff/`, `text/unidiff/` | Exact line changes from immutable text; unified diff helpers. |
 | `agent/prompthistory/` | Prompt history with score-based eviction. |
-| `lsp/lspclient/` | Nonvisual LSP subprocess transport and pipe monitor ([editor](../reference/editor.md)). |
+| `lsp/lspclient/` | Nonvisual LSP subprocess transport and pipe monitor, including pull and push diagnostics ([editor](../reference/editor.md#pull-and-push-diagnostics)). |
 | `lsp/lspedit/` | Passive bounded original-JSON text-edit normalization and strict bidirectional UTF-8-byte/UTF-16 source positions; preserves nullable wire versions without filesystem or execution authority ([reviewed rename](../reference/editor.md#reviewed-symbol-rename)). |
 | `lsp/lspaction/` | Passive bounded original-JSON literal-action parsing and edit-only resolve comparison; preserves opaque data and unsupported rows without provider, URI, source or mutation authority ([manual code actions](../reference/editor.md#manual-code-actions)). |
 | `lsp/lspnav/` | Passive bounded original-JSON Location/LocationLink and DocumentHighlight normalization with distinct null/empty answers; preserves ranges/order/URI data without file-read or target-freshness authority ([qualified navigation](../reference/editor.md#qualified-location-navigation), [occurrences](../reference/editor.md#occurrences-of-the-symbol-at-the-caret)). |

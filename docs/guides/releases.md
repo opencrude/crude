@@ -308,7 +308,7 @@ Build the native platform on the local machine from a clean, committed checkout:
 
 ```bash
 . scripts/libghostty_env.sh
-go run ./internal/wiregen -check
+go run ./tools/wiregen -check
 python scripts/test_go.py
 golangci-lint run ./...
 make design-audit docs-check bench-gate

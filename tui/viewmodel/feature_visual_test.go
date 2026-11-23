@@ -408,7 +408,15 @@ func (m *featureVisualModel) journeyFeature(key, phase int) error {
 				}
 				return nil
 			}
-			return featureVisualPaint(v, []string{"Memory", "Workspace actor step"}[phase-1])
+			if phase == 1 {
+				// The Overview names its memory owner: one Crude process, or
+				// the shell and core apart. A footer pill is not the evidence.
+				if featureVisualPaint(v, "Crude memory") != nil {
+					return featureVisualPaint(v, "Shell memory")
+				}
+				return nil
+			}
+			return featureVisualPaint(v, "Workspace actor step")
 		})
 	case 6:
 		label = "Skills real capability snapshot; no activation"

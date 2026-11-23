@@ -12,6 +12,7 @@ import (
 
 	"crude/agent/memory"
 	"crude/agent/provider"
+	"crude/types/command"
 )
 
 func memoryIntegrationMessages() []provider.ChatMessage {
@@ -204,5 +205,113 @@ func TestMemoryValidationDoesNotTreatNoTestsOrMaskedFailureAsSuccess(t *testing.
 		if len(observations) != 1 || (observations[0].Kind == memory.EvidenceValidation && observations[0].Outcome == memory.OutcomeSucceeded) {
 			t.Fatalf("unverified validation became success: %q %+v", command, observations)
 		}
+	}
+}
+
+// longEnforcementTurn reproduces the turn whose summary said that no source
+// moves were confirmed: a short question, about 250 tool results of which the
+// commit and push came last, and a final report whose list of tree changes
+// starts after its first 1,600 bytes.
+func longEnforcementTurn() ([]provider.ChatMessage, string) {
+	human := provider.NewTextMessage("user", "how can we enforce these rules ?")
+	human.InternalID = "enforce-question"
+	messages := []provider.ChatMessage{human}
+	add := func(id, name, arguments, output string) {
+		messages = append(messages, provider.ChatMessage{Role: "assistant", ToolCalls: []provider.ToolCall{
+			{ID: id, Function: provider.FunctionCall{Name: name, Arguments: arguments}}}},
+			provider.ChatMessage{Role: "tool", ToolCallID: id, Content: provider.TextContent(output)})
+	}
+	for index := range 240 {
+		add(fmt.Sprintf("explore-%d", index), "read_file", fmt.Sprintf(`{"path":"pkg/file%d.go"}`, index), strings.Repeat("package pkg\n", 20))
+	}
+	run := func(id, commandLine, output string) {
+		zero := 0
+		payload, err := json.Marshal(command.Result{Command: commandLine, CWD: "/repo", ExitCode: &zero,
+			OutputDescriptor: command.OutputDescriptor{Status: command.Completed, TotalBytes: len(output)}, Output: output})
+		if err != nil {
+			panic(err)
+		}
+		arguments, _ := json.Marshal(map[string]string{"command": commandLine, "cwd": "/repo"})
+		add(id, "execute_command", string(arguments), string(payload))
+	}
+	run("conventions", "make conventions", "layoutcheck: all rules passed")
+	run("commit", "git commit -m layout", "[master df84dc45] Make the repository layout rule-based and enforce it\n 597 files changed")
+	run("push", "git push", "To github.com:example/crude.git\n   8a071587..df84dc45  master -> master")
+	report := "The rules are enforced now, and the whole tree passes them. Everything is committed and pushed (df84dc45).\n\n" +
+		strings.Repeat("How the rules are enforced: layoutcheck reports each problem with its rule and a fix. ", 22) +
+		"\n\n**What changed in the tree:** group folders now hold only packages and the agent turn loop moved to agent/turnloop.\n\n" +
+		strings.Repeat("Checks that pass: build, vet, cross-builds, wiregen, conventions and docs. ", 12) +
+		"\n\n**Not done:** viewmodel.App still has 1,682 methods."
+	return messages, report
+}
+
+func TestMemoryExtractionKeepsTheOutcomeOfALongTurn(t *testing.T) {
+	messages, report := longEnforcementTurn()
+	if index := strings.Index(report, "What changed in the tree"); index < 1600 {
+		t.Fatalf("fixture must place the tree changes past the old 1,600-byte cut, at %d", index)
+	}
+	store := newTestMemoryStore(t)
+	var prompts []string
+	server := memoryExtractionServer(t, memory.ExtractionResult{Summary: &memory.ExtractedSummary{
+		Title: "Layout enforcement", Summary: "The assistant reported the restructure committed and pushed.", Outcome: "completed"}},
+		func(prompt string) { prompts = append(prompts, prompt) })
+	defer server.Close()
+	session := &Session{sessionID: "long-turn", memoryStore: store, cfg: modelAttributionConfig(server.URL, "curator-model")}
+	if err := store.RecordTurn(t.Context(), turnRecordFromMessages(session.sessionID, 1, messages, report)); err != nil {
+		t.Fatal(err)
+	}
+	session.runExtraction(t.Context(), session.sessionID, false)
+	session.finishMemoryJobs()
+	if len(prompts) != 1 {
+		t.Fatalf("curator requests = %d, want 1", len(prompts))
+	}
+	prompt := prompts[0]
+	for _, want := range []string{"What changed in the tree", "Not done:** viewmodel.App", `"tool_call_id":"commit"`,
+		`"tool_call_id":"push"`, `master -\u003e master`, `"tool_call_id":"conventions"`, `"message_id":"enforce-question"`} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("the curator did not see %q", want)
+		}
+	}
+	if strings.Contains(prompt, `"tool_call_id":"explore-0"`) {
+		t.Error("early exploration displaced the turn's outcome evidence")
+	}
+	summary, found, err := store.SessionSummary(t.Context(), session.sessionID)
+	if err != nil || !found || summary.Outcome != "completed" || summary.TurnCount != 1 {
+		t.Fatalf("session summary = %+v found=%v err=%v", summary, found, err)
+	}
+}
+
+// A window of large turns must never cut its newest turn: the curator takes
+// the oldest turns that fit one request and continues from the watermark.
+func TestMemoryExtractionCoversEveryPendingTurnInBoundedRequests(t *testing.T) {
+	store := newTestMemoryStore(t)
+	var prompts []string
+	server := memoryExtractionServer(t, memory.ExtractionResult{Summary: &memory.ExtractedSummary{
+		Title: "Long session", Summary: "Several large turns.", Outcome: "in-progress"}},
+		func(prompt string) { prompts = append(prompts, prompt) })
+	defer server.Close()
+	session := &Session{sessionID: "large-turns", memoryStore: store, cfg: modelAttributionConfig(server.URL, "curator-model")}
+	const turns = 6
+	for turn := 1; turn <= turns; turn++ {
+		human := provider.NewTextMessage("user", fmt.Sprintf("request %d: ", turn)+strings.Repeat("detail ", 1200))
+		human.InternalID = fmt.Sprintf("human-%d", turn)
+		final := strings.Repeat("progress ", 1100) + fmt.Sprintf("outcome-of-turn-%d", turn)
+		if err := store.RecordTurn(t.Context(), turnRecordFromMessages(session.sessionID, turn, []provider.ChatMessage{human}, final)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	session.runExtraction(t.Context(), session.sessionID, false)
+	session.finishMemoryJobs()
+	if len(prompts) < 2 {
+		t.Fatalf("curator requests = %d; six large turns cannot fit one request", len(prompts))
+	}
+	all := strings.Join(prompts, "\n")
+	for turn := 1; turn <= turns; turn++ {
+		if !strings.Contains(all, fmt.Sprintf("outcome-of-turn-%d", turn)) {
+			t.Errorf("turn %d's outcome never reached the curator", turn)
+		}
+	}
+	if watermark := session.extractWatermark(t.Context(), store, session.sessionID); watermark != turns {
+		t.Fatalf("watermark = %d, want %d", watermark, turns)
 	}
 }

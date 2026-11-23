@@ -286,6 +286,11 @@ func TestManualCompactRebuildsActiveContextWithoutDeletingArchive(t *testing.T) 
 	if result.Error != "" || calls != 1 || len(s.msgs) != len(history) || len(s.activeContext) >= len(history) || s.contextGeneration <= 1 {
 		t.Fatalf("compact result=%+v archive=%d active=%d generation=%d", result, len(s.msgs), len(s.activeContext), s.contextGeneration)
 	}
+	// The boundary row and the activity strip report a completed compaction.
+	// A second, longer notice would repeat them.
+	if result.Desc != "" {
+		t.Fatalf("completed compaction posts a notice: %q", result.Desc)
+	}
 	for index, model := range requestModels {
 		if model != "errand-test-model" {
 			t.Fatalf("compaction request %d model=%q want Errand category model", index, model)

@@ -9,15 +9,16 @@ import (
 	"time"
 )
 
-// RecordTurn upserts one compact cross-session history row. Texts are
-// truncated to keep the mirror small; full transcripts stay in the
-// per-session databases; this index only has to make them findable.
+// RecordTurn upserts one compact cross-session history row. Texts keep their
+// beginning and end within maxTurnTextBytes; full transcripts stay in the
+// per-session databases. The row is the memory curator's source for the turn,
+// so a long report keeps its result and open work.
 func (st *Store) RecordTurn(ctx context.Context, turn TurnRecord) error {
 	if turn.SessionID == "" || turn.Turn <= 0 {
 		return fmt.Errorf("memory: turn record requires session id and turn number")
 	}
-	userText := TruncateBytes(Redact(strings.TrimSpace(turn.UserText)), maxTurnTextBytes)
-	assistantText := TruncateBytes(Redact(strings.TrimSpace(turn.AssistantText)), maxTurnTextBytes)
+	userText := TruncateMiddle(Redact(strings.TrimSpace(turn.UserText)), maxTurnTextBytes)
+	assistantText := TruncateMiddle(Redact(strings.TrimSpace(turn.AssistantText)), maxTurnTextBytes)
 	toolNames := TruncateBytes(Redact(strings.Join(turn.ToolNames, " ")), maxTurnTextBytes)
 	files := TruncateBytes(Redact(strings.Join(turn.Files, " ")), maxTurnTextBytes)
 	norm := NormalizeText(userText, assistantText, toolNames, files)

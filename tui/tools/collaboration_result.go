@@ -347,6 +347,26 @@ func eventKindLabel(kind collaboration.EventKind) string {
 	}
 }
 
+// SentMessageBody returns the text a successful call sent to other agents:
+// the delivered event body of agent_send and agent_respond, or the body of
+// a published report. The chat shows it like a received message; delivery
+// details stay behind disclosure. Other tools return "".
+func SentMessageBody(name, content string) string {
+	switch name {
+	case "agent_send", "agent_respond":
+		var result collaboration.PublishResult
+		if json.Unmarshal([]byte(content), &result) == nil {
+			return strings.TrimSpace(result.Event.Body)
+		}
+	case "publish_report":
+		var published collaboration.PublishReportResult
+		if json.Unmarshal([]byte(content), &published) == nil {
+			return strings.TrimSpace(published.Artifact.Body)
+		}
+	}
+	return ""
+}
+
 func CollaborationOperand(name, content, input string) string {
 	switch name {
 	case "agent_send", "agent_respond", "agent_control":

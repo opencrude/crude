@@ -1910,6 +1910,61 @@ Only reports inside both the workspace root and the producer root are accepted.
   diagnostic opens the file and applies the location unless the buffer has
   unsaved changes.
 
+#### Pull and push diagnostics
+
+Crude uses the diagnostic model each server offers; the user does not choose
+one. The design follows the LSP 3.17 pull diagnostics specification and VS
+Code's language client (`vscode-languageserver-node`,
+`client/src/common/diagnostic.ts`). `lsp/lspclient/lsp_pull.go` owns it.
+
+- **Announcement.** Initialize announces `textDocument.diagnostic` with dynamic
+  registration (related documents and markup off) and
+  `workspace.diagnostics.refreshSupport`. Several servers stop pushing when a
+  client announces pull (the vscode JSON, CSS and HTML servers, pyright), so
+  the announcement and the pulls are one contract.
+- **Providers.** The static `diagnosticProvider` and each
+  `client/registerCapability` registration of `textDocument/diagnostic` are
+  providers of the launch, matched to open documents by their document
+  selector (language, file scheme, LSP glob through doublestar). Other dynamic
+  registrations are refused, as before. `client/unregisterCapability` removes a
+  provider and its part.
+- **Document pull.** A document is pulled after `didOpen`, after each admitted
+  `didChange` (already paced by **Update delay**), after save and on
+  `workspace/diagnostic/refresh`. One request per document and provider is in
+  flight; a new reason cancels it with `$/cancelRequest` and pulls again.
+  `unchanged` repeats the kept full report of its result ID. `ServerCancelled`
+  pulls again unless `retriggerRequest` is false. With inter-file dependencies,
+  an edit's pull is followed by the provider's other open documents, one at a
+  time, 500 ms apart.
+- **Only open documents are pulled.** Servers answer a pull for a file they
+  have not opened with an empty full report, which would erase real problems.
+  Closed files get pull answers through a disk view of the project check or
+  from workspace pull.
+- **Parts.** Push and each pull provider are separate parts of the document's
+  one publication for the current version, each replaced only by its own
+  source, as VS Code and Neovim keep separate collections. A pull report is
+  exact for the version it was asked for, so code actions receive its original
+  items. A push-only document keeps the server's own notification as code-action
+  evidence.
+- **Silence.** A pull has a 20-second deadline. After three unanswered pulls in
+  a row the provider is left out for the rest of the launch, and the server's
+  pushes remain.
+- **Exact answers.** `AwaitDiagnostics` settles on a pull answer after the usual
+  short quiet period. The project check and agent `lsp` checks of pull servers
+  therefore get an answer for each file instead of "did not report in time".
+- **Workspace pull.** A provider with `workspaceDiagnostics` makes the server a
+  project reporter (`reportsProjectLocked`): coverage says "Checks the whole
+  project" and the project check skips its files. `workspace/lsp_workspace_pull.go`
+  keeps one `workspace/diagnostic` request per server with `previousResultIds`
+  and a partial result token. Reports for files that no document holds enter
+  `receiveUnopenedDiagnostics`, so an empty full report clears a file; reports
+  for open documents give way to their own pulls. When the server ends the
+  request, Crude asks again after 2 seconds; after six errors in a row the
+  project check covers the server. **Check closed files** governs it: Off starts
+  no request, When idle starts and repeats it only when the project check's gate
+  allows, Always whenever the server runs. A running request is not cancelled
+  for typing. Refresh, Stop and settings changes cancel it.
+
 #### Closed files, disk views and restarts
 
 These rules are generic. No rule names a language or server.

@@ -26,7 +26,9 @@ func TestNarrowContentLayoutNeverFabricatesInnerColumns(t *testing.T) {
 		terminalW := activityW + wantContent
 		app.width = terminalW
 		layout := app.computeContentLayout()
-		wantPad := min(requestedPad, wantContent/2)
+		// ui.ContentInset gives up the inset before it squeezes out the
+		// last content cell: a non-empty pane always keeps one column.
+		wantPad := min(requestedPad, max(0, wantContent-1)/2)
 		wantInner := wantContent - 2*wantPad
 		if layout.ContentW != wantContent || layout.PadLR != wantPad || layout.InnerW != wantInner {
 			t.Fatalf(
@@ -37,7 +39,10 @@ func TestNarrowContentLayoutNeverFabricatesInnerColumns(t *testing.T) {
 		if used := 2*layout.PadLR + layout.InnerW; used > layout.ContentW {
 			t.Fatalf("content=%d padding and inner width consume %d columns", layout.ContentW, used)
 		}
-		if wantContent >= 2*requestedPad && layout.PadLR != requestedPad {
+		if wantContent > 0 && layout.InnerW < 1 {
+			t.Fatalf("content=%d padding squeezed out every content column", wantContent)
+		}
+		if wantContent > 2*requestedPad && layout.PadLR != requestedPad {
 			t.Fatalf("content=%d changed normal theme padding: got %d want %d", wantContent, layout.PadLR, requestedPad)
 		}
 

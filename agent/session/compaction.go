@@ -435,10 +435,9 @@ func (s *Session) runPreparedCompaction(
 
 	emit(turnloop.AgentEvent{Type: "context_compacted", Data: commitData})
 	s.logger.Info("COMPACT", "manual_complete", "operation_id", operationID, "before_tokens", result.BeforeTokens, "after_tokens", result.AfterTokens)
-	return conversation.CompactResultMsg{
-		Desc:   fmt.Sprintf("Compacted active context from %d to about %d tokens; full session history remains archived.", result.BeforeTokens, result.AfterTokens),
-		Before: beforeMessages, After: len(result.Messages), OperationID: operationID,
-	}
+	// The boundary row and the activity strip report the result; a second
+	// notice would repeat it.
+	return conversation.CompactResultMsg{Before: beforeMessages, After: len(result.Messages), OperationID: operationID}
 }
 
 func (s *Session) finishManualCompactionError(
@@ -461,7 +460,7 @@ func (s *Session) finishManualCompactionError(
 	data["error"] = compactLifecycleError(err)
 	emit(turnloop.AgentEvent{Type: "context_compaction_failed", Data: data})
 	return conversation.CompactResultMsg{
-		Error:       "Compaction failed; original context retained: " + err.Error(),
+		Error:       "Compaction failed: " + err.Error() + ". The original context is kept.",
 		OperationID: operationID,
 	}
 }
