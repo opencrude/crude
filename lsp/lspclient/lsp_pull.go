@@ -153,6 +153,17 @@ func (l *LSPIntegration) registerCapabilities(launch *lspLaunch, params json.Raw
 			return errors.New("missing language server registration ID")
 		}
 		switch r.Method {
+		case lsp.MethodWorkspaceDidChangeConfiguration:
+			// Configuration is immutable for this launch. The client sends its
+			// initial settings after initialized and answers scoped pulls. Any
+			// settings change replaces the launch, so there is no live change
+			// listener to install (or remove on unregister).
+			if len(r.RegisterOptions) != 0 {
+				var options protocol.DidChangeConfigurationRegistrationOptions
+				if err := json.Unmarshal(r.RegisterOptions, &options); err != nil {
+					return err
+				}
+			}
 		case "textDocument/diagnostic":
 			support, err := lsp.ParseDiagnosticSupport(r.RegisterOptions)
 			if err != nil {

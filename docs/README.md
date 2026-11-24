@@ -207,6 +207,8 @@ documents to read before changing each area.
 
 ### Issues (dated user reports)
 
+- [Cold requests after automatic compaction](issues/2026-11-24-compaction-cache-misses.md) — measured cache reads, all seven wire contracts and the portable fallback.
+
 - [LSP completion reliability: immediate action (2026-11-23)](issues/2026-11-23-lsp-completion-immediate-action.md)
   — reproduced Ctrl+Space request loss, open protocol gaps and exit tests.
 

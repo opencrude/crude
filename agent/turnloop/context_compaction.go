@@ -217,11 +217,18 @@ func (a *Agent) compactWithModel(
 	trigger string,
 	emit func(AgentEvent),
 ) (compactOutcome, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if len(msgs) == 0 {
 		return compactOutcome{}, errors.New("cannot compact empty context")
+	}
+	return a.compactSource(ctx, msgs, msgs[1:], tools, requestID, beforeTokens, trigger, emit)
+}
+
+// compactSource keeps the exact history authoritative for archival, human
+// intent and continuation. Only extraction may substitute an already verified
+// summary for the prefix that produced it.
+func (a *Agent) compactSource(ctx context.Context, msgs, source []provider.ChatMessage, tools []provider.ToolDef, requestID string, beforeTokens int, trigger string, emit func(AgentEvent)) (compactOutcome, error) {
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	if requestID == "" {
 		requestID = fmt.Sprintf("%016x%016x", rand2.Uint64(), rand2.Uint64())
@@ -314,7 +321,7 @@ func (a *Agent) compactWithModel(
 			learnedOutputLimit: learnedLimit, usageRatio: usageRatio,
 			capacityBudget: extractionWindow - contextSafetyReserve(extractionWindow) - 1,
 		}
-		text, combinedErr := extractor.request(msgs[1:], rootprompt.InitialCompactionDirective(), 0)
+		text, combinedErr := extractor.request(source, rootprompt.InitialCompactionDirective(), 0)
 		aggregate = addTokenUsage(aggregate, extractor.usage)
 		inputBudget, usageRatio = extractor.inputBudget, extractor.usageRatio
 		if extractor.learnedOutputLimit > 0 {
@@ -372,7 +379,7 @@ func (a *Agent) compactWithModel(
 			learnedOutputLimit: learnedLimit, usageRatio: usageRatio,
 			capacityBudget: extractionWindow - contextSafetyReserve(extractionWindow) - 1,
 		}
-		stageText, stageErr := extractor.request(msgs[1:], rootprompt.InitialCompactionDirective(), 0)
+		stageText, stageErr := extractor.request(source, rootprompt.InitialCompactionDirective(), 0)
 		aggregate = addTokenUsage(aggregate, extractor.usage)
 		inputBudget = extractor.inputBudget
 		usageRatio = extractor.usageRatio
@@ -427,11 +434,6 @@ func (a *Agent) compactWithModel(
 		if known {
 			answered = state == "completed"
 		}
-	}
-	if a.compactionTailHasHuman {
-		// A later human turn stays verbatim after this checkpoint, so every
-		// request summarized here has been superseded by it.
-		answered = true
 	}
 	compacted := []provider.ChatMessage{checkpointMsg}
 	if role == "root" && answered {

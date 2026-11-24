@@ -208,17 +208,18 @@ type ollamaChatChunk struct {
 		Thinking  string                `json:"thinking"`
 		ToolCalls []ollamaToolCallParam `json:"tool_calls"`
 	} `json:"message"`
-	DoneReason         string `json:"done_reason"`
-	Done               bool   `json:"done"`
-	PromptEvalCount    int    `json:"prompt_eval_count"`
-	EvalCount          int    `json:"eval_count"`
-	PromptEvalTokens   int    `json:"prompt_eval_tokens"` // newer field alias
-	EvalTokens         int    `json:"eval_tokens"`        // newer field alias
-	TotalDuration      int64  `json:"total_duration"`
-	LoadDuration       int64  `json:"load_duration"`
-	PromptEvalDuration int64  `json:"prompt_eval_duration"`
-	EvalDuration       int64  `json:"eval_duration"`
-	Error              string `json:"error"`
+	DoneReason            string `json:"done_reason"`
+	Done                  bool   `json:"done"`
+	PromptEvalCachedCount *int   `json:"prompt_eval_cached_count"`
+	PromptEvalCount       int    `json:"prompt_eval_count"`
+	EvalCount             int    `json:"eval_count"`
+	PromptEvalTokens      int    `json:"prompt_eval_tokens"` // newer field alias
+	EvalTokens            int    `json:"eval_tokens"`        // newer field alias
+	TotalDuration         int64  `json:"total_duration"`
+	LoadDuration          int64  `json:"load_duration"`
+	PromptEvalDuration    int64  `json:"prompt_eval_duration"`
+	EvalDuration          int64  `json:"eval_duration"`
+	Error                 string `json:"error"`
 }
 
 // ollamaToolCallParam is Ollama's native tool-call wire shape. Unlike OpenAI,
@@ -320,14 +321,7 @@ func (s *OllamaStandard) DecodeResponse(body []byte) (*ChatResponse, error) {
 	}
 	choice.Message.ToolCalls = ollamaToolCallsFromWire(chunk.Message.ToolCalls)
 	resp.Choices = []ChatChoice{choice}
-	prompt, completion := ollamaUsage(&chunk)
-	if prompt > 0 || completion > 0 {
-		resp.Usage = &ChatUsage{
-			PromptTokens:     prompt,
-			CompletionTokens: completion,
-			TotalTokens:      prompt + completion,
-		}
-	}
+	resp.Usage = chunk.usage()
 	return resp, nil
 }
 
@@ -370,14 +364,7 @@ func decodeOllamaNDJSON(body []byte) (*ChatResponse, error) {
 			ollamaToolCallsFromWire(chunk.Message.ToolCalls)...)
 		if chunk.Done {
 			choice.FinishReason = ollamaFinishReason(chunk.DoneReason, chunk.Message.ToolCalls)
-			prompt, completion := ollamaUsage(&chunk)
-			if prompt > 0 || completion > 0 {
-				resp.Usage = &ChatUsage{
-					PromptTokens:     prompt,
-					CompletionTokens: completion,
-					TotalTokens:      prompt + completion,
-				}
-			}
+			resp.Usage = chunk.usage()
 		}
 	}
 	if !sawChunk {
@@ -422,16 +409,13 @@ func (d *ollamaStreamDecoder) Decode(event StreamEvent) (StreamUpdate, error) {
 		} else {
 			update.FinishReason = "stop"
 		}
-		prompt, completion := ollamaUsage(&chunk)
-		if prompt > 0 || completion > 0 {
-			update.Usage = &TokenUsage{
-				PromptTokens:       prompt,
-				CompletionTokens:   completion,
-				TotalDuration:      time.Duration(chunk.TotalDuration),
-				LoadDuration:       time.Duration(chunk.LoadDuration),
-				PromptEvalDuration: time.Duration(chunk.PromptEvalDuration),
-				EvalDuration:       time.Duration(chunk.EvalDuration),
-			}
+		if wire := chunk.usage(); wire != nil {
+			u := wire.Normalized()
+			u.TotalDuration = time.Duration(chunk.TotalDuration)
+			u.LoadDuration = time.Duration(chunk.LoadDuration)
+			u.PromptEvalDuration = time.Duration(chunk.PromptEvalDuration)
+			u.EvalDuration = time.Duration(chunk.EvalDuration)
+			update.Usage = &u
 		}
 	}
 	return update, nil
@@ -500,18 +484,24 @@ func ollamaFinishReason(doneReason string, toolCalls []ollamaToolCallParam) stri
 	return "stop"
 }
 
-// ollamaUsage extracts prompt/completion token counts from a chunk, tolerating
-// both the legacy *_count and newer *_tokens field names.
-func ollamaUsage(chunk *ollamaChatChunk) (prompt, completion int) {
-	prompt = chunk.PromptEvalCount
+// usage preserves optional cache evidence on both native response paths.
+func (chunk *ollamaChatChunk) usage() *ChatUsage {
+	prompt := chunk.PromptEvalCount
 	if prompt == 0 {
 		prompt = chunk.PromptEvalTokens
 	}
-	completion = chunk.EvalCount
+	completion := chunk.EvalCount
 	if completion == 0 {
 		completion = chunk.EvalTokens
 	}
-	return prompt, completion
+	if prompt == 0 && completion == 0 && chunk.PromptEvalCachedCount == nil {
+		return nil
+	}
+	u := &ChatUsage{PromptTokens: prompt, CompletionTokens: completion, TotalTokens: prompt + completion}
+	if n := chunk.PromptEvalCachedCount; n != nil {
+		u.PromptTokensDetails = &PromptTokenDetails{CachedTokens: *n, CacheReadKnown: true}
+	}
+	return u
 }
 
 func firstNonEmptyOllama(values ...string) string {

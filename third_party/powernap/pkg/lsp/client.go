@@ -584,9 +584,10 @@ func (c *Client) makeClientCapabilities(enableSnippets bool) map[string]any {
 		},
 		"workspace": map[string]any{
 			"configuration": true, "workspaceFolders": true, "applyEdit": true,
-			"diagnostics":    map[string]any{"refreshSupport": true},
-			"workspaceEdit":  map[string]any{"documentChanges": true, "resourceOperations": []string{"create"}},
-			"executeCommand": map[string]any{},
+			"didChangeConfiguration": map[string]any{"dynamicRegistration": true},
+			"diagnostics":            map[string]any{"refreshSupport": true},
+			"workspaceEdit":          map[string]any{"documentChanges": true, "resourceOperations": []string{"create"}},
+			"executeCommand":         map[string]any{},
 		},
 		"window":  map[string]any{"workDoneProgress": true, "showDocument": map[string]any{"support": true}},
 		"general": map[string]any{"positionEncodings": []string{"utf-16"}},

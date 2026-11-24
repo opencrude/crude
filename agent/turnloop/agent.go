@@ -109,9 +109,6 @@ type Agent struct {
 	// CompactionRetentionTokens bounds older verbatim human input carried
 	// through compaction; 0 sizes it to the checkpoint itself.
 	CompactionRetentionTokens int
-	// compactionTailHasHuman marks a checkpoint of older context followed by
-	// a verbatim tail that holds a later human turn.
-	compactionTailHasHuman bool
 	// Precompaction is the agent's background checkpoint slot. Owners that
 	// span runs (sessions, child handles) provide it; nil uses a run-local one.
 	Precompaction *PrecompactionSlot

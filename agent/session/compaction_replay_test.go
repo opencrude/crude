@@ -15,7 +15,7 @@ import (
 	"crude/agent/turnloop"
 )
 
-func TestAutomaticCompactionCommitsLiveReplayTailAndContinues(t *testing.T) {
+func TestAutomaticCompactionArchivesReplayAndResumesWithoutColdTail(t *testing.T) {
 	var extractions, continuations atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request provider.ChatRequest
@@ -32,6 +32,9 @@ func TestAutomaticCompactionCommitsLiveReplayTailAndContinues(t *testing.T) {
 		body, _ := json.Marshal(request.Messages)
 		if !bytes.Contains(body, []byte("context_checkpoint")) || !bytes.Contains(body, []byte("pending-requirement")) {
 			t.Error("continuation omitted the checkpoint or retained pending request")
+		}
+		if bytes.Contains(body, []byte("recent evidence")) || bytes.Contains(body, []byte("older evidence")) {
+			t.Error("raw historical evidence reached the cold continuation")
 		}
 		writeAdaptiveCompactionSSE(t, w, "continued after checkpoint")
 	}))
@@ -106,17 +109,17 @@ func TestAutomaticCompactionCommitsLiveReplayTailAndContinues(t *testing.T) {
 	if s.contextGeneration != 8 {
 		t.Fatalf("compaction generation=%d, want 8", s.contextGeneration)
 	}
-	found := false
 	for _, message := range s.activeContext {
-		if message.InternalID == history[len(history)-2].InternalID {
-			found = true
-			if string(message.ProviderItems[0].Data) != string(live.ProviderItems[0].Data) {
-				t.Fatal("compaction rewrote the live replay bytes")
-			}
+		if message.InternalID == history[len(history)-2].InternalID || len(message.ProviderItems) != 0 {
+			t.Fatal("old replay survived in the active checkpoint")
 		}
 	}
-	if !found {
-		t.Fatal("the recent provider-replay message was not retained")
+	var archived []byte
+	if err := s.db.QueryRow(`SELECT messages_json FROM agent_context_generations WHERE session_id=? AND agent_id=? AND generation=7`, s.sessionID, s.sessionID).Scan(&archived); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(archived, adaptiveMessageBytes(t, history)) {
+		t.Fatal("previous generation lost exact source or signed replay")
 	}
 	after, err := sessiondb.LoadMessagesWithMeta(s.db)
 	if err != nil || !bytes.Equal(adaptiveRowsBytes(t, before), adaptiveRowsBytes(t, after)) {

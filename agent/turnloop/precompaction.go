@@ -13,7 +13,6 @@ import (
 
 	rootprompt "crude/agent/prompt"
 	"crude/agent/provider"
-	"crude/agent/tools"
 	"crude/internal/retry"
 )
 
@@ -25,8 +24,7 @@ import (
 //   - Economic: carrying old context costs money on every request even when
 //     cached. When prices are known, Crude compacts once the extra spend paid
 //     for context a checkpoint would remove has reached what compacting costs
-//     (the ski-rental rule: never worse than twice the best choice made with
-//     hindsight). Prices and usage reports are optional: unknown prices use
+//     (a ski-rental heuristic, not a billing guarantee). Prices and usage reports are optional: unknown prices use
 //     the common relative prices and missing usage reads only growth as new,
 //     so the rule keeps working without provider data and never compacts
 //     sooner than real data would.
@@ -35,7 +33,7 @@ import (
 // Preparation starts halfway to the trigger, so a slow or flaky Errand model has
 // the second half to finish while the agent keeps working; a ready checkpoint
 // waits for the trigger. The adopted context is the fresh system prompt and
-// tools, the checkpoint of older context, and the recent turns verbatim.
+// tools, a checkpoint of all work, bounded human input and a fresh runtime handoff.
 
 // compactionPlan is one step's decision.
 type compactionPlan struct {
@@ -111,7 +109,7 @@ func (p *compactionPlanner) observe(a *Agent, usage provider.TokenUsage, context
 	if prompt <= 0 {
 		prompt = contextTokens
 	}
-	if usage.PromptTokens <= 0 || !usage.CacheReadKnown && a.Provider.ProtocolID() != "ollama" {
+	if usage.PromptTokens <= 0 || !usage.CacheReadKnown {
 		cached = prompt
 		if previous > 0 {
 			cached = max(0, prompt-max(0, contextTokens-previous))
@@ -135,7 +133,7 @@ func (p *compactionPlanner) growth(active int) {
 func (p *compactionPlanner) buyCost(a *Agent, source, post int) float64 {
 	main, compaction, _ := p.prices(a)
 	extraction := p.costPerSource * float64(source)
-	if p.costPerSource <= 0 {
+	if source > 0 && p.costPerSource <= 0 {
 		// Before the first observed checkpoint: one combined extraction reads
 		// the source once; a connection known to need staged extraction reads
 		// it once per section.
@@ -154,16 +152,14 @@ func (p *compactionPlanner) buyCost(a *Agent, source, post int) float64 {
 }
 
 // adoptPrepared reports whether a checkpoint that is already prepared is worth
-// adopting now. Its extraction is paid for, so the only remaining price is the
-// cold cache of the next request; once the excess spend has covered that,
-// carrying the old context any longer is pure waste. An explicit percent keeps
+// adopting now. The snapshot is paid for, but summarizing later work and
+// sending the cold continuation are not. An explicit percent keeps
 // its exact boundary instead, and the economic floor still applies.
-func (p *compactionPlanner) adoptPrepared(a *Agent, active, post, hardLimit int) bool {
+func (p *compactionPlanner) adoptPrepared(a *Agent, active, remaining, post, hardLimit int) bool {
 	if a.ContextCompactionPercent != 0 || p.units == "" || active < economicFloor(max(p.floor, 1), hardLimit) {
 		return false
 	}
-	main, _, _ := p.prices(a)
-	return p.excess >= (main.InputPricePerToken-max(0, main.InputCachedPricePerToken))*float64(post)
+	return p.excess >= p.buyCost(a, remaining, post)
 }
 
 // learn records an adopted checkpoint and resets the accumulated excess.
@@ -199,16 +195,15 @@ func (p *compactionPlanner) checkpointEstimate() int {
 }
 
 // evaluate decides this step. active is the projected next request, fixed the
-// system prompt and tools, tail the verbatim recent context a checkpoint keeps.
-func (p *compactionPlanner) evaluate(a *Agent, active, fixed, tail, hardLimit, window int, overflow bool) compactionPlan {
+// system prompt and tools. No old raw tool rounds survive a summary.
+func (p *compactionPlanner) evaluate(a *Agent, active, fixed, hardLimit, window int, overflow bool) compactionPlan {
 	p.growth(active)
 	if overflow || active >= hardLimit {
 		return compactionPlan{prepare: true, swap: true, force: true, reason: "context reached the model's capacity"}
 	}
 	checkpoint := p.checkpointEstimate()
-	post := fixed + checkpoint + tail
-	source := active - tail
-	worthwhile := source-fixed > checkpoint
+	post := fixed + checkpoint
+	worthwhile := active > post
 	floor := max(fixed, p.floor)
 	near := hardLimit - max(p.maxGrowth, 1)
 	plan := compactionPlan{}
@@ -221,7 +216,7 @@ func (p *compactionPlanner) evaluate(a *Agent, active, fixed, tail, hardLimit, w
 		plan.prepare = active >= floor+(threshold-floor)/2
 		plan.reason = fmt.Sprintf("context reached the configured %d%%", percent)
 	} else if quality := economicFloor(floor, hardLimit); active >= quality*3/4 {
-		buy := p.buyCost(a, source, post)
+		buy := p.buyCost(a, active, post)
 		// Excess grows roughly quadratically with steps, so a quarter of the
 		// price is halfway in steps.
 		plan.swap = active >= quality && buy > 0 && p.excess >= buy
@@ -287,53 +282,6 @@ func explicitCompactionThreshold(a *Agent, hardLimit, window int) int {
 	return min(hardLimit, max(1, window*a.ContextCompactionPercent/100))
 }
 
-// verbatimTailCut chooses where a checkpoint ends and verbatim recent context
-// begins in msgs (msgs[0] is the system prompt). It prefers keeping the
-// current and previous human turns whole, then recent tool rounds, and never
-// keeps a tail larger than the part being summarized. It returns len(msgs)
-// when nothing can stay verbatim, and whether the tail holds human input.
-func verbatimTailCut(msgs []provider.ChatMessage, role, model string) (int, bool) {
-	if len(msgs) < 3 {
-		return len(msgs), false
-	}
-	suffix := make([]int, len(msgs)+1)
-	for index := len(msgs) - 1; index >= 1; index-- {
-		suffix[index] = suffix[index+1] + provider.EstimateMessageTokens(msgs[index], model)
-	}
-	total := suffix[1]
-	human := func(message provider.ChatMessage) bool {
-		return message.IsGenuineUserInput() || role == "child" && message.EffectiveOrigin() == provider.OriginAssignment
-	}
-	var turns, rounds []int
-	for index := 1; index < len(msgs); index++ {
-		switch {
-		case human(msgs[index]):
-			turns, rounds = append(turns, index), nil
-		case msgs[index].Role == "assistant" && len(turns) > 0:
-			rounds = append(rounds, index)
-		}
-	}
-	var candidates []int
-	for _, turn := range turns[max(0, len(turns)-2):] {
-		if turn >= 2 {
-			candidates = append(candidates, turn)
-		}
-	}
-	// Then tool rounds of the current turn, oldest first (largest tail).
-	candidates = append(candidates, rounds...)
-	for _, cut := range candidates {
-		if msgs[cut].Role == "tool" || suffix[cut] > total-suffix[cut] {
-			continue
-		}
-		tailHuman := false
-		for _, message := range msgs[cut:] {
-			tailHuman = tailHuman || human(message)
-		}
-		return cut, tailHuman
-	}
-	return len(msgs), false
-}
-
 // contextDigest identifies a context prefix by its messages' durable IDs
 // (their content where a message has none), so a checkpoint prepared in one
 // run matches the same history resumed in the next.
@@ -383,16 +331,15 @@ func (slot *PrecompactionSlot) plannerFor(priorCheckpoint int) *compactionPlanne
 }
 
 type precompactionJob struct {
-	requestID    string
-	cut          int
-	digest       [32]byte
-	sourceTokens int
-	tailHasHuman bool
-	model        string
-	cancel       context.CancelFunc
-	done         chan struct{}
-	outcome      compactOutcome
-	err          error
+	requestID                  string
+	cut                        int
+	digest                     [32]byte
+	sourceTokens               int
+	mainRoute, extractionRoute string
+	cancel                     context.CancelFunc
+	done                       chan struct{}
+	outcome                    compactOutcome
+	err                        error
 }
 
 // NewPrecompactionSlot creates a slot whose background work stops when
@@ -447,26 +394,28 @@ func (job *precompactionJob) ready() bool {
 }
 
 // matches reports whether the job summarized exactly the start of msgs.
-func (job *precompactionJob) matches(msgs []provider.ChatMessage, model string) bool {
-	return job.cut <= len(msgs) && job.model == model && contextDigest(msgs[1:job.cut]) == job.digest
+func (job *precompactionJob) matches(msgs []provider.ChatMessage, mainRoute, extractionRoute string) bool {
+	return job.cut <= len(msgs) && job.mainRoute == mainRoute && job.extractionRoute == extractionRoute && contextDigest(msgs[1:job.cut]) == job.digest
 }
 
-// start begins preparing a checkpoint of msgs[1:cut] unless one is already in
+// start begins preparing a checkpoint of the complete snapshot unless one is already in
 // flight or recent failures are backing off.
-func (slot *PrecompactionSlot) start(a *Agent, msgs []provider.ChatMessage, tools []provider.ToolDef, cut int, tailHasHuman bool, targetTokens, window, sourceTokens int) bool {
+func (slot *PrecompactionSlot) start(a *Agent, msgs []provider.ChatMessage, tools []provider.ToolDef, targetTokens, window, sourceTokens int) bool {
 	slot.mu.Lock()
 	defer slot.mu.Unlock()
-	if slot.closed || slot.job != nil || time.Now().Before(slot.retryAt) || cut < 2 {
+	if slot.closed || slot.job != nil || time.Now().Before(slot.retryAt) || len(msgs) < 2 {
 		return false
 	}
-	compactor := a.backgroundCompactor(window, targetTokens, tailHasHuman)
-	source := append([]provider.ChatMessage(nil), msgs[:cut]...)
+	compactor := a.backgroundCompactor(window, targetTokens)
+	source := append([]provider.ChatMessage(nil), msgs...)
 	ctx, cancel := context.WithCancel(slot.lifetime)
 	job := &precompactionJob{
 		requestID: fmt.Sprintf("%016x%016x", rand2.Uint64(), rand2.Uint64()),
-		cut:       cut, digest: contextDigest(source[1:]), tailHasHuman: tailHasHuman,
-		sourceTokens: max(sourceTokens, estimateCanonicalRequest(source, tools, a.Model)),
-		model:        a.Model, cancel: cancel, done: make(chan struct{}),
+		cut:       len(source), digest: contextDigest(source[1:]),
+		sourceTokens:    max(sourceTokens, estimateCanonicalRequest(source, tools, a.Model)),
+		mainRoute:       combinedCompactionKey(a.Provider, a.Model),
+		extractionRoute: combinedCompactionKey(compactor.Provider, compactor.Model),
+		cancel:          cancel, done: make(chan struct{}),
 	}
 	slot.job = job
 	// Lifecycle is published by the slot itself; the progress adapter below
@@ -474,6 +423,7 @@ func (slot *PrecompactionSlot) start(a *Agent, msgs []provider.ChatMessage, tool
 	slot.emit(AgentEvent{Type: "context_precompaction", Data: map[string]any{"phase": "started", "request_id": job.requestID, "before_tokens": job.sourceTokens}})
 	slot.tasks.Add(1)
 	emit := slot.backgroundEmit(job.requestID)
+	sameConnection := provider.SameConnection(compactor.Provider, a.Provider)
 	go func() {
 		defer slot.tasks.Done()
 		defer close(job.done)
@@ -497,7 +447,7 @@ func (slot *PrecompactionSlot) start(a *Agent, msgs []provider.ChatMessage, tool
 		}
 		slot.failures++
 		slot.retryAt = time.Now().Add(retry.Exponential(slot.failures, time.Second, retry.MaxCooldown))
-		if concurrencyRefusal(job.err) && provider.SameConnection(compactor.Provider, a.Provider) {
+		if concurrencyRefusal(job.err) && sameConnection {
 			_ = provider.RecordConcurrencyRefused(compactor.Provider, compactor.Model)
 		}
 		slot.emit(AgentEvent{Type: "context_precompaction", Data: map[string]any{"phase": "failed", "request_id": job.requestID, "error": compactErrorText(job.err), "retry_in_seconds": time.Until(slot.retryAt).Seconds()}})
@@ -552,13 +502,13 @@ func concurrencyRefusal(err error) bool {
 // backgroundCompactor is an independent agent instance for extraction. It
 // shares no mutable request state with the running agent and never persists:
 // adoption commits through the running agent's owners.
-func (a *Agent) backgroundCompactor(window, targetTokens int, tailHasHuman bool) *Agent {
-	return a.compactorFor(false, window, targetTokens, tailHasHuman)
+func (a *Agent) backgroundCompactor(window, targetTokens int) *Agent {
+	return a.compactorFor(false, window, targetTokens)
 }
 
 // compactorFor builds the extraction agent; useMain selects the agent's own
 // connection, the fallback when the configured compaction model is failing.
-func (a *Agent) compactorFor(useMain bool, window, targetTokens int, tailHasHuman bool) *Agent {
+func (a *Agent) compactorFor(useMain bool, window, targetTokens int) *Agent {
 	compactor := a
 	if !useMain {
 		compactor = a.contextCompactor(window)
@@ -576,7 +526,6 @@ func (a *Agent) compactorFor(useMain bool, window, targetTokens int, tailHasHuma
 	}
 	compactor.PrepareCompaction, compactor.CommitCompaction = nil, nil
 	compactor.CompactionTargetTokens = max(1, targetTokens)
-	compactor.compactionTailHasHuman = tailHasHuman
 	return compactor
 }
 
@@ -586,58 +535,6 @@ type compactionStorageError struct{ err error }
 
 func (e *compactionStorageError) Error() string { return e.err.Error() }
 func (e *compactionStorageError) Unwrap() error { return e.err }
-
-func tailTokensOf(messages []provider.ChatMessage, model string) int {
-	return provider.EstimateMessagesTotal(messages, model)
-}
-
-// reobtainableTools return data that can be fetched again on demand; their
-// old results carry no information the agent cannot recover.
-var reobtainableTools = map[string]bool{
-	"read_file": true, "grep_files": true, "glob_files": true, "list_directory": true,
-	"web_fetch": true, "web_search": true, "arxiv_search": true,
-	"read_async_output": true, "check_async_command": true, "recall_memory": true, "search_history": true,
-	"get_plan": true, "board_read": true, "artifact_read": true, "agent_inspect": true, "agent_list": true,
-}
-
-// decayVerbatimTail replaces re-obtainable tool results older than the latest
-// tool round with one-line stubs. It runs only at a checkpoint, where the
-// cached prefix is rebuilt anyway, so it never costs an extra cold request.
-// The latest round stays whole because the agent may still be reading it;
-// command output, edits and external results always stay verbatim.
-func decayVerbatimTail(tail []provider.ChatMessage, model string) []provider.ChatMessage {
-	latest := -1
-	calls := make(map[string]provider.ToolCall)
-	for index, message := range tail {
-		if message.Role == "assistant" && len(message.ToolCalls) > 0 {
-			latest = index
-			for _, call := range message.ToolCalls {
-				calls[call.ID] = call
-			}
-		}
-	}
-	out := make([]provider.ChatMessage, len(tail))
-	copy(out, tail)
-	for index := 0; index < latest; index++ {
-		message := out[index]
-		call, known := calls[message.ToolCallID]
-		if message.Role != "tool" || !known || !reobtainableTools[call.Function.Name] {
-			continue
-		}
-		original := message.ContentString()
-		stub := rootprompt.ElidedToolResult(call.Function.Name, tools.SummarizeArgs(call.Function.Name, call.Function.Arguments), len([]rune(original)))
-		elided := message
-		elided.Content = provider.TextContent(stub)
-		if provider.EstimateMessageTokens(elided, model) >= provider.EstimateMessageTokens(message, model) {
-			continue
-		}
-		if message.InternalID != "" {
-			elided.InternalID = message.InternalID + "-elided"
-		}
-		out[index] = elided
-	}
-	return out
-}
 
 // compactionModelUnavailable reports a compaction failure caused by the
 // connection itself (credentials, a missing model, an outage or rate limit

@@ -146,8 +146,7 @@ provider/tool/child replay. One-off alignment tools do not ship in the product.
    safety reserves). Extraction plans each request independently against the
    resolved Errand connection's capacity; a small extraction model uses smaller
    source chunks instead of forcing early compaction of a larger main model.
-3. Persist the exact source before any extraction. A fitting source shares its
-   immutable prefix with the conversation's cached prefix. Oversized sources use
+3. Persist the exact source before any extraction. A fitting source preserves message order; extraction on a different model, endpoint, or no-tools envelope need not share a cache entry. Oversized sources use
    chronological fragments;
    individual large messages and tool arguments/results are split on Unicode
    code-point boundaries without deleting their text. Every fragment includes
@@ -187,7 +186,7 @@ provider/tool/child replay. One-off alignment tools do not ship in the product.
    older verbatim human input is retained newest-first up to the size of the
    checkpoint itself (an explicit agent setting of 1,000 to 200,000 estimated
    tokens replaces that bound), then further bounded by whatever continuation
-   space actually remains. Recent turns stay verbatim as the tail (below). Answered
+   space actually remains. Answered
    human requirements use the same limit inside their marked context-only history
    block. Oversized individual
    inputs are represented in the checkpoint rather than retained unboundedly
@@ -347,8 +346,7 @@ Responses delta uploads and inline-image replay recovery are specified in
   models, each accepted request adds the share of its input spend that a
   checkpoint would have removed. Compaction is due when that accumulated
   excess reaches the price of compacting (extraction plus the cold cache of
-  the next request): the ski-rental rule, never worse than twice the best
-  choice made with hindsight. Learned compaction cost and checkpoint size
+  the next request): a ski-rental heuristic, not a guarantee about actual billing. Learned compaction cost and checkpoint size
   replace the first estimate. Prices and usage are optional provider data and
   a general rule covers their absence. Unknown prices use the common relative
   prices (uncached input 1, cached read 0.1, output 4, both models alike), so a
@@ -382,31 +380,20 @@ Responses delta uploads and inline-image replay recovery are specified in
   reached, halfway in tokens for capacity and explicit percentages) and runs while the agent keeps working, at most one job per
   agent. A ready checkpoint is adopted when the trigger fires; in adaptive
   mode it is adopted as soon as the accumulated excess covers the cold cache
-  of the next request, because its extraction is already paid. The job lives
+  of the next request plus any outstanding reduction. Only the prepared prefix is already paid for. The job lives
   in a slot owned by the session (roots) or the child loop, so it survives the
   end of a run and the next run adopts it when its source is still the start
   of the context (`contextDigest` over message identities). A connection
   that refused concurrent requests (learned in `model-catalog.db`) compacts
   synchronously instead.
-- **What is adopted.** The fresh system prompt and tools, the checkpoint of the
-  older context, a refreshed runtime continuity handoff, and the recent turns
-  verbatim. `verbatimTailCut` keeps the current and previous human turns,
-  else recent tool rounds, never more than the part being summarized, and
-  never splits a tool call from its result. Re-runnable tool results older
-  than the latest round in that tail (file reads, searches, listings, web
-  pages, async output) become one-line stubs that say how to fetch them
-  again (`decayVerbatimTail`); command output, edits and external results stay
-  verbatim. Decay happens only at a checkpoint, where the cached prefix is
-  rebuilt anyway.
+- **What is adopted.** Every model-written checkpoint covers the entire history at the boundary. A background snapshot covers complete rounds. If new messages arrive, finish the checkpoint from the prepared summary and the new messages, without rereading the old prefix. The full original history remains authoritative for archival and bounded human retention. Only the checkpoint, retained input, fresh runtime handoff, current system instructions and tools continue. No raw tool tail is attached behind a rewritten prefix. Manual and overflow requests use the complete current source directly. See the [cache evidence and seven-wire comparison](../issues/2026-11-24-compaction-cache-misses.md).
 - **Survival.** Background failures back off exponentially and never block.
   The capacity margin is the largest step growth since the last checkpoint,
   so one large paste cannot keep the agent near capacity. At capacity, after
   the compaction model's adaptive handling (chunking, staged sections,
   learned output ceilings, retries) has failed because the connection is
   unavailable (credentials, missing model, outage), the agent's own
-  connection writes that one checkpoint; if no model can, deterministic decay
-  of the whole context frees room. Only when none of these fits does the run
-  stop, recoverably.
+  model writes that one checkpoint, including when it shares the endpoint with a different extractor model. If no full checkpoint fits, stop recoverably with the original history. Do not commit a partial rewrite and send its cold tool tail.
 - **Visibility.** Preparation is reported as `context_precompaction`
   (`started`, `progress`, `ready`, `failed`, `cancelled`, `discarded`). The
   owning slot publishes lifecycle directly; extractor progress uses one adapter,
@@ -415,7 +402,7 @@ Responses delta uploads and inline-image replay recovery are specified in
   Agent details explain **Context summary** preparation/readiness and that agent
   work is not blocked; the telemetry-only header shows no maintenance label.
   Adoption emits the normal compaction
-  boundary with trigger `background` (or `decay`). When the run must wait for an
+  boundary with trigger `background`. When the run must wait for an
   unfinished job, that wait is announced as the job's boundary; if the job then
   fails or its checkpoint does not fit, the boundary settles as a deferred
   failure before the run compacts synchronously, so no boundary stays active.
@@ -436,7 +423,7 @@ Responses delta uploads and inline-image replay recovery are specified in
 - Automatic and manual compaction use the resolved Errand category model for
   a combined no-tools extraction of four sections (intent, work, state,
   continuation) over one immutable durable source, falling back to one request
-  per section when needed. Fitting sources share the cached prefix; oversized
+  per section when needed. Fitting sources preserve message order but are not guaranteed cache hits; oversized
   histories or individual tool inputs/results use complete chronological,
   origin-attributed text fragments and bounded model-backed chunk-and-reduce,
   never oldest-history deletion. Each fragment repeats its source role/origin
@@ -480,8 +467,8 @@ Responses delta uploads and inline-image replay recovery are specified in
   limit makes a compaction failure stop the run.
 - Manual compaction presentation is one retained, operation-ID-keyed
   context-boundary table on the normal chat background with full-bleed
-  top/bottom rules using the active-rail accent color. Automatic, background and
-  decay compactions keep the same operation-ID-keyed row but paint it as one
+  top/bottom rules using the active-rail accent color. Automatic and background
+  compactions keep the same operation-ID-keyed row but paint it as one
   ordinary tool row (see [chat activity](chat-activity.md)). The table shows
   real stage units, never fabricated completion percentages. Active, retrying,
   completed, cancelled, failed, and resumed-interrupted forms share geometry;

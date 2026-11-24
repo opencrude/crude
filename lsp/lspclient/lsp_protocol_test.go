@@ -134,6 +134,7 @@ func TestProtocolServerHelper(t *testing.T) {
 		case "initialized":
 			if mode == "pull-dynamic" {
 				write(map[string]any{"jsonrpc": "2.0", "id": "register-1", "method": "client/registerCapability", "params": map[string]any{"registrations": []any{
+					map[string]any{"id": "config-sub", "method": "workspace/didChangeConfiguration"},
 					map[string]any{"id": "pull-go", "method": "textDocument/diagnostic", "registerOptions": map[string]any{
 						"identifier": "dyn", "documentSelector": []any{map[string]any{"language": "go"}}, "interFileDependencies": false, "workspaceDiagnostics": false}},
 				}}})
@@ -464,7 +465,8 @@ func TestLSPProtocolConfigurationAndDuplicateOpen(t *testing.T) {
 			window, _ := caps["window"].(map[string]any)
 			workspace := caps["workspace"].(map[string]any)
 			if len(window) != 2 || window["workDoneProgress"] != true || workspace["applyEdit"] != true ||
-				workspace["executeCommand"] == nil || workspace["workspaceEdit"] == nil {
+				workspace["executeCommand"] == nil || workspace["workspaceEdit"] == nil ||
+				workspace["didChangeConfiguration"].(map[string]any)["dynamicRegistration"] != true {
 				t.Fatalf("unsupported capabilities: %v", caps)
 			}
 			// Dynamic registration is announced only where Crude keeps the

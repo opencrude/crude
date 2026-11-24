@@ -79,9 +79,9 @@ fixed.
   render one argument per line; command discovery matches by words.
 - Adaptive compaction: no fixed fullness or retention defaults; physical,
   economic (ski-rental) and explicit triggers; background preparation adopted
-  late with the recent turns verbatim and old re-runnable results stubbed;
-  combined single-pass extraction with staged fallback; main-model and
-  model-free decay as last resorts at capacity; planner and prepared
+  late after summarizing work added since the snapshot;
+  combined single-pass extraction with staged fallback; a full main-model checkpoint or
+  recoverable failure at capacity; planner and prepared
   checkpoints survive across runs; resumed runs seed their first projection
   from provider-reported usage (it used to fall back to local estimates that
   were half the real size on dense content).

@@ -65,9 +65,8 @@ func TestLiveOllamaCloud(t *testing.T) {
 }
 
 // TestLiveOllamaCloudPrefixReuse sends a byte-identical, non-trivial prompt
-// repeatedly and records Ollama's native prompt-evaluation timing. The API does
-// not expose cache-read token counts, so timing is diagnostic rather than
-// billing data; at least one warm request should evaluate materially faster.
+// repeatedly and records Ollama's optional cache count and prompt-evaluation timing.
+// Timing is diagnostic rather than billing data.
 func TestLiveOllamaCloudPrefixReuse(t *testing.T) {
 	key := os.Getenv("CRUDE_LIVE_OLLAMA_KEY")
 	if key == "" {
@@ -100,14 +99,14 @@ func TestLiveOllamaCloudPrefixReuse(t *testing.T) {
 		if usage.PromptTokens == 0 {
 			t.Fatalf("attempt %d reported no prompt usage", attempt+1)
 		}
-		t.Logf("attempt=%d prompt_tokens=%d prompt_eval=%s total=%s wall=%s content=%q",
-			attempt+1, usage.PromptTokens, usage.PromptEvalDuration, usage.TotalDuration, wall, truncate(content, 40))
+		t.Logf("attempt=%d prompt_tokens=%d cache_read_known=%t cached=%d prompt_eval=%s total=%s wall=%s content=%q",
+			attempt+1, usage.PromptTokens, usage.CacheReadKnown, usage.PromptTokensCached, usage.PromptEvalDuration, usage.TotalDuration, wall, truncate(content, 40))
 		if usage.PromptEvalDuration > 0 {
 			timings = append(timings, usage.PromptEvalDuration)
 		}
 	}
 	if len(timings) < 2 {
-		t.Log("Ollama Cloud did not expose prompt_eval_duration; exact-prefix requests completed but cache billing remains unobservable")
+		t.Log("Ollama Cloud did not expose prompt_eval_duration; cannot compare prompt evaluation time")
 		return
 	}
 	cold := timings[0]
