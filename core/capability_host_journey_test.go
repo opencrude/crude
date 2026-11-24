@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"html"
 	"image"
 	"image/png"
 	"net/http"
@@ -23,6 +24,7 @@ import (
 	"crude/core/coreprotocol"
 	"crude/core/shellport/remote"
 	captypes "crude/types/capability"
+	cmdtypes "crude/types/command"
 	"crude/types/control"
 	"crude/types/setting"
 	"crude/workspace"
@@ -67,6 +69,29 @@ func TestCapabilityHostJourneySDKHelper(t *testing.T) {
 	os.Exit(0)
 }
 
+// journeyActivation reads the activation result the way the model receives
+// it: the settled job's outcome carries the activation result as its output.
+func journeyActivation(messages []provider.ChatMessage, id string) (captypes.ActivationResult, bool) {
+	for _, message := range messages {
+		text := html.UnescapeString(message.Content.String())
+		start := strings.Index(text, "{")
+		if start < 0 {
+			continue
+		}
+		var outcome cmdtypes.Result
+		if json.NewDecoder(strings.NewReader(text[start:])).Decode(&outcome) != nil {
+			continue
+		}
+		for _, line := range strings.Split(outcome.Output, "\n") {
+			var activation captypes.ActivationResult
+			if json.Unmarshal([]byte(line), &activation) == nil && activation.ConnectionID == id {
+				return activation, true
+			}
+		}
+	}
+	return captypes.ActivationResult{}, false
+}
+
 func TestCapabilityHostFramedTwoShellModelJourney(t *testing.T) {
 	t.Setenv("CRUDE_HOST_JOURNEY_HELPER", "yes")
 	root, directory := t.TempDir(), t.TempDir()
@@ -98,33 +123,44 @@ func TestCapabilityHostFramedTwoShellModelJourney(t *testing.T) {
 		}
 		step := requests.Add(1)
 		w.Header().Set("Content-Type", "text/event-stream")
+		// The model acts on what its history shows. Launching the shell server
+		// is a background job, so the activation result arrives as that job's
+		// outcome, and the model waits for it as an agent would.
+		called := map[string]bool{}
+		for _, message := range body.Messages {
+			for _, call := range message.ToolCalls {
+				called[call.Function.Name] = true
+			}
+		}
+		activated, observed := journeyActivation(body.Messages, connection.ID)
+		var dynamic string
+		for _, tool := range body.Tools {
+			if strings.HasPrefix(tool.Function.Name, "mcp_") && strings.Contains(tool.Function.Name, "picture") {
+				dynamic = tool.Function.Name
+			}
+		}
 		name := "capability_activate"
 		args := map[string]any{"id": connection.ID}
-		switch step {
-		case 2:
-			var activated captypes.ActivationResult
-			for _, message := range body.Messages {
-				if message.Role == "tool" {
-					_ = json.Unmarshal([]byte(message.Content.String()), &activated)
-				}
-			}
-			if len(activated.Tools) != 1 {
-				t.Errorf("real shell activation inventory missing: %+v", body.Messages)
+		switch {
+		case !called["capability_activate"]:
+		case !observed && !called["mcp_request_access"]:
+			if step > 6 {
+				t.Errorf("activation outcome never reached the model: %+v", body.Messages)
 				return
 			}
-			name, args = "mcp_request_access", map[string]any{"connection_id": connection.ID, "grants": []captypes.AccessRequest{{Tool: "picture", Fingerprint: activated.Tools[0].Fingerprint, Effect: captypes.EffectRead, Scope: directory}}}
-		case 3:
-			name, args = "", map[string]any{}
-			for _, tool := range body.Tools {
-				if strings.HasPrefix(tool.Function.Name, "mcp_") && strings.Contains(tool.Function.Name, "picture") {
-					name = tool.Function.Name
-				}
-			}
-			if name == "" {
-				t.Errorf("dynamic SDK tool not offered: %+v", body.Tools)
+			name, args = "wait", map[string]any{"seconds": 20}
+		case !called["mcp_request_access"]:
+			if len(activated.NeedsAccess) != 1 {
+				t.Errorf("real shell activation inventory missing: %+v", activated)
 				return
 			}
-		case 4:
+			name, args = "mcp_request_access", map[string]any{"connection_id": connection.ID, "grants": []captypes.AccessRequest{{Tool: "picture", Fingerprint: activated.NeedsAccess[0].Fingerprint, Effect: captypes.EffectRead, Scope: directory}}}
+		case dynamic != "" && !called[dynamic]:
+			name, args = dynamic, map[string]any{}
+		case dynamic == "":
+			t.Errorf("dynamic SDK tool not offered: %+v", body.Tools)
+			return
+		default:
 			raw, _ := json.Marshal(body)
 			finalRequest <- string(raw)
 			select {
@@ -133,11 +169,6 @@ func TestCapabilityHostFramedTwoShellModelJourney(t *testing.T) {
 			}
 			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Inspected.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
 			return
-		default:
-			if step != 1 {
-				t.Errorf("unexpected provider request %d", step)
-				return
-			}
 		}
 		raw, _ := json.Marshal(args)
 		_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":%q,\"type\":\"function\",\"function\":{\"name\":%q,\"arguments\":%q}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", fmt.Sprintf("host-%d", step), name, string(raw))

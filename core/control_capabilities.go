@@ -58,15 +58,18 @@ type CapabilitySearchMethodView struct {
 
 // CapabilityConnectionView is the agent-visible summary of one connection.
 type CapabilityConnectionView struct {
-	ID        string   `json:"id"`
-	Name      string   `json:"name"`
-	Transport string   `json:"transport"`
-	State     string   `json:"state"`
-	Builtin   bool     `json:"builtin,omitempty"`
-	Disabled  bool     `json:"disabled,omitempty"`
-	Tools     []string `json:"tools,omitempty"`
-	ToolsOff  []string `json:"tools_off,omitempty"`
-	Secrets   []string `json:"secrets,omitempty"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Transport string `json:"transport"`
+	State     string `json:"state"`
+	Builtin   bool   `json:"builtin,omitempty"`
+	Disabled  bool   `json:"disabled,omitempty"`
+	// Tools are granted to every run; ToolsOff were switched off by the user;
+	// ToolsNeedAccess have no durable grant and need mcp_request_access.
+	Tools           []string `json:"tools,omitempty"`
+	ToolsOff        []string `json:"tools_off,omitempty"`
+	ToolsNeedAccess []string `json:"tools_need_access,omitempty"`
+	Secrets         []string `json:"secrets,omitempty"`
 }
 
 type CapabilityControlView struct {
@@ -304,10 +307,13 @@ func capabilityControlView(result coreprotocol.CapabilityResult) CapabilityContr
 			entry.State = "not started"
 		}
 		for _, tool := range state.Tools {
-			if tool.Selected {
+			switch {
+			case tool.Selected:
 				entry.Tools = append(entry.Tools, tool.Name)
-			} else {
+			case config.Grants[tool.OriginalName].Disabled:
 				entry.ToolsOff = append(entry.ToolsOff, tool.Name)
+			default:
+				entry.ToolsNeedAccess = append(entry.ToolsNeedAccess, tool.Name)
 			}
 		}
 		if builtin, ok := captypes.Builtin(config.Command); config.IsBuiltin() && ok {

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"crude/agent/skills"
@@ -22,17 +23,17 @@ func TestCapabilitySearchFindsKeywordsAcrossNameAndDescriptionAndReusesInstalled
 	actor := captypes.RuntimeActor{ID: "root", Effects: []captypes.Effect{captypes.EffectRead}}
 	result, err := service.Execute(t.Context(), actor, captypes.RuntimeSnapshot{}, "capability_search",
 		map[string]any{"query": query, "kind": "skill", "limit": 1})
-	var entries []captypes.Entry
-	if err != nil || len(result.Content) != 1 || json.Unmarshal([]byte(result.Content[0].Text), &entries) != nil ||
-		len(entries) != 1 || entries[0].ID != "team:review" {
+	var found captypes.SearchResult
+	if err != nil || len(result.Content) != 1 || json.Unmarshal([]byte(result.Content[0].Text), &found) != nil ||
+		len(found.Results) != 1 || found.Results[0].ID != "team:review" {
 		t.Fatalf("natural keyword discovery lost the relevant skill: %+v %v", result, err)
 	}
-	_, err = service.Activate(t.Context(), actor, entries[0].ID, false)
+	_, err = service.Activate(t.Context(), actor, found.Results[0].ID, false)
 	var approval *captypes.ApprovalRequired
 	if !errors.As(err, &approval) {
 		t.Fatalf("search unexpectedly installed or granted the skill: %v", err)
 	}
-	if _, err := service.Activate(approval.CapabilityApprovalContext(t.Context()), actor, entries[0].ID, false); err != nil {
+	if _, err := service.Activate(approval.CapabilityApprovalContext(t.Context()), actor, found.Results[0].ID, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.RemoveAll(filepath.Dir(sourcePath)); err != nil {
@@ -125,7 +126,7 @@ func TestDiscoverInterleavesSourcesBeyondFirstSourceLimit(t *testing.T) {
 	result, err := service.Execute(t.Context(), captypes.RuntimeActor{Effects: []captypes.Effect{captypes.EffectRead}},
 		captypes.RuntimeSnapshot{}, "capability_search", map[string]any{"kind": "skill", "query": "skill", "limit": 3})
 	var partial captypes.SearchResult
-	if err != nil || json.Unmarshal([]byte(result.Content[0].Text), &partial) != nil || len(partial.Entries) != 3 || partial.Warning == "" {
+	if err != nil || json.Unmarshal([]byte(result.Content[0].Text), &partial) != nil || len(partial.Results) != 3 || partial.Warning == "" {
 		t.Fatalf("agent-facing search discarded partial results: %+v %v", result, err)
 	}
 }
@@ -204,5 +205,68 @@ func TestRegistryUnsupportedPageDoesNotCrowdOutNextPage(t *testing.T) {
 	entries, err := service.Discover(t.Context(), "fuzzy", captypes.KindMCP, 1)
 	if err != nil || len(entries) != 1 || entries[0].Publisher != "vendor/ready" {
 		t.Fatalf("ready next-page candidate=%+v err=%v", entries, err)
+	}
+}
+
+// The official registry matches one substring of a server name, so a keyword
+// query must reach it as separate terms and as names join them. An installed
+// entry that matches one common word is not an answer: the registry is still
+// asked, and entries no agent can install are not offered to agents.
+func TestAgentSearchReachesTheRegistryByEachKeyword(t *testing.T) {
+	service, settings, sourcePath := capabilityFixture(t)
+	settings.Skills["installed"] = captypes.SkillConfig{ID: "installed", Path: sourcePath, Name: "review"}
+	var mu sync.Mutex
+	asked := map[string]bool{}
+	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		term := r.URL.Query().Get("search")
+		mu.Lock()
+		asked[term] = true
+		mu.Unlock()
+		if r.URL.Query().Get("version") != "latest" {
+			t.Errorf("registry was asked for every version of %q", term)
+		}
+		var servers []any
+		if term == "computer-use" {
+			servers = append(servers, map[string]any{"server": map[string]any{"name": "io.github.example/computer-use-omni", "title": "Computer use", "version": "1.0.0", "description": "See the desktop, click and type",
+				"packages": []any{map[string]any{"registryType": "pypi", "identifier": "computer-use-omni", "version": "1.0.0", "transport": map[string]any{"type": "stdio"}}}}})
+		}
+		if term == "desktop" {
+			servers = append(servers,
+				map[string]any{"server": map[string]any{"name": "com.example/quickbooks-desktop", "version": "2", "description": "Accounting data",
+					"remotes": []any{map[string]any{"type": "streamable-http", "url": "https://example.org/books"}}}},
+				map[string]any{"server": map[string]any{"name": "com.example/desktop-bundle", "version": "3",
+					"packages": []any{map[string]any{"registryType": "mcpb", "identifier": "bundle", "version": "3", "transport": map[string]any{"type": "stdio"}}}}})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"servers": servers})
+	}))
+	defer registry.Close()
+	settings.Sources["registry"] = captypes.SourceConfig{ID: "registry", Name: "Registry", Kind: "registry", Location: registry.URL, Trusted: true}
+	if err := service.Configure(t.Context(), settings); err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.Execute(t.Context(), captypes.RuntimeActor{Effects: []captypes.Effect{captypes.EffectRead}}, captypes.RuntimeSnapshot{}, "capability_search",
+		map[string]any{"query": "review computer use desktop"})
+	var found captypes.SearchResult
+	if err != nil || json.Unmarshal([]byte(result.Content[0].Text), &found) != nil {
+		t.Fatalf("search: %+v %v", result, err)
+	}
+	for _, term := range []string{"computer-use", "use-desktop", "computer", "desktop"} {
+		if !asked[term] {
+			t.Errorf("registry was not asked for %q; asked %v", term, asked)
+		}
+	}
+	if len(found.Results) < 3 || found.Results[0].ID != "installed" || !found.Results[0].Installed {
+		t.Fatalf("installed entry is not first or the registry was skipped: %+v", found.Results)
+	}
+	if found.Results[1].Name != "Computer use" || found.Results[1].State != "not installed" || found.Results[1].Package != "pypi" {
+		t.Fatalf("the server matching most keywords is not ranked first among discoveries: %+v", found.Results)
+	}
+	for _, hit := range found.Results {
+		if strings.Contains(hit.Name, "bundle") || hit.State == "unsupported" {
+			t.Fatalf("an entry no agent can install was offered: %+v", hit)
+		}
+	}
+	if strings.Contains(result.Content[0].Text, `"Digest"`) || strings.Contains(result.Content[0].Text, `"Popularity"`) {
+		t.Fatalf("search result carries fields an agent cannot use: %s", result.Content[0].Text)
 	}
 }

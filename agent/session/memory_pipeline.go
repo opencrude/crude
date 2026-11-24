@@ -446,7 +446,7 @@ func (s *Session) extractWindow(parent context.Context, sessionID string, notify
 	if summary, found, err := store.SessionSummary(ctx, sessionID); err == nil && found {
 		previousSummary = summary.Summary
 	}
-	existingTitles := s.existingMemoryTitles(ctx, store)
+	existingTitles := s.existingMemoryTitles(ctx, store, window.Transcript)
 
 	complete, err := s.memoryCompleter()
 	if err != nil {
@@ -468,7 +468,8 @@ func (s *Session) extractWindow(parent context.Context, sessionID string, notify
 	provenance := fmt.Sprintf("session:%s turns:%d-%d (auto)", sessionID, watermark+1, window.ThroughTurn)
 	batch := memory.ExtractionBatch{SessionID: sessionID, ExpectedWatermark: watermark,
 		ThroughTurn: window.ThroughTurn, ExpectedGeneration: generation,
-		Records: memory.GroundExtraction(result, window.Observations, sessionID, provenance)}
+		Records:        memory.GroundExtraction(result, window.Observations, sessionID, provenance),
+		Reinforcements: memory.GroundRestatements(result, window.Observations, sessionID)}
 	if result.Summary != nil {
 		batch.Summary = &memory.SessionSummary{
 			SessionID: sessionID,
@@ -479,18 +480,23 @@ func (s *Session) extractWindow(parent context.Context, sessionID string, notify
 			TurnCount: window.ThroughTurn,
 		}
 	}
-	saved, err := store.CommitExtraction(ctx, batch)
+	commit, err := store.CommitExtraction(ctx, batch)
 	if err != nil {
 		s.logger.Warn("MEMORY", "extract_commit_failed", "error", err.Error())
 		return false
 	}
+	saved := commit.Saved
 	s.refreshMemorySummary(ctx, store)
 	var savedTitles []string
 	for _, record := range saved {
 		savedTitles = append(savedTitles, record.Title)
 	}
+	var reinforced []string
+	for _, record := range commit.Reinforced {
+		reinforced = append(reinforced, fmt.Sprintf("%s@%d", record.ID, record.Revision))
+	}
 	s.logger.Info("MEMORY", "extract_done",
-		"session", sessionID, "through_turn", window.ThroughTurn, "saved", len(saved))
+		"session", sessionID, "through_turn", window.ThroughTurn, "saved", len(saved), "reinforced", strings.Join(reinforced, ","))
 	if notify && len(saved) > 0 && s.sender != nil {
 		s.sender.SendAgentEvent("memory_saved", map[string]any{
 			"count":  len(saved),
@@ -500,15 +506,25 @@ func (s *Session) extractWindow(parent context.Context, sessionID string, notify
 	return window.ThroughTurn < turns[len(turns)-1].Turn || len(turns) == extractWindowMaxTurns
 }
 
-// existingMemoryTitles renders current memory titles for the extraction
-// prompt's dedup list.
-func (s *Session) existingMemoryTitles(ctx context.Context, store *memory.Store) string {
-	records, err := store.List(ctx, memory.ListQuery{Status: "all", Limit: 40})
+// existingMemoryTitles shows the curator the memories these turns may state
+// again, then the newest ones, so a restatement can strengthen the record that
+// already holds it instead of being dropped or duplicated.
+func (s *Session) existingMemoryTitles(ctx context.Context, store *memory.Store, transcript string) string {
+	related, err := store.Recall(ctx, memory.RecallQuery{Text: transcript, Limit: 30})
+	if err != nil {
+		return ""
+	}
+	recent, err := store.List(ctx, memory.ListQuery{Status: "all", Limit: 20})
 	if err != nil {
 		return ""
 	}
 	var b strings.Builder
-	for _, record := range records {
+	seen := make(map[string]bool)
+	for _, record := range append(related, recent...) {
+		if seen[record.ID] {
+			continue
+		}
+		seen[record.ID] = true
 		fmt.Fprintf(&b, "- %s@%d (%s, %s): %s\n", record.ID, record.Revision, record.Kind, record.Status, record.Title)
 	}
 	return strings.TrimSpace(b.String())

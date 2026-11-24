@@ -112,18 +112,40 @@ func TestExecutionClientsRemainIsolatedAndPolicyPublicationRevokesTaskTrust(t *t
 	if len(service.actorClients(first).States()) != 0 || len(service.actorClients(second).States()) != 0 {
 		t.Fatal("passive actor preparation connected a transport")
 	}
+	settings.Connections["fixture"] = captypes.ConnectionConfig{ID: "fixture", Name: "Fixture", Transport: "http", URL: "https://example.org/mcp"}
+	if err := service.Configure(t.Context(), settings); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.admitRun(t.Context(), first); err != nil {
+		t.Fatal(err)
+	}
+	authorized := service.Snapshot().Settings
 	service.mu.Lock()
-	service.taskGrants[taskKey(first)] = map[string]taskGrant{"fixture\x00lookup": {Grant: captypes.ToolGrant{Effect: captypes.EffectRead, Scope: "fixture"}}}
-	service.launches[taskKey(first)] = map[string]string{"fixture": "launch-token"}
+	service.taskGrants[taskKey(first)] = map[string]taskGrant{"fixture\x00lookup": {Connection: authorized.Connections["fixture"],
+		Policy: authorized.Acquisition, Source: authorized.Sources[""], Grant: captypes.ToolGrant{Effect: captypes.EffectRead, Scope: "fixture"}}}
 	service.mu.Unlock()
+	granted := func() bool {
+		_, ok := service.taskAccess(first, service.Snapshot().Settings.Connections["fixture"], "lookup")
+		return ok
+	}
+	launch := launchToken(authorized.Connections["fixture"], authorized, first)
+	if !granted() {
+		t.Fatal("run grant was not usable under the settings that authorized it")
+	}
+	// Removing or adding another connection publishes settings too; it must
+	// not take tools away from a run that was granted them.
+	settings.Connections["other"] = captypes.ConnectionConfig{ID: "other", Name: "Other", Transport: "http", URL: "https://example.org/other"}
+	if err := service.Configure(t.Context(), settings); err != nil {
+		t.Fatal(err)
+	}
+	if !granted() {
+		t.Fatal("an unrelated connection change revoked the run's grant")
+	}
 	settings.Acquisition.AutomaticSelection = "off"
 	if err := service.Configure(t.Context(), settings); err != nil {
 		t.Fatal(err)
 	}
-	service.mu.RLock()
-	retained := len(service.taskGrants) + len(service.launches)
-	service.mu.RUnlock()
-	if retained != 0 {
+	if granted() || launchToken(authorized.Connections["fixture"], service.Snapshot().Settings, first) == launch {
 		t.Fatal("policy revocation retained task authorization")
 	}
 	service.RevokeRun(first)

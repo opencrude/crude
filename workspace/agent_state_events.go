@@ -1,7 +1,6 @@
 package workspace
 
 import (
-	"crude/types/command"
 	"fmt"
 	"strings"
 	"time"
@@ -229,11 +228,7 @@ func (a *AgentState) handleToolProgress(evt AgentEvent, target *Conversation, ef
 		linesRemoved := toInt(data["lines_removed"])
 		estTokens := toInt(data["tool_est_tokens"])
 
-		var transfer *command.Progress
-		if total := toInt(data["transfer_total"]); total > 0 {
-			transfer = &command.Progress{Current: int64(toInt(data["transfer_current"])), Total: int64(total)}
-		}
-		target.updateToolProgress(transfer, toolID, internalID, name, phase, message, path, int(linesAdded), int(linesRemoved), int(estTokens))
+		target.UpdateToolProgress(toolID, internalID, name, phase, message, path, int(linesAdded), int(linesRemoved), int(estTokens))
 		if phase == "done" {
 			effects.setStatus(toolOperationStatus(name, "done"))
 		} else if phase == "error" {

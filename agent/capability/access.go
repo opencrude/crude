@@ -11,6 +11,8 @@ import (
 	"io"
 	"reflect"
 	"slices"
+	"strings"
+	"unicode/utf8"
 
 	captypes "crude/types/capability"
 )
@@ -34,38 +36,61 @@ func (s *Service) observedActivation(ctx context.Context, actor captypes.Runtime
 	var prepared captypes.RuntimeSnapshot
 	s.selectTools(actor, settings, states, &prepared)
 	result.Notices = prepared.Notices
+	usable := make(map[string]bool)
 	for _, tool := range prepared.Tools {
 		if tool.ConnectionID == id {
-			tool.InputSchema, tool.Description = nil, ""
-			result.UsableTools = append(result.UsableTools, tool)
+			usable[tool.OriginalName] = true
+			result.Usable = append(result.Usable, captypes.UsableTool{Name: tool.Name, Tool: tool.OriginalName, Effect: tool.Effect, Scope: tool.Scope})
 		}
 	}
 	for _, state := range states {
-		if state.ID == id {
-			result.State = state.State
-			schemaBytes := 0
-			for _, tool := range state.Tools {
-				size := len(tool.InputSchema) + len(tool.Description)
-				if len(result.Tools) >= budgets.MaxTools || schemaBytes+size > min(budgets.MaxSchemaBytes, 256<<10) {
-					result.Notices = append(result.Notices, "Observed tool details reached the configured count/schema budget; the full catalog remains available in MCP Settings.")
-					break
-				}
-				result.Tools = append(result.Tools, tool)
-				schemaBytes += size
+		if state.ID != id {
+			continue
+		}
+		result.State = state.State
+		descriptionBytes := 0
+		for _, tool := range state.Tools {
+			if usable[tool.OriginalName] {
+				continue
 			}
+			description := boundedText(tool.Description, accessDescriptionBytes)
+			if len(result.NeedsAccess) >= budgets.MaxTools || descriptionBytes+len(description) > min(budgets.MaxSchemaBytes, 256<<10) {
+				result.Notices = append(result.Notices, "More tools exist than this result lists; the full catalog is in Settings › MCP.")
+				break
+			}
+			result.NeedsAccess = append(result.NeedsAccess, captypes.AccessCandidate{Tool: tool.OriginalName, Fingerprint: tool.Fingerprint, Description: description})
+			descriptionBytes += len(description)
 		}
 	}
 	if result.State != "connected" {
 		return captypes.Result{}, errors.New("MCP connection changed before discovery completed")
 	}
-
-	if len(result.UsableTools) > 0 {
-		result.Next = "Use the exact UsableTools names offered at the next request boundary. Installations remain durable at their configured binding; automatic access is limited to the owning run."
-	} else {
-		result.Next = "Connected does not mean tool access. Request exact observed tools using mcp_request_access connection_id plus grants [{tool: original name, fingerprint: observed fingerprint, effect: intended effect, scope: resource scope}]. New or changed grants require exact authorization under the owning session's Manual/Auto Review/YOLO policy; agent ceilings and schema budgets still apply."
+	switch {
+	case len(result.NeedsAccess) == 0:
+		result.Next = "Call usable_tools by name from the next request."
+	case len(result.Usable) > 0:
+		result.Next = "Call usable_tools by name from the next request. Grants add up: to use more, request only tools from tools_needing_access with mcp_request_access."
+	default:
+		result.Next = "Connected is not access. Call mcp_request_access once with every tool the task needs from tools_needing_access: its tool and fingerprint, the strongest effect it can have, and the resources it may touch as scope. Grants add up and follow the session's Manual/Auto Review/YOLO policy."
 	}
 	encoded, err := json.Marshal(result)
 	return textResult(string(encoded)), err
+}
+
+// accessDescriptionBytes bounds one listed description. It is enough to choose
+// an effect and scope; the full text arrives with the granted tool.
+const accessDescriptionBytes = 512
+
+func boundedText(text string, limit int) string {
+	text = strings.TrimSpace(text)
+	if len(text) <= limit {
+		return text
+	}
+	cut := limit
+	for cut > 0 && !utf8.RuneStart(text[cut]) {
+		cut--
+	}
+	return strings.TrimSpace(text[:cut]) + "…"
 }
 
 func decodeAccessRequests(raw any) ([]captypes.AccessRequest, error) {
@@ -108,8 +133,13 @@ func (s *Service) accessPreview(actor captypes.RuntimeActor, id string, requests
 	changed := false
 	schemaBytes := 0
 	for _, request := range requests {
-		if request.Tool == "" || request.Scope == "" || len(request.Scope) > 1024 || seen[request.Tool] {
-			return preview, snapshot.Settings, false, errors.New("MCP access needs unique tool names and a bounded nonempty resource scope")
+		switch {
+		case request.Tool == "":
+			return preview, snapshot.Settings, false, errors.New("each grant needs the tool's original name from tools_needing_access")
+		case seen[request.Tool]:
+			return preview, snapshot.Settings, false, fmt.Errorf("%s appears twice; grant each tool once with the strongest effect it can have (a tool that reads and writes is write)", request.Tool)
+		case request.Scope == "" || len(request.Scope) > 1024:
+			return preview, snapshot.Settings, false, fmt.Errorf("the grant for %s needs a scope of at most 1024 bytes that names the resources it may touch", request.Tool)
 		}
 		seen[request.Tool] = true
 		var observed captypes.Tool
@@ -212,7 +242,9 @@ func (s *Service) activateAccess(ctx context.Context, actor captypes.RuntimeActo
 			s.taskGrants[taskKey(actor)] = make(map[string]taskGrant)
 		}
 		for _, request := range requests {
-			s.taskGrants[taskKey(actor)][id+"\x00"+request.Tool] = taskGrant{Connection: preview.Connection, Grant: captypes.ToolGrant{Effect: request.Effect, Scope: request.Scope, Fingerprint: request.Fingerprint}}
+			s.taskGrants[taskKey(actor)][id+"\x00"+request.Tool] = taskGrant{Connection: preview.Connection,
+				Policy: before.Acquisition, Source: before.Sources[preview.Connection.Source],
+				Grant: captypes.ToolGrant{Effect: request.Effect, Scope: request.Scope, Fingerprint: request.Fingerprint}}
 		}
 		s.mu.Unlock()
 		return s.activationResult(ctx, actor, id)

@@ -128,41 +128,51 @@ func NormalizeText(parts ...string) string {
 	return strings.Join(tokens, " ")
 }
 
-// maxQueryTokens bounds FTS query size; more terms add noise, not recall.
-const maxQueryTokens = 24
+// maxQueryTokens bounds FTS query size. BM25 already weighs each term by
+// its rarity, so the bound only protects against pathological input.
+const maxQueryTokens = 64
 
 // BuildMatchQuery converts free text (plus extra context strings) into a
 // safe FTS5 OR-query over normalized tokens. Returns "" when nothing
 // searchable remains; callers must treat that as "no query", not match-all.
+// Context (such as long active paths) fills at most a quarter of the query,
+// so it never displaces the words of the text itself.
 func BuildMatchQuery(text string, extra ...string) string {
-	set := tokenSet(text)
+	primary := tokenSet(text)
+	context := make(map[string]struct{})
 	for _, e := range extra {
 		for token := range tokenSet(e) {
-			set[token] = struct{}{}
+			if _, known := primary[token]; !known {
+				context[token] = struct{}{}
+			}
 		}
 	}
-	if len(set) == 0 {
+	contextSlots := min(len(context), maxQueryTokens/4)
+	tokens := append(longestTokens(primary, maxQueryTokens-contextSlots), longestTokens(context, contextSlots)...)
+	if len(tokens) == 0 {
 		return ""
-	}
-	tokens := make([]string, 0, len(set))
-	for token := range set {
-		tokens = append(tokens, token)
-	}
-	// Longest first: identifiers beat generic words when truncating.
-	sort.Slice(tokens, func(i, j int) bool {
-		if len(tokens[i]) != len(tokens[j]) {
-			return len(tokens[i]) > len(tokens[j])
-		}
-		return tokens[i] < tokens[j]
-	})
-	if len(tokens) > maxQueryTokens {
-		tokens = tokens[:maxQueryTokens]
 	}
 	quoted := make([]string, len(tokens))
 	for i, token := range tokens {
 		quoted[i] = `"` + strings.ReplaceAll(token, `"`, `""`) + `"`
 	}
 	return strings.Join(quoted, " OR ")
+}
+
+// longestTokens orders a set longest first, so identifiers beat generic words
+// when a bound applies, and returns at most limit tokens.
+func longestTokens(set map[string]struct{}, limit int) []string {
+	tokens := make([]string, 0, len(set))
+	for token := range set {
+		tokens = append(tokens, token)
+	}
+	sort.Slice(tokens, func(i, j int) bool {
+		if len(tokens[i]) != len(tokens[j]) {
+			return len(tokens[i]) > len(tokens[j])
+		}
+		return tokens[i] < tokens[j]
+	})
+	return tokens[:min(len(tokens), max(0, limit))]
 }
 
 // entityRe finds entity-shaped tokens: contains a path separator, an

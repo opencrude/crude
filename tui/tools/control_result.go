@@ -29,8 +29,8 @@ func buildControlResult(name, content, input string) StructuredResult {
 		}
 		return result
 	}
-	var receipt control.Result
-	if err := json.Unmarshal([]byte(content), &receipt); err != nil {
+	receipt, err := parseControlReceipt(content)
+	if err != nil {
 		return StructuredResult{Summary: "Control result unavailable", Unit: "operations", Sections: []ResultSection{{
 			Body: "The control result was not valid JSON.", Details: []ResultField{{"Retained result", content}},
 		}}}
@@ -75,6 +75,20 @@ func buildControlResult(name, content, input string) StructuredResult {
 		}
 	}
 	return result
+}
+
+func parseControlReceipt(content string) (control.Result, error) {
+	var receipt control.Result
+	err := json.Unmarshal([]byte(content), &receipt)
+	return receipt, err
+}
+
+// ControlReceiptSucceeded reports a settled result with no fault, not merely
+// success from the tool transport. Pending and partial results are not success.
+func ControlReceiptSucceeded(content string) bool {
+	receipt, err := parseControlReceipt(content)
+	return err == nil && receipt.RequestID != "" && receipt.Fault == nil &&
+		(receipt.State == control.Committed || receipt.State == control.Applied)
 }
 
 // Diagnostic receipts keep their bounded data intact, but common readings are

@@ -180,11 +180,11 @@ func (s *Service) configure(ctx context.Context, settings captypes.Settings) err
 	for _, clients := range s.executionClients {
 		clients.Configure(settings.Connections)
 	}
-	// Settings publication is a revocation boundary for task authority. Durable
-	// installs/grants survive; in-memory review must use the new exact policy.
+	// Run-local grants and launch authorizations bind the exact connection,
+	// policy and source they were authorized under, so a change to any of
+	// those revokes exactly them. Removing or editing an unrelated connection
+	// keeps every other grant of the run.
 	s.hostStates = make(map[string]map[string]captypes.ConnectionState)
-	s.taskGrants = make(map[string]map[string]taskGrant)
-	s.launches = make(map[string]map[string]string)
 	s.settings, s.entries, s.skills = settings, entries, loaded
 	s.generation++
 	s.mu.Unlock()
@@ -465,14 +465,16 @@ func (s *Service) Execute(ctx context.Context, actor captypes.RuntimeActor, snap
 		if err != nil && len(entries) == 0 {
 			return captypes.Result{}, err
 		}
-		for index := range entries {
-			if actor.DisabledForSession(entries[index].ID) {
-				entries[index].State, entries[index].Reason = "disabled", "turned off for this session by the user"
+		payload := captypes.SearchResult{Results: make([]captypes.SearchHit, 0, len(entries))}
+		for _, entry := range entries {
+			// An entry no agent can install is not a result for an agent.
+			if entry.State == "unsupported" {
+				continue
 			}
+			payload.Results = append(payload.Results, searchHit(actor, entry))
 		}
-		var payload any = entries
 		if err != nil {
-			payload = captypes.SearchResult{Entries: entries, Warning: err.Error()}
+			payload.Warning = err.Error()
 		}
 		encoded, encodeErr := json.Marshal(payload)
 		return textResult(string(encoded)), encodeErr
@@ -688,9 +690,9 @@ func (s *Service) activate(ctx context.Context, actor captypes.RuntimeActor, id 
 		if len(environment) > 0 {
 			return captypes.Result{}, errors.New("environment applies only to MCP connections")
 		}
-		return captypes.RunActivation(ctx, entry.Name, func(ctx context.Context) (captypes.Result, error) {
-			return s.loadPublishedSkill(ctx, actor, id, manual, settings.Skills[id])
-		})
+		// Installed instructions are local files: there is nothing to wait for,
+		// so the agent receives them in this result rather than in a job.
+		return s.loadPublishedSkill(ctx, actor, id, manual, settings.Skills[id])
 	}
 	if !manual && settings.Acquisition.AutomaticSelection != "on" {
 		return captypes.Result{}, errors.New("automatic MCP activation is disabled")
@@ -879,7 +881,10 @@ func (s *Service) SkillPath(ctx context.Context, id, relative string) (string, e
 	return filepath.Join(skill.Path, filepath.FromSlash(relative)), nil
 }
 
-// Search ranks the catalog entries that match a query, and can ask external sources too.
+// Search ranks the installed entries that match a query. With external, it
+// also asks every enabled source, whatever matched locally: an installed
+// partial match is not an answer, and a better capability may exist. Installed
+// entries come first because they are usable now.
 func (s *Service) Search(ctx context.Context, query string, kind captypes.Kind, limit int, external bool) ([]captypes.Entry, error) {
 	query = strings.ToLower(strings.TrimSpace(query))
 	if limit <= 0 || limit > 100 {
@@ -894,10 +899,10 @@ func (s *Service) Search(ctx context.Context, query string, kind captypes.Kind, 
 		entries = append(entries, entry)
 	}
 	entries = rankCapabilityEntries(entries, newCapabilityQuery(query), limit)
-	if !external || len(entries) > 0 {
+	if !external || len(entries) >= limit {
 		return entries, nil
 	}
-	discovered, err := s.discover(ctx, snapshot.Settings.Sources, query, kind, limit-len(entries))
+	discovered, err := s.discover(ctx, snapshot.Settings.Sources, query, kind, limit)
 	seen := make(map[string]struct{}, len(entries))
 	for _, entry := range entries {
 		seen[entry.ID] = struct{}{}
@@ -1059,6 +1064,24 @@ func (s *Service) Close() {
 	for _, client := range clients {
 		client.Close()
 	}
+}
+
+// searchHit projects an entry for a model. Launch authorization is a step of
+// activation under the session's policy, not a state the agent must resolve.
+func searchHit(actor captypes.RuntimeActor, entry captypes.Entry) captypes.SearchHit {
+	hit := captypes.SearchHit{ID: entry.ID, Kind: entry.Kind, Name: entry.Name, Description: entry.Description,
+		Installed: entry.Installed, State: entry.State, Reason: entry.Reason, Source: entry.Source,
+		Transport: entry.Transport, Package: entry.PackageType, Version: entry.Version, Repository: entry.Repository}
+	if !entry.Installed && entry.State == "not acquired" {
+		hit.State = "not installed"
+	}
+	switch {
+	case actor.DisabledForSession(entry.ID):
+		hit.State, hit.Reason = "disabled", "turned off for this session by the user"
+	case entry.State == "approval required":
+		hit.State, hit.Reason = "not started", "capability_activate starts it after the session's Manual/Auto Review/YOLO policy authorizes the launch"
+	}
+	return hit
 }
 
 func connectionTimeout(config captypes.ConnectionConfig) time.Duration {

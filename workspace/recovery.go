@@ -1,6 +1,8 @@
 package workspace
 
 import (
+	"slices"
+
 	"crude/agent/sessiondb"
 	"crude/types/conversation"
 	"crude/types/recovery"
@@ -12,7 +14,9 @@ import (
 func RecoveryMessage(status recovery.Status) conversation.Message {
 	copy := status
 	timestamp := status.StartedAt
-	if timestamp.IsZero() {
+	if status.State == recovery.Failed && !status.UpdatedAt.IsZero() || timestamp.IsZero() {
+		// A terminal verdict belongs where it happened, even on cold resume
+		// after a previously recoverable interruption in the same turn.
 		timestamp = status.UpdatedAt
 	}
 	return conversation.Message{
@@ -38,7 +42,16 @@ func (c *Conversation) UpdateRecovery(status recovery.Status) bool {
 	if message.Recovery != nil && *message.Recovery == status {
 		return false
 	}
+	terminalFailure := status.State == recovery.Failed && (message.Recovery == nil || message.Recovery.State != recovery.Failed)
 	*message = RecoveryMessage(status)
+	if terminalFailure {
+		// Move the same incident into the normal terminal position. Publish
+		// order and contents together, without touching accepted work or queued input.
+		if index := slices.Index(c.messages, message); index >= 0 && index < len(c.messages)-1 {
+			c.messages = slices.Delete(c.messages, index, index+1)
+			c.insertMessage(message)
+		}
+	}
 	c.lastRecovery = status
 	c.commitChange(message)
 	return true

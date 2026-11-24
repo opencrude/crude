@@ -9,24 +9,26 @@ import (
 )
 
 func TestCapabilitySearchActualEntryFields(t *testing.T) {
-	entries := []captypes.Entry{{ID: "skill:a", Kind: captypes.KindSkill, Name: "A", Description: "Read docs", Source: "registry", Version: "v3", Digest: "sha256:abcd", Origin: captypes.ScopeWorkspace, State: "ready", Installed: true}, {ID: "mcp:b", Kind: captypes.KindMCP, Name: "B", State: "available", Source: "configured", Installed: false, ConnectionID: "conn"}}
-	data, _ := json.Marshal(entries)
+	found := captypes.SearchResult{Results: []captypes.SearchHit{
+		{ID: "skill:a", Kind: captypes.KindSkill, Name: "A", Description: "Read docs", Source: "registry", Version: "v3", State: "available", Installed: true},
+		{ID: "mcp:b", Kind: captypes.KindMCP, Name: "B", State: "not installed", Source: "configured", Transport: "local package", Package: "pypi", Repository: "https://example.org/b"}}}
+	data, _ := json.Marshal(found)
 	result := buildCapabilityResult("capability_search", string(data), "")
 	if result.Summary != "2 capabilities" || len(result.Sections) != 2 {
 		t.Fatalf("search result: %+v", result)
 	}
-	if !strings.Contains(result.Sections[0].Metadata, "installed") || !strings.Contains(result.Sections[1].Metadata, "not installed") || strings.Contains(readableEvidence(result), "connected") {
+	if !strings.Contains(result.Sections[0].Metadata, "available") || !strings.Contains(result.Sections[1].Metadata, "not installed") || strings.Contains(readableEvidence(result), "connected") {
 		t.Fatalf("search falsely described discovery: %+v", result)
 	}
-	for _, expected := range []string{"skill:a", "Read docs", "v3", "sha256:abcd", "workspace", "conn"} {
+	for _, expected := range []string{"skill:a", "Read docs", "v3", "pypi", "https://example.org/b"} {
 		if !strings.Contains(readableEvidence(result), expected) {
 			t.Fatalf("missing %q: %+v", expected, result)
 		}
 	}
-	if result := buildCapabilityResult("capability_search", "[]", ""); result.Summary != "No capabilities found" {
+	if result := buildCapabilityResult("capability_search", `{"results":[]}`, ""); result.Summary != "No capabilities found" {
 		t.Fatalf("empty search = %+v", result)
 	}
-	if result := buildCapabilityResult("capability_search", `[{"ID":`, ""); result.Summary != "Capability search result unavailable" || strings.Contains(readableEvidence(result), `"ID"`) {
+	if result := buildCapabilityResult("capability_search", `{"results":[{"id":`, ""); result.Summary != "Capability search result unavailable" || strings.Contains(readableEvidence(result), `"id"`) {
 		t.Fatalf("invalid search exposed JSON: %+v", result)
 	}
 }
@@ -40,7 +42,7 @@ func TestCapabilityActivationAttributionAndInstructions(t *testing.T) {
 	if result := buildCapabilityResult("capability_activate", content, `{"id":"skill:other"}`); result.Summary != "Skill instructions unavailable" {
 		t.Fatalf("mismatched attribution accepted: %+v", result)
 	}
-	data, _ := json.Marshal(captypes.ActivationResult{ConnectionID: "mcp:a", State: "connected", Next: "Request exact fingerprint grants", Tools: []captypes.Tool{{OriginalName: "lookup", Fingerprint: "observed", Reason: "Needs explicit effect and scope grant"}}})
+	data, _ := json.Marshal(captypes.ActivationResult{ConnectionID: "mcp:a", State: "connected", Next: "Request exact fingerprint grants", NeedsAccess: []captypes.AccessCandidate{{Tool: "lookup", Fingerprint: "observed"}}})
 	mcp := buildCapabilityResult("capability_activate", string(data), `{"id":"mcp:a"}`)
 	if mcp.Summary != "MCP connected · 0 usable tools" || !strings.Contains(readableEvidence(mcp), "observed") || !strings.Contains(readableEvidence(mcp), "Request exact") {
 		t.Fatalf("mcp activation: %+v", mcp)

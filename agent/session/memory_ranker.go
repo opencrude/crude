@@ -168,6 +168,14 @@ func (s *Session) rankActionMemories(parent context.Context, owner, root string,
 			selected = next
 		}
 	}
+	// One line per ranking: which knowledge the model saw and chose. Without
+	// it a memory that never reaches the agent cannot be told apart from one
+	// the model judged irrelevant.
+	ranked := make([]string, 0, len(pool))
+	for _, rec := range pool {
+		ranked = append(ranked, fmt.Sprintf("%s=%.2f", rec.ID, rec.Score))
+	}
+	s.logger.Info("MEMORY", "ranked", "agent_id", owner, "round", round, "candidates", strings.Join(ranked, ","), "selected", len(selected))
 	if len(selected) == 0 {
 		return nil, nil
 	}

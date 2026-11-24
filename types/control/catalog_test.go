@@ -2,6 +2,7 @@ package control
 
 import (
 	"encoding/json"
+	"slices"
 	"testing"
 )
 
@@ -114,5 +115,24 @@ func TestCatalogMatchesNaturalPhrasesByTerms(t *testing.T) {
 	}
 	if none := Catalog("zzzqqq"); len(none) != 0 {
 		t.Fatalf("unrelated query matched %d commands", len(none))
+	}
+}
+
+// An agent asked for "mcp server add install" and got only set_tool_enabled:
+// every schema mentions "additionalProperties", so "add" matched everything
+// while the command that adds a server never said "add" or "install".
+func TestCatalogMatchesMeaningNotSchemaKeywords(t *testing.T) {
+	ids := func(query string) []string {
+		var out []string
+		for _, result := range Catalog(query) {
+			out = append(out, result.ID)
+		}
+		return out
+	}
+	if found := ids("mcp server add install"); !slices.Contains(found, "capabilities.save_connection") || slices.Contains(found, "settings.get") {
+		t.Fatalf("adding a server did not find save_connection: %v", found)
+	}
+	if found := ids("additionalProperties"); len(found) != 0 {
+		t.Fatalf("a schema keyword matched commands: %v", found)
 	}
 }

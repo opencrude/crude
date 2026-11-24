@@ -1,11 +1,13 @@
 package workspace
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -18,6 +20,8 @@ import (
 	"crude/agent/collaboration"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
+	"crude/agent/tools"
+	"crude/types/command"
 	"crude/types/setting"
 )
 
@@ -289,6 +293,34 @@ func TestWorkspaceAgentsCollaborateToRepairAndVerifyProject(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Prove that the original project fails for the intended reason. This also
+	// keeps a cold Go toolchain build out of the bounded collaboration wait.
+	preflight, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	broken := exec.CommandContext(preflight, "go", "test", "-count=1", "./...")
+	broken.Dir = project
+	out, err := broken.CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "Sum = 0, want 6") {
+		t.Fatalf("the fixture must fail before repair: %v\n%s", err, out)
+	}
+	const verify = "go test -count=1 ./..."
+	const verifyTimeout = 20 * time.Second // stay below synchronous command promotion
+	checkResult := func(messages []provider.ChatMessage, callID string) {
+		for _, msg := range messages {
+			if msg.Role != "tool" || msg.ToolCallID != callID {
+				continue
+			}
+			result, ok := tools.ParseCommandResult("execute_command", msg.ContentString())
+			fields := strings.Fields(result.Output)
+			if !ok || result.Command != verify || result.OutputDescriptor.Status != command.Completed || result.ExitCode == nil || *result.ExitCode != 0 ||
+				len(fields) < 2 || fields[0] != "ok" || fields[1] != "collaborationproof" {
+				t.Errorf("%s did not return a passing project test: %s", callID, msg.ContentString())
+			}
+			return
+		}
+		t.Errorf("provider did not receive the verification result for %s", callID)
+	}
+
 	var coordinatorID, implementerID atomic.Value
 	var coordinatorRequests, implementerRequests atomic.Int32
 	reportPublished := make(chan struct{})
@@ -297,6 +329,11 @@ func TestWorkspaceAgentsCollaborateToRepairAndVerifyProject(t *testing.T) {
 		encoded, _ := json.Marshal(arguments)
 		writer.Header().Set("Content-Type", "text/event-stream")
 		_, _ = fmt.Fprintf(writer, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":%q,\"type\":\"function\",\"function\":{\"name\":%q,\"arguments\":%q}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", id, name, string(encoded))
+	}
+	runVerification := func(writer http.ResponseWriter, id string) {
+		writeTool(writer, id, "execute_command", map[string]any{
+			"command": verify, "cwd": project, "timeout_seconds": int(verifyTimeout / time.Second),
+		})
 	}
 	writeText := func(writer http.ResponseWriter, text string) {
 		writer.Header().Set("Content-Type", "text/event-stream")
@@ -357,13 +394,9 @@ func TestWorkspaceAgentsCollaborateToRepairAndVerifyProject(t *testing.T) {
 				if !strings.Contains(text, "Implemented the accumulator in sum.go.") {
 					t.Errorf("coordinator did not read the complete peer report before verification")
 				}
-				writeTool(writer, "verify-project", "execute_command", map[string]any{
-					"command": "go test ./...", "cwd": project,
-				})
+				runVerification(writer, "verify-project")
 			default:
-				if !strings.Contains(text, "ok") {
-					t.Errorf("coordinator verification result missing from context:\n%s", text)
-				}
+				checkResult(body.Messages, "verify-project")
 				writeText(writer, "The peer repair is verified by the project test.")
 			}
 		case strings.Contains(text, "Implement Sum in sum.go so the existing test passes."):
@@ -380,8 +413,9 @@ func TestWorkspaceAgentsCollaborateToRepairAndVerifyProject(t *testing.T) {
 					"new_string": "\ttotal := 0\n\tfor _, value := range values {\n\t\ttotal += value\n\t}\n\treturn total",
 				})
 			case 3:
-				writeTool(writer, "check-sum", "execute_command", map[string]any{"command": "go test ./...", "cwd": project})
+				runVerification(writer, "check-sum")
 			case 4:
+				checkResult(body.Messages, "check-sum")
 				writeTool(writer, "report-sum", "publish_report", map[string]any{
 					"recipient_ids": []string{coordinatorID.Load().(string)},
 					"kind":          "final",
@@ -437,8 +471,8 @@ func TestWorkspaceAgentsCollaborateToRepairAndVerifyProject(t *testing.T) {
 	if !coordinatorSession.backend.SubmitInput(coordinator.ID, provider.PlainInput("Coordinate the Sum repair through workspace collaboration.")) {
 		t.Fatal("coordinator turn was not admitted")
 	}
-	waitHistoryAgentDone(t, implementerSender, implementer.ID)
-	waitHistoryAgentDone(t, coordinatorSender, coordinator.ID)
+	waitHistoryAgentDoneAfterCommand(t, implementerSender, implementer.ID, "check-sum", verifyTimeout)
+	waitHistoryAgentDoneAfterCommand(t, coordinatorSender, coordinator.ID, "verify-project", verifyTimeout)
 
 	data, err := os.ReadFile(filepath.Join(project, "sum.go"))
 	if err != nil {

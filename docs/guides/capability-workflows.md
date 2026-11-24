@@ -99,16 +99,35 @@ server's redacted stderr tail is captured per launch and attached to handshake,
 disconnect and tool-call failures and to the connection state, so a crash reads
 as its own reason (for example `Could not open main display`), not a bare EOF.
 
-A slow agent activation is one job, not a package download followed by a second
-activation call. Source review, sign-in and launch permission remain explicit.
-Once admitted, a skill can acquire its pinned files, verify and load them; an
-MCP launch uses the reviewed executable and environment, including any first-run
-installation by that executable, and discovers the live tool catalog. Fast work
-returns inline. The command promotion threshold or incoming human steering
-hands slow work to the same **Background jobs** deck as shell commands. The
-command link reveals the originating call. **Output** reads retained phases
-and the result; **Stop** stops this attempt. A known transfer length fills
-the bar; without one, the bar shows activity, not an estimated percentage.
+Agent activation that must acquire, install or launch is one job from its first
+instant, not a package download followed by a second activation call, and not
+a wait inside the tool call. Source review, sign-in and launch permission remain
+explicit and happen first. Once admitted, a skill acquires its pinned files,
+verifies and loads them; an MCP launch uses the reviewed executable and
+environment, including any first-run installation by that executable, and
+discovers the live tool catalog. The tool returns the job's handle at once and
+the job appears in the same **Background jobs** deck as shell commands. An
+installed skill or an already connected server has nothing to wait for and
+answers in the result. The job link reveals the originating call. **Output**
+reads retained phases and the result; **Stop** stops this attempt. A known
+transfer length fills the bar; without one, the bar shows activity, not an
+estimated percentage. A local server that exits before it answers fails with its
+own reason on the first line (`server exited before it answered: Error: Missing
+command.`), followed by its stderr tail.
+
+`capability_search` asks every enabled source unless installed matches already
+fill the requested count: an installed entry that shares one word with the query
+is not an answer. The official registry matches one substring of a server name,
+so each keyword is asked separately, together with adjacent keywords joined as
+names join them (`computer use` also asks `computer-use`); only the latest
+version of each server is requested and the union is ranked by all query words.
+Agents receive compact results without entries they cannot install. An
+activation or access result lists `usable_tools` and `tools_needing_access`
+(name, fingerprint and a bounded description) without input schemas: a granted
+tool brings its schema as a native tool at the next request. Grants add up for
+the run. A run-local grant binds the exact connection, acquisition policy and
+source it was approved under, so editing or removing another connection keeps
+it. A tool is granted once with the strongest effect it can have.
 
 The owning agent receives the actual activation result as a `command_outcome`.
 No polling or second activation is needed. Access approval remains separate.
@@ -227,11 +246,13 @@ Detach, changed run/configuration and cancellation fence late calls and revoke
 run-local authority. Manual Settings UI for selecting/configuring shell-host execution
 is not yet a complete advertised journey; do not infer it from transport support.
 
-Users can select an external computer-use MCP appropriate to their OS/vendor and
-authorize its actual host effects. Crude bundles no universal desktop driver and
-cannot guarantee screenshot, mouse, browser or authentication automation for every
-integration. Native [Crude control](../reference/control-contract.md) is semantic IDE
-control, not external desktop access.
+Crude bundles no universal desktop driver. Computer use (seeing and operating a
+desktop or another application) is an MCP server for that OS. An agent asked for it
+finds one with `capability_search` and activates it like any capability, under the
+user's policy and the server's actual host permissions; it does not install packages
+by hand. Crude cannot guarantee screenshot, mouse, browser or authentication
+automation for every integration. Native [Crude control](../reference/control-contract.md)
+is semantic IDE control, not external desktop access.
 
 ## Agent Discovery, Acquisition, And Durable Use
 
@@ -388,17 +409,23 @@ Saved Version keep the separate full-file reader in movable main tabs.
 
 ## Validation Evidence
 
-- `TestConnectedActivationJobControls` submits work through the composer on a
-  connected shell. An ordinary `go test ./...` job runs beside a real MCP
-  initialization held at a local HTTP peer. A steering message promotes the
-  activation. The test reveals its exact call, reads its output, stops the
-  handshake, and verifies the neighboring command still has its own Stop action.
+- `TestConnectedActivationJobControls` submits one composer turn on a connected
+  shell: an ordinary `go test ./...` job, a real MCP initialization held at a
+  local HTTP peer, and a local server that exits with `Error: Missing command.`.
+  The turn ends without steering while the handshake is still held. The failed
+  row leads with the server's own reason. The test reveals the exact call, reads
+  its output, stops the handshake, and verifies the neighboring command still
+  has its own Stop action.
   For native verification, compile `./tui/viewmodel` as a test binary, set
   `CRUDE_VISUAL_ACTIVATION=1`, select this test, and use the repository capture
   driver at 160×40 and 80×24, sequentially. Set `CRUDE_CAPTURE_EVIDENCE` to a
   fresh temporary file per run. Use `await:motion`, `shot:mixed`, `quit:F9`.
-  The marker requires five distinct painted bar states inside one idle-tick
-  interval. A capture without the marker and a successful exit is not proof.
+  The marker requires five consecutive painted arc steps in order without an
+  idle-clock gap. `TestMeasuredJobMotionVisualAcceptance` with
+  `CRUDE_VISUAL_JOB_MOTION=1` uses a held download snapshot in the same mounted
+  deck to verify the arc beside measured fill and the ordinary running and
+  failed rows. Use the same steps and sizes. A capture without the marker and a
+  successful exit is not proof.
 - Set `CRUDE_LONG_ACTIVATION_PROOF=1` for
   `TestSlowActivationSettlesWithDiscoveredToolsWithoutReplay` in `./agent/session`.
   The local executable waits beyond the old 30-second handshake limit before

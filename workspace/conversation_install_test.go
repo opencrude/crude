@@ -3,6 +3,7 @@ package workspace
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	"crude/types/conversation"
 	"crude/types/recovery"
@@ -50,5 +51,37 @@ func TestRecoveryPublishesIncrementalDelta(t *testing.T) {
 	delta := c.ChangesSince(before)
 	if delta.Reset || delta.Order != nil || len(delta.Upserts) != 1 || delta.Upserts[0].Recovery.Summary != "second" {
 		t.Fatalf("recovery was not incremental: %+v", delta)
+	}
+}
+
+// A terminal failure can happen long after its first (recoverable) interruption.
+// The receipt must reach the tail as a move of its exact ID, not a second row.
+func TestFailedRecoveryMovesTheExistingRowBeforePendingInput(t *testing.T) {
+	c, replica := NewConversation(), NewConversation()
+	c.AppendMessage(conversation.Message{InternalID: "prompt", Role: MessageRoleUser})
+	status := recovery.Status{ID: "incident", State: recovery.Recovering, StartedAt: time.Unix(100, 0), UpdatedAt: time.Unix(101, 0)}
+	c.UpdateRecovery(status)
+	c.AppendMessage(conversation.Message{InternalID: "accepted", Role: MessageRoleAssistant, Content: "Continued after recovery."})
+	c.AppendMessage(conversation.Message{InternalID: "queued", Role: MessageRoleUser, PendingSteering: true})
+	if err := replica.InstallDelta(c.ChangesSince(0)); err != nil {
+		t.Fatal(err)
+	}
+	status.State, status.Detail, status.UpdatedAt = recovery.Failed, "Provider quota reached", time.Unix(190, 0)
+	c.UpdateRecovery(status)
+	if err := replica.InstallDelta(c.ChangesSince(replica.Version())); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"prompt", "accepted", "incident", "queued"}
+	for _, transcript := range []*Conversation{c, replica} {
+		if got := transcript.messageOrder(); !reflect.DeepEqual(got, want) {
+			t.Fatalf("failure remained above accepted work or moved queued input: %v", got)
+		}
+		row, ok := transcript.Message("incident")
+		if !ok || !row.Time.Equal(status.UpdatedAt) || row.Recovery == nil || *row.Recovery != status {
+			t.Fatalf("failure lost its exact settlement: %+v", row)
+		}
+	}
+	if c.UpdateRecovery(status) {
+		t.Fatal("repeated failure receipt moved or duplicated the row")
 	}
 }

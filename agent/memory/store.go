@@ -235,7 +235,7 @@ var ftsSpecs = []ftsSpec{
 	{
 		table: "workspace_memories_fts",
 		create: `CREATE VIRTUAL TABLE IF NOT EXISTS workspace_memories_fts USING fts5(
-			id UNINDEXED, title, content, entities, norm
+			id UNINDEXED, title, content, entities, norm, tokenize='porter unicode61'
 		)`,
 		triggers: []string{
 			`CREATE TRIGGER IF NOT EXISTS workspace_memories_fts_ai
@@ -260,7 +260,7 @@ var ftsSpecs = []ftsSpec{
 	{
 		table: "memory_history_fts",
 		create: `CREATE VIRTUAL TABLE IF NOT EXISTS memory_history_fts USING fts5(
-			rid UNINDEXED, user_text, assistant_text, tool_names, files, norm
+			rid UNINDEXED, user_text, assistant_text, tool_names, files, norm, tokenize='porter unicode61'
 		)`,
 		triggers: []string{
 			`CREATE TRIGGER IF NOT EXISTS memory_history_fts_ai
@@ -285,7 +285,7 @@ var ftsSpecs = []ftsSpec{
 	{
 		table: "memory_summaries_fts",
 		create: `CREATE VIRTUAL TABLE IF NOT EXISTS memory_summaries_fts USING fts5(
-			session_id UNINDEXED, title, summary, key_files, outcome
+			session_id UNINDEXED, title, summary, key_files, outcome, tokenize='porter unicode61'
 		)`,
 		triggers: []string{
 			`CREATE TRIGGER IF NOT EXISTS memory_summaries_fts_ai
@@ -312,13 +312,23 @@ var ftsSpecs = []ftsSpec{
 // migrateFTS probes FTS5 and installs the index tables + sync triggers.
 // Any failure disables FTS for this process and records an observable
 // fault in memory_meta; retrieval then uses the scan fallback. It never
-// fails the open: memory must degrade, not break the workspace.
+// fails the open: memory must degrade, not break the workspace. An index
+// holds no knowledge of its own, so one whose definition changed (for
+// example its tokenizer) is rebuilt from its source table.
 func (st *Store) migrateFTS() {
 	for _, spec := range ftsSpecs {
-		existed, err := st.tableExists(spec.table)
+		definition, err := st.tableDefinition(spec.table)
 		if err != nil {
 			st.disableFTS(fmt.Sprintf("inspect %s: %v", spec.table, err))
 			return
+		}
+		existed := definition != ""
+		if existed && !sameDefinition(definition, spec.create) {
+			if _, err := st.db.Exec(`DROP TABLE ` + spec.table); err != nil {
+				st.disableFTS(fmt.Sprintf("rebuild %s: %v", spec.table, err))
+				return
+			}
+			existed = false
 		}
 		if _, err := st.db.Exec(spec.create); err != nil {
 			st.disableFTS(fmt.Sprintf("create %s: %v", spec.table, err))
@@ -346,18 +356,25 @@ func (st *Store) disableFTS(reason string) {
 	_ = st.SetMeta(context.Background(), MetaFTSFault, reason)
 }
 
-func (st *Store) tableExists(name string) (bool, error) {
-	var found string
+// tableDefinition returns the stored CREATE statement, or "" for no table.
+func (st *Store) tableDefinition(name string) (string, error) {
+	var definition string
 	err := st.db.QueryRow(
-		`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, name,
-	).Scan(&found)
+		`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?`, name,
+	).Scan(&definition)
 	if err == sql.ErrNoRows {
-		return false, nil
+		return "", nil
 	}
-	if err != nil {
-		return false, err
+	return definition, err
+}
+
+// sameDefinition compares statements as SQLite stores them: without
+// IF NOT EXISTS and regardless of layout whitespace.
+func sameDefinition(stored, create string) bool {
+	canonical := func(statement string) string {
+		return strings.Join(strings.Fields(strings.Replace(statement, "IF NOT EXISTS ", "", 1)), " ")
 	}
-	return true, nil
+	return canonical(stored) == canonical(create)
 }
 
 func newRecordID() (string, error) {

@@ -97,8 +97,8 @@ func (h *Host) Theme() *theme.Theme {
 	return h.theme
 }
 
-// SetTheme rebuilds tokens and invalidates paint. Layout is invalidated only
-// when metric/spacing tokens change (color-only switches stay paint-only).
+// SetTheme rebuilds tokens and invalidates paint. Layout is invalidated when
+// measurements, spacing or glyph choices change; palette-only changes repaint.
 func (h *Host) SetTheme(th *theme.Theme) {
 	h.theme = th
 	prevMetric := uint64(0)

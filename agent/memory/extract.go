@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -32,10 +34,23 @@ type ExtractedSummary struct {
 	KeyFiles []string `json:"key_files"`
 }
 
+// Restatement cites new turns that state an existing memory again.
+type Restatement struct {
+	ID       string `json:"id"`
+	Evidence []int  `json:"evidence"`
+}
+
 // ExtractionResult is the parsed output of one extraction call.
 type ExtractionResult struct {
 	Memories []ExtractedMemory `json:"memories"`
+	Restated []Restatement     `json:"restated"`
 	Summary  *ExtractedSummary `json:"summary"`
+}
+
+// Reinforcement is grounded support for knowledge the store already holds.
+type Reinforcement struct {
+	ID       string
+	Evidence []Evidence
 }
 
 // extractionInputBytes bounds the turns and evidence of one curator request,
@@ -172,6 +187,29 @@ func GroundExtraction(result ExtractionResult, observations []Observation, sessi
 	return records
 }
 
+// GroundRestatements keeps only restatements cited by this window's own
+// observations. Repetition strengthens a memory; it never invents one.
+func GroundRestatements(result ExtractionResult, observations []Observation, sessionID string) []Reinforcement {
+	var out []Reinforcement
+	for _, restated := range result.Restated {
+		if restated.ID == "" || len(restated.Evidence) == 0 || len(restated.Evidence) > MaxEvidence {
+			continue
+		}
+		reinforcement := Reinforcement{ID: restated.ID}
+		for _, index := range restated.Evidence {
+			if index < 0 || index >= len(observations) || observations[index].SessionID != sessionID {
+				reinforcement.Evidence = nil
+				break
+			}
+			reinforcement.Evidence = append(reinforcement.Evidence, observations[index].Evidence)
+		}
+		if len(reinforcement.Evidence) > 0 {
+			out = append(out, reinforcement)
+		}
+	}
+	return out
+}
+
 func scopeSupported(paths, observedPaths []string, kind string) bool {
 	if len(paths) == 0 || kind == EvidenceUser {
 		return true
@@ -197,7 +235,14 @@ type ExtractionBatch struct {
 	ThroughTurn        int
 	ExpectedGeneration int64
 	Records            []Record
+	Reinforcements     []Reinforcement
 	Summary            *SessionSummary
+}
+
+// ExtractionCommit reports what one curator window changed.
+type ExtractionCommit struct {
+	Saved      []Record
+	Reinforced []Record
 }
 
 func (st *Store) KnowledgeGeneration(ctx context.Context) (int64, error) {
@@ -208,73 +253,123 @@ func (st *Store) KnowledgeGeneration(ctx context.Context) (int64, error) {
 	return strconv.ParseInt(raw, 10, 64)
 }
 
-func (st *Store) CommitExtraction(ctx context.Context, batch ExtractionBatch) ([]Record, error) {
-	if batch.SessionID == "" || batch.ThroughTurn <= batch.ExpectedWatermark || len(batch.Records) > 5 {
-		return nil, fmt.Errorf("memory: invalid extraction batch")
+// CommitExtraction applies one curator window and advances its watermark together.
+func (st *Store) CommitExtraction(ctx context.Context, batch ExtractionBatch) (ExtractionCommit, error) {
+	var commit ExtractionCommit
+	if batch.SessionID == "" || batch.ThroughTurn <= batch.ExpectedWatermark || len(batch.Records) > 5 || len(batch.Reinforcements) > 5 {
+		return commit, fmt.Errorf("memory: invalid extraction batch")
 	}
 	tx, err := st.db.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, err
+		return commit, err
 	}
 	defer func() { _ = tx.Rollback() }()
 	for key, expected := range map[string]int64{"extract:" + batch.SessionID: int64(batch.ExpectedWatermark), "knowledge_generation": batch.ExpectedGeneration} {
 		var raw string
 		err := tx.QueryRowContext(ctx, `SELECT value FROM memory_meta WHERE key=?`, key).Scan(&raw)
 		if err != nil && err != sql.ErrNoRows {
-			return nil, err
+			return commit, err
 		}
 		current := int64(0)
 		if raw != "" {
 			current, err = strconv.ParseInt(raw, 10, 64)
 			if err != nil {
-				return nil, err
+				return commit, err
 			}
 		}
 		if current != expected {
-			return nil, fmt.Errorf("%w: extraction %s changed", ErrRevisionConflict, key)
+			return commit, fmt.Errorf("%w: extraction %s changed", ErrRevisionConflict, key)
 		}
 	}
-	var saved []Record
+	reinforce := func(id string, evidence []Evidence) error {
+		record, changed, err := reinforceTx(ctx, tx, id, evidence, batch.SessionID)
+		if err == nil && changed {
+			commit.Reinforced = append(commit.Reinforced, record)
+		}
+		return err
+	}
 	for _, record := range batch.Records {
 		if record.Source != SourceAuto || record.SourceSessionID != batch.SessionID {
-			return nil, fmt.Errorf("memory: extraction source mismatch")
+			return commit, fmt.Errorf("memory: extraction source mismatch")
 		}
 		if err := validateKindDefaults(&record); err != nil {
-			return nil, err
+			return commit, err
 		}
-		var conflicts int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM workspace_memories WHERE kind=? AND lower(trim(title))=lower(trim(?))`, record.Kind, record.Title).Scan(&conflicts); err != nil {
-			return nil, err
-		}
-		if conflicts > 0 {
-			if err := journalTx(ctx, tx, ActorAuto, "merge_suggested", "", batch.SessionID, record.Title); err != nil {
-				return nil, err
+		// The same knowledge stated again strengthens the record that holds it.
+		var existing string
+		switch err := tx.QueryRowContext(ctx, `SELECT id FROM workspace_memories WHERE kind=? AND lower(trim(title))=lower(trim(?)) ORDER BY status = ? DESC LIMIT 1`, record.Kind, record.Title, StatusActive).Scan(&existing); {
+		case err == nil:
+			if err := reinforce(existing, record.Evidence); err != nil {
+				return commit, err
 			}
 			continue
+		case !errors.Is(err, sql.ErrNoRows):
+			return commit, err
 		}
 		record, err := rememberTx(ctx, tx, record)
 		if err != nil {
-			return nil, err
+			return commit, err
 		}
-		saved = append(saved, record)
+		commit.Saved = append(commit.Saved, record)
+	}
+	for _, reinforcement := range batch.Reinforcements {
+		if err := reinforce(reinforcement.ID, reinforcement.Evidence); err != nil {
+			return commit, err
+		}
 	}
 	if batch.Summary != nil {
 		if batch.Summary.SessionID != batch.SessionID {
-			return nil, fmt.Errorf("memory: extraction summary source mismatch")
+			return commit, fmt.Errorf("memory: extraction summary source mismatch")
 		}
 		if err := saveSessionSummaryTx(ctx, tx, *batch.Summary); err != nil {
-			return nil, err
+			return commit, err
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO memory_meta(key, value, updated_at) VALUES (?, ?, ?)
 		ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
 		"extract:"+batch.SessionID, strconv.Itoa(batch.ThroughTurn), time.Now().UnixNano()); err != nil {
-		return nil, err
+		return commit, err
 	}
 	if err := tx.Commit(); err != nil {
-		return nil, err
+		return commit, err
 	}
-	return saved, nil
+	return commit, nil
+}
+
+// reinforceTx adds new support to an active record stated again. It keeps the
+// record's text and authority; only its evidence and freshness change, as an
+// audited revision. Retired records and already cited evidence change nothing.
+func reinforceTx(ctx context.Context, tx *sql.Tx, id string, evidence []Evidence, sessionID string) (Record, bool, error) {
+	record, err := scanRecord(tx.QueryRowContext(ctx, `SELECT `+recordSelectColumns+` FROM workspace_memories WHERE id=? AND status=?`, id, StatusActive))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Record{}, false, nil
+	}
+	if err != nil {
+		return Record{}, false, err
+	}
+	added := false
+	for _, item := range evidence {
+		if !slices.ContainsFunc(record.Evidence, func(known Evidence) bool {
+			return known.SessionID == item.SessionID && known.MessageID == item.MessageID && known.ToolCallID == item.ToolCallID
+		}) {
+			record.Evidence = append(record.Evidence, item)
+			added = true
+		}
+	}
+	if !added {
+		return record, false, nil
+	}
+	if excess := len(record.Evidence) - MaxEvidence; excess > 0 {
+		record.Evidence = record.Evidence[excess:]
+	}
+	expected := record.Revision
+	record.Revision++
+	record.UpdatedAt = time.Now().UnixNano()
+	record.Actor = ActorAuto
+	if err := writeRecordTx(ctx, tx, record, expected, "reinforce", sessionID); err != nil {
+		return Record{}, false, err
+	}
+	return record, true, nil
 }
 
 // ParseExtraction parses a (possibly noisy) model response into an
@@ -310,6 +405,9 @@ func ParseExtraction(raw string) (ExtractionResult, error) {
 		valid = valid[:5]
 	}
 	result.Memories = valid
+	if len(result.Restated) > 5 {
+		result.Restated = result.Restated[:5]
+	}
 	if result.Summary != nil {
 		result.Summary.Summary = strings.TrimSpace(result.Summary.Summary)
 		if result.Summary.Summary == "" {

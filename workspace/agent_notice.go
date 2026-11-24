@@ -176,7 +176,7 @@ func (c *StatusCenter) recordBackgroundCommands(owner statuscenter.ResourceRef, 
 			c.notifyOnce(statuscenter.NotificationRecord{
 				ID: id + ":failed", DedupKey: id + ":failed", Owner: owner,
 				Severity: statuscenter.SeverityError, Source: "background-command",
-				Summary: "Background command failed", Detail: "Open the agent transcript for command details.",
+				Summary: "Background job failed", Detail: "Open the agent transcript for details.",
 				Actions: []statuscenter.Action{{ID: "status.switch", Label: "Inspect agent", Enabled: true}},
 			})
 		}

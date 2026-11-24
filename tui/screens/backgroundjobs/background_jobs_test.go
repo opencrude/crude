@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
@@ -60,7 +61,7 @@ func TestBackgroundJobsPaintsStatusGlyphsAndErrors(t *testing.T) {
 	buf := surface.NewCellBuffer(120, 12)
 	host.Paint(buf)
 	painted := bufferText(buf)
-	for _, want := range []string{"✓ Completed", "✗ Failed", "! Stopped", "exit status 1"} {
+	for _, want := range []string{"✓ Completed", "✗ Failed · Exit status 1", "! Stopped"} {
 		if !strings.Contains(painted, want) {
 			t.Fatalf("missing %q:\n%s", want, painted)
 		}
@@ -148,7 +149,8 @@ func TestActivationHasProgressAndExactControlsWithoutProcessTelemetry(t *testing
 		buf := surface.NewCellBuffer(width, 8)
 		host.Paint(buf)
 		row := strings.Split(bufferText(buf), "\n")[4]
-		if !strings.Contains(row, "──") || !strings.Contains(row, "Output") || (!strings.Contains(row, "Stop") && !strings.Contains(row, string(ui.FirstRune(screen.tokens.Glyphs().Close, '✕')))) {
+		// Connecting never suggests measurable progress, even with room.
+		if strings.Contains(row, "──") || !strings.Contains(row, "◜ Connecting") || !strings.Contains(row, "Output") || (!strings.Contains(row, "Stop") && !strings.Contains(row, string(ui.FirstRune(screen.tokens.Glyphs().Close, '✕')))) {
 			t.Fatalf("%d missing controls or progress: %s", width, row)
 		}
 		for _, control := range screen.controls {
@@ -179,5 +181,96 @@ func BenchmarkJobAnimationTick(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		s.Refresh(now)
+	}
+}
+
+func TestJobArcMovesWithoutMovingLabelsOrFillingUnknownProgress(t *testing.T) {
+	now := time.Now()
+	jobs := []Job{
+		{Handle: "shell", Command: "go test", StartedAt: now, Status: "running"},
+		{Handle: "connect", TaskID: "connect", Command: "MCP server", StartedAt: now.Add(time.Second), Status: "running", Progress: command.Progress{Phase: "Connecting"}},
+		{Handle: "skill", TaskID: "skill", Command: "Skill files", StartedAt: now.Add(2 * time.Second), Status: "running", Progress: command.Progress{Phase: "Downloading", Current: 9, Total: 100}},
+	}
+	for _, width := range []int{80, 160} {
+		th := theme.DefaultDark()
+		screen := New(th)
+		screen.SetJobs(jobs, now)
+		host := ui.NewHost(th, screen)
+		host.Resize(width, 9)
+		buf := surface.NewCellBuffer(width, 9)
+		paint := func(frame int) []string {
+			host.SetFrame(frame)
+			host.Paint(buf)
+			return strings.Split(bufferText(buf), "\n")
+		}
+		first := paint(0)
+		status := strings.Index(first[2], "STATUS")
+		for i, want := range []rune("◜◝◞◟") {
+			frame := i * 160
+			lines := paint(frame)
+			for y := 4; y <= 6; y++ {
+				row, baseline := []rune(lines[y]), []rune(first[y])
+				if row[status] != want || string(row[status+1:]) != string(baseline[status+1:]) {
+					t.Fatalf("%d: frame %d did not turn only the arc: %s", width, frame, lines[y])
+				}
+				if y < 6 && strings.Contains(lines[y], "──") {
+					t.Fatalf("%d: unknown progress painted a bar: %s", width, lines[y])
+				}
+			}
+		}
+		before := paint(0)
+		jobs[2].Progress.Current = 48
+		screen.SetJobs(jobs, now)
+		host.MarkLayout()
+		after := paint(0)
+		jobs[2].Progress.Current = 9
+		for _, operand := range []string{"STATUS", "TIME", "HANDLE"} {
+			if strings.Index(before[2], operand) != strings.Index(after[2], operand) {
+				t.Fatalf("%d: %s jumped when progress crossed 10%%:\n%s\n%s", width, operand, before[2], after[2])
+			}
+		}
+		barColumn := func(line string) int {
+			text, _, ok := strings.Cut(line, "──")
+			if !ok {
+				return -1
+			}
+			return rendering.VisibleWidth(text)
+		}
+		if !strings.Contains(after[6], "48%") || barColumn(before[6]) != barColumn(after[6]) || width >= 160 && barColumn(after[6]) < 0 {
+			t.Fatalf("%d: measured progress was lost or moved the bar:\n%s\n%s", width, before[6], after[6])
+		}
+		if w := screen.columns.barW; w > 0 {
+			filled := 0
+			for x := screen.columns.barX; x < screen.columns.barX+w; x++ {
+				if buf.Get(x, 6).FG == screen.tokens.Color(ui.ColorAccent2) {
+					filled++
+				}
+			}
+			if filled != w*48/100 {
+				t.Fatalf("%d: measured fill was %d/%d cells, want 48%%", width, filled, w)
+			}
+		}
+	}
+}
+
+func BenchmarkBackgroundJobsAnimationPaint(b *testing.B) {
+	now := time.Now()
+	th := theme.DefaultDark()
+	screen := New(th)
+	screen.SetJobs([]Job{
+		{Handle: "tests", Command: "go test ./...", StartedAt: now, Status: "running"},
+		{Handle: "mcp", TaskID: "mcp", Command: "MCP server", StartedAt: now.Add(time.Second), Status: "running", Progress: command.Progress{Phase: "Connecting"}},
+		{Handle: "skill", TaskID: "skill", Command: "Skill files", StartedAt: now.Add(2 * time.Second), Status: "running", Progress: command.Progress{Phase: "Downloading skill", Current: 42, Total: 100}},
+	}, now)
+	host := ui.NewHost(th, screen)
+	host.Resize(120, 8)
+	buf := surface.NewCellBuffer(120, 8)
+	host.Paint(buf)
+	b.ReportAllocs()
+	frame := 0
+	for b.Loop() {
+		frame += 16
+		host.SetFrame(frame)
+		host.Paint(buf)
 	}
 }

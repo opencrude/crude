@@ -479,14 +479,9 @@ func waitLiveCapabilityTurn(t *testing.T, ws *workspace.Workspace, agentID strin
 				if name == "capability_search" {
 					// kind is optional: a legitimate untyped discovery can
 					// return both kinds. Assert the delivered identities.
-					var entries []captypes.Entry
-					if json.Unmarshal([]byte(result), &entries) != nil {
-						var partial captypes.SearchResult
-						if json.Unmarshal([]byte(result), &partial) == nil {
-							entries = partial.Entries
-						}
-					}
-					for _, entry := range entries {
+					var found captypes.SearchResult
+					_ = json.Unmarshal([]byte(result), &found)
+					for _, entry := range found.Results {
 						observed.skillSearch = observed.skillSearch || entry.ID == skillID && entry.Kind == captypes.KindSkill
 						observed.mcpSearch = observed.mcpSearch || entry.ID == mcpID && entry.Kind == captypes.KindMCP
 					}

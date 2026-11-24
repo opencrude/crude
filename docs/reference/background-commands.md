@@ -24,10 +24,20 @@
   detached process kept the pipe open. Settle, session close and core shutdown
   therefore never wait on processes Crude does not own.
 - The deck leads with **Job**: a shell command or capability name, linked to its
-  exact call. **Status** shows its state or activation phase and progress. Handle
-  and elapsed time appear when they fit. Output and Stop share aligned columns
-  across kinds; Stop is absent after settlement and uses its glyph on narrow
-  decks. PID and exit code belong in the expanded evidence, not every row.
+  exact call. **Status** shows its state or activation phase and progress; a
+  failure adds the first line of its error, which is its summary. Column widths
+  are decided from all visible rows together, so every column has one width and
+  one position for the whole table. Space goes, in order, to a recognizable job
+  name and every row's state, the elapsed time, about 32 cells of status detail,
+  the handle, and then to the full job name and status text. The job column is
+  never wider than its longest name; spare width trails the status column.
+  A one-cell arc marks each running job, including a measured download. It
+  turns in four even steps on the shell clock and never displaces its label.
+  Measured progress uses a fixed percentage slot and a fill that starts at
+  one shared position after the longest measured phase. A narrow row keeps
+  the percentage before it drops the fill. Unknown progress has no bar. Output and Stop share
+  aligned columns across kinds; Stop is absent after settlement and uses its
+  glyph on narrow decks. PID and exit code belong in the expanded evidence.
 - **One agent command shell.** Settings › Agents › Main Agent › Command shell
   (`agents.shell`; empty is Auto) chooses the shell for every agent's
   commands: blocking, background, `exec_command` and sub-agents. Auto is the
@@ -87,14 +97,21 @@
 
 ## Activation jobs
 
-The same manager tracks admitted skill and MCP activation. A task has an opaque
-identity rather than a fabricated PID or exit code. Its handle, task identity
-and start instant fence Output, Stop and semantic `job.stop`. Command jobs
-still require their process identity. Promotion, steering, output cursors, work
-retention, wait interruption and idle-agent delivery use the ordinary command
-paths. The deck paints progress in the status column without displacing either
-control. Only measured transfers have a determinate fill. Phase changes and the
-final result are retained as output; animation does not write the journal.
+The same manager tracks admitted skill and MCP activation. Activation work is
+a background job from its first instant, like `async_execute_command`: the
+handle is registered when the work is admitted and returned at once, so the
+turn never waits on a download, an install or a server start, and the chat
+shows no progress of its own. Work with nothing to wait for (an installed
+skill's files, a server that is already connected) answers in the tool result
+and starts no job. A task has an opaque identity rather than a fabricated PID
+or exit code. Its handle, task identity and start instant fence Output, Stop
+and semantic `job.stop`. Command jobs still require their process identity.
+Output cursors, work retention, wait interruption and idle-agent delivery use
+the ordinary command paths; the outcome names it a background job and carries
+the activation result. The deck paints progress in the status column without
+displacing either control. Only measured transfers have a determinate fill.
+Phase changes and the final result are retained as output; animation does not
+write the journal.
 
 The job ends after activation, **not** when the connected server eventually
 exits. Run-local authority is admitted in the foreground, never recreated on

@@ -3,14 +3,12 @@ package viewmodel
 import (
 	"context"
 	"crude/internal/terminalvt"
-	"crude/tui/cell"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -21,14 +19,32 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"crude/agent/session"
+	agenttools "crude/agent/tools"
 	"crude/tui/rendering"
 	captypes "crude/types/capability"
+	"crude/types/command"
+	"crude/types/setting"
 	"crude/workspace"
+	"crude/workspace/fileio"
 )
 
-// A real composer call through the core, real HTTP initialization, user
-// steering, command inventory, terminal output reader and termination control.
-// The HTTP peer deliberately withholds initialize until its request is stopped.
+// TestBrokenActivationHelper is a local server whose runner installed it but
+// whose command line rejects the arguments it was given.
+func TestBrokenActivationHelper(t *testing.T) {
+	if os.Getenv("CRUDE_BROKEN_ACTIVATION_HELPER") != "1" {
+		return
+	}
+	_, _ = fmt.Fprintln(os.Stderr, "Installed 84 packages in 2.1s")
+	_, _ = fmt.Fprintln(os.Stderr, "Usage: windows-mcp [OPTIONS] COMMAND [ARGS]...")
+	_, _ = fmt.Fprintln(os.Stderr, "Error: Missing command.")
+	os.Exit(2)
+}
+
+// A real composer turn through the core starts a shell job and two
+// activations. Activations are jobs from their first instant: the turn ends
+// while the HTTP peer still withholds initialize, the exiting local server
+// settles as a failed row that leads with its own reason, and every row keeps
+// its exact output reader and stop control beside the others.
 func TestConnectedActivationJobControls(t *testing.T) {
 	started, stopped := make(chan struct{}), make(chan struct{})
 	waitPeer, releasePeer := context.WithCancel(t.Context())
@@ -63,11 +79,17 @@ func TestConnectedActivationJobControls(t *testing.T) {
 			_, _ = fmt.Fprint(w, "data: "+`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"activate-fixture","type":"function","function":{"name":"capability_activate","arguments":"{\"id\":\"fixture\"}"}}]},"finish_reason":"tool_calls"}]}`+"\n\ndata: [DONE]\n\n")
 			return
 		}
+		if step == 3 {
+			_, _ = fmt.Fprint(w, "data: "+`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"activate-broken","type":"function","function":{"name":"capability_activate","arguments":"{\"id\":\"broken\"}"}}]},"finish_reason":"tool_calls"}]}`+"\n\ndata: [DONE]\n\n")
+			return
+		}
 		_, _ = fmt.Fprint(w, "data: "+`{"choices":[{"delta":{"content":"I can continue while the server starts."},"finish_reason":"stop"}]}`+"\n\ndata: [DONE]\n\n")
 	}))
 	t.Cleanup(provider.Close)
 	settings := captypes.Normalize(captypes.Settings{Connections: map[string]captypes.ConnectionConfig{
 		"fixture": {ID: "fixture", Name: "Fixture server", Transport: "http", URL: endpoint.URL, TimeoutSeconds: 120},
+		"broken": {ID: "broken", Name: "Windows computer use", Transport: "stdio", Command: os.Args[0], LaunchApproved: true,
+			Args: []string{"-test.run=^TestBrokenActivationHelper$"}, Environment: map[string]string{"CRUDE_BROKEN_ACTIVATION_HELPER": "1"}},
 	}})
 	rt := remoteJourneyRuntimeConfig(t, provider.URL, func(cfg *session.Config) { cfg.Capabilities = settings }, func(ws *workspace.Workspace) {
 		defaults := ws.AppDefaults()
@@ -91,21 +113,26 @@ func TestConnectedActivationJobControls(t *testing.T) {
 		_, cmd := app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 		runAppCommand(t, app, cmd)
 	}
-	submit("Activate Fixture server.")
+	submit("Run the tests and activate both servers.")
+	// No steering: the turn finishes on its own while the HTTP handshake is
+	// still held, because activation never waits inside the tool call.
 	remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool {
-		select {
-		case <-started:
-			return true
-		default:
-			return false
-		}
+		view := rendering.StripAnsi(app.View().RenderContent())
+		return strings.Contains(view, "Background jobs") && requests.Load() >= 4 && app.activeSessionProjection().backgroundJobs.VisibleCount() == 3 &&
+			strings.Contains(view, "Server exited before it answered")
 	})
-	submit("Continue while it starts.")
-	remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool {
-		return strings.Contains(rendering.StripAnsi(app.View().RenderContent()), "Background jobs") && requests.Load() >= 3 && app.activeSessionProjection().backgroundJobs.VisibleCount() == 2
-	})
-	if !app.wantsFastTick() {
-		t.Fatal("a visible background progress bar was left on the idle clock")
+	select {
+	case <-started:
+	default:
+		t.Fatal("the HTTP activation never reached its server")
+	}
+	select {
+	case <-stopped:
+		t.Fatal("ending the turn stopped a background activation")
+	default:
+	}
+	if app.nextTickDelay(time.UnixMilli(1600)) >= workspace.IdleTickInterval {
+		t.Fatal("a visible job arc was left on the idle clock")
 	}
 	if os.Getenv("CRUDE_VISUAL_ACTIVATION") == "1" {
 		app.onboarding.trust.askedOwner, app.onboarding.trust.askedGen = app.ws, app.workspaceSwitchGen.Load()
@@ -134,14 +161,19 @@ func TestConnectedActivationJobControls(t *testing.T) {
 		}
 	}
 	clickCommandDeck(t, shell, "Show auto-1 in the conversation")
-	var expanded bool
+	var expanded, other bool
 	for _, msg := range app.ws.AgentMgr().Get(id).State.Messages.Messages() {
-		if msg.ToolName == "capability_activate" {
-			expanded = app.subPaneProjections.Existing(id).renderer.DisclosureExpanded(msg.InternalID)
+		if job, ok := agenttools.ParseCommandResult(msg.ToolName, msg.Content); ok && msg.ToolName == "capability_activate" {
+			open := app.subPaneProjections.Existing(id).renderer.DisclosureExpanded(msg.InternalID)
+			if job.OutputDescriptor.Handle == "auto-1" {
+				expanded = open
+			} else {
+				other = other || open
+			}
 		}
 	}
-	if !expanded {
-		t.Fatal("the activation link did not reveal its originating call")
+	if !expanded || other {
+		t.Fatalf("the auto-1 link did not reveal exactly its own call: revealed=%v other=%v", expanded, other)
 	}
 	clickCommandDeck(t, shell, "Show output of auto-1")
 	remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool {
@@ -175,23 +207,22 @@ func TestConnectedActivationJobControls(t *testing.T) {
 type activationCapture struct {
 	*App
 	evidence string
-	colors   []cell.Color
+	phase    string
+	arc      int
 	changes  int
 	since    time.Time
 	ready    bool
 }
 
-// Inspect the last painted job row, not View(), which would consume a frame.
-// Five distinct bar paints in one idle-tick interval distinguish actual motion
-// from updating on either the 400 ms idle tick or the one-second inventory.
+// Inspect the last painted job row without consuming a frame. Require more
+// than one full rotation in order, with no step left on the idle clock.
 func (m *activationCapture) motionReady() bool {
 	if m.ready || m.evidence == "" {
 		return false
 	}
-	now := time.Now()
-	if now.Sub(m.since) > workspace.IdleTickInterval {
-		m.changes = 0
-		m.since = now
+	phase := m.phase
+	if phase == "" {
+		phase = "Connecting"
 	}
 	for _, g := range m.mainPanes.groups {
 		if g.view == nil || g.deck.Empty() || g.view.deck.surf == nil {
@@ -200,23 +231,28 @@ func (m *activationCapture) motionReady() bool {
 		buf := g.view.deck.surf.Buffer()
 		for y := 0; y < buf.Height(); y++ {
 			var text strings.Builder
-			var colors []cell.Color
 			for _, c := range buf.Row(y) {
 				text.WriteRune(c.Char)
-				if c.Char == '─' {
-					colors = append(colors, c.FG)
-				}
 			}
-			if !strings.Contains(text.String(), "Output") || len(colors) < 2 {
+			row := text.String()
+			if !strings.Contains(row, phase) || !strings.Contains(row, "Output") {
 				continue
 			}
-			if !slices.Equal(colors, m.colors) {
-				m.colors = colors
-				m.changes++
-			}
-			if m.changes >= 5 {
-				m.ready = true
-				return true
+			for i, glyph := range []rune("◜◝◞◟") {
+				if !strings.ContainsRune(row, glyph) {
+					continue
+				}
+				now := time.Now()
+				if m.since.IsZero() || i != m.arc {
+					if !m.since.IsZero() && (m.arc+1)%4 == i && now.Sub(m.since) < 300*time.Millisecond {
+						m.changes++
+					} else {
+						m.changes = 0
+					}
+					m.arc, m.since = i, now
+				}
+				m.ready = m.changes >= 5
+				return m.ready
 			}
 		}
 	}
@@ -233,4 +269,35 @@ func (m *activationCapture) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmd, func() tea.Msg { return os.WriteFile(m.evidence, []byte("motion\n"), 0600) })
 	}
 	return m, cmd
+}
+
+// TestMeasuredJobMotionVisualAcceptance uses the same shell/PanelDeck paint
+// path with a held download snapshot. The real transfer counters and connected
+// activation controls are exercised separately by their owning journeys.
+func TestMeasuredJobMotionVisualAcceptance(t *testing.T) {
+	if os.Getenv("CRUDE_VISUAL_JOB_MOTION") != "1" {
+		t.Skip("set CRUDE_VISUAL_JOB_MOTION to drive the native capture")
+	}
+	app := newFullTestApp(t)
+	wsOf(app).Logger = stubLogger{}
+	owner := &workspace.Session{SessionID: "job-motion", Settings: workspace.NewSessionSettingsState(setting.Settings{}, setting.Settings{}, nil)}
+	selectDeckSession(t, app, owner, "job-motion-agent")
+	app.Tree.Visible = false
+	app.onboarding.trust.askedOwner, app.onboarding.trust.askedGen = app.ws, app.workspaceSwitchGen.Load()
+	now := time.Now()
+	app.updateSessionBackgroundJobs("job-motion-agent", []fileio.AsyncCmdInfo{
+		{Handle: "tests", Command: "go test ./...", Status: fileio.AsyncRunning, StartedAt: now.Add(-4 * time.Second)},
+		{Handle: "auto-1", TaskID: "connect", Command: "Fixture server", Status: fileio.AsyncRunning, StartedAt: now.Add(-3 * time.Second), Progress: command.Progress{Phase: "Connecting"}},
+		{Handle: "auto-2", TaskID: "download", Command: "Review guide", Status: fileio.AsyncRunning, StartedAt: now.Add(-2 * time.Second), Progress: command.Progress{Phase: "Downloading skill", Current: 42, Total: 100}},
+		{Handle: "auto-3", TaskID: "failed", Command: "Local server", Status: fileio.AsyncFailed, StartedAt: now.Add(-time.Second), EndedAt: now, Error: "Missing command. Check the launch arguments."},
+	}, now)
+	model := &activationCapture{App: app, evidence: os.Getenv("CRUDE_CAPTURE_EVIDENCE"), phase: "Downloading"}
+	program := tea.NewProgram(model, tea.WithWidthMethod(ansi.GraphemeWidth))
+	app.SetProgram(program)
+	if _, err := program.Run(); err != nil {
+		t.Fatal(err)
+	}
+	if !model.ready {
+		t.Fatal("native shell did not paint five consecutive arc steps")
+	}
 }

@@ -1071,6 +1071,10 @@ func (uc *UntrackedCmd) Info() AsyncCmdInfo {
 func (m *AsyncCommandManager) NextAutoHandle() string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.nextAutoHandleLocked()
+}
+
+func (m *AsyncCommandManager) nextAutoHandleLocked() string {
 	for {
 		m.autoCounter++
 		handle := fmt.Sprintf("auto-%d", m.autoCounter)

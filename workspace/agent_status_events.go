@@ -295,13 +295,26 @@ func (w *Workspace) ApplyAgentStatusEvent(evt AgentEvent) {
 		if values, ok := evt.Data.(map[string]any); ok {
 			reason, _ = values["reason"].(string)
 		}
-		if reason == "cancelled" {
-			snapshot.Phase, snapshot.Detail = statuscenter.AgentCancelled, "Cancelled"
-		} else {
-			snapshot.Phase, snapshot.Detail = statuscenter.AgentCompleted, "Completed"
-		}
 		snapshot.NeedsAction = false
-		center.FinishOperations(evt.AgentID, statuscenter.OperationSucceeded, "")
+		switch reason {
+		case "failed":
+			// The preceding recovery event owns the diagnostic. The terminal
+			// acknowledgement must not replace it with a successful state.
+			snapshot.Phase, snapshot.Detail = statuscenter.AgentFailed, "Turn failed"
+			var detail string
+			if node.State != nil {
+				if status := node.State.RecoveryStatus(); status.State == recovery.Failed {
+					detail = status.Detail
+				}
+			}
+			center.FinishOperations(evt.AgentID, statuscenter.OperationFailed, detail)
+		case "cancelled":
+			snapshot.Phase, snapshot.Detail = statuscenter.AgentCancelled, "Cancelled"
+			center.FinishOperations(evt.AgentID, statuscenter.OperationCancelled, "")
+		default:
+			snapshot.Phase, snapshot.Detail = statuscenter.AgentCompleted, "Completed"
+			center.FinishOperations(evt.AgentID, statuscenter.OperationSucceeded, "")
+		}
 	case "error":
 		detail := fmt.Sprint(evt.Data)
 		snapshot.Phase, snapshot.Detail, snapshot.NeedsAction = statuscenter.AgentFailed, detail, false

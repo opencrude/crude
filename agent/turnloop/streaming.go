@@ -153,27 +153,16 @@ func looksComplete(s string) bool {
 	if len(s) == 0 {
 		return true
 	}
-	if s[0] == '{' {
-		last := findLastNonWhitespace(s)
-		return last == '}'
+	// A brace inside a still-streaming command string is not a completed
+	// envelope. Do not run repair on just that token and change its preview.
+	switch s[0] {
+	case '{':
+		return s[len(s)-1] == '}' && findMatch(s, 0, '{', '}') >= 0
+	case '[':
+		return s[len(s)-1] == ']' && findMatch(s, 0, '[', ']') >= 0
+	default:
+		return true
 	}
-	if s[0] == '[' {
-		last := findLastNonWhitespace(s)
-		return last == ']'
-	}
-	return true
-}
-
-func findLastNonWhitespace(s string) byte {
-	for i := len(s) - 1; i >= 0; i-- {
-		switch s[i] {
-		case ' ', '\t', '\n', '\r':
-			continue
-		default:
-			return s[i]
-		}
-	}
-	return 0
 }
 
 func extractWithJSONParser(data string, toolName string) map[string]any {
@@ -319,10 +308,10 @@ func fallbackKVScan(jsonStr string) map[string]any {
 		case '"':
 			strEnd, ok := findStrEnd(jsonStr, valStart+1)
 			if ok {
-				result[key] = unesc(jsonStr[valStart+1 : strEnd])
+				result[key] = unescapePreviewString(jsonStr[valStart+1 : strEnd])
 				idx = strEnd + 1
 			} else {
-				result[key] = unesc(jsonStr[valStart+1:])
+				result[key] = unescapePreviewString(jsonStr[valStart+1:])
 				idx = len(jsonStr)
 			}
 		case '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
@@ -403,20 +392,27 @@ func findStrEnd(s string, start int) (int, bool) {
 	return len(s), false
 }
 
-// unesc decodes one JSON string body. It delegates to the shared JSON unescaper
-// instead of re-implementing the escape table: a local switch that handled
-// \" \\ \/ \n \t \r but not \uXXXX left a raw "u0026" where the stream carried a
-// shell "&&". Text that is not yet decodable (a stream truncated mid-escape)
-// stays raw and is replaced once the payload completes.
-func unesc(s string) string {
+// unescapePreviewString decodes the longest usable prefix of a streaming JSON
+// string. A trailing partial escape must not replace all previously decoded
+// characters with wire escapes. Execution still uses the original arguments.
+func unescapePreviewString(s string) string {
 	if !strings.ContainsRune(s, '\\') {
 		return s
 	}
-	decoded, err := jsonparser.Unescape([]byte(s), nil)
-	if err != nil {
-		return s
+	input, scratch := []byte(s), make([]byte, len(s))
+	if decoded, err := jsonparser.Unescape(input, scratch); err == nil {
+		return string(decoded)
 	}
-	return string(decoded)
+	// Retry only at escape boundaries within one encoded scalar of the end.
+	// A UTF-16 surrogate pair is the longest escape; reuse the same unescaper
+	// and buffer rather than decoding or allocating for every byte in the tail.
+	const longestEscape = len(`\ud83d\ude00`)
+	for cut := strings.LastIndexByte(s, '\\'); cut >= max(0, len(s)-longestEscape); cut = strings.LastIndexByte(s[:cut], '\\') {
+		if decoded, err := jsonparser.Unescape(input[:cut], scratch); err == nil {
+			return string(decoded)
+		}
+	}
+	return "" // malformed input is never substituted for a readable preview
 }
 
 func findMatch(s string, start int, open, close byte) int {

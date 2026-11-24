@@ -16,8 +16,13 @@ import (
 	captypes "crude/types/capability"
 )
 
+// taskGrant is run-local access authorized under exact settings. It stays
+// valid exactly while its connection, acquisition policy and source stay as
+// authorized, so unrelated settings changes never revoke it.
 type taskGrant struct {
 	Connection captypes.ConnectionConfig
+	Policy     captypes.AcquisitionSettings
+	Source     captypes.SourceConfig
 	Grant      captypes.ToolGrant
 }
 
@@ -37,7 +42,8 @@ func (s *Service) taskAccess(actor captypes.RuntimeActor, config captypes.Connec
 		return captypes.ToolGrant{}, false
 	}
 	grant, ok := s.taskGrants[taskKey(actor)][config.ID+"\x00"+name]
-	return grant.Grant, ok && reflect.DeepEqual(grant.Connection, config)
+	return grant.Grant, ok && reflect.DeepEqual(grant.Connection, config) &&
+		reflect.DeepEqual(grant.Policy, s.settings.Acquisition) && reflect.DeepEqual(grant.Source, s.settings.Sources[config.Source])
 }
 
 func previewToken(value any) string {
@@ -88,24 +94,19 @@ func (s *Service) activateConnection(ctx context.Context, actor captypes.Runtime
 		}
 	}
 	clients := s.actorClients(actor)
-	if config.Transport == "stdio" && !manual {
-		if !actorAllows(actor, "capability_activate", captypes.EffectExecute) {
-			return captypes.Result{}, errors.New("local MCP host execution exceeds the agent effect ceiling")
+	if config.Transport == "stdio" && !manual && !actorAllows(actor, "capability_activate", captypes.EffectExecute) {
+		return captypes.Result{}, errors.New("local MCP host execution exceeds the agent effect ceiling")
+	}
+	// A running server has nothing left to start: report its observed tools in
+	// this result instead of scheduling a job that would only reconnect it.
+	for _, state := range clients.States() {
+		if state.ID == config.ID && state.State == "connected" && !state.Cached {
+			return s.finishConnection(ctx, actor, entry, clients)
 		}
-		if !config.LaunchApproved {
-			connected := false
-			for _, state := range clients.States() {
-				if state.ID == config.ID && state.State == "connected" {
-					connected = true
-					break
-				}
-			}
-			if connected {
-				return s.finishConnection(ctx, actor, entry, clients)
-			}
-			if err := s.authorizeLaunch(ctx, actor, config, settings); err != nil {
-				return captypes.Result{}, err
-			}
+	}
+	if config.Transport == "stdio" && !manual && !config.LaunchApproved {
+		if err := s.authorizeLaunch(ctx, actor, config, settings); err != nil {
+			return captypes.Result{}, err
 		}
 	}
 	return captypes.RunActivation(ctx, entry.Name, func(ctx context.Context) (captypes.Result, error) {

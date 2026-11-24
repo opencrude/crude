@@ -48,6 +48,20 @@ func (t *stderrTail) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// ended reports that every holder of the server's stderr closed it: the
+// server process and its children are gone.
+func (t *stderrTail) ended() bool {
+	if t == nil {
+		return false
+	}
+	select {
+	case <-t.done:
+		return true
+	default:
+		return false
+	}
+}
+
 // Text returns the retained tail. After a process exit, the last diagnostic
 // line can still be in the pipe; wait briefly for EOF so a crash reason such
 // as "Could not open main display" is not lost to scheduling.

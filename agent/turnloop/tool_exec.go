@@ -15,7 +15,6 @@ import (
 	"crude/agent/safety"
 	"crude/agent/tools"
 	"crude/internal/metrics"
-	captypes "crude/types/capability"
 	"crude/types/command"
 	"crude/types/conversation"
 	"crude/types/toolresult"
@@ -633,12 +632,6 @@ func (a *Agent) executeToolCall(ctx context.Context, tc provider.ToolCall, emit 
 	a.logger.Info("TOOL", "call", "name", tc.Function.Name, "params", formatToolArgs(params))
 	toolStart := time.Now()
 	ctx = context.WithValue(ctx, tools.ExecutionIdentityKey{}, tools.ExecutionIdentity{AgentID: string(a.AgentID), RunID: a.RunID, MessageID: tc.InternalID, ToolCallID: tc.ID})
-
-	if tc.Function.Name == "capability_activate" {
-		ctx = captypes.WithProgress(ctx, func(p command.Progress) {
-			emit(AgentEvent{Type: "tool_progress", Data: map[string]any{"internal_id": internalID, "tool_id": tc.ID, "name": tc.Function.Name, "phase": "activating", "message": p.Phase, "transfer_current": p.Current, "transfer_total": p.Total}})
-		})
-	}
 
 	var result tools.ToolResult
 	var toolErr error

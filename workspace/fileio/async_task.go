@@ -31,37 +31,38 @@ func (o TaskOutput) Report(p command.Progress) {
 	}
 }
 
-// StartTask admits exact, already authorized work. Like an untracked process it
-// returns inline or promotes without restarting. The original request owns the
-// wait before promotion; the manager cancels and joins even unpublished tasks
-// at shutdown. Key excludes concurrent work on the same resource, not retries.
-func (m *AsyncCommandManager) StartTask(parent context.Context, key, label, cwd string, run func(context.Context, TaskOutput) error) (*UntrackedCmd, error) {
+// StartTask admits exact, already authorized in-process work as a tracked
+// background job from its first instant, like async_execute_command: the
+// caller gets its handle at once, the settle observer delivers its outcome,
+// and kill_async_command or Stop cancels it with command.ErrStopped. Key
+// excludes concurrent work on the same resource, not retries. CloseAndWait
+// cancels and joins it.
+func (m *AsyncCommandManager) StartTask(parent context.Context, key, label, cwd string, run func(context.Context, TaskOutput) error) (AsyncCmdInfo, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closing {
-		return nil, errors.New("background job manager is closing")
+		return AsyncCmdInfo{}, errors.New("background job manager is closing")
 	}
 	if err := parent.Err(); err != nil {
-		return nil, err
+		return AsyncCmdInfo{}, err
 	}
 	if other := m.tasks[key]; other != nil {
 		other.mu.Lock()
 		handle := other.info.Handle
 		other.mu.Unlock()
-		if handle != "" {
-			return nil, fmt.Errorf("%s is already running as %s; use its existing job", label, handle)
-		}
-		return nil, fmt.Errorf("%s is already running", label)
+		return AsyncCmdInfo{}, fmt.Errorf("%s is already running as background job %s; wait for its outcome instead of starting it again", label, handle)
 	}
 	ctx, stop := context.WithCancelCause(context.WithoutCancel(parent))
 	cancel := func() { stop(command.ErrStopped) }
 	st := &asyncCmdState{cancel: cancel, done: make(chan struct{}), info: AsyncCmdInfo{
-		TaskID: rand.Text(), Command: label, CWD: cwd, StartedAt: time.Now(), Status: AsyncRunning,
+		TaskID: rand.Text(), Handle: m.nextAutoHandleLocked(), Command: label, CWD: cwd, StartedAt: time.Now(), Status: AsyncRunning,
 	}}
 	if m.tasks == nil {
 		m.tasks = make(map[string]*asyncCmdState)
 	}
 	m.tasks[key] = st
+	m.commands[st.info.Handle] = st
+	info := st.info
 	go func() {
 		var err error
 		defer func() {
@@ -82,5 +83,8 @@ func (m *AsyncCommandManager) StartTask(parent context.Context, key, label, cwd 
 		}()
 		err = run(ctx, TaskOutput{state: st})
 	}()
-	return &UntrackedCmd{state: st, cancel: cancel, logger: m.logger}, nil
+	if m.logger != nil {
+		m.logger.Info("ASYNC", "task_start", "handle", info.Handle, "task_id", info.TaskID)
+	}
+	return info, nil
 }

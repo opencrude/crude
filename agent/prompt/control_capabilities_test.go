@@ -29,7 +29,7 @@ func TestControlAndCapabilityContractsReachRootAndChild(t *testing.T) {
 				"Reviewer/YOLO authorization is not a human grant",
 				"authentication, consent and authority changes remain user-owned",
 				"crude_commands", "crude_control", "operation.receipt",
-				"never retarget", "human-only authority", "no universal desktop driver",
+				"never retarget", "human-only authority", "no universal desktop driver", "acquire it with capability_search and capability_activate",
 				"agent_start isolation auto/shared/worktree", "SourceContextID",
 				"not private shell drafts", "Worktrees are not security sandboxes",
 				"Local History owner", "retention pins",

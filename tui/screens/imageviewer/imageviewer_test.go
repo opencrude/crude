@@ -294,6 +294,23 @@ func TestToolbarFontPreferenceChangesWithoutChangingImageGeometry(t *testing.T) 
 	}
 }
 
+func TestCompactNerdToolbarSurvivesColorThemeChange(t *testing.T) {
+	nerd := true
+	dark, light := theme.DefaultDark(), theme.DefaultLight()
+	dark.Tree.Config.UseNerdFont, light.Tree.Config.UseNerdFont = &nerd, &nerd
+	s := NewWithID(dark, "pane/image")
+	host := ui.NewHost(dark, s)
+	host.Resize(17, 8) // The bracket and icon fit; the extra ink cell does not.
+	host.Layout()
+	assertBracketedIcon(t, paint(host, 17, 8), s.buttons[0].Bounds(), "\uf010", false)
+	before := host.Tokens().MetricVersion
+	host.SetTheme(light)
+	assertBracketedIcon(t, paint(host, 17, 8), s.buttons[0].Bounds(), "\uf010", false)
+	if host.Tokens().MetricsChangedSince(before) {
+		t.Fatal("a color-only change must not rebuild toolbar geometry")
+	}
+}
+
 func TestRightAlignedIconToolbarActionsThroughHost(t *testing.T) {
 	for _, nerd := range []bool{false, true} {
 		for _, width := range []int{80, 24, 17} {
