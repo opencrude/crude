@@ -139,6 +139,10 @@ them; they are not a template for language-specific modules.
 
 ## Current checkpoint
 
+**Immediate action: unreliable completion (2026-11-23), open.** Ctrl+Space
+can lose the invocation while an edit awaits acknowledgement.
+See the [reproduction, protocol findings and exit test](../issues/2026-11-23-lsp-completion-immediate-action.md).
+
 **Project analysis by server and root (2026-11-23): implemented.** Use the existing root and
 launch identity for discovery, native reporting and the fallback. A single
 unsolicited file report establishes coverage for that file only. Test native

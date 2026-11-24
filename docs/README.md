@@ -207,6 +207,9 @@ documents to read before changing each area.
 
 ### Issues (dated user reports)
 
+- [LSP completion reliability: immediate action (2026-11-23)](issues/2026-11-23-lsp-completion-immediate-action.md)
+  — reproduced Ctrl+Space request loss, open protocol gaps and exit tests.
+
 - [Workspace GC crash on Windows (2026-11-11)](issues/2026-11-11-workspace-gc-crash.md)
   — unresolved memory-safety failure, exact reproduction and diagnostic evidence.
 
