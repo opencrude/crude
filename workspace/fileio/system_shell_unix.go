@@ -8,8 +8,7 @@ import (
 	"crude/types/command"
 )
 
-// SystemShell runs command lines that their caller quoted for a POSIX shell,
-// such as MCP package preparation. Agent commands use the agent command shell.
+// SystemShell runs command lines that their caller quoted for a POSIX shell. Agent commands use the agent command shell.
 func SystemShell() command.Shell {
 	path := "/bin/sh"
 	if bash, err := exec.LookPath("bash"); err == nil {

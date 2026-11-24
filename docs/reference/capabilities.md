@@ -226,6 +226,8 @@ is in [settings design](settings-design.md#skills-and-mcp-store).
   read cannot inspect a nil/new WorkspaceDB during Close/SwitchProject.
 - Local stdio MCP servers inherit the full host environment, like agent shell
   commands; never reintroduce a variable allowlist. Server stderr tails are
-  attached to failures. Registry packages are prepared through the owning
-  agent's background command manager after launch authorization, never inside
-  the handshake deadline. See `docs/guides/capability-workflows.md`.
+  attached to failures. Slow activation, including first-run installation by
+  the server, uses the owning
+  agent's [background jobs](background-commands.md#activation-jobs) after exact
+  authorization. A returned handle is not a connected server. See
+  [capability workflows](../guides/capability-workflows.md#mcp).

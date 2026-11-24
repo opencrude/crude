@@ -1622,9 +1622,12 @@ func (p *Program) startRenderer() {
 				finished = time.Now()
 				elapsed = finished.Sub(start)
 				if p.observer != nil {
-					if counted, ok := p.renderer.(interface{ flushedBytes() int }); ok && counted.flushedBytes() > 0 {
-						written := counted.flushedBytes()
-						p.observer.ObserveFlush(FlushSample{Duration: time.Since(start), Bytes: written})
+					if observed, ok := p.renderer.(interface{ flushSample() FlushSample }); ok {
+						sample := observed.flushSample()
+						sample.Duration = elapsed
+						if sample.Bytes > 0 || elapsed >= 16*time.Millisecond {
+							p.observer.ObserveFlush(sample)
+						}
 					}
 				}
 				timer.Reset(max(time.Nanosecond, rendererIdleInterval-elapsed))

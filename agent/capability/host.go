@@ -3,10 +3,12 @@ package capability
 import (
 	"bytes"
 	"context"
+	"crude/workspace/fileio"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"sync"
 	"time"
@@ -53,6 +55,25 @@ func (s *Service) hostRequest(ctx context.Context, actor captypes.RuntimeActor, 
 	if err == nil && reply.ID != request.ID {
 		err = errors.New("MCP host response identity mismatch")
 	}
+	// Cancelling the core await does not cancel a shell worker. Stop and
+	// join the exact original receipt; never target a PID or replacement shell.
+	if err != nil && operation == "connect" && ctx.Err() != nil {
+		stop := request
+		stop.ID = rand.Text()
+		stop.Operation = "stop-connect"
+		stop.StopConnectID = request.ID
+		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		ack, stopErr := host.DispatchHost(cleanup, stop)
+		if stopErr != nil || ack.ID != stop.ID || ack.Error != "" {
+			return captypes.HostReply{}, &fileio.CommandTreeUnverifiedError{Err: fmt.Errorf("shell did not confirm stopping the launch: %v %s", stopErr, ack.Error)}
+		}
+		if len(ack.States) > 0 {
+			ack.ID = request.ID
+			return ack, nil
+		} // The connect committed before stop; retain its real result.
+		return captypes.HostReply{}, ctx.Err()
+	}
 	if err != nil && operation == "call" && request.Tool.Effect != captypes.EffectRead {
 		reply.Result.Unknown = true
 		reply.Result.IsError = true
@@ -76,6 +97,7 @@ type HostWorker struct {
 	outstanding  int
 }
 type workerReceipt struct {
+	stop    context.CancelFunc
 	request []byte
 	done    chan struct{}
 	reply   captypes.HostReply
@@ -98,6 +120,9 @@ func (w *HostWorker) Handle(ctx context.Context, r captypes.HostRequest) captype
 	if r.Operation == "connect" && !actorAllows(r.Actor, "capability_activate", captypes.EffectExecute) {
 		reply.Error = "MCP launch exceeds exact actor ceiling"
 		return reply
+	}
+	if r.Operation == "stop-connect" {
+		return w.stopConnect(ctx, r)
 	}
 	encoded, _ := json.Marshal(r)
 	w.mu.Lock()
@@ -129,7 +154,9 @@ func (w *HostWorker) Handle(ctx context.Context, r captypes.HostRequest) captype
 		reply.Error = "MCP shell receipt capacity exhausted"
 		return reply
 	}
-	receipt := &workerReceipt{request: encoded, done: make(chan struct{})}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	receipt := &workerReceipt{request: encoded, done: make(chan struct{}), stop: cancel}
 	w.receipts[r.ID] = receipt
 	w.receiptBytes += len(encoded)
 	w.outstanding++
@@ -140,8 +167,6 @@ func (w *HostWorker) Handle(ctx context.Context, r captypes.HostRequest) captype
 		w.managers[key] = manager
 	}
 	w.mu.Unlock()
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
 	stop := context.AfterFunc(w.ctx, cancel)
 	defer stop()
 	// Resolve env: references on this shell only. Never forward core credential bytes.
@@ -199,6 +224,7 @@ func (w *HostWorker) Handle(ctx context.Context, r captypes.HostRequest) captype
 		replyBytes, _ = json.Marshal(reply)
 	}
 	w.receiptBytes += len(replyBytes)
+	receipt.stop = nil
 	receipt.reply = reply
 	w.receipts[r.ID] = receipt
 	close(receipt.done)
@@ -210,6 +236,48 @@ func (w *HostWorker) Handle(ctx context.Context, r captypes.HostRequest) captype
 	w.mu.Unlock()
 	return reply
 }
+
+// Carrier delivery is ordered but worker admission is concurrent. If stop
+// wins, retain the exact cancelled preimage so a delayed launch cannot start.
+func (w *HostWorker) stopConnect(ctx context.Context, stop captypes.HostRequest) captypes.HostReply {
+	reply := captypes.HostReply{ID: stop.ID}
+	original := stop
+	original.ID, original.Operation, original.StopConnectID = stop.StopConnectID, "connect", ""
+	encoded, _ := json.Marshal(original)
+	w.mu.Lock()
+	prior := w.receipts[original.ID]
+	if prior == nil {
+		if w.closed || len(w.receipts) >= 256 || w.receiptBytes+len(encoded) > 4<<20 {
+			w.mu.Unlock()
+			reply.Error = "cannot retain cancelled MCP launch"
+			return reply
+		}
+		prior = &workerReceipt{request: encoded, done: make(chan struct{}), reply: captypes.HostReply{ID: original.ID, Error: "MCP launch cancelled"}}
+		close(prior.done)
+		w.receipts[original.ID] = prior
+		w.receiptBytes += len(encoded)
+	} else if !bytes.Equal(prior.request, encoded) {
+		w.mu.Unlock()
+		reply.Error = "MCP launch identity changed"
+		return reply
+	}
+	if prior.stop != nil {
+		prior.stop()
+	}
+	w.mu.Unlock()
+	select {
+	case <-prior.done:
+		w.mu.Lock()
+		if prior.reply.Error == "" {
+			reply.States = prior.reply.States
+		}
+		w.mu.Unlock()
+	case <-ctx.Done():
+		reply.Error = ctx.Err().Error()
+	}
+	return reply
+}
+
 func (w *HostWorker) Close() {
 	w.mu.Lock()
 	if w.closed {
@@ -250,7 +318,24 @@ func (c routedClient) config(id string) captypes.ConnectionConfig {
 	return captypes.Clone(c.s.settings).Connections[id]
 }
 func (c routedClient) remote(ctx context.Context, id, op string, r captypes.HostRequest) (captypes.HostReply, error) {
-	reply, err := c.s.hostRequest(ctx, c.actor, c.config(id), op, r)
+	if op == "connect" {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithCancel(ctx)
+		start := &hostStart{cancel: cancel, done: make(chan struct{})}
+		key := taskKey(c.actor)
+		c.s.mu.Lock()
+		if c.s.hostStarts == nil {
+			c.s.hostStarts = map[*hostStart]string{}
+		}
+		c.s.hostStarts[start] = key
+		c.s.mu.Unlock()
+		defer func() { cancel(); c.s.mu.Lock(); delete(c.s.hostStarts, start); close(start.done); c.s.mu.Unlock() }()
+	}
+	config := r.Connection
+	if config.ID == "" {
+		config = c.config(id)
+	}
+	reply, err := c.s.hostRequest(ctx, c.actor, config, op, r)
 	if err == nil {
 		c.s.mu.Lock()
 		if c.s.hostStates[taskKey(c.actor)] == nil {
@@ -277,7 +362,7 @@ func (c routedClient) ConnectAuthorized(ctx context.Context, id string, config c
 	if !reflect.DeepEqual(config, c.config(id)) {
 		return errors.New("MCP launch preimage changed")
 	}
-	_, err := c.remote(ctx, id, "connect", captypes.HostRequest{Authorized: true})
+	_, err := c.remote(ctx, id, "connect", captypes.HostRequest{Authorized: true, Connection: config})
 	return err
 }
 func (c routedClient) Refresh(ctx context.Context, id string) error {
@@ -354,7 +439,28 @@ func (s *Service) prepareHosts(ctx context.Context, actor captypes.RuntimeActor)
 	return nil
 }
 
+type hostStart struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
 func (s *Service) revokeHostRun(actor captypes.RuntimeActor) {
+	s.mu.RLock()
+	var starts []*hostStart
+	key := taskKey(actor)
+	for start, k := range s.hostStarts {
+		if k == key {
+			starts = append(starts, start)
+		}
+	}
+	s.mu.RUnlock()
+	for _, start := range starts {
+		start.cancel()
+	}
+	for _, start := range starts {
+		<-start.done
+	}
+
 	s.mu.RLock()
 	host := s.host
 	var configs []captypes.ConnectionConfig

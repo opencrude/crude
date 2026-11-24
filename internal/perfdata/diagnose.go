@@ -74,8 +74,8 @@ func Diagnose(d Data) []Finding {
 	add(freezeFinding(d))
 	add(inputFinding(d))
 	add(busyFinding(d))
-	add(latencyFinding(d, ProcessShell, "render.flush", SectionUI, "Terminal writes are slow",
-		"the renderer goroutine waits on the terminal; input is not blocked, but frames reach the screen late"))
+	add(latencyFinding(d, ProcessShell, "render.flush", SectionUI, "Renderer flushes are slow",
+		"compare snapshot lock time and output write time; the total alone does not identify a slow terminal"))
 	add(latencyFinding(d, ProcessShell, "ui.present", SectionUI, "Frame handoff waits",
 		"the UI goroutine waited to hand a frame to the renderer"))
 	add(actorFinding(d))

@@ -46,9 +46,9 @@ func (s *Session) publishCommandOutcome(agentID string, info fileio.AsyncCmdInfo
 		Origin:         collaboration.OriginRuntime, Kind: collaboration.EventCommandOutcome,
 		Body: body,
 		Command: &command.Outcome{
-			Handle: info.Handle, Command: info.Command, PID: info.PID, Status: string(info.Status),
+			TaskID: info.TaskID, Handle: info.Handle, Command: info.Command, PID: info.PID, Status: string(info.Status),
 			StartedAt: info.StartedAt, EndedAt: info.EndedAt, Duration: info.Duration,
-			ExitCode: info.ExitCode, ExitKnown: info.Status == fileio.AsyncCompleted || info.Status == fileio.AsyncFailed,
+			ExitCode: info.ExitCode, ExitKnown: info.HasExitCode(),
 			OutputBytes: info.OutputBytes, Error: info.Error,
 			TimedOut: info.TimedOut, Uncertain: info.Uncertain,
 			Output: info.SettledOutput,

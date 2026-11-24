@@ -2,12 +2,16 @@ package capability
 
 import (
 	"context"
+	"crude/types/command"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"crude/agent/skills"
 	captypes "crude/types/capability"
@@ -179,5 +183,64 @@ func TestReviewedAcquisitionIsPassiveAndRejectsChangedPreimage(test *testing.T) 
 	cancel()
 	if _, err := service.PreviewAcquisition(cancelled, preview.ID, preview.Scope, "update"); !errors.Is(err, context.Canceled) {
 		test.Fatalf("cancelled preview: %v", err)
+	}
+}
+
+// A real transfer is deliberately held partway through its response. A
+// guessed stage percentage (or reporting only at EOF) cannot pass this test.
+func TestSkillActivationReportsActualDownloadBeforeEOF(t *testing.T) {
+	service, settings, _ := capabilityFixture(t)
+	settings.Acquisition.Mode = "automatic"
+	if err := service.Configure(t.Context(), settings); err != nil {
+		t.Fatal(err)
+	}
+	archive := skillArchive(t, archiveFixtureEntry{name: "repo/skills/guide/SKILL.md", body: "---\nname: guide\ndescription: A fixture guide.\n---\nVerified instructions.\n"})
+	split := len(archive) / 3
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprint(len(archive)))
+		_, _ = w.Write(archive[:split])
+		w.(http.Flusher).Flush()
+		select {
+		case <-release:
+			_, _ = w.Write(archive[split:])
+		case <-r.Context().Done():
+		}
+	}))
+	defer srv.Close()
+	defer close(release)
+	const id = "team:guide"
+	service.candidates = map[string]Candidate{id: {Entry: captypes.Entry{ID: id, Kind: captypes.KindSkill, Name: "guide", Source: "team", Version: "pinned"}, ArchiveURL: srv.URL, Subpath: "skills/guide"}}
+	progress := make(chan command.Progress, 10)
+	ctx, cancel := context.WithCancelCause(t.Context())
+	defer cancel(command.ErrStopped)
+	ctx = captypes.WithActivationRunner(ctx, func(ctx context.Context, _ string, work captypes.ActivationWork) (captypes.Result, error) {
+		return work(captypes.WithProgress(ctx, func(p command.Progress) {
+			if p.Total > 0 {
+				progress <- p
+			}
+		}))
+	})
+	done := make(chan error, 1)
+	go func() {
+		_, err := service.Activate(ctx, captypes.RuntimeActor{ID: "owner", RunID: "run", Effects: []captypes.Effect{captypes.EffectRead}}, id, false)
+		done <- err
+	}()
+	select {
+	case p := <-progress:
+		if p.Current != int64(split) || p.Total != int64(len(archive)) {
+			t.Fatalf("not the HTTP byte counts: %+v", p)
+		}
+	case err := <-done:
+		t.Fatalf("premature settlement: %v", err)
+	case <-time.After(4 * time.Second):
+		t.Fatal("missing progress while downloading")
+	}
+	cancel(command.ErrStopped)
+	if err := <-done; err == nil || !strings.Contains(err.Error(), "cancel") {
+		t.Fatalf("stop failed: %v", err)
+	}
+	if _, ok := service.Snapshot().Settings.Skills[id]; ok {
+		t.Fatal("an interrupted transfer was published")
 	}
 }

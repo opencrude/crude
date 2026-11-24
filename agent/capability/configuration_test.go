@@ -64,3 +64,12 @@ func TestAgentConfiguredEnvironmentIsOneExactDurableApproval(t *testing.T) {
 		t.Fatalf("empty environment was not a no-op: %v", err)
 	}
 }
+
+func connectionState(service *Service, id string) string {
+	for _, state := range service.Snapshot().Connections {
+		if state.ID == id {
+			return state.State
+		}
+	}
+	return ""
+}

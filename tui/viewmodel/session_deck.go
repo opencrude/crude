@@ -37,7 +37,7 @@ func (m *App) updateSessionBackgroundJobs(agentID string, commands []fileio.Asyn
 	jobs := make([]backgroundjobs.Job, 0, len(commands))
 	for _, command := range commands {
 		jobs = append(jobs, backgroundjobs.Job{
-			OwnerID: agentID, Handle: command.Handle, Command: command.Command, PID: command.PID, Status: string(command.Status),
+			TaskID: command.TaskID, Progress: command.Progress, OwnerID: agentID, Handle: command.Handle, Command: command.Command, PID: command.PID, Status: string(command.Status),
 			StartedAt: command.StartedAt, EndedAt: command.EndedAt, Duration: command.Duration,
 			ExitCode: command.ExitCode, Error: command.Error,
 		})

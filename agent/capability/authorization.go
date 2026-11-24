@@ -74,57 +74,64 @@ func (s *Service) recordAuthorization(ctx context.Context, actor captypes.Runtim
 	return err
 }
 
-func (s *Service) connectActor(ctx context.Context, actor captypes.RuntimeActor, config captypes.ConnectionConfig, settings captypes.Settings, manual bool) error {
+func (s *Service) activateConnection(ctx context.Context, actor captypes.RuntimeActor, entry captypes.Entry, config captypes.ConnectionConfig, settings captypes.Settings, manual bool) (captypes.Result, error) {
 	if config.Disabled {
-		return errors.New("MCP connection is disabled")
+		return captypes.Result{}, errors.New("MCP connection is disabled")
 	}
 	if missing := mcpclient.MissingConfiguration(config); len(missing) != 0 {
-		return fmt.Errorf("MCP connection is installed but needs setup: %s. Configure headers or credential references in Settings; local environment values can also be supplied through capability_activate", strings.Join(missing, ", "))
+		return captypes.Result{}, fmt.Errorf("MCP connection is installed but needs setup: %s. Configure headers or credential references in Settings; local environment values can also be supplied through capability_activate", strings.Join(missing, ", "))
 	}
 	if config.Source != "" {
 		source, exists := settings.Sources[config.Source]
 		if !exists || source.Disabled || !source.Trusted {
-			return errors.New("MCP source is unavailable or untrusted")
+			return captypes.Result{}, errors.New("MCP source is unavailable or untrusted")
 		}
-	}
-	if config.Transport != "stdio" || manual {
-		return s.actorClients(actor).Connect(ctx, config.ID)
-	}
-	if !actorAllows(actor, "capability_activate", captypes.EffectExecute) {
-		return errors.New("local MCP host execution exceeds the agent effect ceiling")
 	}
 	clients := s.actorClients(actor)
-	// Reconfiguration disconnects a changed connection, so a live session runs
-	// this exact configuration. Reusing it launches nothing; tool access still
-	// requires its own grants.
-	for _, state := range clients.States() {
-		if state.ID == config.ID && state.State == "connected" {
-			return nil
+	if config.Transport == "stdio" && !manual {
+		if !actorAllows(actor, "capability_activate", captypes.EffectExecute) {
+			return captypes.Result{}, errors.New("local MCP host execution exceeds the agent effect ceiling")
+		}
+		if !config.LaunchApproved {
+			connected := false
+			for _, state := range clients.States() {
+				if state.ID == config.ID && state.State == "connected" {
+					connected = true
+					break
+				}
+			}
+			if connected {
+				return s.finishConnection(ctx, actor, entry, clients)
+			}
+			if err := s.authorizeLaunch(ctx, actor, config, settings); err != nil {
+				return captypes.Result{}, err
+			}
 		}
 	}
-	if !config.LaunchApproved {
-		if err := s.authorizeLaunch(ctx, actor, config, settings); err != nil {
-			return err
+	return captypes.RunActivation(ctx, entry.Name, func(ctx context.Context) (captypes.Result, error) {
+		captypes.ReportProgress(ctx, "Connecting", 0, 0)
+		var err error
+		if config.Transport == "stdio" && !manual {
+			err = clients.ConnectAuthorized(ctx, config.ID, config)
+		} else {
+			err = clients.Connect(ctx, config.ID)
 		}
+		if err != nil {
+			return captypes.Result{}, err
+		}
+		return s.finishConnection(ctx, actor, entry, clients)
+	})
+}
+
+func (s *Service) finishConnection(ctx context.Context, actor captypes.RuntimeActor, entry captypes.Entry, clients actorClient) (captypes.Result, error) {
+	if err := s.bind(ctx, actor.ID, entry); err != nil {
+		return captypes.Result{}, err
 	}
-	prepared, err := s.prepareLaunch(ctx, config)
-	if err != nil {
-		return err
-	}
-	if config.LaunchApproved {
-		err = clients.Connect(ctx, config.ID)
-	} else {
-		err = clients.ConnectAuthorized(ctx, config.ID, config)
-	}
-	if err == nil {
-		s.markPrepared(prepared)
-	}
-	return err
+	return s.observedActivation(ctx, actor, entry.ID, clients)
 }
 
 // authorizeLaunch admits one exact local launch for the owning run. A recorded
-// authorization survives a failed connection or a package preparation in the
-// same run, so retrying does not ask again; a new run or any configuration,
+// authorization survives a failed connection in the same run, so retrying does not ask again; a new run or any configuration,
 // policy, source or actor change requires a fresh authorization.
 func (s *Service) authorizeLaunch(ctx context.Context, actor captypes.RuntimeActor, config captypes.ConnectionConfig, settings captypes.Settings) error {
 	preview := captypes.LaunchPreview{Connection: config, Actor: actor, Token: launchToken(config, settings, actor)}

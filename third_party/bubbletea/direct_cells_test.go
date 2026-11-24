@@ -489,3 +489,69 @@ func TestDirectSnapshotAppliesProducerDeltaOnlyOverItsPreviousGeneration(t *test
 		t.Fatalf("resize offered a delta: draws=%d offers=%d", resized.draws, len(resized.held))
 	}
 }
+
+// One progress row changes on a dense direct surface. Measure snapshot
+// consumption under the same producer lock on which frame handoff waits.
+func BenchmarkConsumeOneChangedRow(b *testing.B) {
+	const width, height = 200, 60
+	r := newCursedRenderer(io.Discard, nil, width, height)
+	src := &deltaSurface{generationSurface: generationSurface{Buffer: uv.NewBuffer(width, height), generation: 1}}
+	v := NewViewFromSurface(src)
+	v.AltScreen = true
+	for _, row := range src.Lines {
+		for i := range row {
+			row[i] = uv.Cell{Content: "x", Width: 1}
+		}
+	}
+	r.render(v)
+	r.drawFrame(false)
+	b.ReportAllocs()
+	for b.Loop() {
+		src.generation++
+		src.held = src.held[:0]
+		src.SetCell(0, 0, &uv.Cell{Content: []string{"x", "y"}[src.generation%2], Width: 1})
+		r.render(v)
+		r.drawFrame(false)
+	}
+}
+
+// Two producer generations arrive before one writer flush. The changed rows
+// from the first generation must not be lost to the second one.
+type movingRow struct {
+	generationSurface
+	y int
+}
+
+func (s *movingRow) DrawSince(dst uv.Screen, _ uv.Rectangle, held uv.SnapshotToken) bool {
+	if held.Owner != &s.owner || held.Generation+1 != s.generation {
+		return false
+	}
+	dst.(interface{ SetCellRow(int, []uv.Cell) }).SetCellRow(s.y, s.Lines[s.y])
+	return true
+}
+func TestDirectRowDeltasAccumulateUntilConsumption(t *testing.T) {
+	src := &movingRow{generationSurface: generationSurface{Buffer: uv.NewBuffer(80, 24), generation: 1}}
+	r := newCursedRenderer(io.Discard, nil, 80, 24)
+	v := NewViewFromSurface(src)
+	v.AltScreen = true
+	r.render(v)
+	if err := r.flush(false); err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range []int{3, 22, 3} {
+		src.y = row
+		src.generation++
+		src.SetCell(int(src.generation), row, &uv.Cell{Content: "界", Width: 2})
+		r.render(v)
+	}
+	if err := r.flush(false); err != nil {
+		t.Fatal(err)
+	}
+	for y, row := range src.Lines {
+		for x := range row {
+			if !r.cellbuf.CellAt(x, y).Equal(&row[x]) {
+				t.Fatalf("lost accumulated row %d cell %d", y, x)
+			}
+		}
+	}
+}

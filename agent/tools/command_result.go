@@ -26,7 +26,7 @@ func CommandResultContent(result command.Result) string {
 // printed by a command. Native exec's documented output/exit/session fields may
 // stand alone; the other tools require the explicit process descriptor.
 func ParseCommandResult(name, content string) (command.Result, bool) {
-	if !IsCommandTool(name) {
+	if !IsCommandTool(name) && name != "capability_activate" {
 		return command.Result{}, false
 	}
 	var envelope struct {

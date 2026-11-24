@@ -30,11 +30,7 @@ func (manager *Manager) Recover(ctx context.Context, id string) error {
 		manager.mu.Unlock()
 		return nil
 	}
-	config := entry.config
-	launchable := entry.state.State != "needs sign-in" && config.Host != "shell" &&
-		(config.Transport != "stdio" || config.LaunchApproved)
-	eligible := config.IsBuiltin() || launchable && (entry.connectedOnce || durablyGranted(config))
-	if !eligible {
+	if !eligibleForRecovery(entry) {
 		manager.mu.Unlock()
 		return ErrNotRecoverable
 	}
@@ -55,6 +51,24 @@ func (manager *Manager) Recover(ctx context.Context, id string) error {
 		}
 	}
 	return err
+}
+
+// RecoveryEligible reports whether this owner could admit a reconnect, never
+// whether an attempt has started. Recover rechecks under the same lock.
+func (manager *Manager) RecoveryEligible(id string) bool {
+	manager.mu.RLock()
+	defer manager.mu.RUnlock()
+	entry := manager.connections[id]
+	return !manager.closed && entry != nil && eligibleForRecovery(entry)
+}
+func eligibleForRecovery(entry *connection) bool {
+	if entry.config.Disabled || entry.parked {
+		return false
+	}
+	config := entry.config
+	launchable := entry.state.State != "needs sign-in" && config.Host != "shell" &&
+		(config.Transport != "stdio" || config.LaunchApproved)
+	return config.IsBuiltin() || launchable && (entry.connectedOnce || durablyGranted(config))
 }
 
 // durablyGranted reports a connection the user already approved tools on, so

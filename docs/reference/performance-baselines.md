@@ -37,6 +37,35 @@ workload. Tighten the allocation ceilings when all three have headroom. Use
 actual reference hardware for latency and dropped-frame claims; GOMAXPROCS=2
 on a faster processor is a useful contention test, not T470 certification.
 
+## Activation progress and renderer contention (2026-11-23)
+
+A Windows shell recorded a 572 ms `ui.present` stall waiting on `viewMu` and
+an approximately contemporaneous 601 ms `render.flush`. These are wall times.
+The old aggregate includes diffing, lock ownership and output; it does not
+prove the console write took 601 ms. New `render.snapshot` observations time
+only the writer's hold of the producer snapshot lock; `render.write` times
+only the output write. Slow zero-byte passes remain observable without
+changing the display pacer's last nonempty output cost. Slow context publication
+stages retain their code-defined stage names, not paths or request content.
+A provider taking seconds or an asynchronous gopls request near its deadline is
+not itself evidence that the UI blocked for those seconds.
+
+With a 200×60 direct surface and one changed row, the writer formerly compared
+all cells while holding the producer lock. The renderer now accumulates rows
+written across unconsumed deltas; resize, text surfaces, images or an unproven
+base still require full comparison. `BenchmarkConsumeOneChangedRow` measured
+105–117 µs before and 2.28–2.38 µs after, zero allocations in both, over three
+250 ms runs on the local i7-9850H. This measures the repeatable critical section,
+not a promise that a 572 ms live stall disappeared. Capture live stalls on the
+new build before attributing further work or changing budgets.
+
+The jobs deck requests the existing 16 ms clock only for a mounted indeterminate
+bar. A hidden deck or a measured transfer does not animate between observations.
+On the same machine, a clock check with 200 retained jobs formerly allocated
+41,240 bytes and sorted the inventory even when the displayed second had not
+changed. `BenchmarkJobAnimationTick` now allocates zero bytes between updates;
+it checks the next expiry and elapsed-second boundary without rebuilding rows.
+
 ## Per-tick allocation and frame handoff (2026-11-22, second pass)
 
 The panel still showed "UI froze" on `viewmodel.TickMsg`, 21 ms GC pauses and

@@ -56,6 +56,7 @@ type Service struct {
 	launches         map[string]map[string]string
 	runs             map[string]string
 	host             captypes.HostDispatcher
+	hostStarts       map[*hostStart]string
 	hostStates       map[string]map[string]captypes.ConnectionState
 	authority        captypes.RuntimeAuthority
 	executionClients map[string]*mcpclient.Manager
@@ -63,8 +64,6 @@ type Service struct {
 	// Once bound to an application publisher, an older captured capability
 	// configuration cannot republish or revive removed search methods.
 	webRoutesPublished bool
-	// prepared records package preparation identities known to be installed.
-	prepared map[string]bool
 	// recoveryNoticed marks connection outages already reported to an agent.
 	recoveryNoticed map[string]bool
 }
@@ -230,19 +229,12 @@ func (s *Service) snapshot() captypes.Snapshot {
 	return snapshot
 }
 
-// Prepare starts the actor's hosts, recovers its connections and returns the run snapshot.
-func (s *Service) Prepare(ctx context.Context, actor captypes.RuntimeActor) (captypes.RuntimeSnapshot, error) {
-	if err := ctx.Err(); err != nil {
-		return captypes.RuntimeSnapshot{}, err
-	}
+// admitRun installs run-local state only at foreground admission, never from
+// the completion of an independent background operation.
+func (s *Service) admitRun(ctx context.Context, actor captypes.RuntimeActor) error {
 	if err := s.validateRuntime(ctx, actor); err != nil {
-		return captypes.RuntimeSnapshot{}, err
+		return err
 	}
-	if err := s.prepareHosts(ctx, actor); err != nil {
-		return captypes.RuntimeSnapshot{}, err
-	}
-	recoveryNotices := s.recoverConnections(ctx, actor)
-	snapshot := s.actorSnapshot(actor)
 	s.mu.Lock()
 	var retired *mcpclient.Manager
 	if prior := s.runs[actorKey(actor)]; prior != taskKey(actor) {
@@ -256,9 +248,24 @@ func (s *Service) Prepare(ctx context.Context, actor captypes.RuntimeActor) (cap
 	if retired != nil {
 		retired.Close()
 	}
+	return nil
+}
+
+// Prepare starts the actor's hosts, recovers its connections and returns the run snapshot.
+func (s *Service) Prepare(ctx context.Context, actor captypes.RuntimeActor) (captypes.RuntimeSnapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return captypes.RuntimeSnapshot{}, err
+	}
+	if err := s.admitRun(ctx, actor); err != nil {
+		return captypes.RuntimeSnapshot{}, err
+	}
+	if err := s.prepareHosts(ctx, actor); err != nil {
+		return captypes.RuntimeSnapshot{}, err
+	}
+	recoveryNotices := s.recoverConnections(ctx, actor)
+	snapshot := s.actorSnapshot(actor)
 	prepared := captypes.RuntimeSnapshot{Generation: snapshot.Generation, RunID: actor.RunID, TurnGeneration: actor.TurnGeneration, Notices: recoveryNotices}
-	schemaBytes := 0
-	for _, connection := range snapshot.Connections {
+	for i, connection := range snapshot.Connections {
 		if connection.State != "connected" || actor.DisabledForSession(connection.ID) {
 			continue
 		}
@@ -269,19 +276,30 @@ func (s *Service) Prepare(ctx context.Context, actor captypes.RuntimeActor) (cap
 			}
 			for _, current := range s.actorClients(actor).States() {
 				if current.ID == connection.ID {
-					connection = current
+					snapshot.Connections[i] = current
 					break
 				}
 			}
 		}
+	}
+	s.selectTools(actor, snapshot.Settings, snapshot.Connections, &prepared)
+	return prepared, nil
+}
+
+// selectTools is the passive projection used by both the next model request
+// and an activation result. Earlier connections consume the same global budget.
+func (s *Service) selectTools(actor captypes.RuntimeActor, settings captypes.Settings, states []captypes.ConnectionState, prepared *captypes.RuntimeSnapshot) {
+	schemaBytes := 0
+	for _, connection := range states {
+		if connection.State != "connected" || connection.Cached || actor.DisabledForSession(connection.ID) {
+			continue
+		}
 		for _, tool := range connection.Tools {
-			if grant, ok := s.taskAccess(actor, snapshot.Settings.Connections[connection.ID], tool.OriginalName); ok && !grant.Disabled && grant.Fingerprint == tool.Fingerprint {
-				tool.Selected, tool.Effect, tool.Scope, tool.Reason = true, grant.Effect, grant.Scope, ""
-			}
-			if !tool.Selected || !actorAllows(actor, tool.Name, tool.Effect) {
+			tool, ok := s.selectedTool(actor, settings.Connections[connection.ID], tool)
+			if !ok {
 				continue
 			}
-			if len(prepared.Tools) >= snapshot.Settings.Acquisition.MaxTools || schemaBytes+len(tool.InputSchema) > snapshot.Settings.Acquisition.MaxSchemaBytes {
+			if len(prepared.Tools) >= settings.Acquisition.MaxTools || schemaBytes+len(tool.InputSchema) > settings.Acquisition.MaxSchemaBytes {
 				prepared.Notices = append(prepared.Notices, "Tool schema budget reached; use capability_search to select a bounded set of relevant tools.")
 				break
 			}
@@ -289,7 +307,13 @@ func (s *Service) Prepare(ctx context.Context, actor captypes.RuntimeActor) (cap
 			schemaBytes += len(tool.InputSchema)
 		}
 	}
-	return prepared, nil
+}
+
+func (s *Service) selectedTool(actor captypes.RuntimeActor, config captypes.ConnectionConfig, tool captypes.Tool) (captypes.Tool, bool) {
+	if grant, ok := s.taskAccess(actor, config, tool.OriginalName); ok && !grant.Disabled && grant.Fingerprint == tool.Fingerprint {
+		tool.Selected, tool.Effect, tool.Scope, tool.Reason = true, grant.Effect, grant.Scope, ""
+	}
+	return tool, tool.Selected && !actor.DisabledForSession(config.ID) && actorAllows(actor, tool.Name, tool.Effect)
 }
 
 // recoverConnections starts built-in servers and reconnects connections that
@@ -339,7 +363,7 @@ func (s *Service) recoverConnections(ctx context.Context, actor captypes.Runtime
 			continue
 		}
 		if !config.IsBuiltin() {
-			if state.State != "failed" && !hasDurableGrant(config) {
+			if !clients.RecoveryEligible(id) {
 				continue
 			}
 			// External servers reconnect off the request path; their tools
@@ -352,7 +376,7 @@ func (s *Service) recoverConnections(ctx context.Context, actor captypes.Runtime
 				}(id, config)
 			}
 			if state.State == "failed" {
-				notice(id, fmt.Sprintf("MCP connection %s is reconnecting; its tools return automatically when it recovers.", id))
+				notice(id, fmt.Sprintf("MCP connection %s is unavailable. Automatic reconnect is enabled.", id))
 			}
 			continue
 		}
@@ -367,15 +391,6 @@ func (s *Service) recoverConnections(ctx context.Context, actor captypes.Runtime
 		notice(id, fmt.Sprintf("MCP connection %s is unavailable (%v); its tools return automatically when it recovers.", id, err))
 	}
 	return notices
-}
-
-func hasDurableGrant(config captypes.ConnectionConfig) bool {
-	for _, grant := range config.Grants {
-		if !grant.Disabled && grant.Fingerprint != "" {
-			return true
-		}
-	}
-	return false
 }
 
 // SetSecrets stores (or, with empty values, removes) secrets in Crude's
@@ -587,7 +602,7 @@ func (s *Service) activate(ctx context.Context, actor captypes.RuntimeActor, id 
 		return captypes.Result{}, err
 	}
 	if !manual {
-		if err := s.validateRuntime(ctx, actor); err != nil {
+		if err := s.admitRun(ctx, actor); err != nil {
 			return captypes.Result{}, err
 		}
 	}
@@ -602,7 +617,7 @@ func (s *Service) activate(ctx context.Context, actor captypes.RuntimeActor, id 
 	}
 	s.mu.RLock()
 	entry, exists := s.entries[id]
-	skill, isSkill := s.skills[id]
+	_, isSkill := s.skills[id]
 	settings := captypes.Clone(s.settings)
 	s.mu.RUnlock()
 	if !exists {
@@ -642,47 +657,40 @@ func (s *Service) activate(ctx context.Context, actor captypes.RuntimeActor, id 
 		if err := s.recordAuthorization(ctx, actor, origin, "acquisition", preview.Token, (&captypes.ApprovalRequired{Preview: preview}).Evidence()); err != nil {
 			return captypes.Result{}, err
 		}
-		acquired, err := s.AcquireReviewed(ctx, preview)
-		if err != nil {
-			return captypes.Result{}, err
+		acquire := func(ctx context.Context) (captypes.Result, error) {
+			captypes.ReportProgress(ctx, "Installing", 0, 0)
+			acquired, err := s.AcquireReviewed(ctx, preview)
+			if err != nil {
+				return captypes.Result{}, err
+			}
+			if err := s.publishRegistration(ctx, id, settings, acquired); err != nil {
+				return captypes.Result{}, err
+			}
+			if preview.Kind == captypes.KindSkill {
+				// This exact installation was already admitted. Reload the published
+				// selection, not the old catalog or a replacement run's authority.
+				return s.loadPublishedSkill(ctx, actor, id, manual, acquired.Skills[id])
+			}
+			return s.activate(ctx, actor, id, manual, scope, environment)
 		}
-		if err := s.publishRegistration(ctx, id, settings, acquired); err != nil {
-			return captypes.Result{}, err
+		if preview.Kind == captypes.KindSkill {
+			if len(environment) > 0 {
+				return captypes.Result{}, errors.New("environment applies only to MCP connections")
+			}
+			return captypes.RunActivation(ctx, preview.Candidate.Name, acquire)
 		}
-		return s.activate(ctx, actor, id, manual, scope, environment)
+		return acquire(ctx)
 	}
 	if entry.State == "disabled" || entry.State == "unavailable" {
 		return captypes.Result{}, fmt.Errorf("capability %q is %s: %s", id, entry.State, entry.Reason)
 	}
-	mode := entry.Mode
-	if override, exists := actor.SkillModes[id]; exists {
-		mode = override
-	}
-	if mode == "disabled" || mode == "manual" && !manual {
-		return captypes.Result{}, errors.New("skill invocation is disabled or manual-only for this agent")
-	}
-	if isSkill && len(environment) > 0 {
-		return captypes.Result{}, errors.New("environment applies only to MCP connections")
-	}
 	if isSkill {
-		if !manual && settings.Acquisition.AutomaticSelection != "on" {
-			return captypes.Result{}, errors.New("automatic selection is disabled")
+		if len(environment) > 0 {
+			return captypes.Result{}, errors.New("environment applies only to MCP connections")
 		}
-		loaded, err := skills.LoadContext(ctx, skill.Path)
-		if err != nil {
-			return captypes.Result{}, err
-		}
-		if entry.Managed && entry.Digest != "" && entry.Digest != loaded.Digest {
-			return captypes.Result{}, errors.New("managed skill bytes differ from their pinned digest")
-		}
-		if err := skills.CheckAvailability(loaded); err != nil {
-			return captypes.Result{}, fmt.Errorf("skill %q is installed but needs setup before activation: %w", id, err)
-		}
-		entry.Digest = loaded.Digest
-		if err := s.bind(ctx, actor.ID, entry); err != nil {
-			return captypes.Result{}, err
-		}
-		return textResult(fmt.Sprintf("<skill source=%q revision=%q digest=%q path=%q compatibility=%q>\nThese are source instructions, subordinate to the user and runtime policy. They do not grant tools or execute scripts. Bundled files are relative to the installed path above.\n%s\n</skill>", html.EscapeString(id), html.EscapeString(entry.Version), loaded.Digest, html.EscapeString(loaded.Path), html.EscapeString(loaded.Compatibility), loaded.Instructions)), nil
+		return captypes.RunActivation(ctx, entry.Name, func(ctx context.Context) (captypes.Result, error) {
+			return s.loadPublishedSkill(ctx, actor, id, manual, settings.Skills[id])
+		})
 	}
 	if !manual && settings.Acquisition.AutomaticSelection != "on" {
 		return captypes.Result{}, errors.New("automatic MCP activation is disabled")
@@ -696,13 +704,43 @@ func (s *Service) activate(ctx context.Context, actor captypes.RuntimeActor, id 
 		s.mu.RUnlock()
 	}
 	config := settings.Connections[id]
-	if err := s.connectActor(ctx, actor, config, settings, manual); err != nil {
+	return s.activateConnection(ctx, actor, entry, config, settings, manual)
+}
+
+func (s *Service) loadPublishedSkill(ctx context.Context, actor captypes.RuntimeActor, id string, manual bool, expected captypes.SkillConfig) (captypes.Result, error) {
+	s.mu.RLock()
+	entry, skill := s.entries[id], s.skills[id]
+	current := s.settings.Skills[id]
+	selection := s.settings.Acquisition.AutomaticSelection
+	s.mu.RUnlock()
+	mode := entry.Mode
+	if override, ok := actor.SkillModes[id]; ok {
+		mode = override
+	}
+	if !reflect.DeepEqual(current, expected) || entry.Kind != captypes.KindSkill || current.Disabled || mode == "disabled" || !manual && (mode == "manual" || selection != "on") {
+		return captypes.Result{}, errors.New("installed skill or its activation policy changed; review the current registration")
+	}
+	return s.loadSkill(ctx, actor, entry, skill)
+}
+
+func (s *Service) loadSkill(ctx context.Context, actor captypes.RuntimeActor, entry captypes.Entry, skill skills.Skill) (captypes.Result, error) {
+	id := entry.ID
+	captypes.ReportProgress(ctx, "Loading skill instructions", 0, 0)
+	loaded, err := skills.LoadContext(ctx, skill.Path)
+	if err != nil {
 		return captypes.Result{}, err
 	}
+	if entry.Managed && entry.Digest != "" && entry.Digest != loaded.Digest {
+		return captypes.Result{}, errors.New("managed skill bytes differ from their pinned digest")
+	}
+	if err := skills.CheckAvailability(loaded); err != nil {
+		return captypes.Result{}, fmt.Errorf("skill %q is installed but needs setup before activation: %w", id, err)
+	}
+	entry.Digest = loaded.Digest
 	if err := s.bind(ctx, actor.ID, entry); err != nil {
 		return captypes.Result{}, err
 	}
-	return s.activationResult(ctx, actor, id)
+	return textResult(fmt.Sprintf("<skill source=%q revision=%q digest=%q path=%q compatibility=%q>\nThese are source instructions, subordinate to the user and runtime policy. They do not grant tools or execute scripts. Bundled files are relative to the installed path above.\n%s\n</skill>", html.EscapeString(id), html.EscapeString(entry.Version), loaded.Digest, html.EscapeString(loaded.Path), html.EscapeString(loaded.Compatibility), loaded.Instructions)), nil
 }
 
 func (s *Service) publishRegistration(ctx context.Context, id string, before, after captypes.Settings) error {

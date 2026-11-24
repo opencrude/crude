@@ -133,6 +133,7 @@ func (config ConnectionConfig) ExecutionHost() string {
 // HostRequest is internal, immutable execution authority, never model input.
 // Secret references resolve on the selected host; credential bytes must not cross.
 type HostRequest struct {
+	StopConnectID   string
 	ID              string
 	WorkspaceID     string
 	Actor           RuntimeActor
@@ -166,8 +167,11 @@ func ValidateCapabilityHostRequest(r HostRequest, workspace string, owner contro
 	if r.Connection.Host != "shell" || r.Connection.Transport != "stdio" || len(r.Connection.Environment) > 0 || len(r.Connection.Headers) > 0 || r.Connection.CredentialRef != "" {
 		return errors.New("shell host must use stdio without forwarded credential values")
 	}
+	if (r.Operation == "stop-connect") != (r.StopConnectID != "") || len(r.StopConnectID) > 256 || r.StopConnectID == r.ID {
+		return errors.New("invalid MCP connect cancellation identity")
+	}
 	switch r.Operation {
-	case "prepare", "connect", "inventory", "call", "readResource", "getPrompt", "disconnect":
+	case "prepare", "connect", "stop-connect", "inventory", "call", "readResource", "getPrompt", "disconnect":
 	default:
 		return errors.New("unknown MCP host operation")
 	}
@@ -184,38 +188,6 @@ func ValidateCapabilityHostRequest(r HostRequest, workspace string, owner contro
 // HostRequestReadOnly permits fresh discovery without retaining an effect receipt.
 func HostRequestReadOnly(r HostRequest) bool {
 	return r.Operation == "prepare" || r.Operation == "inventory" || r.Operation == "readResource" || r.Operation == "getPrompt" || r.Operation == "call" && r.Tool.Effect == EffectRead
-}
-
-// PreparationRequired asks the owning agent session to make a package-backed
-// local server's package available before launching it. It is returned only
-// after the exact launch was authorized, because package installation runs
-// package code with the same authority as the launch. The session runs the
-// exact command through its background command manager: quick preparation
-// continues inline, and a slow download becomes an ordinary tracked command,
-// visible and cancellable in the jobs panel and reported when it settles,
-// instead of a handshake timeout killing it mid-download.
-type PreparationRequired struct {
-	ConnectionID string
-	Name         string
-	Command      string
-	Args         []string
-	Key          string
-}
-
-func (request *PreparationRequired) Error() string {
-	return "MCP package for " + request.Name + " must be prepared before launch"
-}
-
-type preparedKey struct{}
-
-// WithPrepared records that the session completed the exact preparation key.
-func WithPrepared(ctx context.Context, key string) context.Context {
-	return context.WithValue(ctx, preparedKey{}, key)
-}
-
-func PreparedFrom(ctx context.Context) string {
-	key, _ := ctx.Value(preparedKey{}).(string)
-	return key
 }
 
 // ConfigurationPreview is one exact agent-requested change to an installed

@@ -6,6 +6,7 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/tools"
+	"crude/types/command"
 	"crude/types/conversation"
 	"crude/types/reasoning"
 	"crude/types/recovery"
@@ -950,10 +951,14 @@ func applyToolInput(message *conversation.Message, name string, data map[string]
 }
 
 func (c *Conversation) UpdateToolProgress(toolID, internalID, name, phase, detail, path string, linesAdded, linesRemoved, estTokens int) {
+	c.updateToolProgress(nil, toolID, internalID, name, phase, detail, path, linesAdded, linesRemoved, estTokens)
+}
+func (c *Conversation) updateToolProgress(transfer *command.Progress, toolID, internalID, name, phase, detail, path string, linesAdded, linesRemoved, estTokens int) {
 	message := c.findTool(internalID, toolID)
 	if message == nil || (message.ToolStatus != "calling" && message.ToolStatus != "streaming" && message.ToolStatus != "success") {
 		return
 	}
+	message.ToolTransfer = transfer
 	message.ToolProgressPhase = phase
 	message.ToolProgressMessage = detail
 	if path != "" {

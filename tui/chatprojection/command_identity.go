@@ -17,7 +17,7 @@ type commandSettlement struct {
 
 func commandStart(message *conversation.ChatMessage) bool {
 	switch message.ToolName {
-	case "execute_command", "async_execute_command", "exec_command":
+	case "capability_activate", "execute_command", "async_execute_command", "exec_command":
 		return message.ToolOutcome.ID != ""
 	}
 	return false
@@ -28,7 +28,7 @@ func settlementID(message *conversation.ChatMessage) string {
 		return ""
 	}
 	info := message.Collaboration.Command
-	return command.ExecutionID(info.PID, info.StartedAt)
+	return command.JobID(info.TaskID, info.PID, info.StartedAt)
 }
 
 // indexCommandEvidence runs only on a source change. It widens the incremental

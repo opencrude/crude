@@ -448,6 +448,7 @@ var wireTypes = []any{
 	new(p16.OutputDescriptor),
 	new(p16.OutputRange),
 	new(p16.Page),
+	new(p16.Progress),
 	new(p16.Result),
 	new(p16.Status),
 	new(p17.Availability),

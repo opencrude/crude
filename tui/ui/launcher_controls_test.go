@@ -81,3 +81,41 @@ func TestProgressRuleMovesInkNotGeometryAndStops(t *testing.T) {
 		}
 	}
 }
+
+func TestMeasuredProgressUsesOnlyReportedFraction(t *testing.T) {
+	tokens := NewTokenSet(theme.DefaultDark())
+	r := NewProgressRule("transfer", tokens)
+	r.Layout(LayoutContext{}, Rect{W: 20, H: 1})
+	r.SetActive(true)
+	r.SetMeasurement(25, 100)
+	buf := surface.NewCellBuffer(20, 1)
+	r.Paint(buf, 0, 0, PaintContext{})
+	if r.NeedsFrame() {
+		t.Fatal("measured transfer requested animation")
+	}
+	for x := 0; x < 20; x++ {
+		if buf.Get(x, 0).Attr.Has(cell.AttrBold) != (x < 5) {
+			t.Fatalf("incorrect fill at %d", x)
+		}
+	}
+}
+
+func BenchmarkActivationProgressPaint(b *testing.B) {
+	for _, mode := range []string{"unknown", "measured"} {
+		b.Run(mode, func(b *testing.B) {
+			r := NewProgressRule("transfer", NewTokenSet(theme.DefaultDark()))
+			r.Layout(LayoutContext{}, Rect{W: 18, H: 1})
+			r.SetActive(true)
+			if mode == "measured" {
+				r.SetMeasurement(1024, 2048)
+			}
+			buf := surface.NewCellBuffer(18, 1)
+			frame := 1
+			b.ReportAllocs()
+			for b.Loop() {
+				r.Paint(buf, 0, 0, PaintContext{Frame: frame})
+				frame += 16
+			}
+		})
+	}
+}

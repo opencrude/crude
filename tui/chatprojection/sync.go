@@ -149,7 +149,7 @@ func sameMessageData(current, incoming *conversation.ChatMessage) bool {
 		current.ToolStatus == incoming.ToolStatus &&
 		current.ToolOutcome == incoming.ToolOutcome &&
 		current.ToolIndex == incoming.ToolIndex &&
-		current.ToolProgressPhase == incoming.ToolProgressPhase &&
+		(current.ToolTransfer == incoming.ToolTransfer || current.ToolTransfer != nil && incoming.ToolTransfer != nil && *current.ToolTransfer == *incoming.ToolTransfer) && current.ToolProgressPhase == incoming.ToolProgressPhase &&
 		current.ToolProgressMessage == incoming.ToolProgressMessage &&
 		current.ToolProgressLabel == incoming.ToolProgressLabel &&
 		current.ToolPreviewPhase == incoming.ToolPreviewPhase &&

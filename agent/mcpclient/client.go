@@ -156,8 +156,7 @@ func (manager *Manager) Configure(configs map[string]captypes.ConnectionConfig) 
 			}
 			if existing.session != nil {
 				session := existing.session
-				manager.lifetimeTasks.Add(1)
-				go func() { defer manager.lifetimeTasks.Done(); _ = session.Close() }()
+				manager.lifetimeTasks.Go(func() { _ = session.Close() })
 			}
 			existing.session = nil
 			existing.cancel = nil
@@ -226,9 +225,14 @@ func (manager *Manager) connect(ctx context.Context, id string, interactive bool
 		manager.mu.Unlock()
 		return errors.New("connection is unavailable")
 	}
-	if entry.session != nil {
+	config := entry.config
+	if config.Host == "shell" {
 		manager.mu.Unlock()
-		return nil
+		return errors.New("shell MCP connection requires exact connected-shell dispatcher")
+	}
+	if expected, authorized := ctx.Value(launchAuthorizationKey{}).(captypes.ConnectionConfig); authorized && !reflect.DeepEqual(expected, config) {
+		manager.mu.Unlock()
+		return errors.New("MCP launch configuration changed after authorization")
 	}
 	if entry.state.State == "connecting" && entry.connecting != nil {
 		// Join the attempt already in flight (for example an automatic
@@ -252,14 +256,9 @@ func (manager *Manager) connect(ctx context.Context, id string, interactive bool
 		}
 		return errors.New(failure)
 	}
-	config := entry.config
-	if config.Host == "shell" {
+	if entry.session != nil {
 		manager.mu.Unlock()
-		return errors.New("shell MCP connection requires exact connected-shell dispatcher")
-	}
-	if expected, authorized := ctx.Value(launchAuthorizationKey{}).(captypes.ConnectionConfig); authorized && !reflect.DeepEqual(expected, config) {
-		manager.mu.Unlock()
-		return errors.New("MCP launch configuration changed after authorization")
+		return nil
 	}
 	if config.Disabled {
 		manager.mu.Unlock()
@@ -301,13 +300,22 @@ func (manager *Manager) connect(ctx context.Context, id string, interactive bool
 		manager.mu.Unlock()
 	}()
 	seconds := config.TimeoutSeconds
-	if seconds <= 0 {
+	if seconds <= 0 && config.Transport != "stdio" && !captypes.TrackedActivation(ctx) {
 		seconds = 30
 	}
 	if interactive && seconds < 300 {
 		seconds = 300
 	}
-	connectCtx, connectCancel := context.WithTimeout(ctx, time.Duration(seconds)*time.Second)
+	// A local runner may install before it speaks MCP. Respect an explicit
+	// start limit, not the protocol-call default. Disconnect and Close still
+	// cancel this exact launch; discovery has its own ordinary request budget.
+	var connectCtx context.Context
+	var connectCancel context.CancelFunc
+	if seconds > 0 {
+		connectCtx, connectCancel = context.WithTimeout(ctx, time.Duration(seconds)*time.Second)
+	} else {
+		connectCtx, connectCancel = context.WithCancel(ctx)
+	}
 	stopLifetime := context.AfterFunc(lifetime, connectCancel)
 	stopRequest := context.AfterFunc(connectCtx, cancel)
 	defer func() {
@@ -362,12 +370,23 @@ func (manager *Manager) connect(ctx context.Context, id string, interactive bool
 		return errors.New("connection request was superseded or cancelled")
 	}
 	entry.session = session
-	entry.state.State, entry.state.Cached = "connected", false
-	entry.connectedOnce, entry.parked = true, false
 	manager.mu.Unlock()
-	if err := manager.Refresh(connectCtx, id); err != nil {
-		manager.mu.Lock()
-		if manager.connections[id] == entry && entry.epoch == epoch && entry.session == session {
+	captypes.ReportProgress(ctx, "Discovering MCP tools", 0, 0)
+	err = manager.Refresh(connectCtx, id)
+	manager.mu.Lock()
+	current := !manager.closed && manager.connections[id] == entry && entry.epoch == epoch && entry.session == session
+	// Transfer the transport from the request to its connection lifetime only
+	// after discovery. A cancellation racing this commit cannot stop a server
+	// after a successful return.
+	if err == nil {
+		if !current {
+			err = errors.New("connection discovery was superseded")
+		} else if !stopRequest() || connectCtx.Err() != nil {
+			err = connectCtx.Err()
+		}
+	}
+	if err != nil {
+		if current {
 			entry.session = nil
 		}
 		manager.mu.Unlock()
@@ -375,8 +394,11 @@ func (manager *Manager) connect(ctx context.Context, id string, interactive bool
 		_ = session.Close()
 		err = manager.diagnosed(id, epoch, err)
 		manager.failed(id, epoch, err)
-		return err
+		return manager.safeError(config, err)
 	}
+	entry.state.State, entry.state.Cached = "connected", false
+	entry.connectedOnce, entry.parked = true, false
+	manager.mu.Unlock()
 	go manager.watchSession(id, epoch, session, cancel)
 	return nil
 }
@@ -533,9 +555,7 @@ func (manager *Manager) transport(config captypes.ConnectionConfig, lifetime con
 		return &boundedCommandTransport{command: command, lifetime: lifetime, stderr: tail}, cleanup, nil
 	}
 	headers := make(map[string]string)
-	for name, value := range config.Headers {
-		headers[name] = value
-	}
+	maps.Copy(headers, config.Headers)
 	for name, reference := range config.SecretRefs {
 		value, err := manager.resolveSecret(reference)
 		if err != nil {
@@ -833,6 +853,7 @@ func (manager *Manager) Refresh(ctx context.Context, id string) error {
 	if entry == nil || entry.epoch != epoch || entry.session != session {
 		return errors.New("MCP discovery was superseded")
 	}
+	state.State = entry.state.State
 	state.Logs = entry.state.Logs
 	entry.state, entry.discovered = state, true
 	entry.outputSchemas = outputSchemas

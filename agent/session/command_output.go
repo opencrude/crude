@@ -12,11 +12,14 @@ import (
 )
 
 func commandResult(info fileio.AsyncCmdInfo) command.Result {
-	result := command.Result{ExecutionID: command.ExecutionID(info.PID, info.StartedAt), Command: info.Command, CWD: info.CWD, PID: info.PID, Error: info.Error, TimedOut: info.TimedOut, Uncertain: info.Uncertain,
+	result := command.Result{TaskID: info.TaskID, ExecutionID: info.Ref().ExecutionID(), Command: info.Command, CWD: info.CWD, PID: info.PID, Error: info.Error, TimedOut: info.TimedOut, Uncertain: info.Uncertain,
 		WallTimeSeconds:  info.Duration.Seconds(),
 		OutputDescriptor: command.OutputDescriptor{Handle: info.Handle, Status: info.Status, TotalBytes: info.OutputBytes}}
+	if info.TaskID != "" && info.Status == fileio.AsyncRunning {
+		result.Progress = &info.Progress
+	}
 	result.Cancelled = info.Status == fileio.AsyncKilled && !info.TimedOut
-	if info.Status == fileio.AsyncCompleted || info.Status == fileio.AsyncFailed {
+	if info.HasExitCode() {
 		code := info.ExitCode
 		result.ExitCode = &code
 	}
@@ -32,7 +35,7 @@ func FormatCommandStart(info fileio.AsyncCmdInfo) string {
 func FormatCommandStatus(info fileio.AsyncCmdInfo) string {
 	result := commandResult(info)
 	result.Retrieval = fmt.Sprintf("Read retained content with read_async_output(handle=%q, since_byte=0, max_bytes=%d); do not rerun the command for output.", info.Handle, fileio.DefaultOutputChunkBytes)
-	if info.Status == fileio.AsyncRunning {
+	if info.TaskID == "" && info.Status == fileio.AsyncRunning {
 		result.Retrieval += " Exit unknown while running; do not repeat status checks for content."
 	}
 	return tools.CommandResultContent(result)
@@ -86,7 +89,11 @@ func cancelledCommandOutcome(mgr *fileio.AsyncCommandManager, uc *fileio.Untrack
 	result, _ := commandOutcome(mgr, uc)
 	if evidence, ok := tools.ParseCommandResult("execute_command", result.Content); ok {
 		evidence.Cancelled = true
-		evidence.Error = "Command cancelled. The owning turn stopped its exact command tree and preserved the captured evidence."
+		if evidence.TaskID != "" {
+			evidence.Error = "Activation stopped. Inspect the retained output."
+		} else {
+			evidence.Error = "Command cancelled. The owning turn stopped its exact command tree and preserved the captured evidence."
+		}
 		result.Content = tools.CommandResultContent(evidence)
 	}
 	return result
@@ -105,19 +112,37 @@ func awaitCommandWithPromotion(
 	agentID string,
 	humanInput <-chan struct{},
 ) (tools.ToolResult, error) {
+	return awaitJobWithPromotion(ctx, mgr, uc, lg, agentID, humanInput, nil, nil, func() (tools.ToolResult, error) { return commandOutcome(mgr, uc) })
+}
+
+func awaitJobWithPromotion(ctx context.Context, mgr *fileio.AsyncCommandManager, uc *fileio.UntrackedCmd, lg *logger.Logger, agentID string, humanInput <-chan struct{}, changes <-chan struct{}, progress func(command.Progress), inline func() (tools.ToolResult, error)) (tools.ToolResult, error) {
 	reason := "threshold"
-	select {
-	case <-ctx.Done():
-		uc.Kill()
-		<-uc.Done()
-		return cancelledCommandOutcome(mgr, uc), nil
-	case <-uc.Done():
-		return commandOutcome(mgr, uc)
-	case <-time.After(asyncPromotionThreshold):
-	case <-humanInput:
-		// The user is waiting for the agent: hand back a background handle
-		// now instead of holding their message until the threshold.
-		reason = "human_input"
+	deadline := time.After(asyncPromotionThreshold)
+	var lastPhase string
+	var sent time.Time
+await:
+	for {
+		select {
+		case <-ctx.Done():
+			uc.Kill()
+			<-uc.Done()
+			return cancelledCommandOutcome(mgr, uc), nil
+		case <-uc.Done():
+			return inline()
+		case <-changes:
+			p := uc.Info().Progress
+			if progress != nil && (p.Phase != lastPhase || time.Since(sent) >= 100*time.Millisecond || p.Total > 0 && p.Current >= p.Total) {
+				progress(p)
+				lastPhase, sent = p.Phase, time.Now()
+			}
+		case <-deadline:
+			break await
+		case <-humanInput:
+			// The user is waiting for the agent: hand back a background handle
+			// now instead of holding their message until the threshold.
+			reason = "human_input"
+			break await
+		}
 	}
 
 	if uc.Status() == fileio.AsyncRunning {
@@ -146,6 +171,6 @@ func awaitCommandWithPromotion(
 		<-uc.Done()
 		return cancelledCommandOutcome(mgr, uc), nil
 	case <-uc.Done():
-		return commandOutcome(mgr, uc)
+		return inline()
 	}
 }

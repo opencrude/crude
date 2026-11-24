@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/charmbracelet/colorprofile"
 	uv "github.com/charmbracelet/ultraviolet"
@@ -18,30 +19,33 @@ import (
 )
 
 type cursedRenderer struct {
-	w             io.Writer
-	buf           bytes.Buffer // updates buffer to be flushed to [w]
-	scr           *uv.TerminalRenderer
-	cellbuf       uv.ScreenBuffer
-	directbuf     uv.ScreenBuffer // producer snapshot, guarded by viewMu
-	surfaceFrame  uint64
-	snapshotToken uv.SnapshotToken
-	flushbuf      bytes.Buffer // renderer-owned envelope; retain actual frame capacity
-	lastView      *View
-	env           []string
-	term          string // the terminal type $TERM
-	width, height int
-	mu            sync.Mutex
-	viewMu        sync.Mutex // guards view and pendingSize only; see flush
-	pendingSize   *[2]int
-	written       int // bytes written by the last flush
-	profile       colorprofile.Profile
-	logger        uv.Logger
-	view          View
-	onMouseView   func(MouseMsg) Cmd // last presented handler, guarded by viewMu
-	hardTabs      bool               // whether to use hard tabs to optimize cursor movements
-	backspace     bool               // whether to use backspace to optimize cursor movements
-	mapnl         bool
-	syncdUpdates  bool // whether to use synchronized output mode for updates
+	w                         io.Writer
+	buf                       bytes.Buffer // updates buffer to be flushed to [w]
+	scr                       *uv.TerminalRenderer
+	cellbuf                   uv.ScreenBuffer
+	directbuf                 uv.ScreenBuffer // producer snapshot, guarded by viewMu
+	surfaceFrame              uint64
+	snapshotToken             uv.SnapshotToken
+	deltaRows                 snapshotRows
+	rowBase                   bool // cellbuf is the base of all accumulated row writes
+	snapshotHold, outputWrite time.Duration
+	flushbuf                  bytes.Buffer // renderer-owned envelope; retain actual frame capacity
+	lastView                  *View
+	env                       []string
+	term                      string // the terminal type $TERM
+	width, height             int
+	mu                        sync.Mutex
+	viewMu                    sync.Mutex // guards view and pendingSize only; see flush
+	pendingSize               *[2]int
+	written                   int // bytes written by the last flush
+	profile                   colorprofile.Profile
+	logger                    uv.Logger
+	view                      View
+	onMouseView               func(MouseMsg) Cmd // last presented handler, guarded by viewMu
+	hardTabs                  bool               // whether to use hard tabs to optimize cursor movements
+	backspace                 bool               // whether to use backspace to optimize cursor movements
+	mapnl                     bool
+	syncdUpdates              bool // whether to use synchronized output mode for updates
 	// Host BiDi mode (host_bidi.go): what the application wants, whether
 	// explicit mode is written, and the terminal's DECRPM report.
 	bidiWanted, bidiApplied, bidiKnown bool
@@ -332,6 +336,7 @@ func (s *cursedRenderer) flush(closing bool) error {
 	defer s.mu.Unlock()
 
 	s.written = 0
+	s.snapshotHold, s.outputWrite = 0, 0
 	view, unchanged := s.drawFrame(closing)
 	if unchanged {
 		return nil
@@ -633,7 +638,10 @@ func (s *cursedRenderer) flush(closing bool) error {
 		if s.logger != nil {
 			s.logger.Printf("output: %q", buf.String())
 		}
-		if _, err := io.Copy(s.w, buf); err != nil {
+		writeStart := time.Now()
+		_, err := io.Copy(s.w, buf)
+		s.outputWrite = time.Since(writeStart)
+		if err != nil {
 			s.failKittyImages(view.Images)
 			s.failSixels()
 			return fmt.Errorf("bubbletea: error flushing update to the writer: %w", err)
@@ -682,12 +690,20 @@ func (s *cursedRenderer) render(v View) {
 			// Sixel extraction replaces marker cells with blanks in directbuf.
 			// Such a buffer is not the exact prior producer generation, even
 			// when its token matches. Redraw before extracting the next tiles.
-			if !ok || !sized || len(s.view.sixels) != 0 || token.Owner == nil || token == s.snapshotToken ||
-				!delta.DrawSince(snapshotScreen{s.directbuf.Buffer}, s.directbuf.Bounds(), s.snapshotToken) {
+			s.deltaRows.snapshotScreen = snapshotScreen{s.directbuf.Buffer}
+			if len(s.deltaRows.rows) != h {
+				s.deltaRows.rows = make([]bool, h)
+				s.rowBase = false
+			}
+			if !ok || !sized || len(s.view.sixels) != 0 || token.Owner == nil || token == s.snapshotToken || !delta.DrawSince(&s.deltaRows, s.directbuf.Bounds(), s.snapshotToken) {
+				s.rowBase = false
 				s.directbuf.Clear()
-				v.Surface.Draw(snapshotScreen{s.directbuf.Buffer}, s.directbuf.Bounds())
+				v.Surface.Draw(s.deltaRows.snapshotScreen, s.directbuf.Bounds())
 			}
 			v.sixels = snapshotSixelTiles(s.directbuf.Buffer, v.Images)
+			if len(v.sixels) != 0 {
+				s.rowBase = false
+			}
 			s.surfaceFrame++
 		} else {
 			v.sixels = s.view.sixels
@@ -696,6 +712,7 @@ func (s *cursedRenderer) render(v View) {
 		v.surfaceFrame = s.surfaceFrame
 	} else {
 		s.snapshotToken = uv.SnapshotToken{}
+		s.rowBase = false
 	}
 	if v.Cursor != nil {
 		cursor := *v.Cursor
@@ -739,13 +756,33 @@ func (s snapshotScreen) SetCellRow(y int, row []uv.Cell) {
 	copy(s.Lines[y], row)
 }
 
+// snapshotRows accumulates changed rows across unconsumed producer generations.
+// CellAt exposes a mutable cell, so reads through that API are conservative.
+type snapshotRows struct {
+	snapshotScreen
+	rows []bool
+}
+
+func (d *snapshotRows) mark(y int) {
+	if y >= 0 && y < len(d.rows) {
+		d.rows[y] = true
+	}
+}
+func (d *snapshotRows) SetCell(x, y int, c *uv.Cell) { d.mark(y); d.snapshotScreen.SetCell(x, y, c) }
+func (d *snapshotRows) CellAt(x, y int) *uv.Cell     { d.mark(y); return d.snapshotScreen.CellAt(x, y) }
+func (d *snapshotRows) SetCellRow(y int, row []uv.Cell) {
+	d.mark(y)
+	d.snapshotScreen.SetCellRow(y, row)
+}
+
 // drawFrame consumes a producer snapshot while holding viewMu, never while
 // writing the terminal. render can therefore reuse producer cells immediately
 // and cannot race a flush, even when terminal output is stalled. Full snapshots
 // conflate safely: damage is computed against the last consumed frame.
 func (s *cursedRenderer) drawFrame(closing bool) (View, bool) {
 	s.viewMu.Lock()
-	defer s.viewMu.Unlock()
+	held := time.Now()
+	defer func() { s.snapshotHold = time.Since(held); s.viewMu.Unlock() }()
 	view := s.view
 	resized := s.pendingSize != nil
 	if size := s.pendingSize; size != nil {
@@ -778,14 +815,26 @@ func (s *cursedRenderer) drawFrame(closing bool) (View, bool) {
 	s.starting = false
 	s.bidiPending = false
 	if frameArea != s.cellbuf.Bounds() {
+		s.rowBase = false
 		s.scr.Erase()
 		s.cellbuf.Touched = nil
 		s.cellbuf.Resize(frameArea.Dx(), frameArea.Dy())
 	}
 	if view.Surface != nil {
 		if s.directbuf.Bounds() == s.cellbuf.Bounds() {
-			s.cellbuf.Replace(s.directbuf.Buffer)
+			if s.rowBase && !resized && !s.sixelAny && len(view.Images) == 0 {
+				for y, dirty := range s.deltaRows.rows {
+					if dirty {
+						s.cellbuf.ReplaceRow(y, s.directbuf.Lines[y])
+					}
+				}
+			} else {
+				s.cellbuf.Replace(s.directbuf.Buffer)
+			}
+			clear(s.deltaRows.rows)
+			s.rowBase = len(view.Images) == 0 && frameArea.Dy() <= s.height
 		} else {
+			s.rowBase = false
 			// Terminal resize can precede the model's new geometry. Never
 			// retain stale cells outside the latest complete source snapshot.
 			s.cellbuf.Clear()
@@ -795,6 +844,7 @@ func (s *cursedRenderer) drawFrame(closing bool) (View, bool) {
 			}
 		}
 	} else {
+		s.rowBase = false
 		s.cellbuf.Clear()
 		content.Draw(s.cellbuf, s.cellbuf.Bounds())
 		s.snapshotSixelContent(&view)
@@ -1125,4 +1175,12 @@ func (s *cursedRenderer) flushedBytes() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.written
+}
+
+// flushSample returns counters from the completed writer pass, never from the
+// producer. Hold excludes waiting to acquire the snapshot lock.
+func (s *cursedRenderer) flushSample() FlushSample {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return FlushSample{Bytes: s.written, SnapshotHold: s.snapshotHold, OutputWrite: s.outputWrite}
 }

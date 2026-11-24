@@ -2,6 +2,8 @@ package mcpclient
 
 import (
 	"context"
+	"crude/workspace/fileio"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -91,7 +93,8 @@ func (t *boundedCommandTransport) Connect(ctx context.Context) (mcp.Connection, 
 		}
 		t.command.Stderr = stderrWrite
 	}
-	if err := t.command.Start(); err != nil {
+	stop, wait, err := fileio.StartPipeCommand(t.command)
+	if err != nil {
 		_ = stdout.Close()
 		_ = stdin.Close()
 		if stderrWrite != nil {
@@ -109,7 +112,7 @@ func (t *boundedCommandTransport) Connect(ctx context.Context) (mcp.Connection, 
 			_, _ = io.Copy(tail, stderrRead)
 		}(t.stderr)
 	}
-	owner := &commandPipeOwner{command: t.command, stdout: stdout, stdin: stdin, done: make(chan struct{})}
+	owner := &commandPipeOwner{stop: stop, wait: wait, stdout: stdout, stdin: stdin, done: make(chan struct{})}
 	if t.lifetime != nil {
 		go func() {
 			select {
@@ -123,12 +126,12 @@ func (t *boundedCommandTransport) Connect(ctx context.Context) (mcp.Connection, 
 }
 
 type commandPipeOwner struct {
-	command *exec.Cmd
-	stdout  io.ReadCloser
-	stdin   io.WriteCloser
-	once    sync.Once
-	err     error
-	done    chan struct{}
+	stop, wait func() error
+	stdout     io.ReadCloser
+	stdin      io.WriteCloser
+	once       sync.Once
+	err        error
+	done       chan struct{}
 }
 
 func (p *commandPipeOwner) Close() error {
@@ -137,6 +140,7 @@ func (p *commandPipeOwner) Close() error {
 		// Windows pipe Close can itself wait for a pending ReadFile/WriteFile.
 		// Arm termination independently before touching either pipe, or a silent
 		// server can prevent us from ever reaching the grace timer.
+		var stopErr error
 		exited, timerDone := make(chan struct{}), make(chan struct{})
 		go func() {
 			timer := time.NewTimer(time.Second)
@@ -145,14 +149,17 @@ func (p *commandPipeOwner) Close() error {
 			select {
 			case <-exited:
 			case <-timer.C:
-				_ = p.command.Process.Kill()
+				stopErr = p.stop()
 			}
 		}()
 		_ = p.stdin.Close()
 		_ = p.stdout.Close()
-		p.err = p.command.Wait()
+		p.err = p.wait()
 		close(exited)
 		<-timerDone
+		if stopErr != nil && !errors.Is(stopErr, os.ErrProcessDone) {
+			p.err = errors.Join(p.err, &fileio.CommandTreeUnverifiedError{Err: stopErr})
+		}
 	})
 	return p.err
 }

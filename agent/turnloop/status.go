@@ -62,7 +62,11 @@ func BuildAsyncCommandStatus(mgr *fileio.AsyncCommandManager) string {
 			marker = "!"
 		}
 		dur := c.Duration.Round(time.Second).String()
-		fmt.Fprintf(&sb, "  %s [%s]: %s (PID %d, %s)", marker, c.Handle, c.Status, c.PID, dur)
+		if c.TaskID != "" {
+			fmt.Fprintf(&sb, "  %s [%s]: %s (%s) %s", marker, c.Handle, c.Status, dur, c.Progress.Phase)
+		} else {
+			fmt.Fprintf(&sb, "  %s [%s]: %s (PID %d, %s)", marker, c.Handle, c.Status, c.PID, dur)
+		}
 		if c.Status == fileio.AsyncFailed && c.Error != "" {
 			sb.WriteString(" — " + c.Error)
 		}

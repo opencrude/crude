@@ -99,16 +99,23 @@ server's redacted stderr tail is captured per launch and attached to handshake,
 disconnect and tool-call failures and to the connection state, so a crash reads
 as its own reason (for example `Could not open main display`), not a bare EOF.
 
-Registry packages (npm/PyPI) are prepared before their first launch in a core
-process: after the launch is authorized, the owning agent session runs
-`npx --yes --package=<pkg@ver> --call "exit 0"` or `uvx --from <pkg==ver> python -c ""`
-through its ordinary background command manager. Quick preparation continues
-inline; a slow download is promoted to a normal tracked command (stable
-`mcp_prepare_<id>` handle in the background jobs panel, Terminate-able, readable
-with `read_async_output`) and reported to the agent as a `command_outcome` event,
-after which it activates the same ID again. Preparation has no deadline; the
-handshake keeps the ordinary connection budget once the package is local. Edited
-argument vectors and shell-host connections launch directly.
+A slow agent activation is one job, not a package download followed by a second
+activation call. Source review, sign-in and launch permission remain explicit.
+Once admitted, a skill can acquire its pinned files, verify and load them; an
+MCP launch uses the reviewed executable and environment, including any first-run
+installation by that executable, and discovers the live tool catalog. Fast work
+returns inline. The command promotion threshold or incoming human steering
+hands slow work to the same **Background jobs** deck as shell commands. The
+command link reveals the originating call. **Output** reads retained phases
+and the result; **Stop** stops this attempt. A known transfer length fills
+the bar; without one, the bar shows activity, not an estimated percentage.
+
+The owning agent receives the actual activation result as a `command_outcome`.
+No polling or second activation is needed. Access approval remains separate.
+Local stdio bootstrap has no implicit 30-second deadline. An explicitly set
+connection timeout still applies, and catalog discovery and tool calls keep
+their own limits. Passive restore never restarts a launch. The Settings **Install**
+action still only registers an MCP; it neither connects nor wakes an agent.
 
 `capability_activate` accepts an optional `environment` object for server-specific
 settings (empty value unsets). It is one exact, durable registration change whose
@@ -116,7 +123,7 @@ values are shown to the approver; approving it also authorizes launching exactly
 that configuration for the run. Credential references stay user-owned and cannot
 be shadowed. A live connection is reused without another launch authorization,
 and a recorded run-local launch authorization survives a failed connect or a
-preparation in the same run.
+slow launch in the same run.
 
 Local MCP process teardown has one pipe/process owner for cancellation, EOF,
 bounded termination and reaping. Termination is armed before potentially blocking
@@ -381,6 +388,23 @@ Saved Version keep the separate full-file reader in movable main tabs.
 
 ## Validation Evidence
 
+- `TestConnectedActivationJobControls` submits work through the composer on a
+  connected shell. An ordinary `go test ./...` job runs beside a real MCP
+  initialization held at a local HTTP peer. A steering message promotes the
+  activation. The test reveals its exact call, reads its output, stops the
+  handshake, and verifies the neighboring command still has its own Stop action.
+  For native verification, compile `./tui/viewmodel` as a test binary, set
+  `CRUDE_VISUAL_ACTIVATION=1`, select this test, and use the repository capture
+  driver at 160×40 and 80×24, sequentially. Set `CRUDE_CAPTURE_EVIDENCE` to a
+  fresh temporary file per run. Use `await:motion`, `shot:mixed`, `quit:F9`.
+  The marker requires five distinct painted bar states inside one idle-tick
+  interval. A capture without the marker and a successful exit is not proof.
+- Set `CRUDE_LONG_ACTIVATION_PROOF=1` for
+  `TestSlowActivationSettlesWithDiscoveredToolsWithoutReplay` in `./agent/session`.
+  The local executable waits beyond the old 30-second handshake limit before
+  serving its actual MCP tool catalog. `TestSkillActivationReportsActualDownloadBeforeEOF`
+  separately checks the downloaded and total byte counts against a server
+  held partway through a response and stops the job before registration.
 - Full build/tests, whole-repository lint (zero issues), docs/design/benchmark
   gates and affected race suites are required, not substitutes for interaction.
 - `agent/session/capability_task_e2e_test.go` drives the real agent loop against a

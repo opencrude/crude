@@ -154,7 +154,7 @@ func TestBackgroundJobMouseTerminationKeepsOtherJobsAndSessionAlive(t *testing.T
 	app.forceFrame()
 	view := app.View()
 	painted := rendering.StripAnsi(view.RenderContent())
-	if !strings.Contains(painted, "KILLED") || !strings.Contains(painted, "neighbor-job") {
+	if !strings.Contains(painted, "Stopped") || !strings.Contains(painted, "neighbor-job") {
 		t.Fatalf("owning panel did not show the individual terminal status:\n%s", painted)
 	}
 	if !backend.SubmitInput(orchestrator.ID, provider.PlainInput("continue this session")) {
@@ -227,7 +227,7 @@ func TestBackgroundJobNoticesOnlyUpdateShellProjection(t *testing.T) {
 	app.Tree.Visible = false
 	app.forceFrame()
 	painted := rendering.StripAnsi(app.View().RenderContent())
-	if !strings.Contains(painted, "failed-job") || !strings.Contains(painted, "FAILED") || !strings.Contains(painted, "running-job") {
+	if !strings.Contains(painted, "failed-job") || !strings.Contains(painted, "Failed") || !strings.Contains(painted, "running-job") {
 		t.Fatalf("projected command rows missing from rendered panel:\n%s", painted)
 	}
 }

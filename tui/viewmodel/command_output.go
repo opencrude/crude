@@ -32,7 +32,7 @@ type commandOutputOpenedMsg struct {
 }
 
 func commandOutputKey(job backgroundjobs.Job) string {
-	return job.OwnerID + "/" + command.ExecutionID(job.PID, job.StartedAt)
+	return job.OwnerID + "/" + command.JobID(job.TaskID, job.PID, job.StartedAt)
 }
 
 func (m *App) openCommandOutput(request backgroundjobs.OutputRequest) tea.Cmd {
@@ -54,7 +54,7 @@ func (m *App) openCommandOutput(request backgroundjobs.OutputRequest) tea.Cmd {
 	}
 	controller := m.terminalController()
 	w, h := m.floatingTerminalSize()
-	open, err := m.ws.PrepareOpenCommandView(job.OwnerID, fileio.AsyncCmdRef{Handle: job.Handle, PID: job.PID, StartedAt: job.StartedAt}, controller, max(8, w-2), max(2, h-2))
+	open, err := m.ws.PrepareOpenCommandView(job.OwnerID, fileio.AsyncCmdRef{TaskID: job.TaskID, Handle: job.Handle, PID: job.PID, StartedAt: job.StartedAt}, controller, max(8, w-2), max(2, h-2))
 	if err != nil {
 		m.Feedback.NotifyError(err.Error())
 		return nil
