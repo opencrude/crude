@@ -87,6 +87,7 @@ type Server struct {
 	Package               string
 	Hints                 Hints
 	DiagnosticScope       string
+	DiagnosticRootMarkers []string
 	Note                  string
 	Provenance            []Provenance
 }
@@ -334,7 +335,7 @@ func (c *Catalog) Server(id string) (Server, bool) {
 		ID: record.ID, Command: record.Command, Args: slices.Clone(record.Args),
 		Environment: cloneStrings(record.Environment), Settings: cloneObject(record.Settings),
 		InitializationOptions: cloneObject(record.InitializationOptions), Package: record.Package,
-		DiagnosticScope: record.DiagnosticScope, Note: record.Note, Provenance: c.provenance(record.Sources),
+		DiagnosticScope: record.DiagnosticScope, DiagnosticRootMarkers: slices.Clone(record.DiagnosticRootMarkers), Note: record.Note, Provenance: c.provenance(record.Sources),
 	}
 	if h := record.Hints; h != nil {
 		server.Hints = Hints{

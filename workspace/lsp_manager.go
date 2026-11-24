@@ -37,13 +37,19 @@ type LSPManager struct {
 	factSequence uint64
 	// Project check (lsp_project_check.go): checkPending asks for another
 	// pass; lastEdit is the user's last edit or file open.
-	checkPending bool
-	checkRunning bool
-	checkCancel  context.CancelFunc
-	checkDone    chan struct{}
-	checkPath    string
-	check        projectCheckProgress
-	checkResults map[string]projectCheckResult
+	checkPending  bool
+	checkRunning  bool
+	checkCancel   context.CancelFunc
+	checkDone     chan struct{}
+	checkPaths    map[string]bool // active background disk views, never editor or agent ownership
+	checkLaunch   bool            // the foreground/load gate admitted a background start
+	checkTarget   string          // the one root whose server the pass is negotiating or using
+	checkWait     string
+	forceFallback bool // diagnostic test override, sampled once at manager creation
+	inventory     *analysisInventory
+	checkResults  map[string]projectCheckResult
+	checkCounts   map[string]checkCounts // compact background receipts by launch
+
 	// workspacePulls joins the workspace diagnostic request loops.
 	workspacePulls sync.WaitGroup
 	// checkRetryAt delays a pass that stopped because a busy computer or
@@ -268,8 +274,13 @@ func (m *LSPManager) ProjectInsights() insight.ProjectInsights {
 	}
 	settings := setting.LSP{Diagnostics: m.settings.Diagnostics, MinSeverity: m.settings.MinSeverity}
 	sources := m.sources
-	check := m.check
-	unchecked := len(m.checkResults)
+	analysis := m.analysisProgressLocked()
+	wait := m.checkWait
+	clean, unchecked := 0, 0
+	for _, counts := range m.checkCounts {
+		clean += counts.clean
+		unchecked += counts.unchecked
+	}
 	m.mu.Unlock()
 	summary := insight.ProjectInsights{}
 	if sources != nil && sources.Insight != nil {
@@ -280,8 +291,10 @@ func (m *LSPManager) ProjectInsights() insight.ProjectInsights {
 	summary.ServerName, summary.ServerReady, summary.ServerBusy = ins.ServerName, ins.ServerReady, ins.ServerBusy
 	summary.ServerStarting, summary.ServerSyncing, summary.ServerFailed = ins.ServerStarting, ins.ServerSyncing, ins.ServerFailed
 	summary.ServerError, summary.Language, summary.SymbolsCount = ins.ServerError, ins.Language, ins.SymbolsCount
-	summary.ProjectCheckDone, summary.ProjectCheckTotal, summary.ProjectCheckWait = check.done, check.total, check.wait
+	summary.Analysis, summary.ProjectCheckWait = analysis, wait
 	summary.ProjectCheckUnchecked = unchecked
+	summary.DiagnosticsObserved += clean
+	summary.FilesTracked += clean
 	if unchecked > 0 {
 		summary.DiagnosticsLimited += unchecked
 		summary.CoverageDetail += fmt.Sprintf(" %d closed files could not be checked. Use Refresh to try again.", unchecked)
@@ -320,7 +333,7 @@ func (m *LSPManager) retainedResultHealth() []statuscenter.LSPServerHealth {
 		}
 		out = append(out, statuscenter.LSPServerHealth{
 			ID: id, Name: filepath.Base(count.Provider), Command: count.Provider, Status: "Stopped",
-			FilesTracked: count.FilesTracked, FilesAffected: count.FilesAffected,
+			FilesTracked: count.FilesTracked + m.checkCounts[id].clean, FilesAffected: count.FilesAffected,
 			Errors: count.Errors, Warnings: count.Warnings, Information: count.Information, Hints: count.Hints,
 			LastDiagnostics: count.LastDiagnostics, Scope: insight.CoverageOpenFiles,
 		})
@@ -349,7 +362,7 @@ func (m *LSPManager) ServerHealthSnapshots() []statuscenter.LSPServerHealth {
 			Syncing:   m.syncing, Busy: m.inflight > 0,
 		}
 		count := counts[id]
-		health.FilesTracked, health.FilesAffected = count.FilesTracked, count.FilesAffected
+		health.FilesTracked, health.FilesAffected = count.FilesTracked+m.checkCounts[id].clean, count.FilesAffected
 		health.Errors, health.Warnings, health.Information, health.Hints = count.Errors, count.Warnings, count.Information, count.Hints
 		health.LastDiagnostics = count.LastDiagnostics
 		for _, at := range m.crashes[id] {
@@ -375,7 +388,7 @@ func (m *LSPManager) ServerHealthSnapshots() []statuscenter.LSPServerHealth {
 		// Coverage: what this producer checks. A project producer reports
 		// files that are not open; any other server checks open files only.
 		health.Scope, health.Coverage = insight.CoverageOpenFiles, openFilesCoverage(m.settings)
-		if _, project := m.projects[id]; project && state.spec.DiagnosticScope == insight.CoverageProject || state.reportsProject || m.workspacePullLocked(state) {
+		if m.reportsProjectLocked(id, state) {
 			health.Scope, health.Coverage = insight.CoverageProject, "Checks the whole project, including files that are not open."
 			if m.projectWatchUnreliable {
 				health.Coverage = "Project file observation is incomplete; results may be out of date."

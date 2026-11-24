@@ -65,6 +65,8 @@ type Problem struct {
 // Status is the one language status line and its next step.
 type Status struct {
 	Text        string
+	Servers     string   // running and failed servers, beside severity counts during analysis
+	Progress    []string // one complete counter per server; narrow layouts page these
 	Attention   bool
 	Action      string
 	ActionLabel string
@@ -113,21 +115,25 @@ type row struct {
 // Screen is the Problems pane.
 type Screen struct {
 	ui.Base
-	tokens    *ui.TokenSet
-	filter    *ui.FilterField
-	list      *list
-	scrollbar *ui.ScrollbarControl
-	model     Model
-	groups    []group
-	rows      []row
-	collapsed map[string]bool
-	expanded  map[string]bool
-	columns   columns
-	listWidth int
-	query     string
-	inset     int
-	link      ui.Rect // the status action, screen-local
-	refresh   ui.Rect // the Refresh link, screen-local
+	tokens                       *ui.TokenSet
+	filter                       *ui.FilterField
+	list                         *list
+	scrollbar                    *ui.ScrollbarControl
+	model                        Model
+	fullProgress                 string
+	progressWidth                int
+	groups                       []group
+	rows                         []row
+	collapsed                    map[string]bool
+	expanded                     map[string]bool
+	columns                      columns
+	listWidth                    int
+	query                        string
+	inset                        int
+	link                         ui.Rect // the status action, screen-local
+	more                         ui.Rect
+	progressOffset, progressNext int
+	refresh                      ui.Rect // the Refresh link, screen-local
 	// band puts the language status on its own row above the list when it
 	// does not fit beside the filter and counts; it is never cut short there.
 	band  bool
@@ -200,6 +206,12 @@ func (s *Screen) SetModel(model Model) {
 	key, ok := s.list.cursorKey()
 	s.rows = s.rows[:0]
 	s.model = model
+	s.fullProgress = ""
+	s.progressWidth = 0
+	if len(model.Status.Progress) > 0 {
+		s.fullProgress = model.Status.Text + " " + strings.Join(model.Status.Progress, " · ")
+		s.progressWidth = rendering.VisibleWidth(s.fullProgress)
+	}
 	s.groups = buildGroups(model.Problems)
 	retained := make(map[string]bool)
 	for _, p := range model.Problems {
@@ -353,6 +365,9 @@ func (s *Screen) updateBand() {
 	s.list.top = 0
 	if s.band {
 		s.list.top = 1
+		if p := s.model.Status.Progress; len(p) > 0 && width-2*margin-linksWidth(s.statusLinks())-3 < rendering.VisibleWidth(p[s.progressOffset%len(p)])+8 && s.Bounds().H > listTop+2 {
+			s.list.top = 2
+		}
 	}
 }
 
@@ -405,6 +420,9 @@ func (s *Screen) statusWidth() int {
 	w := linksWidth(links)
 	if status := s.model.Status.Text; status != "" {
 		w += rendering.VisibleWidth(status) + 3
+		if p := s.model.Status.Progress; len(p) > 0 {
+			w += s.progressWidth - rendering.VisibleWidth(status)
+		}
 	}
 	return w
 }
@@ -494,7 +512,7 @@ func (s *Screen) paintHeader(buf *surface.CellBuffer, x, y, width int) {
 	t := s.tokens
 	bg := t.Color(ui.ColorBg)
 	left, right := s.headerSpan(width)
-	s.link, s.refresh = ui.Rect{}, ui.Rect{}
+	s.link, s.refresh, s.more = ui.Rect{}, ui.Rect{}, ui.Rect{}
 	if right <= left {
 		return
 	}
@@ -535,13 +553,34 @@ func (s *Screen) paintStatus(buf *surface.CellBuffer, x, y, left, right, row int
 	}
 	if status := s.model.Status.Text; status != "" {
 		text := status
-		if s.band {
-			text = rendering.TruncateVisual(status, max(0, right-left-linksWidth(links)-3), "…")
+		budget := max(0, right-cx-linksWidth(links)-3)
+		more := ""
+		if len(s.model.Status.Progress) > 0 {
+			if s.list.top == 2 {
+				budget = right - left
+			}
+			text, more, s.progressNext = s.progressPage(budget)
+		} else if s.band {
+			text = rendering.TruncateVisual(status, budget, "…")
+		}
+		if more != "" {
+			buf.WriteString(x+cx, y, text, t.Color(role), bg, 0)
+			cx += rendering.VisibleWidth(text) + 1
+			s.more = ui.Rect{X: cx, Y: row, W: rendering.VisibleWidth(more), H: 1}
+			buf.WriteString(x+cx, y, more, t.Color(ui.ColorAccent2), bg, cell.AttrUnderline)
+			cx += s.more.W
+			text = ""
 		}
 		buf.WriteString(x+cx, y, text, t.Color(role), bg, 0)
 		cx += rendering.VisibleWidth(text)
-		buf.WriteString(x+cx+1, y, "·", t.Color(ui.ColorMuted), bg, 0)
-		cx += 3
+		if s.list.top == 2 {
+			cx = left
+			y++
+			row++
+		} else {
+			buf.WriteString(x+cx+1, y, "·", t.Color(ui.ColorMuted), bg, 0)
+			cx += 3
+		}
 	}
 	for i, link := range links {
 		if i > 0 {
@@ -558,6 +597,45 @@ func (s *Screen) paintStatus(buf *surface.CellBuffer, x, y, left, right, row int
 		buf.WriteString(x+cx, y, link.label, t.Color(ui.ColorAccent2), bg, cell.AttrUnderline)
 		cx += w
 	}
+}
+
+// progressPage keeps whole server counters whenever possible. The overflow
+// link advances to the next hidden server instead of cutting off its count.
+func (s *Screen) progressPage(width int) (text, more string, next int) {
+	p := s.model.Status.Progress
+	n := len(p)
+	offset := s.progressOffset % n
+	label := s.model.Status.Text + " "
+	if s.progressWidth <= width {
+		return s.fullProgress, "", 0
+	}
+	for count := 0; count < n; count++ {
+		entry := p[(offset+count)%n]
+		prefix := text + " · "
+		if count == 0 {
+			prefix = label
+		}
+		candidate := prefix + entry
+		tail := ""
+		if left := n - count - 1; left > 0 {
+			tail = fmt.Sprintf("+%d more", left)
+		}
+		space := width
+		if tail != "" {
+			space -= rendering.VisibleWidth(tail) + 1
+		}
+		if rendering.VisibleWidth(candidate) > space {
+			if count > 0 {
+				break
+			}
+			candidate = entry
+			if rendering.VisibleWidth(candidate) > space {
+				candidate = rendering.TruncateVisual(candidate, max(0, space), "…")
+			}
+		}
+		text, more, next = candidate, tail, (offset+count+1)%n
+	}
+	return text, more, next
 }
 
 type countPart struct {
@@ -588,6 +666,9 @@ func (s *Screen) countParts(problems []Problem) []countPart {
 			parts = append(parts, countPart{"No problems.", ui.ColorMuted})
 		}
 	}
+	if s.model.Status.Servers != "" {
+		parts = append(parts, countPart{s.model.Status.Servers, ui.ColorMuted})
+	}
 	return parts
 }
 
@@ -610,10 +691,21 @@ func severityRole(s Severity) ui.SemanticColor {
 	return ui.DiagnosticColor(int(s) + 1)
 }
 
+func (s *Screen) statusClick(x, y int) ui.EventResult {
+	if s.more.W > 0 && s.more.Contains(x, y) {
+		s.progressOffset = s.progressNext
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+	}
+	if action, ok := s.linkAt(x, y); ok {
+		return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return ActionMsg{Action: action} }}
+	}
+	return ui.EventResult{}
+}
+
 func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	if evt.Kind == ui.EventMouseClick && evt.MouseClick.Button == tea.MouseLeft {
-		if action, ok := s.linkAt(ctx.LocalX, ctx.LocalY); ok {
-			return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return ActionMsg{Action: action} }}
+		if result := s.statusClick(ctx.LocalX, ctx.LocalY); result.Handled {
+			return result
 		}
 	}
 	// Keys the filter does not use reach here: Tab and Down go to the list.
@@ -882,8 +974,8 @@ func (l *list) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 		if y < 0 && !l.pressing {
 			// The status band: only its links act.
 			lr := l.Bounds()
-			if action, ok := l.owner.linkAt(lr.X+ctx.LocalX, lr.Y+ctx.LocalY); ok {
-				return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return ActionMsg{Action: action} }}
+			if result := l.owner.statusClick(lr.X+ctx.LocalX, lr.Y+ctx.LocalY); result.Handled {
+				return result
 			}
 			return ui.EventResult{Handled: true}
 		}

@@ -407,6 +407,35 @@ func answerWeight(a insight.Diagnostics) int {
 	return publicationWeight(insight.DiagnosticPublication{Boundary: a.Boundary, Detail: a.Detail, Diagnostics: a.Diagnostics})
 }
 
+// CurrentDocument reports whether a usable answer exists for this document and launch.
+func (s *Store) CurrentDocument(id, key string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	e := s.documents[id]
+	return e != nil && usableAnswer(e) && e.answer.Boundary.Context.ID == key
+}
+
+func usableAnswer(e *entry) bool {
+	return e.answer.ID != "" && !e.answer.Limited && e.answer.State != insight.Stale && e.answer.State != insight.Limited
+}
+
+// CountCurrent returns current file counts for the supplied path-to-launch inventory.
+// It reads provenance only; it never exports diagnostic payloads.
+func (s *Store) CountCurrent(owners map[string]string) (uint64, map[string]int) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	counts := make(map[string]int)
+	seen := make(map[string]bool, len(s.documents))
+	for _, e := range s.documents {
+		b := e.answer.Boundary
+		if usableAnswer(e) && b.Context.ID != "" && owners[b.Source.Path] == b.Context.ID && !seen[b.Source.Path] {
+			seen[b.Source.Path] = true
+			counts[b.Context.ID]++
+		}
+	}
+	return s.version, counts
+}
+
 // SnapshotPath reads one retained answer without exporting every document.
 // Paths are presentation keys; document identity remains the primary key.
 func (s *Store) SnapshotPath(path string) (insight.Diagnostics, bool) {

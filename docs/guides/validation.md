@@ -77,6 +77,23 @@ its aggregate deadline during a three-second-old bounded SSH transport test;
 the earlier app run completed in 114 seconds. Grouping retains every discovered
 case and the same per-group deadline. It does not exempt a slow or failing case.
 
+### Project analysis under load
+
+Run `CRUDE_TEST_LSP_CORPUS=1 go test ./workspace -run '^TestFallbackCrudeCorpus$' -count=1 -v -timeout=17m`.
+The test copies the tracked working tree, installs disposable stand-in servers
+that only publish for synchronized files, limits concurrent server processes,
+edits a document during analysis and requires current answers for the whole
+eligible corpus. It records elapsed time, peak simultaneous disk views, edit
+latency and the 95th percentile for status reads. These are not paint times.
+
+For an interactive trial start a **separate core with a fresh, short
+`CRUDE_HOME`**, on a copy of the project, with `CRUDE_TEST_LSP_FORCE_FALLBACK=1`
+in the core environment. This bypasses declared project push and workspace
+pull, not trust, limits, idle policy or supported document pull. It cannot stop
+a real server from indexing internally. Use the push-only corpus test to
+measure the legacy path without that extra work. Never set this on a shared
+core. Unset it for a normal launch.
+
 ### Plan investigations and mixed-direction Markdown
 
 `TestPlanInvestigationThroughConnectedShell` exercises host consent (including

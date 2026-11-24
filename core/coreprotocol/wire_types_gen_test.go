@@ -557,6 +557,7 @@ var wireTypes = []any{
 	new(p20.ProjectToolSetupResult),
 	new(p20.ProjectToolSetupReview),
 	new(p20.RecentEdit),
+	new(p20.ServerAnalysis),
 	new(p20.Source),
 	new(p20.State),
 	new(p20.UnmanagedCodeTool),

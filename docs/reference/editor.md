@@ -1977,7 +1977,7 @@ These rules are generic. No rule names a language or server.
 - **A closed disk view keeps its result.** When the last holder releases it, its
   current result becomes the file's project result, bound to the same server
   instance: `unopened:<path>` when the server reports closed files itself
-  (catalog `diagnostic_scope: project`, or the server was seen doing it),
+  (declared project push for this root, or negotiated workspace pull),
   otherwise `checked:<path>`. A watched change of the file marks a `checked:`
   result out of date; the server maintains `unopened:` results. A `checked:`
   result describes the file on disk under one launch configuration, so it stays
@@ -1998,65 +1998,43 @@ These rules are generic. No rule names a language or server.
 
 #### Project check of closed files
 
-`workspace/lsp_project_check.go` gives closed files the diagnostics of open files
-for every server that does not report closed files itself. It uses the assembly
-listing and the disk-view path above, one file at a time:
+Assembly groups eligible files by the same root and launch configuration as the
+editor. It resolves markers off the manager lock. A declared project producer
+starts without opening a file. Crude also initializes a server of unknown scope
+before giving it disk views. With spare process slots Crude negotiates other
+roots before a slow fallback can delay native reporting. A server that offers
+workspace diagnostics supplies its own project results. A report about one unopened file establishes a result for
+that file, not project-wide coverage for its process or for other roots.
 
-- It runs only while the user does not type or open files for three seconds
-  and no agent request borrows a server view. After each file it waits at
-  least as long as that file took, so a server works at most half of the time.
-- **When idle** (default) it also yields to the rest of the computer, after
-  established background indexers. It waits on battery power or battery saver,
-  as KDE Baloo pauses content indexing. It waits while the computer is busy, as
-  the Windows Search indexer backs off: on Linux, busy means pressure stall
-  information (`/proc/pressure`) shows at least 10% stalled time for CPU,
-  memory or I/O since the last sample, systemd's default pressure threshold
-  (200 ms per 2 s). Where pressure is not available it means less than one idle
-  core. A file whose server is not running waits until the computer has the
-  server's memory hint (`lsp.server_memory_mb`) free. **Always** turns these
-  three waits off, like the Windows `DisableBackoff` policy; typing and agent
-  requests still come first. `internal/sysload/` owns the measurements; it reads power
-  from `/sys/class/power_supply` (Linux) or `GetSystemPowerStatus` (Windows).
-  macOS power is not read, so battery power does not pause the check there.
-- **Crude's own work is not the computer's load.** After each file the check
-  starts a new load interval (`sysload.Probe.Rebase`), so the decision for the
-  next file measures only the rest time, not the stall that Crude's own server
-  caused on the previous file. A server that reports work in progress (for
-  example indexing) is waited for as itself ("while the language server
-  prepares the project"), whatever the mode, not as "the computer is busy".
-  Contention from other programs, the user's builds and agent commands still
-  makes the check wait, so it never adds load to a computer that is already
-  contended.
-- **Load is never blamed on a file.** A file without an answer while the
-  computer had contention over the kernel's last ten seconds (PSI `avg10`) or
-  while its server reported work in progress is not remembered as
-  unanswerable, and it does not count toward the two-file limit. The pass stops
-  for that server and tries its files again after one minute, or sooner when
-  something else asks for a pass. Only silence on a quiet computer is
-  remembered (`ProjectCheckUnchecked`).
-- Problems says why it waits: "closed-file check waits while you type", "on
-  battery power", "while the computer is busy", "for free memory", "while the
-  language server prepares the project" or "while an agent checks code", with
-  its progress.
-- Crude does not lower the server's process priority, as Baloo does for its
-  own extractor: the same server answers the editor, so a lower priority would
-  slow the user's own diagnostics whenever the computer is busy.
-- Files nearest to the open files come first. Files of one server stay together,
-  so few servers run at the same time. Vendored paths that follow GitHub
-  Linguist's `vendor.yml` conventions (`third_party/`, `vendor/`,
-  `node_modules/` and similar) are skipped.
-- A file with a current result, an open view or a server that reports the
-  project is skipped. A server that fails, stops or gives no result for two
-  files in a row on a quiet computer is not asked again in that pass, and those
-  files wait for a change, a new launch configuration, Refresh or Restart. A
-  file waits at most ten seconds for its result.
-- A pass starts after the assembly plan, a start or Refresh, a settled new
-  server instance, a watched file change or a settings change. Stop, a root
-  change and a launch-setting change cancel it; Close joins it.
-- **Check closed files** (`lsp.project_check`: When idle, Always or Off) on Code
-  Intelligence controls it, together with the existing Diagnostics switch.
-  Problems shows "checking closed files (N of M)". Refresh restarts the servers,
-  removes old results and so checks the closed files again.
+The fallback (`workspace/lsp_project_check.go`) covers the entire group, not
+just files that happen to be closed when the pass starts:
+
+- Current results count, including clean and open files. The editor owns open
+  documents; Crude never replaces an unsaved buffer with text from disk.
+  Ignore rules, vendored paths, tool availability and document limits still apply.
+- Up to four disk views in one workspace share one server at a time. The
+  document-slot and publication limits reserve room for the editor. Clean disk
+  answers keep only a path and launch receipt, not a full diagnostic payload in
+  every shell snapshot. A watched change, removal, configuration change or
+  explicit refresh invalidates the receipt. Silence is never a clean receipt.
+- Before admitting each batch, wait for three seconds without typing or opening
+  a file, foreground probes and server preparation. **When idle** also yields
+  on battery, memory pressure and system load. Measure the idle interval after
+  the batch, not the load caused by the batch itself. **Always** skips the
+  system-load waits, not foreground priority or capacity limits. A file that
+  times out under contention is retried later. On a quiet computer an
+  unanswered file stays unchecked, but does not disqualify its neighbors.
+- Problems shows `Analyzing project: server checked/total` per fallback launch.
+  Unanswered files are marked unchecked. Narrow panes put counters above the
+  actions when needed; **+N more** shows the next servers. Native reporters
+  have no fabricated file count. **Refresh** restarts the servers and rechecks.
+  Some push servers do not process outside edits until a refresh. Changed native
+  results stay out of date until the server replaces them. Losing the root or
+  its watcher never turns an old error into a clean answer.
+
+**Check closed files** is the existing When idle / Always / Off control. There
+is no protocol preference. For the isolated forced-fallback load test, see
+[validation](../guides/validation.md#project-analysis-under-load).
 
 #### Assembly service and coverage
 

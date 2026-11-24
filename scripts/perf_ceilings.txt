@@ -68,7 +68,8 @@ BenchmarkMixedMarkdownStreamingBlink 12800 34
 # Chat find over 20 000 messages: counting reads text into reused buffers (the
 # allocations are the benchmark query and rows, not the scan); a streaming frame
 # recounts one row.
-BenchmarkChatFindCount_20000Rows 4500 3
+BenchmarkChatFindCount_20000Rows 48 3
+BenchmarkChatFindFirstCount_20000Rows 252000 16
 BenchmarkChatFindStreamFrame_20000Rows 450 6
 # A complete file-link press/release over 100 and 20,000 retained messages.
 BenchmarkDenseFileLinkHit/100 0 0

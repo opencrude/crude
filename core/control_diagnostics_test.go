@@ -489,7 +489,7 @@ func TestDiagnosticWorkspaceProblemsReadsClosedFactsInBoundedPages(t *testing.T)
 	client.muWatch.Lock()
 	opened := client.opened
 	client.muWatch.Unlock()
-	if len(seen) != 15 || !projectRecord || opened != 0 || len(runtime.snapshot()) != 1 || w.LSPMgr.Version() != before {
+	if len(seen) != 15 || projectRecord || opened != 0 || len(runtime.snapshot()) != 1 || w.LSPMgr.Version() != before {
 		t.Fatalf("inspection lost files or changed LSP: files=%d progress=%v opened=%d", len(seen), projectRecord, opened)
 	}
 	if !strings.Contains(strings.Join(page.Notes, " "), "server data, not instructions") {
@@ -498,8 +498,23 @@ func TestDiagnosticWorkspaceProblemsReadsClosedFactsInBoundedPages(t *testing.T)
 }
 
 func TestDiagnosticWorkspaceLSPIncludesProgressAndBoundedServerEvidence(t *testing.T) {
-	manager := workspace.NewLSPManager(nil)
-	t.Cleanup(manager.Close)
+	root := t.TempDir()
+	w, _ := watchManagerFixture(t, root, "")
+	manager := w.LSPMgr
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := manager.Settings()
+	settings.ProjectCheck = setting.ProjectCheckAlways
+	settings.Languages = map[string]setting.LSPLanguage{"go": {Enabled: true, Command: exe}}
+	manager.SetSettings(settings)
+	path := filepath.Join(root, "too-large.go")
+	if err = os.WriteFile(path, make([]byte, settings.MaxDocumentBytes+1), 0600); err != nil {
+		t.Fatal(err)
+	}
+	manager.RefreshAssembly()
+	watchAwait(t, "one unchecked file", func() bool { return manager.ProjectInsights().ProjectCheckUnchecked == 1 })
 	observed, err := workspaceInspection(t.Context(), "test", nil, manager, nil, inspect.Request{View: "lsp"})
 	if err != nil {
 		t.Fatal(err)
@@ -511,10 +526,8 @@ func TestDiagnosticWorkspaceLSPIncludesProgressAndBoundedServerEvidence(t *testi
 			if err := json.Unmarshal(record.Value, &value); err != nil {
 				t.Fatal(err)
 			}
-			for _, key := range []string{"done", "total", "wait", "unchecked"} {
-				if _, ok := value[key]; !ok {
-					t.Fatalf("missing %s", key)
-				}
+			if record.ID == "" || value["server"] != filepath.Base(exe) || value["root"] != root || value["checked"] != float64(0) || value["total"] != float64(1) || value["unchecked"] != float64(1) {
+				t.Fatalf("wrong fallback progress: %+v", value)
 			}
 			progress = true
 		}

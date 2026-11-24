@@ -108,6 +108,7 @@ func (m *LSPManager) acquireProbe(ctx context.Context, path string, gate func(se
 	onDisk := !source.snapshot.Dirty && !source.snapshot.Conflict && source.snapshot.DiskExists
 	if doc == nil {
 		doc = &lspDocument{text: string(source.snapshot.Text), source: source.ref, revision: 1, diskView: onDisk}
+		m.dropCheckResultLocked(path)
 		m.documents[path] = doc
 		m.removeProjectFactsLocked(func(b insight.Boundary) bool { return b.Source.Path == path })
 		// A view of the file as it is on disk shows the server nothing new, so
@@ -240,6 +241,10 @@ func (m *LSPManager) awaitProbeClient(ctx context.Context, path string, doc *lsp
 func (m *LSPManager) releaseProbe(path string, doc *lspDocument) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.releaseProbeLocked(path, doc)
+}
+
+func (m *LSPManager) releaseProbeLocked(path string, doc *lspDocument) {
 	doc.probes--
 	if m.documents[path] != doc || doc.probes > 0 {
 		return

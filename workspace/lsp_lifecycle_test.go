@@ -298,9 +298,15 @@ func TestLSPRetryAfterInstallingMissingServer(t *testing.T) {
 	if !m.RestartServer(server.ID) {
 		t.Fatal("retry rejected for a failed server")
 	}
-	awaitLSP(t, func() bool { h := m.ServerHealthSnapshots(); return len(h) == 1 && h[0].Connected })
-	if cs := r.snapshot(); len(cs) != 2 || len(cs[1].snapshot()) != 1 || cs[1].snapshot()[0] != "open:main.go:go:unsaved" {
-		t.Fatalf("retry did not reopen the document on the new server")
+	// A successful initialize precedes the worker's didOpen. Wait for the
+	// document receipt, not just the connection, before checking its contents.
+	awaitLSP(t, func() bool { cs := r.snapshot(); return len(cs) == 2 && len(cs[1].snapshot()) > 0 })
+	calls := r.snapshot()[1].snapshot()
+	if len(calls) != 1 || calls[0] != "open:main.go:go:unsaved" {
+		t.Fatalf("retry document traffic = %v", calls)
+	}
+	if h := m.ServerHealthSnapshots(); len(h) != 1 || !h[0].Connected {
+		t.Fatalf("retry server health = %+v", h)
 	}
 }
 

@@ -84,7 +84,7 @@ func TestWorkspaceDiagnosticsReplaceTheClosedFileCheck(t *testing.T) {
 	m, base, root := probeManager(t)
 	r := &workspacePullRuntime{lifecycleRuntime: base, reports: map[string]string{}}
 	m.SetRuntime(r)
-	open := filepath.Join(root, "open.py")
+
 	closed := []string{filepath.Join(root, "a.py"), filepath.Join(root, "pkg", "b.py")}
 	for _, path := range closed {
 		mkdir(t, filepath.Dir(path))
@@ -94,9 +94,7 @@ func TestWorkspaceDiagnosticsReplaceTheClosedFileCheck(t *testing.T) {
 	r.reports[closed[0]] = "a has a problem"
 	r.reports[closed[1]] = "b has a problem"
 	r.mu.Unlock()
-	editorSource(t, m, open, "x = 1\n")
-	awaitLSP(t, func() bool { return len(base.snapshot()) == 1 })
-	startProjectCheck(t, m, root, map[string][]string{"python": append([]string{open}, closed...)})
+	startProjectCheck(t, m, root, map[string][]string{"python": closed})
 
 	for _, path := range closed {
 		awaitLSP(t, func() bool {

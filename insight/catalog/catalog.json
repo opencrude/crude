@@ -9766,13 +9766,13 @@
         "settings": {
           "basedpyright": {
             "analysis": {
-              "diagnosticMode": "openFilesOnly"
+              "diagnosticMode": "workspace"
             }
           }
         }
       },
       "diagnostic_scope": "open-files",
-      "note": "Same bounded diagnostic mode as pyright.",
+      "note": "Let the server analyze the workspace; negotiate coverage from its runtime capability.",
       "sources": [
         "crude-authored",
         "helix"
@@ -10535,7 +10535,17 @@
         "server"
       ],
       "package": "marksman",
+      "diagnostic_scope": "project",
+      "diagnostic_root_markers": [
+        ".marksman.toml",
+        ".git/",
+        ".hg/",
+        ".svn/",
+        ".jj/"
+      ],
+      "note": "Marksman 2026-02-08 publishes diagnostics for the folder on initialization only when Folder.isRealWorkspaceFolder accepts the root. A Git worktree's .git file does not qualify. See https://github.com/artempyanykh/marksman/blob/2026-02-08/Marksman/Folder.fs and Server.fs.",
       "sources": [
+        "crude-authored",
         "helix"
       ]
     },
@@ -10846,13 +10856,13 @@
         "settings": {
           "python": {
             "analysis": {
-              "diagnosticMode": "openFilesOnly"
+              "diagnosticMode": "workspace"
             }
           }
         }
       },
       "diagnostic_scope": "open-files",
-      "note": "Earlier Crude launch and the open-files diagnostic mode, which bounds analysis work.",
+      "note": "Request workspace analysis. Pyright dynamically offers workspace diagnostics in this mode; an explicit user setting wins.",
       "sources": [
         "crude-authored",
         "helix"

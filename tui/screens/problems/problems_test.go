@@ -387,3 +387,27 @@ func TestProblemDoubleClickRequiresSameCurrentRow(t *testing.T) {
 		}
 	}
 }
+
+func TestAnalysisCountersPageWithoutDisplacingActions(t *testing.T) {
+	model := fixture()
+	model.Refresh = true
+	model.Status = Status{Text: "Analyzing project:", Action: "language:settings", ActionLabel: "Language settings", Progress: []string{"marksman 5/15", "another 1/20", "checker 0/9"}}
+	s, h := mount(t, 160, 18, model)
+	wide := strings.Join(paint(h, 160, 18), "\n")
+	if !strings.Contains(wide, "Analyzing project: marksman 5/15 · another 1/20 · checker 0/9") {
+		t.Fatal(wide)
+	}
+	h.Resize(64, 14)
+	narrow := strings.Join(paint(h, 64, 14), "\n")
+	if !strings.Contains(narrow, "marksman 5/15") || !strings.Contains(narrow, "more · Refresh · Language settings") {
+		t.Fatal(narrow)
+	}
+	h.Handle(tea.MouseClickMsg{X: s.more.X + 1, Y: s.more.Y, Button: tea.MouseLeft})
+	next := strings.Join(paint(h, 64, 14), "\n")
+	if next == narrow || !strings.Contains(next, "another 1/20") {
+		t.Fatal(next)
+	}
+	if r := h.Handle(tea.MouseClickMsg{X: s.refresh.X + 1, Y: s.refresh.Y, Button: tea.MouseLeft}); r.Cmd == nil || r.Cmd().(ActionMsg).Action != RefreshAction {
+		t.Fatal("paging stole the refresh action")
+	}
+}

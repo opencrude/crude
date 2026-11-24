@@ -4,4 +4,4 @@ package coreprotocol
 
 // Schema identifies the exact wire layout of every protocol type. Peers
 // compare it at session start; any difference is a different protocol.
-const Schema = "68aa21f0f0aaf1cc"
+const Schema = "9bbea1b49e1f0341"

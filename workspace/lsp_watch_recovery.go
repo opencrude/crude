@@ -20,6 +20,10 @@ func (m *LSPManager) SetProjectWatchReliable(reliable bool) {
 	m.projectWatchUnreliable = !reliable
 	m.cancelAssemblyInvalidationLocked()
 	m.invalidateAssemblyDiscoveryLocked()
+	if !reliable {
+		m.cancelProjectCheckLocked()
+		m.invalidateCheckedResultsLocked(func(string, string, string) bool { return true }, "Project file observation is incomplete; this result may be out of date.")
+	}
 	if reliable {
 		m.invalidateCheckedResultsLocked(func(string, string, string) bool { return true },
 			"File observation resumed. Crude will check this file again.")
@@ -30,14 +34,13 @@ func (m *LSPManager) SetProjectWatchReliable(reliable bool) {
 	}
 	if !reliable && m.sources != nil && m.sources.Insight != nil {
 		m.sources.Insight.diagnostics.InvalidateMatching(func(b insight.Boundary) bool {
-			_, project := m.projects[b.Context.ID]
-			return project
+			return isProjectFact(b) || m.reportsProjectLocked(b.Context.ID, m.states[b.Context.ID])
 		}, "Project file observation is incomplete; this result may be out of date.")
 	}
 	// Retire on both edges: a shared document server may have started during
 	// the gap, and only a new process after recovery can re-index the project.
-	for key := range m.projects {
-		if state := m.states[key]; state != nil && !state.stopped {
+	for key, state := range m.states {
+		if !state.stopped && m.reportsProjectLocked(key, state) {
 			m.retireLocked(state)
 		}
 	}

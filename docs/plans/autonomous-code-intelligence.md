@@ -107,6 +107,8 @@ detail: read the sections that the current checkpoint names.
 | 2026-11-23 | Use every diagnostic model that a server offers, automatically: document pull and workspace pull when the server offers them, push for the other servers, and Crude's closed-file check only as the fallback for servers that cover only open files. Design from the specification and established clients, not from memory; reuse the existing owners; no server- or language-named branches. | User |
 | 2026-11-23 | Think about the whole product as its owner, especially Settings: add a setting only when people would actually use it. Applied: the diagnostic model is not a setting; **Diagnostics**, **Update delay** and **Check closed files** govern the new paths. | User; application by the plan |
 
+| 2026-11-23 | Let each server analyze its own project. Otherwise schedule every eligible file for that server and root, keep editing responsive, and show per-server counts of current answers. Provide an explicit forced fallback for isolated load tests, not a new user preference. | User |
+
 ### Open decisions
 
 None. The 2026-11-03 setup questions are answered in
@@ -137,6 +139,27 @@ them; they are not a template for language-specific modules.
 
 ## Current checkpoint
 
+**Project analysis by server and root (2026-11-23): implemented.** Use the existing root and
+launch identity for discovery, native reporting and the fallback. A single
+unsolicited file report establishes coverage for that file only. Test native
+reporting with no open document, and the fallback with a multi-language project,
+including previously checked, open, silent and changed files. Keep a bounded
+number of disk views, the foreground and load gates, and the editor reserve.
+Show per-server file counts in Problems and inspection. Exercise a forced pass
+on an isolated copy of Crude and run the repository gates. No protocol setting.
+
+*Acceptance.* The installed gopls reported and cleared an unopened type error
+by push. Marksman reported an unopened broken link under a recognized root;
+without its root markers it uses document checks. With the old open-files
+hint removed, Pyright registered workspace diagnostics and reported and cleared
+an unopened error. At 160×40 the isolated Problems pane showed native Go,
+Markdown and Python errors together with separate Bash and JSON counters. At
+80×24 the active counter, overflow link and actions remained visible. The
+[full-source fallback test](../guides/validation.md#project-analysis-under-load)
+returned answers for 4,043 eligible files with at most four background disk
+views; unknown and vendored files were not claimed. Race coverage includes
+external changes during simultaneous document replies.
+
 **Pull diagnostics, with push and the closed-file check as fallbacks
 (2026-11-23): implemented; live acceptance in the product open (see the end
 of this checkpoint).** Generic, no server branch. Contract:
@@ -160,7 +183,7 @@ opened one file per server and pulled it:
 | asm-lsp | Document pull (static, inter-file dependencies), but the pull did not answer within 20 s | Yes |
 | gopls v0.24.0, clangd 18, marksman, bash-, typescript-, yaml- (2.0), docker- and docker-compose-language servers, zls 0.15.1 | Push only | Yes |
 
-No installed server offers workspace pull. A document pull for a file that the
+With the old open-files settings, no installed server offered workspace pull. A document pull for a file that the
 server had not opened returned a *full, empty* report from vscode-json and
 pyright, although both files contain errors. Pyright answered a repeated pull
 with `unchanged` and the same result identifier.
@@ -218,7 +241,7 @@ with `unchanged` and the same result identifier.
   closed-file check covers the server.
   Stop, restart, root change and settings generation cancel the request.
 - **Fallback order per server:** workspace pull, then a server that pushes
-  closed files (catalog scope or observed), then the closed-file check, which
+  closed files (declared project scope at this root), then the closed-file check, which
   uses document pull on its disk view when the server offers it and the push
   wait otherwise.
 
@@ -300,8 +323,7 @@ repeating its request and stopping when **Check closed files** is Off. Real
 servers on this computer: `TestPullOnlyServerAgainstRealJSONServer` (the JSON
 server pushes nothing once pull is announced; clean, broken and fixed files get
 exact answers) and the existing real pyright batch test, which now runs through
-pyright's dynamic registration, pass. No installed server offers workspace
-pull, so that path is proven by fixtures only.
+pyright's dynamic registration, pass. The initial workspace-pull proof used fixtures. The current checkpoint also exercises Pyright with workspace analysis enabled.
 
 *Sources.* [LSP 3.17 pull diagnostics](https://github.com/microsoft/language-server-protocol/blob/6714b477746a6d4b29fb5510152a3b82206a2e16/_specifications/lsp/3.17/language/pullDiagnostics.md)
 (see its implementation considerations);

@@ -129,11 +129,12 @@ type authoredLaunch struct {
 }
 
 type authoredServer struct {
-	Note            string               `json:"note"`
-	Launch          *authoredLaunch      `json:"launch"`
-	Package         *string              `json:"package"`
-	DiagnosticScope string               `json:"diagnostic_scope"`
-	Hints           *catalog.HintsRecord `json:"hints"`
+	Note                  string               `json:"note"`
+	Launch                *authoredLaunch      `json:"launch"`
+	Package               *string              `json:"package"`
+	DiagnosticScope       string               `json:"diagnostic_scope"`
+	DiagnosticRootMarkers []string             `json:"diagnostic_root_markers,omitempty"`
+	Hints                 *catalog.HintsRecord `json:"hints"`
 }
 
 // Import builds the catalog document from the pinned inputs. It is pure:
@@ -454,6 +455,7 @@ func Import(pins Pins, helixTOML, masonJSON, authoredJSON []byte) (catalog.Docum
 			server.Package = *patch.Package
 		}
 		server.DiagnosticScope = patch.DiagnosticScope
+		server.DiagnosticRootMarkers = patch.DiagnosticRootMarkers
 		server.Hints = patch.Hints
 		server.Note = patch.Note
 		server.Sources = appendUnique(server.Sources, sourceAuthored)

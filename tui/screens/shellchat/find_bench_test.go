@@ -26,11 +26,16 @@ func denseChat(rows, linesPerRow int) []chatprojection.MessageRow {
 }
 
 // BenchmarkChatFindCount_20000Rows is the cost of counting a query over 20 000
-// messages (80 000 lines), as when a long history is searched for the first
-// time or the query changes.
+// messages (80 000 lines) after a query change. The first count, including
+// the per-row cache allocation, is measured separately.
 func BenchmarkChatFindCount_20000Rows(b *testing.B) {
 	rows := denseChat(20000, 4)
 	f := chatFind{limit: time.Hour}
+	f.setQuery("needle", FindOptions{}, -1)
+	f.observe(rows, 1, false)
+	if f.total != 200 {
+		b.Fatal("initial count lost matches")
+	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -38,6 +43,22 @@ func BenchmarkChatFindCount_20000Rows(b *testing.B) {
 		f.observe(rows, 1, false)
 		if f.pending(len(rows)) {
 			b.Fatal("count did not finish")
+		}
+	}
+}
+
+// BenchmarkChatFindFirstCount_20000Rows measures opening find with a cold
+// row cache. Its bytes/op must not depend on how many query edits happen later.
+func BenchmarkChatFindFirstCount_20000Rows(b *testing.B) {
+	rows := denseChat(20000, 4)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		f := chatFind{limit: time.Hour}
+		f.setQuery("needle", FindOptions{}, -1)
+		f.observe(rows, 1, false)
+		if f.pending(len(rows)) || f.total != 200 {
+			b.Fatal("incomplete cold count")
 		}
 	}
 }

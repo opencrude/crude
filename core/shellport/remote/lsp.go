@@ -10,6 +10,7 @@ import (
 	"crude/types/statuscenter"
 	"errors"
 	"path/filepath"
+	"slices"
 )
 
 // lspReplica owns only detached observations. Core alone owns server lifetime;
@@ -65,6 +66,7 @@ func cloneLSPSnapshot(in coreprotocol.LSPSnapshot) coreprotocol.LSPSnapshot {
 	}
 	in.Symbols = syms
 	in.Health = append([]statuscenter.LSPServerHealth(nil), in.Health...)
+	in.Insights.Analysis = slices.Clone(in.Insights.Analysis)
 	in.Assembly = insight.CloneAssemblyPlan(in.Assembly)
 	in.Settings = setting.CloneLSP(in.Settings)
 	return in
@@ -154,7 +156,11 @@ func (l *lspReplica) FileDiagnostics(path string) (insight.Diagnostics, bool) {
 func (l *lspReplica) DocumentSymbols(path string) []insight.LSPSymbol {
 	return cloneLSPSymbols(l.snapshot.Symbols[filepath.Clean(path)])
 }
-func (l *lspReplica) ProjectInsights() insight.ProjectInsights { return l.snapshot.Insights }
+func (l *lspReplica) ProjectInsights() insight.ProjectInsights {
+	s := l.snapshot.Insights
+	s.Analysis = slices.Clone(s.Analysis)
+	return s
+}
 func (l *lspReplica) ServerHealthSnapshots() []statuscenter.LSPServerHealth {
 	return append([]statuscenter.LSPServerHealth(nil), l.snapshot.Health...)
 }

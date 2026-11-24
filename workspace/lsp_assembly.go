@@ -126,11 +126,33 @@ func (m *LSPManager) publishAssembly(ctx context.Context, discovery *assemblyDis
 		return
 	}
 	m.mu.Lock()
+	settings := m.settings
+	m.mu.Unlock()
+	inventory := planAnalysis(ctx, discovery, settings, plan)
+	if inventory == nil || ctx.Err() != nil {
+		return
+	}
+	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed || plan.Generation != m.assemblyRequested || discovery.root != m.workspaceRoot {
 		return
 	}
+	m.cancelProjectCheckLocked()
+	for path, r := range m.checkResults {
+		if inventory.owners[path] != r.key {
+			m.dropCheckResultLocked(path)
+		}
+	}
+	m.inventory = inventory
 	m.discovery = discovery
+	if m.forceFallback {
+		for i := range plan.Languages {
+			l := &plan.Languages[i]
+			if l.Scope == insight.CoverageProject {
+				l.Root, l.Scope, l.Reason = "", insight.CoverageOpenFiles, openFilesCoverage(settings)
+			}
+		}
+	}
 	m.assembly = plan
 	m.toolPaths = map[assemblyToolKey]string{}
 	m.toolMissing = map[assemblyToolKey]string{}
@@ -141,15 +163,14 @@ func (m *LSPManager) publishAssembly(ctx context.Context, discovery *assemblyDis
 			if language.Source == insight.ToolSourceStore {
 				m.toolPaths[assemblyToolKey{language.ServerID, language.Command}] = language.Executable
 			}
-			if language.Scope != insight.CoverageProject || language.Root == "" {
-				continue
-			}
-			spec, ok := m.resolveServerLocked(language.Sample)
-			if ok {
-				producers = append(producers, insight.LSPProjectProducer{Root: language.Root, Spec: spec})
-			}
 		case insight.ToolMissing, insight.ToolUnavailable:
 			m.toolMissing[assemblyToolKey{language.ServerID, language.Command}] = language.Reason
+		}
+	}
+	for _, group := range inventory.groups {
+		if group.project && !m.forceFallback {
+			root, _ := fileuri.ToPath(group.rootURI)
+			producers = append(producers, insight.LSPProjectProducer{Root: root, Spec: group.spec})
 		}
 	}
 	m.setProjectProducersLocked(producers)
@@ -358,9 +379,12 @@ func resolveAssembly(root string, settings setting.LSP, discovery *assemblyDisco
 			language.Scope = insight.CoverageOpenFiles
 			language.Reason = openFilesCoverage(settings)
 			if spec.DiagnosticScope == insight.CoverageProject {
-				language.Scope = insight.CoverageProject
-				language.Root, _ = fileuri.ToPath(resolveLSPRoot(found.sample, root, spec.RootMarkers, spec.WorkspaceRootMarkers))
-				language.Reason = "Checks the whole project, including files that are not open."
+				uri := resolveLSPRoot(found.sample, root, spec.RootMarkers, spec.WorkspaceRootMarkers)
+				if declaresProject(spec, uri) {
+					language.Scope = insight.CoverageProject
+					language.Root, _ = fileuri.ToPath(uri)
+					language.Reason = "Checks the whole project, including files that are not open."
+				}
 			}
 		}
 		plan.Languages = append(plan.Languages, language)
