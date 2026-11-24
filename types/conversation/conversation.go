@@ -5,6 +5,7 @@ import (
 
 	"crude/agent/provider"
 	"crude/types/attachment"
+	"crude/types/command"
 	"crude/types/reasoning"
 	"crude/types/recovery"
 	"crude/types/toolresult"
@@ -40,6 +41,7 @@ type Message struct {
 	ToolOutcome         toolresult.Outcome `json:"tool_outcome,omitempty,omitzero"`
 	ToolIndex           int                `json:"tool_index,omitempty"`
 	ToolProgressPhase   string             `json:"tool_progress_phase,omitempty"`
+	ToolTransfer        *command.Progress  `json:"tool_transfer,omitempty"`
 	ToolProgressMessage string             `json:"tool_progress_message,omitempty"`
 	ToolProgressLabel   string             `json:"tool_progress_label,omitempty"`
 	ToolPreviewPhase    string             `json:"tool_preview_phase,omitempty"`
@@ -224,6 +226,7 @@ type ChatMessage struct {
 	ToolIndex   int
 
 	ToolProgressPhase   string
+	ToolTransfer        *command.Progress
 	ToolProgressMessage string
 	ToolProgressLabel   string
 	ToolPreviewPhase    string

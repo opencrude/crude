@@ -1,5 +1,10 @@
 package command
 
+import "errors"
+
+// ErrStopped distinguishes stopping an owned job from detaching one caller.
+var ErrStopped = errors.New("background job stopped")
+
 // Status describes the process, not the success of a tool which inspected it.
 type Status string
 
@@ -35,6 +40,8 @@ type Page struct {
 // keep process facts separate from captured bytes and model-facing retrieval
 // guidance. The original result is retained in the conversation audit log.
 type Result struct {
+	TaskID             string           `json:"task_id,omitempty"`
+	Progress           *Progress        `json:"progress,omitempty"`
 	ExecutionID        string           `json:"execution_id,omitempty"`
 	Command            string           `json:"command,omitempty"`
 	CWD                string           `json:"cwd,omitempty"`

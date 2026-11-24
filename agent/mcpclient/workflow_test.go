@@ -123,7 +123,7 @@ func TestManagedWorkflowStdioHelper(test *testing.T) {
 		return
 	}
 	directory := os.Getenv("CRUDE_MCP_WORKFLOW_DIRECTORY")
-	if err := os.WriteFile(filepath.Join(directory, "helper.started"), []byte(fmt.Sprint(os.Getpid())), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(directory, "helper.started"), fmt.Append(nil, os.Getpid()), 0600); err != nil {
 		os.Exit(1)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -546,7 +546,7 @@ func workflowOAuthServer(test *testing.T) *workflowOAuthFixture {
 	return fixture
 }
 
-func workflowOAuthManager(test *testing.T, fixture *workflowOAuthFixture, vault string, config captypes.ConnectionConfig) *Manager {
+func workflowOAuthManager(test *testing.T, vault string, config captypes.ConnectionConfig) *Manager {
 	test.Helper()
 	manager := New(test.TempDir())
 	manager.SetCredentialDirectory(vault)
@@ -634,7 +634,7 @@ func TestManagedWorkflowOAuthLoopbackPersistenceBindingAndReauthentication(test 
 	fixture := workflowOAuthServer(test)
 	config := workflowOAuthConfig(fixture)
 	vault := filepath.Join(test.TempDir(), "credentials")
-	manager := workflowOAuthManager(test, fixture, vault, config)
+	manager := workflowOAuthManager(test, vault, config)
 	ctx, cancel := context.WithTimeout(test.Context(), 15*time.Second)
 	defer cancel()
 	if state := workflowState(test, manager, config.ID); state.State != "not started" || fixture.requests.Load() != 0 {
@@ -705,7 +705,7 @@ func TestManagedWorkflowOAuthLoopbackPersistenceBindingAndReauthentication(test 
 		{ID: "another_identity", Name: config.Name, Transport: "http", URL: config.URL, Auth: "oauth"},
 		{ID: config.ID, Name: config.Name, Transport: "http", URL: fixture.endpoint.URL + "/alternate", Auth: "oauth"},
 	} {
-		isolated := workflowOAuthManager(test, fixture, vault, other)
+		isolated := workflowOAuthManager(test, vault, other)
 		if err := isolated.Connect(ctx, other.ID); err == nil {
 			test.Fatalf("credential crossed connection or endpoint identity: %#v", other)
 		}
@@ -719,7 +719,7 @@ func TestManagedWorkflowOAuthLoopbackPersistenceBindingAndReauthentication(test 
 	if err := manager.Disconnect(config.ID); err != nil {
 		test.Fatal(err)
 	}
-	restored := workflowOAuthManager(test, fixture, vault, config)
+	restored := workflowOAuthManager(test, vault, config)
 	if err := restored.Connect(ctx, config.ID); err != nil {
 		test.Fatalf("fresh manager did not load the credential: %v", err)
 	}
@@ -759,7 +759,7 @@ func TestManagedWorkflowOAuthRejectsCallbackStateAndIssuer(test *testing.T) {
 			fixture := workflowOAuthServer(test)
 			config := workflowOAuthConfig(fixture)
 			vault := filepath.Join(test.TempDir(), "credentials")
-			manager := workflowOAuthManager(test, fixture, vault, config)
+			manager := workflowOAuthManager(test, vault, config)
 			authorizationURL, completed, _ := workflowStartSignIn(test, manager, config.ID)
 			returned, err := url.Parse(workflowAuthorizationReturn(test, authorizationURL))
 			if err != nil {
@@ -795,7 +795,7 @@ func TestManagedWorkflowOAuthCancellationAndRetry(test *testing.T) {
 	fixture := workflowOAuthServer(test)
 	config := workflowOAuthConfig(fixture)
 	vault := filepath.Join(test.TempDir(), "credentials")
-	manager := workflowOAuthManager(test, fixture, vault, config)
+	manager := workflowOAuthManager(test, vault, config)
 	authorizationURL, completed, cancel := workflowStartSignIn(test, manager, config.ID)
 	staleReturn := workflowAuthorizationReturn(test, authorizationURL)
 	cancel()
@@ -835,7 +835,7 @@ func TestManagedWorkflowOAuthStoredCredentialIdentityValidation(test *testing.T)
 	fixture := workflowOAuthServer(test)
 	config := workflowOAuthConfig(fixture)
 	vault := filepath.Join(test.TempDir(), "credentials")
-	manager := workflowOAuthManager(test, fixture, vault, config)
+	manager := workflowOAuthManager(test, vault, config)
 	authorizationURL, completed, _ := workflowStartSignIn(test, manager, config.ID)
 	if err := manager.SubmitAuthorization(config.ID, workflowAuthorizationReturn(test, authorizationURL)); err != nil {
 		test.Fatal(err)
@@ -860,7 +860,7 @@ func TestManagedWorkflowOAuthStoredCredentialIdentityValidation(test *testing.T)
 			if err := os.WriteFile(workflowCredentialPath(otherVault, config), encoded, 0600); err != nil {
 				test.Fatal(err)
 			}
-			isolated := workflowOAuthManager(test, fixture, otherVault, config)
+			isolated := workflowOAuthManager(test, otherVault, config)
 			before := fixture.requests.Load()
 			ctx, cancel := context.WithTimeout(test.Context(), 3*time.Second)
 			defer cancel()
@@ -878,7 +878,7 @@ func TestManagedWorkflowOAuthExpiredRefreshAllowsExplicitSignIn(test *testing.T)
 	fixture := workflowOAuthServer(test)
 	config := workflowOAuthConfig(fixture)
 	vault := filepath.Join(test.TempDir(), "credentials")
-	manager := workflowOAuthManager(test, fixture, vault, config)
+	manager := workflowOAuthManager(test, vault, config)
 	authorizationURL, completed, _ := workflowStartSignIn(test, manager, config.ID)
 	if err := manager.SubmitAuthorization(config.ID, workflowAuthorizationReturn(test, authorizationURL)); err != nil {
 		test.Fatal(err)

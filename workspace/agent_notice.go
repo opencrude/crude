@@ -144,7 +144,7 @@ func (c *StatusCenter) recordBackgroundCommands(owner statuscenter.ResourceRef, 
 	previous := c.backgroundCommands[owner.ID]
 	current := make(map[string]statuscenter.OperationSnapshot, len(commands))
 	for _, command := range commands {
-		if command.Handle == "" || command.PID <= 0 || command.StartedAt.IsZero() {
+		if command.Handle == "" || command.Ref().ExecutionID() == "" {
 			continue
 		}
 		state := statuscenter.OperationRunning
@@ -163,7 +163,7 @@ func (c *StatusCenter) recordBackgroundCommands(owner statuscenter.ResourceRef, 
 		op := statuscenter.OperationSnapshot{
 			ID: id, Owner: owner, Kind: "background-command", Label: command.Command,
 			State: state, StartedAt: command.StartedAt, EndedAt: command.EndedAt,
-			Error: command.Error, OutputRef: command.Handle, Cancellable: state == statuscenter.OperationRunning,
+			Detail: command.Progress.Phase, Progress: command.Progress.Current, Total: command.Progress.Total, Error: command.Error, OutputRef: command.Handle, Cancellable: state == statuscenter.OperationRunning,
 		}
 		old, observed := previous[id]
 		if observed && (operationTerminal(old.State) || operationEquivalent(old, op)) {

@@ -90,6 +90,17 @@ func buildProjectToolTitleLines(msg conversation.ChatMessage, phase string, fram
 		header.Spans = append(header.Spans, suffix...)
 		lines = wrapToolTitle(header, width)
 	}
+	if msg.ToolName == "capability_activate" && msg.ToolProgressPhase == "activating" && toolRowFrameSensitive(msg) && width >= 8 {
+		cols := min(18, width/3)
+		var motion ui.TextTideMotion
+		line := PaintLine{TextTide: true, TideCenter: motion.Advance(frame, cols, false), Spans: []RowSpan{{Text: strings.Repeat("─", cols), Role: ui.ColorMuted}, {Text: rendering.TruncateLine(" "+rendering.SanitizeForTerminal(msg.ToolProgressMessage), width-cols), Role: ui.ColorToolOperand}}}
+		if p := msg.ToolTransfer; p != nil && p.Total > 0 {
+			filled := cols * p.Percent() / 100
+			label := fmt.Sprintf(" %d%% · %s / %s", p.Percent(), rendering.FormatBytes(p.Current), rendering.FormatBytes(p.Total))
+			line = PaintLine{Spans: []RowSpan{{Text: strings.Repeat("━", filled), Role: ui.ColorAccent2}, {Text: strings.Repeat("─", cols-filled), Role: ui.ColorMuted}, {Text: rendering.TruncateLine(label, width-cols), Role: ui.ColorToolOperand}}}
+		}
+		lines = append(lines, line)
+	}
 	if msg.ToolName == "web_search" && msg.ToolStatus == conversation.ToolStatusError && msg.ToolOutcome.Code == captypes.WebSearchOutage {
 		label := "Set up search methods"
 		if rendering.VisibleWidth(label)+2 > width {
@@ -260,7 +271,7 @@ func renderProjectToolMessageLines(msg conversation.ChatMessage, th *theme.Theme
 	if isCommandEvidenceTool(msg.ToolName) && !expanded {
 		return out
 	}
-	if tools.IsStructuredTool(msg.ToolName) {
+	if !commandOK && tools.IsStructuredTool(msg.ToolName) {
 		if msg.ToolStatus == conversation.ToolStatusSuccess {
 			out.appendStructuredToolBody(tools.BuildStructuredResult(msg.ToolName, msg.Content, msg.ToolInput), msg.ToolInput, innerW, height, expanded)
 		} else if expanded {

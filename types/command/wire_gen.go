@@ -9,8 +9,9 @@ import (
 // MarshalMsg implements msgp.Marshaler
 func (z *Outcome) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 14
-	o = append(o, 0x9e)
+	// array header, size 15
+	o = append(o, 0x9f)
+	o = msgp.AppendString(o, z.TaskID)
 	o = msgp.AppendString(o, z.Handle)
 	o = msgp.AppendString(o, z.Command)
 	o = msgp.AppendInt(o, z.PID)
@@ -48,8 +49,13 @@ func (z *Outcome) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 14 {
-		err = msgp.ArrayError{Wanted: 14, Got: zb0001}
+	if zb0001 != 15 {
+		err = msgp.ArrayError{Wanted: 15, Got: zb0001}
+		return
+	}
+	z.TaskID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "TaskID")
 		return
 	}
 	z.Handle, bts, err = msgp.ReadStringBytes(bts)
@@ -139,7 +145,7 @@ func (z *Outcome) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *Outcome) Msgsize() (s int) {
-	s = 1 + msgp.StringPrefixSize + len(z.Handle) + msgp.StringPrefixSize + len(z.Command) + msgp.IntSize + msgp.StringPrefixSize + len(z.Status) + msgp.TimeSize + msgp.TimeSize + msgp.DurationSize + msgp.IntSize + msgp.BoolSize + msgp.IntSize + msgp.StringPrefixSize + len(z.Error) + msgp.BoolSize + msgp.BoolSize
+	s = 1 + msgp.StringPrefixSize + len(z.TaskID) + msgp.StringPrefixSize + len(z.Handle) + msgp.StringPrefixSize + len(z.Command) + msgp.IntSize + msgp.StringPrefixSize + len(z.Status) + msgp.TimeSize + msgp.TimeSize + msgp.DurationSize + msgp.IntSize + msgp.BoolSize + msgp.IntSize + msgp.StringPrefixSize + len(z.Error) + msgp.BoolSize + msgp.BoolSize
 	if z.Output == nil {
 		s += msgp.NilSize
 	} else {
@@ -372,10 +378,72 @@ func (z Page) Msgsize() (s int) {
 }
 
 // MarshalMsg implements msgp.Marshaler
+func (z Progress) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 3
+	o = append(o, 0x93)
+	o = msgp.AppendString(o, z.Phase)
+	o = msgp.AppendInt64(o, z.Current)
+	o = msgp.AppendInt64(o, z.Total)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *Progress) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 3 {
+		err = msgp.ArrayError{Wanted: 3, Got: zb0001}
+		return
+	}
+	z.Phase, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Phase")
+		return
+	}
+	z.Current, bts, err = msgp.ReadInt64Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Current")
+		return
+	}
+	z.Total, bts, err = msgp.ReadInt64Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Total")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z Progress) Msgsize() (s int) {
+	s = 1 + msgp.StringPrefixSize + len(z.Phase) + msgp.Int64Size + msgp.Int64Size
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
 func (z *Result) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 17
-	o = append(o, 0xdc, 0x0, 0x11)
+	// array header, size 19
+	o = append(o, 0xdc, 0x0, 0x13)
+	o = msgp.AppendString(o, z.TaskID)
+	if z.Progress == nil {
+		o = msgp.AppendNil(o)
+	} else {
+		// array header, size 3
+		o = append(o, 0x93)
+		o = msgp.AppendString(o, z.Progress.Phase)
+		o = msgp.AppendInt64(o, z.Progress.Current)
+		o = msgp.AppendInt64(o, z.Progress.Total)
+	}
 	o = msgp.AppendString(o, z.ExecutionID)
 	o = msgp.AppendString(o, z.Command)
 	o = msgp.AppendString(o, z.CWD)
@@ -424,9 +492,54 @@ func (z *Result) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 17 {
-		err = msgp.ArrayError{Wanted: 17, Got: zb0001}
+	if zb0001 != 19 {
+		err = msgp.ArrayError{Wanted: 19, Got: zb0001}
 		return
+	}
+	z.TaskID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "TaskID")
+		return
+	}
+	if msgp.IsNil(bts) {
+		bts, err = msgp.ReadNilBytes(bts)
+		if err != nil {
+			return
+		}
+		z.Progress = nil
+	} else {
+		if z.Progress == nil {
+			z.Progress = new(Progress)
+		}
+		var zb0002 uint32
+		zb0002, bts, err = msgp.ReadArrayHeaderBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "Progress")
+			return
+		}
+		if uint64(zb0002)*1 > uint64(len(bts)) {
+			err = msgp.ErrShortBytes
+			return
+		}
+		if zb0002 != 3 {
+			err = msgp.ArrayError{Wanted: 3, Got: zb0002}
+			return
+		}
+		z.Progress.Phase, bts, err = msgp.ReadStringBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "Progress", "Phase")
+			return
+		}
+		z.Progress.Current, bts, err = msgp.ReadInt64Bytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "Progress", "Current")
+			return
+		}
+		z.Progress.Total, bts, err = msgp.ReadInt64Bytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "Progress", "Total")
+			return
+		}
 	}
 	z.ExecutionID, bts, err = msgp.ReadStringBytes(bts)
 	if err != nil {
@@ -494,18 +607,18 @@ func (z *Result) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		if z.Page == nil {
 			z.Page = new(Page)
 		}
-		var zb0002 uint32
-		zb0002, bts, err = msgp.ReadArrayHeaderBytes(bts)
+		var zb0003 uint32
+		zb0003, bts, err = msgp.ReadArrayHeaderBytes(bts)
 		if err != nil {
 			err = msgp.WrapError(err, "Page")
 			return
 		}
-		if uint64(zb0002)*1 > uint64(len(bts)) {
+		if uint64(zb0003)*1 > uint64(len(bts)) {
 			err = msgp.ErrShortBytes
 			return
 		}
-		if zb0002 != 3 {
-			err = msgp.ArrayError{Wanted: 3, Got: zb0002}
+		if zb0003 != 3 {
+			err = msgp.ArrayError{Wanted: 3, Got: zb0003}
 			return
 		}
 		z.Page.SinceByte, bts, err = msgp.ReadIntBytes(bts)
@@ -565,7 +678,13 @@ func (z *Result) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *Result) Msgsize() (s int) {
-	s = 3 + msgp.StringPrefixSize + len(z.ExecutionID) + msgp.StringPrefixSize + len(z.Command) + msgp.StringPrefixSize + len(z.CWD) + msgp.IntSize + msgp.Float64Size
+	s = 3 + msgp.StringPrefixSize + len(z.TaskID)
+	if z.Progress == nil {
+		s += msgp.NilSize
+	} else {
+		s += 1 + msgp.StringPrefixSize + len(z.Progress.Phase) + msgp.Int64Size + msgp.Int64Size
+	}
+	s += msgp.StringPrefixSize + len(z.ExecutionID) + msgp.StringPrefixSize + len(z.Command) + msgp.StringPrefixSize + len(z.CWD) + msgp.IntSize + msgp.Float64Size
 	if z.ExitCode == nil {
 		s += msgp.NilSize
 	} else {

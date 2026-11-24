@@ -165,7 +165,7 @@ func activitySuccessfulResult(msg *conversation.ChatMessage) bool {
 	}
 	if msg.ToolName == "check_async_command" {
 		if result, ok := toolargs.ParseCommandResult(msg.ToolName, msg.Content); ok {
-			return result.OutputDescriptor.Status == "completed" && result.ExitCode != nil && *result.ExitCode == 0
+			return result.OutputDescriptor.Status == "completed" && (result.TaskID != "" || result.ExitCode != nil && *result.ExitCode == 0)
 		}
 		return false
 	}

@@ -18,8 +18,9 @@ type LoopSample struct {
 // FlushSample describes one renderer flush: diffing the latest frame and
 // writing it to the terminal. It runs on the renderer goroutine.
 type FlushSample struct {
-	Duration time.Duration
-	Bytes    int
+	SnapshotHold, OutputWrite time.Duration
+	Duration                  time.Duration
+	Bytes                     int
 }
 
 // Observer receives loop and flush samples. ObserveLoop runs on the event

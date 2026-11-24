@@ -8,17 +8,19 @@ import (
 )
 
 type AsyncCommandContext struct {
-	Handle          string         `json:"handle"`
-	Command         string         `json:"command"`
-	CWD             string         `json:"cwd"`
-	PID             int            `json:"pid"`
-	StartedAt       time.Time      `json:"started_at"`
-	Status          command.Status `json:"status"`
-	ExitCode        *int           `json:"exit_code,omitempty"`
-	Error           string         `json:"error,omitempty"`
-	NativeSessionID int            `json:"native_session_id,omitempty"`
-	ReadCursor      *int           `json:"read_cursor_byte,omitempty"`
-	OutputBytes     int            `json:"output_bytes"`
+	Handle          string            `json:"handle"`
+	Command         string            `json:"command"`
+	CWD             string            `json:"cwd"`
+	PID             int               `json:"pid,omitempty"`
+	TaskID          string            `json:"task_id,omitempty"`
+	Progress        *command.Progress `json:"progress,omitempty"`
+	StartedAt       time.Time         `json:"started_at"`
+	Status          command.Status    `json:"status"`
+	ExitCode        *int              `json:"exit_code,omitempty"`
+	Error           string            `json:"error,omitempty"`
+	NativeSessionID int               `json:"native_session_id,omitempty"`
+	ReadCursor      *int              `json:"read_cursor_byte,omitempty"`
+	OutputBytes     int               `json:"output_bytes"`
 }
 
 // ContextSnapshot observes the existing command owner without reading output,
@@ -31,17 +33,22 @@ func (m *AsyncCommandManager) ContextSnapshot() []AsyncCommandContext {
 		state.mu.Lock()
 		info := state.info
 		entry := AsyncCommandContext{Handle: info.Handle, Command: info.Command, PID: info.PID,
-			StartedAt: info.StartedAt, Status: info.Status, Error: info.Error}
+			TaskID: info.TaskID, CWD: info.CWD, StartedAt: info.StartedAt, Status: info.Status, Error: info.Error}
 		if state.cmd != nil {
 			entry.CWD = state.cmd.Dir
 		}
-		switch info.Status {
-		case AsyncCompleted, AsyncFailed:
-			code := info.ExitCode
-			entry.ExitCode = &code
-		case AsyncKilled:
-			code := -1
-			entry.ExitCode = &code
+		if info.Progress.Phase != "" {
+			entry.Progress = &info.Progress
+		}
+		if info.TaskID == "" {
+			switch info.Status {
+			case AsyncCompleted, AsyncFailed:
+				code := info.ExitCode
+				entry.ExitCode = &code
+			case AsyncKilled:
+				code := -1
+				entry.ExitCode = &code
+			}
 		}
 		interactive := state.input != nil
 		state.mu.Unlock()

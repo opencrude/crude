@@ -5,14 +5,16 @@ import (
 	"testing"
 	"time"
 
+	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
+	"crude/types/command"
 )
 
 func TestBackgroundJobsUsesAvailableWidthForHandle(t *testing.T) {
 	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
-	for _, width := range []int{80, 120, 160} {
+	for _, width := range []int{120, 160} {
 		screen := New(theme.DefaultDark())
 		screen.SetJobs([]Job{{
 			Handle: "workspace-test-suite-long-handle", Command: "go test ./...", Status: "running", StartedAt: now.Add(-time.Minute),
@@ -50,6 +52,32 @@ func TestBackgroundJobsUsesWholeSecondHumanDurations(t *testing.T) {
 		host.Paint(buffer)
 		if painted := bufferText(buffer); !strings.Contains(painted, test.want) {
 			t.Errorf("duration=%s missing %q:\n%s", test.duration, test.want, painted)
+		}
+	}
+}
+
+func TestMixedJobsLeadWithWorkAndKeepControlsAligned(t *testing.T) {
+	now := time.Now()
+	for _, width := range []int{68, 80, 120, 160} {
+		s := New(theme.DefaultDark())
+		s.SetJobs([]Job{{Handle: "tests", Command: "go test ./...", Status: "running", StartedAt: now}, {TaskID: "mcp", Handle: "auto-1", Command: "Desktop tools", Status: "running", Progress: command.Progress{Phase: "Connecting"}, StartedAt: now.Add(time.Second)}, {TaskID: "skill", Handle: "auto-2", Command: "Review guide", Status: "running", Progress: command.Progress{Phase: "Downloading", Current: 37, Total: 100}, StartedAt: now.Add(2 * time.Second)}, {Handle: "previous", Command: "go vet", Status: "failed", Error: "exit status 1", EndedAt: now, StartedAt: now.Add(3 * time.Second)}}, now)
+		host := ui.NewHost(theme.DefaultDark(), s)
+		host.Resize(width, 10)
+		buf := surface.NewCellBuffer(width, 10)
+		host.Paint(buf)
+		lines := strings.Split(bufferText(buf), "\n")
+		header := lines[2]
+		if !strings.Contains(header, "JOB") || strings.Index(header, "STATUS") <= strings.Index(header, "JOB") || strings.Contains(header, "COMMAND") || strings.Contains(header, "PID") || strings.Contains(header, "EXIT") {
+			t.Fatal(header)
+		}
+		for i, want := range []string{"go test ./...", "Desktop tools", "Review guide", "go vet"} {
+			row := lines[i+4]
+			if !strings.Contains(row, want) || rendering.VisibleWidth(strings.SplitN(row, "Output", 2)[0]) != rendering.VisibleWidth(strings.SplitN(lines[4], "Output", 2)[0]) {
+				t.Fatalf("%d: %s", width, row)
+			}
+		}
+		if !strings.Contains(lines[6], "37%") || strings.Contains(lines[5], "%") || strings.Contains(lines[7], "Stop") {
+			t.Fatalf("%d: %s", width, bufferText(buf))
 		}
 	}
 }

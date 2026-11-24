@@ -945,6 +945,23 @@ func (m *App) wantsFastTick() bool {
 	if m.activityListLoading() && m.sidebarHostVisible() {
 		return true
 	}
+	// Only the selected panel in a mounted deck can animate. Background
+	// sessions and determinate transfers never keep the shell at 60 Hz.
+	if m.mainPanes != nil {
+		for _, g := range m.mainPanes.groups {
+			if g.view == nil || g.deck.Empty() || g.view.deck == nil {
+				continue
+			}
+			p := g.view.deck.projection
+			if p != nil {
+				if panel := p.deck.Active(); panel != nil {
+					if a, ok := panel.Content.(ui.Animated); ok && a.NeedsAnimation() {
+						return true
+					}
+				}
+			}
+		}
+	}
 	// Running and stopping agents repaint at frame rate; an idle session
 	// keeps the idle cadence.
 	if m.anyAgentAnimating() {

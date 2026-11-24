@@ -199,15 +199,23 @@ func (s *Session) bindAgentRuntime(ctx context.Context, live *turnloop.Agent, ac
 			mu.RLock()
 			requestSnapshot := snapshot
 			mu.RUnlock()
-			result, err := runtime.Execute(callCtx, currentActor(), requestSnapshot, tool, params)
-			var preparation *captypes.PreparationRequired
-			if errors.As(err, &preparation) {
-				prepared, outcome, prepErr := s.prepareCapabilityPackage(callCtx, live, *preparation)
-				if !prepared {
-					return outcome, prepErr
-				}
-				result, err = runtime.Execute(captypes.WithPrepared(callCtx, preparation.Key), currentActor(), requestSnapshot, tool, params)
+			// Authorization and any required human decision remain on the originating call.
+			// Only a domain-admitted activation may transfer to this manager.
+			var scheduled bool
+			var jobResult tools.ToolResult
+			if tool == "capability_activate" {
+				callCtx = captypes.WithActivationRunner(callCtx, func(ctx context.Context, label string, work captypes.ActivationWork) (captypes.Result, error) {
+					scheduled = true
+					var jobErr error
+					jobResult, jobErr = s.runActivation(ctx, live, actor.ID, getStrParam(params, "id"), label, work)
+					return captypes.Result{}, jobErr
+				})
 			}
+			result, err := runtime.Execute(callCtx, currentActor(), requestSnapshot, tool, params)
+			if scheduled {
+				return jobResult, err
+			}
+
 			if err == nil {
 				if operation, id := sharedCapabilityID(tool, params); id != "" {
 					s.capabilitySharing.share(actor.ID, operation, id)

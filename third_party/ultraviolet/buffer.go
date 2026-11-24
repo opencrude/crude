@@ -724,18 +724,24 @@ func (b *RenderBuffer) Replace(src *Buffer) {
 		panic("uv: Replace requires equal buffer dimensions")
 	}
 	for y, row := range src.Lines {
-		dst := b.Lines[y]
-		first, last := len(row), -1
-		for x := range row {
-			if !dst[x].Equal(&row[x]) {
-				first = min(first, x)
-				last = x
-			}
+		b.ReplaceRow(y, row)
+	}
+}
+
+// ReplaceRow compares a complete equal-width row against the last consumed
+// cells. Damage retains exact cell spans, including wide-cell continuations.
+func (b *RenderBuffer) ReplaceRow(y int, row []Cell) {
+	dst := b.Lines[y]
+	first, last := len(row), -1
+	for x := range row {
+		if !dst[x].Equal(&row[x]) {
+			first = min(first, x)
+			last = x
 		}
-		if last >= first {
-			copy(dst, row)
-			b.TouchLine(first, y, last-first+1)
-		}
+	}
+	if last >= first {
+		copy(dst, row)
+		b.TouchLine(first, y, last-first+1)
 	}
 }
 

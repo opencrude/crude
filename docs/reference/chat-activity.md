@@ -89,6 +89,15 @@ second terminal emulator. Original command-result bytes remain canonical.
 
 ## Capabilities and Peer Data
 
+A running activation shows its current phase on the originating call. A transfer
+with a known size shows measured bytes and a percentage, not elapsed-time
+progress. After promotion, the Background jobs deck owns live progress and the
+initial call remains a link target. Completion joins on the task identity, not
+the package runner's PID or the server name. An MCP server that downloads its
+own executable before initialization may not expose a total; Crude does not
+scrape arbitrary stderr, inspect private caches or proxy that download to guess.
+
+
 `capability_search`, `capability_activate`, `agent_send`, `board_read`,
 `mcp_request_access`, `mcp_read_resource`, `mcp_get_prompt` and `mcp__<connection>__<tool>` calls retain
 their exact identity/arguments/results in disclosure. Semantic titles use the

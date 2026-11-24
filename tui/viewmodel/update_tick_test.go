@@ -1,6 +1,15 @@
 package viewmodel
 
-import "testing"
+import (
+	"crude/tui/rendering"
+	"crude/types/command"
+	"crude/types/setting"
+	"crude/workspace"
+	"crude/workspace/fileio"
+	"strings"
+	"testing"
+	"time"
+)
 
 // The idle launcher previously scheduled the 16 ms streaming tick forever
 // (AgentMgr.Count()==0 && ActiveView==""), repainting full frames at ~60 Hz
@@ -19,5 +28,44 @@ func TestWantsFastTick(t *testing.T) {
 	delete(app.reveals, "popup")
 	if app.wantsFastTick() {
 		t.Fatal("after the reveal completes the fast tick must stop")
+	}
+}
+
+func TestOnlyMountedIndeterminateActivationKeepsFastTick(t *testing.T) {
+	app := newFullTestApp(t)
+	session := &workspace.Session{SessionID: "bar", Settings: workspace.NewSessionSettingsState(setting.Settings{}, setting.Settings{}, nil)}
+	selectDeckSession(t, app, session, "bar-agent")
+	app.width, app.height = 100, 30
+	app.compositor.Resize(100, 30)
+	app.Tree.Visible = false
+	app.View()
+	if app.wantsFastTick() {
+		t.Fatal("baseline unexpectedly animating")
+	}
+	now := time.Now()
+	job := fileio.AsyncCmdInfo{TaskID: "fixture", Handle: "auto-1", Command: "Tool", Status: fileio.AsyncRunning, StartedAt: now, Progress: command.Progress{Phase: "Downloading"}}
+	show := func() string {
+		app.presentAgentNotice(workspace.AgentNotice{Type: workspace.NoticeAsyncCommandStatus, AgentID: "bar-agent", Commands: []fileio.AsyncCmdInfo{job}})
+		app.forceFrame()
+		return rendering.StripAnsi(app.View().RenderContent())
+	}
+	show()
+	if !app.wantsFastTick() {
+		t.Fatal("visible indeterminate progress used idle cadence")
+	}
+	job.Progress.Current, job.Progress.Total = 37, 100
+	if painted := show(); !strings.Contains(painted, "37%") {
+		t.Fatalf("new measured frame did not display: %s", painted)
+	}
+	if app.wantsFastTick() {
+		t.Fatal("measured progress repaints between observations")
+	}
+	job.Progress.Total = 0
+	show()
+	app.openSessionSettings()
+	app.forceFrame()
+	app.View()
+	if app.wantsFastTick() {
+		t.Fatal("hidden job kept the fast clock")
 	}
 }

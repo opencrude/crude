@@ -5,7 +5,7 @@
 ## Lifetime and termination
 
 - The background-jobs session deck opens passively; each running row has a
-  native Output and Terminate buttons. Output remains available on retained
+  native Output and Stop buttons. Output remains available on retained
   finished rows. Explicit button interaction retains keyboard focus;
   Esc returns it to the composer. Finished rows have no termination target.
 - Termination captures the exact owning backend and the observed
@@ -23,11 +23,11 @@
   leader succeeded still completes, and its output ends with a note that a
   detached process kept the pipe open. Settle, session close and core shutdown
   therefore never wait on processes Crude does not own.
-- Background-job columns are content-sized with terminal-width helpers.
-  Optional PID/exit telemetry yields first. Narrow decks retain Output,
-  Terminate and command text; the status becomes a glyph and the handle is
-  retained in control labels; elapsed labels
-  use whole seconds (`2m 05s`, `1h 03m 09s`), never fractional seconds.
+- The deck leads with **Job**: a shell command or capability name, linked to its
+  exact call. **Status** shows its state or activation phase and progress. Handle
+  and elapsed time appear when they fit. Output and Stop share aligned columns
+  across kinds; Stop is absent after settlement and uses its glyph on narrow
+  decks. PID and exit code belong in the expanded evidence, not every row.
 - **One agent command shell.** Settings › Agents › Main Agent › Command shell
   (`agents.shell`; empty is Auto) chooses the shell for every agent's
   commands: blocking, background, `exec_command` and sub-agents. Auto is the
@@ -53,8 +53,8 @@
     script's prologue turns off progress records and colors and its epilogue
     gives the exit status of the last statement (native exit code, or 1 for a
     failed cmdlet).
-  - MCP package preparation quotes for `fileio.SystemShell` (cmd.exe on
-    Windows, bash or sh elsewhere) and never uses the agent shell.
+  - A capability activation is an admitted in-process job, not shell text. The
+    MCP transport launches the exact registered executable and arguments.
   - `exec_command` may name another installed shell; `bash` on Windows is Git
     Bash, never the WSL launcher on PATH.
 - Command Prompt agent commands run from a temporary `.cmd` file (cmd `/C`
@@ -85,6 +85,22 @@
   handles under `STARTF_USESTDHANDLES`, with inheritance disabled, so redirected
   host streams cannot replace the pseudoconsole's captured console streams.
 
+## Activation jobs
+
+The same manager tracks admitted skill and MCP activation. A task has an opaque
+identity rather than a fabricated PID or exit code. Its handle, task identity
+and start instant fence Output, Stop and semantic `job.stop`. Command jobs
+still require their process identity. Promotion, steering, output cursors, work
+retention, wait interruption and idle-agent delivery use the ordinary command
+paths. The deck paints progress in the status column without displacing either
+control. Only measured transfers have a determinate fill. Phase changes and the
+final result are retained as output; animation does not write the journal.
+
+The job ends after activation, **not** when the connected server eventually
+exits. Run-local authority is admitted in the foreground, never recreated on
+background settlement. The MCP manager owns the live transport. Closing the
+session cancels and joins its jobs; closing the viewer does neither.
+
 ## Reading and finding a command
 
 The command text in each deck row is a native `ui.ActionLink`. Activation
@@ -101,7 +117,7 @@ colors, carriage-return progress and scrollback, not the bounded chat preview.
 Home/End and Page Up/Down read history; End follows new output. Selection/copy,
 wheel scrolling and resize reuse the terminal view. New output preserves a
 historical viewport. Escape clears selection first, then closes the reader.
-Closing the window never stops the command; Terminate remains the explicit
+Closing the window never stops the command; Stop remains the explicit
 process action in the deck. Typing and paste cannot write to a command viewer.
 The window title shows completion, failure, a time limit or an unknown outcome.
 

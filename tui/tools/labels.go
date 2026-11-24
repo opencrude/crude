@@ -205,8 +205,12 @@ func BuildToolTitle(msg conversation.ChatMessage, phase string) ToolTitle {
 			title.Failed = true
 		} else if failed {
 			return errorTitle(msg.ToolName, target, duration, resultReason(msg))
-		} else if result.OutputDescriptor.Status == command.Running && (msg.ToolName == "exec_command" || msg.ToolName == "execute_command" || msg.ToolName == "async_execute_command") {
+		} else if result.OutputDescriptor.Status == command.Running && (msg.ToolName == "exec_command" || msg.ToolName == "execute_command" || msg.ToolName == "async_execute_command" || msg.ToolName == "capability_activate") {
 			title.Action = "Started"
+		}
+		if msg.ToolName == "capability_activate" && result.TaskID != "" && result.OutputDescriptor.Status == command.Running {
+			title.Action = "Activating"
+			title.Metadata = result.OutputDescriptor.Handle
 		}
 		title.Metadata = strings.TrimSpace(title.Metadata + " " + duration)
 		return title

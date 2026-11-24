@@ -203,15 +203,17 @@ func (m *App) handleProductControl(msg shellport.ControlRequestMsg) (tea.Cmd, bo
 			Agent   string    `json:"agent_id"`
 			Handle  string    `json:"handle"`
 			PID     int       `json:"pid"`
+			TaskID  string    `json:"task_id"`
 			Started time.Time `json:"started_at"`
 		}
 		if err := decodeShellInput(r.Input, &in); err != nil {
 			return invalid(err)
 		}
-		if r.Target.ResourceID != in.Agent || in.Handle == "" || in.PID <= 0 || in.Started.IsZero() {
+		ref := fileio.AsyncCmdRef{TaskID: in.TaskID, Handle: in.Handle, PID: in.PID, StartedAt: in.Started}
+		if r.Target.ResourceID != in.Agent || in.Handle == "" || ref.ExecutionID() == "" {
 			return fail(control.Invalid, "exact command identity required")
 		}
-		run, err := m.ws.PrepareAsyncCommandTermination(in.Agent, fileio.AsyncCmdRef{Handle: in.Handle, PID: in.PID, StartedAt: in.Started})
+		run, err := m.ws.PrepareAsyncCommandTermination(in.Agent, ref)
 		if err != nil {
 			return fail(control.Stale, err.Error())
 		}

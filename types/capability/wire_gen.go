@@ -1730,8 +1730,9 @@ func (z *HostReply) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *HostRequest) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 12
-	o = append(o, 0x9c)
+	// array header, size 13
+	o = append(o, 0x9d)
+	o = msgp.AppendString(o, z.StopConnectID)
 	o = msgp.AppendString(o, z.ID)
 	o = msgp.AppendString(o, z.WorkspaceID)
 	o, err = z.Actor.MarshalMsg(o)
@@ -1791,8 +1792,13 @@ func (z *HostRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 12 {
-		err = msgp.ArrayError{Wanted: 12, Got: zb0001}
+	if zb0001 != 13 {
+		err = msgp.ArrayError{Wanted: 13, Got: zb0001}
+		return
+	}
+	z.StopConnectID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "StopConnectID")
 		return
 	}
 	z.ID, bts, err = msgp.ReadStringBytes(bts)
@@ -1905,7 +1911,7 @@ func (z *HostRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *HostRequest) Msgsize() (s int) {
-	s = 1 + msgp.StringPrefixSize + len(z.ID) + msgp.StringPrefixSize + len(z.WorkspaceID) + z.Actor.Msgsize() + msgp.StringPrefixSize + len(z.Operation) + z.Connection.Msgsize() + msgp.BoolSize + z.Tool.Msgsize()
+	s = 1 + msgp.StringPrefixSize + len(z.StopConnectID) + msgp.StringPrefixSize + len(z.ID) + msgp.StringPrefixSize + len(z.WorkspaceID) + z.Actor.Msgsize() + msgp.StringPrefixSize + len(z.Operation) + z.Connection.Msgsize() + msgp.BoolSize + z.Tool.Msgsize()
 	if z.Grant == nil {
 		s += msgp.NilSize
 	} else {

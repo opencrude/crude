@@ -33,6 +33,8 @@ const (
 )
 
 type AsyncCmdInfo struct {
+	TaskID    string
+	Progress  command.Progress
 	Handle    string
 	Command   string
 	CWD       string
@@ -70,6 +72,7 @@ type OutputPage struct {
 }
 
 type AsyncCmdRef struct {
+	TaskID    string
 	Handle    string
 	PID       int
 	StartedAt time.Time
@@ -82,7 +85,19 @@ var (
 )
 
 func (info AsyncCmdInfo) Ref() AsyncCmdRef {
-	return AsyncCmdRef{Handle: info.Handle, PID: info.PID, StartedAt: info.StartedAt}
+	return AsyncCmdRef{TaskID: info.TaskID, Handle: info.Handle, PID: info.PID, StartedAt: info.StartedAt}
+}
+
+// ExecutionID is the immutable identity shared by job controls and the transcript.
+func (ref AsyncCmdRef) ExecutionID() string { return command.JobID(ref.TaskID, ref.PID, ref.StartedAt) }
+
+func (ref AsyncCmdRef) matches(info AsyncCmdInfo) bool {
+	return ref.Handle == info.Handle && ref.TaskID == info.TaskID && ref.PID == info.PID && ref.StartedAt.Equal(info.StartedAt) && ref.ExecutionID() != ""
+}
+
+// HasExitCode distinguishes a process exit from completion of an in-process job.
+func (info AsyncCmdInfo) HasExitCode() bool {
+	return info.TaskID == "" && (info.Status == AsyncCompleted || info.Status == AsyncFailed)
 }
 
 type ownedCommandTree struct {
@@ -200,13 +215,13 @@ type asyncCmdState struct {
 func (st *asyncCmdState) killGroup() {
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	if st.processSettled || st.info.Status != AsyncRunning || st.cmd == nil || st.cmd.Process == nil {
+	if st.processSettled || st.info.Status != AsyncRunning {
 		return
 	}
 	st.cancel()
 	if st.tree != nil {
 		_ = st.tree.kill()
-	} else {
+	} else if st.cmd != nil && st.cmd.Process != nil {
 		_ = cancelProcess(st.cmd)
 	}
 }
@@ -287,6 +302,7 @@ func setProcessGroupCmd(ctx context.Context, name string, arg ...string) *exec.C
 type AsyncCommandManager struct {
 	mu          sync.Mutex
 	commands    map[string]*asyncCmdState
+	tasks       map[string]*asyncCmdState // admitted in-process work, including before promotion
 	reserved    map[string]bool
 	autoCounter int
 	closing     bool
@@ -369,9 +385,9 @@ func (st *asyncCmdState) outputExcerpt(info AsyncCmdInfo) command.Result {
 	} else {
 		output = string(raw)
 	}
-	result := command.Result{ExecutionID: command.ExecutionID(info.PID, info.StartedAt), Command: info.Command, CWD: info.CWD, PID: info.PID, WallTimeSeconds: info.Duration.Seconds(), Error: info.Error, OutputDescriptor: d, Output: output, TimedOut: info.TimedOut, Uncertain: info.Uncertain}
+	result := command.Result{TaskID: info.TaskID, ExecutionID: info.Ref().ExecutionID(), Command: info.Command, CWD: info.CWD, PID: info.PID, WallTimeSeconds: info.Duration.Seconds(), Error: info.Error, OutputDescriptor: d, Output: output, TimedOut: info.TimedOut, Uncertain: info.Uncertain}
 	result.Cancelled = info.Status == AsyncKilled && !info.TimedOut
-	if info.Status == AsyncCompleted || info.Status == AsyncFailed {
+	if info.HasExitCode() {
 		code := info.ExitCode
 		result.ExitCode = &code
 	}
@@ -644,16 +660,19 @@ func (m *AsyncCommandManager) KillRef(ref AsyncCmdRef) error {
 	}
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	if ref.PID <= 0 || ref.StartedAt.IsZero() || state.info.PID != ref.PID || !state.info.StartedAt.Equal(ref.StartedAt) {
+	if !ref.matches(state.info) {
 		return fmt.Errorf("%w: %q", ErrAsyncCommandReplaced, ref.Handle)
 	}
-	if state.info.Status != AsyncRunning || state.tree == nil {
+	if state.info.Status != AsyncRunning || state.processSettled || (state.info.TaskID == "" && state.tree == nil) {
 		return fmt.Errorf("%w: %q", ErrAsyncCommandNotRunning, ref.Handle)
 	}
 	if m.logger != nil {
 		m.logger.Info("ASYNC", "kill", "handle", ref.Handle, "pid", ref.PID)
 	}
 	state.cancel()
+	if state.info.TaskID != "" {
+		return nil
+	}
 	if err := state.tree.kill(); err != nil {
 		if errors.Is(err, os.ErrProcessDone) {
 			return fmt.Errorf("%w: %q", ErrAsyncCommandNotRunning, ref.Handle)
@@ -730,7 +749,7 @@ func (m *AsyncCommandManager) ObserveOutput(ref AsyncCmdRef, sinceByte, maxBytes
 	state.mu.Lock()
 	defer state.mu.Unlock()
 	info := state.info
-	if ref.PID <= 0 || ref.StartedAt.IsZero() || info.PID != ref.PID || !info.StartedAt.Equal(ref.StartedAt) {
+	if !ref.matches(info) {
 		return nil, 0, AsyncCmdInfo{}, nil, fmt.Errorf("%w: %q", ErrAsyncCommandReplaced, ref.Handle)
 	}
 	if sinceByte < 0 || maxBytes <= 0 || maxBytes > MaxOutputChunkBytes {
@@ -1134,6 +1153,9 @@ func (m *AsyncCommandManager) CloseAndWait() {
 	m.mu.Lock()
 	states := make([]*asyncCmdState, 0, len(m.commands))
 	for _, state := range m.commands {
+		states = append(states, state)
+	}
+	for _, state := range m.tasks {
 		states = append(states, state)
 	}
 	m.mu.Unlock()

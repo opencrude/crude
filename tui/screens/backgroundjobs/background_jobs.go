@@ -14,6 +14,7 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
+	"crude/types/command"
 	"crude/types/control"
 )
 
@@ -29,10 +30,10 @@ const (
 
 const (
 	outputLabel    = "Output"
-	terminateLabel = "Terminate"
+	terminateLabel = "Stop"
 	// Bracketed button widths: "[ " + label + " ]".
 	outputButtonW    = 10
-	terminateButtonW = 13
+	terminateButtonW = 8
 )
 
 // Control columns inside one job row, left to right.
@@ -45,6 +46,8 @@ const (
 const completedRetention = 15 * time.Second
 
 type Job struct {
+	TaskID    string
+	Progress  command.Progress
 	OwnerID   string
 	Handle    string
 	Command   string
@@ -64,8 +67,12 @@ type Screen struct {
 	visible    int
 	attention  bool
 	lastNow    time.Time
+	nextExpiry time.Time
+	running    bool
+	animating  bool
 	ruleBleedX int
 	ruleBleedW int
+	rules      map[string]*ui.ProgressRule
 	rows       []Job
 	columns    columnLayout
 	controls   map[ui.ComponentID]*rowControl
@@ -88,20 +95,15 @@ func (s *Screen) SetJobs(jobs []Job, now time.Time) {
 }
 
 func (s *Screen) Refresh(now time.Time) bool {
-	visible := s.visibleJobs(now)
-	running := false
-	for _, job := range visible {
-		if job.Status == "running" {
-			running = true
-			break
-		}
-	}
-	if len(visible) == s.visible && (!running || now.Unix() == s.lastNow.Unix()) {
+	if (s.nextExpiry.IsZero() || !now.After(s.nextExpiry)) && (!s.running || now.Unix() == s.lastNow.Unix()) {
 		return false
 	}
 	s.rebuild(now)
 	return true
 }
+
+// NeedsAnimation reports only indeterminate bars with space on a painted row.
+func (s *Screen) NeedsAnimation() bool { return s.animating }
 
 func (s *Screen) VisibleCount() int { return s.visible }
 
@@ -163,6 +165,8 @@ func (s *Screen) Layout(ctx ui.LayoutContext, rect ui.Rect) {
 		s.children = append(s.children, control)
 	}
 	cols := s.columns
+	s.animating = false
+	var rules map[string]*ui.ProgressRule
 	for index, job := range s.rows {
 		y := 4 + index
 		if y >= rect.H {
@@ -170,9 +174,24 @@ func (s *Screen) Layout(ctx ui.LayoutContext, rect ui.Rect) {
 		}
 		// The command reads as a link to its call in the conversation. The
 		// link's one-cell padding sits in the column gap so the text stays
-		// aligned with the COMMAND header.
+		// aligned with the JOB header.
+		if width := progressWidth(cols.statusW, job); width > 0 {
+			if rules == nil {
+				rules = make(map[string]*ui.ProgressRule)
+			}
+			bar := s.rules[job.TaskID]
+			if bar == nil {
+				bar = ui.NewProgressRule(ui.NewID(ScreenID, "progress/"+job.TaskID), s.tokens)
+			}
+			bar.SetTokens(s.tokens)
+			bar.SetActive(true)
+			bar.SetMeasurement(job.Progress.Current, job.Progress.Total)
+			s.animating = s.animating || bar.NeedsFrame()
+			bar.Layout(ctx, ui.Rect{X: cols.statusX + cols.statusW - width, Y: y, W: width, H: 1})
+			rules[job.TaskID] = bar
+		}
 		if text := s.commandText(job); text != "" && cols.commandW > 0 {
-			w := min(rendering.VisibleWidth(text)+2, cols.commandW+1)
+			w := min(rendering.VisibleWidth(text)+2, cols.commandW+2)
 			place(controlReveal, columnCommand, index, job, ui.Rect{X: max(0, cols.commandX-1), Y: y, W: w, H: 1}, text)
 		}
 		if cols.outputW > 0 {
@@ -187,16 +206,19 @@ func (s *Screen) Layout(ctx ui.LayoutContext, rect ui.Rect) {
 		}
 	}
 	s.controls = controls
+	s.rules = rules
 }
 
-// commandText is the command cell's text: the whole command when it fits,
-// leaving room for an error summary on failed rows.
-func (s *Screen) commandText(job Job) string {
-	w := s.columns.commandW
-	if job.Error != "" && (job.Status == "failed" || job.Status == "killed") {
-		return rendering.TruncateVisual(job.Command, max(1, w-1), "…")
+func progressWidth(width int, job Job) int {
+	if job.TaskID == "" || job.Status != "running" || width < 6 {
+		return 0
 	}
-	return rendering.TruncateLine(job.Command, w)
+	return min(18, width/3)
+}
+
+// commandText is the single linked label for a shell command or capability.
+func (s *Screen) commandText(job Job) string {
+	return rendering.TruncateVisual(rendering.SanitizeForTerminal(job.Command), s.columns.commandW, "…")
 }
 
 func (s *Screen) Paint(buf *surface.CellBuffer, originX, originY int, ctx ui.PaintContext) {
@@ -236,203 +258,125 @@ func (s *Screen) Paint(buf *surface.CellBuffer, originX, originY int, ctx ui.Pai
 			break
 		}
 		s.paintRow(buf, x, headerY+2+index, cols, job, ctx.Frame)
+		if bar := s.rules[job.TaskID]; bar != nil {
+			bar.Paint(buf, x, y, ctx)
+		}
 	}
 }
 
 // columnLayout describes the resolved tabular geometry for the current size.
 type columnLayout struct {
-	statusX, statusW int
-	handleX, handleW int
-	commandX         int
-	commandW         int
-	durationX        int
-	durationW        int
-	pidX, pidW       int
-	exitX, exitW     int
-	actionX, actionW int
-	// Output and Terminate share the action column; Terminate appears only
-	// on running rows but its column is kept so Output buttons line up.
-	outputX, outputW       int
-	terminateX, terminateW int
-	showDuration           bool
-	showEnd                bool
+	commandX, commandW, statusX, statusW     int
+	handleX, handleW, durationX, durationW   int
+	outputX, outputW, terminateX, terminateW int
 }
 
+// Keep the two decisions aligned on the right and the job link on the left.
+// A handle is useful for addressing a job, but is never worth clipping its
+// name or progress. PID and exit evidence belong to the expanded result.
 func (s *Screen) columnWidths(total int) columnLayout {
 	gap := ui.TableMinGap
-	cols := columnLayout{statusW: 6, handleW: 6, durationW: 8, pidW: 3, exitW: 4}
-	commandWidth := 7
+	var c columnLayout
+	remaining := total
+	reserve := func(w int) (int, int) {
+		w = min(remaining, w)
+		remaining -= w
+		x := remaining
+		remaining = max(0, remaining-gap)
+		return x, w
+	}
+	var stop bool
+	jobW, statusW, handleW, timeW := 3, 6, 6, 4
 	for _, job := range s.rows {
-		glyph, _, _ := s.statusGlyph(job)
-		cols.statusW = max(cols.statusW, rendering.VisibleWidth(glyph+" "+job.Status))
-		cols.handleW = max(cols.handleW, rendering.VisibleWidth("["+job.Handle+"]"))
-		cols.durationW = max(cols.durationW, rendering.VisibleWidth(s.durationLabel(job)))
-		cols.pidW = max(cols.pidW, rendering.VisibleWidth(fmt.Sprint(job.PID)))
-		cols.exitW = max(cols.exitW, rendering.VisibleWidth(fmt.Sprint(job.ExitCode)))
-		commandWidth = max(commandWidth, rendering.VisibleWidth(job.Command))
-		cols.outputW = outputButtonW
-		if job.Status == "running" {
-			cols.terminateW = terminateButtonW
+		stop = stop || job.Status == "running"
+		jobW = max(jobW, rendering.VisibleWidth(job.Command))
+		sw := rendering.VisibleWidth(s.statusText(job, 0))
+		if job.TaskID != "" && job.Status == "running" {
+			sw += 15
 		}
+		statusW = max(statusW, min(sw, 34))
+		handleW = max(handleW, rendering.VisibleWidth(job.Handle)+2)
+		timeW = max(timeW, rendering.VisibleWidth(s.durationLabel(job)))
 	}
-	cols.actionW = cols.outputW
-	if cols.terminateW > 0 {
-		cols.actionW += 1 + cols.terminateW
-	}
-	baseWidth := cols.statusW + cols.handleW + commandWidth + 2*gap
-	if cols.actionW > 0 {
-		baseWidth += cols.actionW + gap
-	}
-	cols.showDuration = total >= baseWidth+cols.durationW+gap
-	cols.showEnd = cols.showDuration && total >= baseWidth+cols.durationW+cols.pidW+cols.exitW+3*gap
-	if cols.terminateW > 0 && total < baseWidth {
-		// Narrow decks keep both decisions; Terminate becomes its glyph.
-		compact := rendering.VisibleWidth(s.tokens.Glyphs().Close) + 4
-		cols.actionW -= cols.terminateW - compact
-		cols.terminateW = compact
-	}
-	if cols.actionW > max(0, total) {
-		// Too narrow for both: stopping a running command outranks Output.
-		if cols.terminateW > 0 {
-			cols.outputW, cols.actionW = 0, cols.terminateW
+	if stop {
+		w := terminateButtonW
+		if remaining < 56 {
+			w = rendering.VisibleWidth(s.tokens.Glyphs().Close) + 4
 		}
-		cols.actionW = min(cols.actionW, max(0, total))
-		cols.terminateW = min(cols.terminateW, cols.actionW)
-		cols.outputW = min(cols.outputW, cols.actionW)
+		c.terminateX, c.terminateW = reserve(w)
 	}
-	right := max(0, total)
-	reserve := func(width int) (int, int) {
-		width = min(width, right)
-		right -= width
-		position := right
-		right = max(0, right-gap)
-		return position, width
+	if remaining >= outputButtonW || !stop {
+		c.outputX, c.outputW = reserve(outputButtonW)
 	}
-	if cols.actionW > 0 {
-		cols.actionX, cols.actionW = reserve(cols.actionW)
-		cols.outputX = cols.actionX
-		cols.terminateX = cols.actionX
-		if cols.outputW > 0 {
-			cols.outputW = min(cols.outputW, cols.actionW)
-			cols.terminateX = cols.actionX + cols.outputW + 1
-		}
-		cols.terminateW = max(0, min(cols.terminateW, cols.actionX+cols.actionW-cols.terminateX))
+	// Reserve enough for a useful operand and a readable state before offering
+	// optional columns. The spare width belongs to the operand, not empty IDs.
+	required := min(jobW, 25) + 1 + statusW + gap
+	if remaining >= required+timeW+gap {
+		c.durationX, c.durationW = reserve(timeW)
 	}
-	if cols.showEnd {
-		cols.exitX, cols.exitW = reserve(cols.exitW)
-		cols.pidX, cols.pidW = reserve(cols.pidW)
+	if remaining >= required+handleW+gap {
+		c.handleX, c.handleW = reserve(handleW)
 	}
-	if cols.showDuration {
-		cols.durationX, cols.durationW = reserve(cols.durationW)
-	}
-	// On narrow decks, keep the two actions and readable command text. The
-	// status glyph is sufficient; the handle remains in every control's
-	// accessible label instead of squeezing the command to a few cells.
-	if right < cols.statusW+cols.handleW+min(commandWidth, 20)+2*gap {
-		cols.statusW, cols.handleW = min(1, right), 0
-		cols.commandX = min(right, cols.statusW+gap)
-		cols.commandW = max(0, right-cols.commandX)
-		return cols
-	}
-	cols.statusW = min(cols.statusW, max(0, right-6-7-2*gap))
-	if cols.statusW == 0 {
-		cols.statusW = min(1, right)
-	}
-	cols.handleX = min(right, cols.statusW+gap)
-	cols.handleW = min(cols.handleW, max(0, right-cols.handleX-gap-7))
-	cols.commandX = min(right, cols.handleX+cols.handleW+gap)
-	cols.commandW = max(0, right-cols.commandX)
-	return cols
+	c.statusX, c.statusW = reserve(min(statusW, max(0, remaining-min(jobW, 14)-gap-1)))
+	c.commandX = min(1, remaining)
+	c.commandW = max(0, remaining-c.commandX)
+	return c
 }
 
-func (s *Screen) paintHeader(buf *surface.CellBuffer, x, y, total int, cols columnLayout, muted, divider, bg cell.Color, hBorder string, rule bool) {
-	headers := []struct {
+func (s *Screen) paintHeader(buf *surface.CellBuffer, x, y, total int, c columnLayout, muted, divider, bg cell.Color, border string, rule bool) {
+	for _, h := range [...]struct {
 		label string
-		at    int
-		width int
-	}{
-		{"STATUS", cols.statusX, cols.statusW},
-		{"HANDLE", cols.handleX, cols.handleW},
-		{"COMMAND", cols.commandX, cols.commandW},
-	}
-	if cols.showDuration {
-		headers = append(headers, struct {
-			label string
-			at    int
-			width int
-		}{"DURATION", cols.durationX, cols.durationW})
-	}
-	if cols.showEnd {
-		headers = append(headers,
-			struct {
-				label string
-				at    int
-				width int
-			}{"PID", cols.pidX, cols.pidW},
-			struct {
-				label string
-				at    int
-				width int
-			}{"EXIT", cols.exitX, cols.exitW},
-		)
-	}
-	for _, header := range headers {
-		s.paintCell(buf, x+header.at, y, header.width, header.label, muted, bg, cell.AttrBold, ui.TableAlignLeft)
+		x, w  int
+	}{{"JOB", c.commandX, c.commandW}, {"STATUS", c.statusX, c.statusW}, {"HANDLE", c.handleX, c.handleW}, {"TIME", c.durationX, c.durationW}} {
+		s.paintCell(buf, x+h.x, y, h.w, h.label, muted, bg, cell.AttrBold, ui.TableAlignLeft)
 	}
 	if rule {
-		buf.WriteString(x, y+1, strings.Repeat(hBorder, max(0, total)), divider, bg, 0)
+		buf.WriteString(x, y+1, strings.Repeat(border, max(0, total)), divider, bg, 0)
 	}
 }
 
-func (s *Screen) paintRow(buf *surface.CellBuffer, x, y int, cols columnLayout, job Job, frame int) {
-	bg := s.tokens.Color(ui.ColorBg)
-	status := job.Status
-	if status == "" {
-		status = "unknown"
-	}
-	glyph, glyphColor, attr := s.statusGlyph(job)
-	if job.Status == "running" {
+func (s *Screen) statusText(job Job, frame int) string {
+	glyph, _, _ := s.statusGlyph(job)
+	var text string
+	switch job.Status {
+	case "running":
 		glyph = ui.ActivityDot(frame)
+		text = "Running"
+		if job.Progress.Phase != "" {
+			text = job.Progress.Phase
+		}
+		if job.Progress.Total > 0 {
+			text = fmt.Sprintf("%d%% · %s", job.Progress.Percent(), text)
+		}
+	case "completed":
+		text = "Completed"
+	case "killed":
+		text = "Stopped"
+	case "failed":
+		text = "Failed"
+		if job.Error != "" {
+			text += " · " + job.Error
+		}
+	default:
+		text = "Unknown"
 	}
-	statusCell := glyph + " " + strings.ToUpper(status)
-	s.paintCell(buf, x+cols.statusX, y, cols.statusW, statusCell, glyphColor, bg, attr, ui.TableAlignLeft)
+	return glyph + " " + rendering.SanitizeForTerminal(text)
+}
 
-	handle := "[" + job.Handle + "]"
-	s.paintCell(buf, x+cols.handleX, y, cols.handleW, handle, s.tokens.Color(ui.ColorAccent2), bg, cell.AttrBold, ui.TableAlignLeft)
-
-	commandCell := job.Command
-	commandFg := s.tokens.Color(ui.ColorFg)
-	if job.Error != "" && (job.Status == "failed" || job.Status == "killed") {
-		commandFg = s.tokens.Color(ui.ColorMuted)
-		commandCell = rendering.TruncateVisual(commandCell, max(1, cols.commandW-1), "…")
-		remaining := cols.commandW - rendering.VisibleWidth(commandCell) - 1
-		if remaining > 1 {
-			if errText := rendering.TruncateVisual(job.Error, remaining-1, "…"); errText != "" {
-				commandCell += " " + errText
-			}
-		}
+func (s *Screen) paintRow(buf *surface.CellBuffer, x, y int, c columnLayout, job Job, frame int) {
+	bg := s.tokens.Color(ui.ColorBg)
+	muted := s.tokens.Color(ui.ColorMuted)
+	_, ink, attr := s.statusGlyph(job)
+	w := c.statusW
+	if bar := progressWidth(w, job); bar > 0 {
+		w -= bar + 1
 	}
-	s.paintCell(buf, x+cols.commandX, y, cols.commandW, commandCell, commandFg, bg, 0, ui.TableAlignLeft)
-
-	if cols.showDuration {
-		s.paintCell(buf, x+cols.durationX, y, cols.durationW, s.durationLabel(job), s.tokens.Color(ui.ColorMuted), bg, 0, ui.TableAlignRight)
+	s.paintCell(buf, x+c.statusX, y, w, s.statusText(job, frame), ink, bg, attr, ui.TableAlignLeft)
+	if c.handleW > 0 {
+		s.paintCell(buf, x+c.handleX, y, c.handleW, "["+job.Handle+"]", muted, bg, 0, ui.TableAlignLeft)
 	}
-
-	if cols.showEnd {
-		pid := "—"
-		if job.PID > 0 {
-			pid = fmt.Sprintf("%d", job.PID)
-		}
-		s.paintCell(buf, x+cols.pidX, y, cols.pidW, pid, s.tokens.Color(ui.ColorMuted), bg, 0, ui.TableAlignRight)
-		exit := "—"
-		if job.Status == "completed" || job.Status == "failed" {
-			exit = fmt.Sprintf("%d", job.ExitCode)
-		}
-		exitFg := s.tokens.Color(ui.ColorMuted)
-		if job.Status == "failed" || job.Status == "killed" {
-			exitFg = s.tokens.Color(ui.ColorError)
-		}
-		s.paintCell(buf, x+cols.exitX, y, cols.exitW, exit, exitFg, bg, 0, ui.TableAlignRight)
+	if c.durationW > 0 {
+		s.paintCell(buf, x+c.durationX, y, c.durationW, s.durationLabel(job), muted, bg, 0, ui.TableAlignRight)
 	}
 }
 
@@ -607,11 +551,19 @@ func (s *Screen) rebuild(now time.Time) {
 	s.rows = s.visibleJobs(now)
 	s.visible = len(s.rows)
 	s.lastNow = now
-	s.attention = false
+	s.attention, s.running = false, false
+	s.nextExpiry = time.Time{}
 	for _, job := range s.rows {
+		if job.Status == "running" {
+			s.running = true
+		} else if !job.EndedAt.IsZero() {
+			expires := job.EndedAt.Add(completedRetention)
+			if s.nextExpiry.IsZero() || expires.Before(s.nextExpiry) {
+				s.nextExpiry = expires
+			}
+		}
 		if job.Status == "failed" || job.Status == "killed" {
 			s.attention = true
-			break
 		}
 	}
 }
@@ -766,7 +718,7 @@ func (c *rowControl) Semantics() ui.Semantics {
 		semantics.Label = "Show output of " + c.job.Handle
 		semantics.Description = "Opens the live output of this background command"
 	default:
-		semantics.Label = "Terminate " + c.job.Handle
+		semantics.Label = terminateLabel + " " + c.job.Handle
 		semantics.Description = "Stops only this background command"
 	}
 	return semantics

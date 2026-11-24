@@ -11,12 +11,13 @@ import (
 // has no animation; its host owns the frame clock and scheduling.
 type ProgressRule struct {
 	Base
-	tokens *TokenSet
-	active bool
-	frame  int
-	motion TextTideMotion
-	bg     SemanticColor
-	bgSet  bool
+	tokens         *TokenSet
+	active         bool
+	current, total int64
+	frame          int
+	motion         TextTideMotion
+	bg             SemanticColor
+	bgSet          bool
 }
 
 // SetSurfaceBackground paints the rule on an explicit surface fill. Rules on
@@ -35,7 +36,10 @@ func (r *ProgressRule) SetActive(active bool) {
 	}
 	r.active = active
 }
-func (r *ProgressRule) NeedsFrame() bool { return r.active }
+
+// SetMeasurement selects a determinate fill when the producer knows a total.
+func (r *ProgressRule) SetMeasurement(current, total int64) { r.current, r.total = current, total }
+func (r *ProgressRule) NeedsFrame() bool                    { return r.active && r.total <= 0 }
 func (r *ProgressRule) Paint(buf *surface.CellBuffer, ox, oy int, ctx PaintContext) {
 	b := r.Bounds()
 	if b.Empty() || r.tokens == nil {
@@ -58,14 +62,20 @@ func (r *ProgressRule) Paint(buf *surface.CellBuffer, ox, oy int, ctx PaintConte
 		frame = ctx.Frame
 	}
 	center := 0.0
-	if r.active {
+	if r.NeedsFrame() {
 		center = r.motion.Advance(frame, b.W, true)
 	}
 	// Paint the repeated single-rune rule directly. A row-sized temporary string
 	// makes even an idle footer allocate on every frame.
+	filled := 0
+	if r.total > 0 && r.active {
+		filled = max(0, min(b.W, int(float64(b.W)*(float64(r.current)/float64(r.total)))))
+	}
 	for column := 0; column+width <= b.W; column += width {
 		fg, attr := ink, cell.Attrs(0)
-		if r.active {
+		if column < filled {
+			fg, attr = r.tokens.Color(ColorAccent2), cell.AttrBold
+		} else if r.NeedsFrame() {
 			fg, attr = TextTide(ink, attr, r.tokens, center, column)
 		}
 		c := cell.NewCell(glyph, fg, bg, attr)

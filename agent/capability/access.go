@@ -16,13 +16,31 @@ import (
 )
 
 func (s *Service) activationResult(ctx context.Context, actor captypes.RuntimeActor, id string) (captypes.Result, error) {
-	prepared, err := s.Prepare(ctx, actor)
-	if err != nil {
+	return s.observedActivation(ctx, actor, id, s.actorClients(actor))
+}
+
+// Settlement is passive. Prepare starts recovery and publishes a run generation;
+// calling it here could resurrect a finished run after an independent launch.
+func (s *Service) observedActivation(ctx context.Context, actor captypes.RuntimeActor, id string, clients actorClient) (captypes.Result, error) {
+	if err := ctx.Err(); err != nil {
 		return captypes.Result{}, err
 	}
-	result := captypes.ActivationResult{ConnectionID: id, State: "connected", Notices: prepared.Notices}
-	budgets := s.snapshot().Settings.Acquisition
-	for _, state := range s.actorClients(actor).States() {
+	s.mu.RLock()
+	settings := s.settings // Configure replaces the normalized snapshot.
+	budgets := settings.Acquisition
+	s.mu.RUnlock()
+	result := captypes.ActivationResult{ConnectionID: id}
+	states := clients.States()
+	var prepared captypes.RuntimeSnapshot
+	s.selectTools(actor, settings, states, &prepared)
+	result.Notices = prepared.Notices
+	for _, tool := range prepared.Tools {
+		if tool.ConnectionID == id {
+			tool.InputSchema, tool.Description = nil, ""
+			result.UsableTools = append(result.UsableTools, tool)
+		}
+	}
+	for _, state := range states {
 		if state.ID == id {
 			result.State = state.State
 			schemaBytes := 0
@@ -37,14 +55,10 @@ func (s *Service) activationResult(ctx context.Context, actor captypes.RuntimeAc
 			}
 		}
 	}
-	for _, tool := range prepared.Tools {
-		if tool.ConnectionID == id {
-			// Schemas are already offered through the request snapshot. Avoid
-			// repeating that potentially large budget in a tool result.
-			tool.InputSchema, tool.Description = nil, ""
-			result.UsableTools = append(result.UsableTools, tool)
-		}
+	if result.State != "connected" {
+		return captypes.Result{}, errors.New("MCP connection changed before discovery completed")
 	}
+
 	if len(result.UsableTools) > 0 {
 		result.Next = "Use the exact UsableTools names offered at the next request boundary. Installations remain durable at their configured binding; automatic access is limited to the owning run."
 	} else {

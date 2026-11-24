@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crude/types/command"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -38,17 +39,34 @@ type Candidate struct {
 	Requirements []string
 }
 
+// Shared immutable downloads are keyed by artifact, not by activation. A
+// detached requester leaves the cache fill intact. Stopping the last owning
+// job cancels and joins it; it must never interrupt a different waiter.
 type acquisition struct {
-	done   chan struct{}
-	path   string
-	digest string
-	err    error
+	done         chan struct{}
+	cancel       context.CancelFunc
+	path, digest string
+	err          error
+	waiters      map[*acquisitionWaiter]struct{}
+	progress     command.Progress
 }
+type acquisitionWaiter struct{ report func(command.Progress) }
 
 var acquisitions = struct {
 	sync.Mutex
 	jobs map[string]*acquisition
 }{jobs: make(map[string]*acquisition)}
+
+func (job *acquisition) report(p command.Progress) {
+	acquisitions.Lock()
+	defer acquisitions.Unlock()
+	job.progress = p
+	for waiter := range job.waiters {
+		if waiter.report != nil {
+			waiter.report(p)
+		}
+	}
+}
 
 func boundedFetch(ctx context.Context, endpoint string, limit int64) ([]byte, error) {
 	parsed, err := url.Parse(endpoint)
@@ -76,7 +94,11 @@ func boundedFetch(ctx context.Context, endpoint string, limit int64) ([]byte, er
 	if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("capability source returned HTTP %d", response.StatusCode)
 	}
-	data, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
+	var body io.Reader = response.Body
+	if sink := captypes.ProgressObserver(ctx); sink != nil && response.ContentLength > 0 {
+		body = &transferReader{Reader: body, ctx: ctx, total: response.ContentLength}
+	}
+	data, err := io.ReadAll(io.LimitReader(body, limit+1))
 	if err != nil {
 		return nil, err
 	}
@@ -231,28 +253,47 @@ func (s *Service) Acquire(ctx context.Context, id string, scope captypes.Scope) 
 func (s *Service) acquireArtifact(ctx context.Context, candidate Candidate, settings captypes.AcquisitionSettings) (string, string, error) {
 	keyDigest := sha256.Sum256([]byte(s.cache + "\n" + candidate.Entry.ID + "\n" + candidate.Entry.Version + "\n" + candidate.Entry.Digest + "\n" + candidate.ArchiveURL))
 	key := hex.EncodeToString(keyDigest[:])
+	waiter := &acquisitionWaiter{report: captypes.ProgressObserver(ctx)}
 	acquisitions.Lock()
 	job := acquisitions.jobs[key]
 	if job == nil {
-		job = &acquisition{done: make(chan struct{})}
+		bounded, cancel := context.WithTimeout(context.Background(), time.Duration(settings.TimeoutSeconds)*time.Second)
+		job = &acquisition{done: make(chan struct{}), cancel: cancel, waiters: make(map[*acquisitionWaiter]struct{})}
 		acquisitions.jobs[key] = job
 		go func() {
-			bounded, cancel := context.WithTimeout(context.Background(), time.Duration(settings.TimeoutSeconds)*time.Second)
 			defer cancel()
-			job.path, job.digest, job.err = s.installArtifact(bounded, key, candidate, settings.MaxDownloadBytes)
-			close(job.done)
+			job.path, job.digest, job.err = s.installArtifact(captypes.WithProgress(bounded, job.report), key, candidate, settings.MaxDownloadBytes)
 			acquisitions.Lock()
-			delete(acquisitions.jobs, key)
+			if acquisitions.jobs[key] == job {
+				delete(acquisitions.jobs, key)
+			}
+			close(job.done)
 			acquisitions.Unlock()
 		}()
+	}
+	job.waiters[waiter] = struct{}{}
+	if waiter.report != nil && job.progress.Phase != "" {
+		waiter.report(job.progress)
 	}
 	acquisitions.Unlock()
 	select {
 	case <-ctx.Done():
+		acquisitions.Lock()
+		delete(job.waiters, waiter)
+		stop := len(job.waiters) == 0 && errors.Is(context.Cause(ctx), command.ErrStopped) && acquisitions.jobs[key] == job
+		if stop {
+			delete(acquisitions.jobs, key)
+			job.cancel()
+		}
+		acquisitions.Unlock()
+		if stop {
+			<-job.done
+		}
 		return "", "", ctx.Err()
 	case <-job.done:
 		return job.path, job.digest, job.err
 	}
+
 }
 
 func (s *Service) installArtifact(ctx context.Context, key string, candidate Candidate, limit int64) (string, string, error) {
@@ -296,10 +337,12 @@ func (s *Service) installArtifact(ctx context.Context, key string, candidate Can
 		}
 		return destination, copied.Digest, nil
 	}
+	captypes.ReportProgress(ctx, "Downloading skill", 0, 0)
 	data, err := boundedFetch(ctx, candidate.ArchiveURL, limit)
 	if err != nil {
 		return "", "", err
 	}
+	captypes.ReportProgress(ctx, "Verifying skill files", 0, 0)
 	if candidate.Entry.Digest != "" {
 		digest := sha256.Sum256(data)
 		if hex.EncodeToString(digest[:]) != candidate.Entry.Digest {
@@ -398,4 +441,22 @@ func extractSkill(ctx context.Context, data []byte, subpath, root string, limit 
 			return closeErr
 		}
 	}
+}
+
+// transferReader reports whole-percent changes, never a UI event per packet.
+type transferReader struct {
+	io.Reader
+	ctx                  context.Context
+	total, read, percent int64
+}
+
+func (r *transferReader) Read(p []byte) (int, error) {
+	n, err := r.Reader.Read(p)
+	r.read += int64(n)
+	pct := 100 * r.read / r.total
+	if pct != r.percent {
+		r.percent = pct
+		captypes.ReportProgress(r.ctx, "Downloading skill", r.read, r.total)
+	}
+	return n, err
 }

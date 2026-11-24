@@ -7,7 +7,9 @@ import (
 	"syscall"
 )
 
-func setCmdSysProcAttr(c *exec.Cmd) {
+func setCmdSysProcAttr(c *exec.Cmd) { setTreeAttrs(c) }
+
+func setTreeAttrs(c *exec.Cmd) {
 	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 }
 

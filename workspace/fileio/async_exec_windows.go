@@ -11,11 +11,15 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func setCmdSysProcAttr(cmd *exec.Cmd) {
+func setTreeAttrs(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_SUSPENDED | windows.CREATE_NO_WINDOW,
 		HideWindow:    true,
 	}
+}
+
+func setCmdSysProcAttr(cmd *exec.Cmd) {
+	setTreeAttrs(cmd)
 	if strings.EqualFold(strings.TrimSuffix(filepath.Base(cmd.Path), ".exe"), "cmd") && len(cmd.Args) > 1 {
 		// cmd.exe parses its command tail itself, not with CommandLineToArgvW.
 		// EscapeArg would turn embedded quotes into literal backslash-quotes.

@@ -83,6 +83,27 @@ func finishOwnedOutput(reader *os.File, done <-chan error) error {
 	}
 }
 
+// StartPipeCommand starts an already configured executable on an owned process
+// tree. The protocol transport owns its pipes. It must call wait exactly once,
+// after closing its input, and can stop the tree concurrently with wait.
+func StartPipeCommand(cmd *exec.Cmd) (stop, wait func() error, err error) {
+	setTreeAttrs(cmd)
+	if err := cmd.Start(); err != nil {
+		return nil, nil, err
+	}
+	tree, err := ownProcessTree(cmd)
+	if err != nil {
+		return nil, nil, errors.Join(err, uncertainTreeStop(cancelProcess(cmd)), cmd.Wait())
+	}
+	if err := resumeOwnedProcess(cmd); err != nil {
+		stopErr := tree.kill()
+		waitErr := tree.wait()
+		tree.close()
+		return nil, nil, errors.Join(err, uncertainTreeStop(stopErr), waitErr)
+	}
+	return tree.kill, func() error { defer tree.close(); return tree.wait() }, nil
+}
+
 // RunOwnedCommand executes one exact program off the UI thread. Cancellation
 // terminates its retained process tree and joins the leader before return.
 // A detached pipe holder is reported as uncertain, not as successful completion.

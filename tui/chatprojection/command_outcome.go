@@ -31,6 +31,21 @@ func renderCommandOutcome(msg conversation.ChatMessage, ctx renderContext) messa
 		} else if info.Status == "killed" {
 			title.Action, status = "Command stopped", conversation.ToolStatusCancelled
 		}
+		if info.TaskID != "" {
+			title.Operand = info.Command
+			switch {
+			case info.Uncertain:
+				title.Action = "Outcome unknown"
+			case info.TimedOut:
+				title.Action = "Timed out"
+			case info.Status == "failed":
+				title.Action = "Failed"
+			case info.Status == "killed":
+				title.Action = "Stopped"
+			default:
+				title.Action = "Completed"
+			}
+		}
 		if info.ExitKnown && info.ExitCode != 0 {
 			title.Metadata = fmt.Sprintf("(exit %d)", info.ExitCode)
 		}
@@ -71,11 +86,14 @@ func renderCommandOutcome(msg conversation.ChatMessage, ctx renderContext) messa
 			}
 		}
 	}
-	text := fmt.Sprintf("Command: %s\nHandle: %s\nStatus: %s\nPID: %d\nCaptured output: %s",
-		info.Command, info.Handle, info.Status, info.PID, rendering.FormatBytes(int64(info.OutputBytes)))
+	text := fmt.Sprintf("Command: %s\nHandle: %s\nStatus: %s\nCaptured output: %s",
+		info.Command, info.Handle, info.Status, rendering.FormatBytes(int64(info.OutputBytes)))
+	if info.PID > 0 {
+		text += fmt.Sprintf("\nPID: %d", info.PID)
+	}
 	if info.ExitKnown {
 		text += fmt.Sprintf("\nExit code: %d", info.ExitCode)
-	} else {
+	} else if info.TaskID == "" {
 		text += "\nExit code: unavailable"
 	}
 	if !info.StartedAt.IsZero() {

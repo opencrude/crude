@@ -122,3 +122,26 @@ func TestCoreManagerNeverLaunchesShellAndNoDispatcherFallback(t *testing.T) {
 		t.Fatal("missing exact shell fell back")
 	}
 }
+
+func TestShellWorkerStopsOnlyExactLaunchBeforeAdmission(t *testing.T) {
+	r := hostFixtureRequest(t)
+	worker := NewHostWorker(t.Context(), *r.Actor.ShellOwner, r.WorkspaceID, t.TempDir())
+	t.Cleanup(worker.Close)
+	stop := r
+	stop.ID = "stop"
+	stop.Operation = "stop-connect"
+	stop.StopConnectID = r.ID
+	if ack := worker.Handle(t.Context(), stop); ack.Error != "" {
+		t.Fatalf("stop: %+v", ack)
+	}
+	if result := worker.Handle(t.Context(), r); result.Error != "MCP launch cancelled" || len(result.States) != 0 {
+		t.Fatalf("late launch was not fenced: %+v", result)
+	}
+	stop.Connection.Command = "another"
+	if ack := worker.Handle(t.Context(), stop); ack.Error == "" {
+		t.Fatal("stop accepted a different launch preimage")
+	}
+	if len(worker.managers) != 0 {
+		t.Fatal("stop created a server")
+	}
+}

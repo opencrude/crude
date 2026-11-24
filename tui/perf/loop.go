@@ -34,10 +34,12 @@ var (
 	uiPresent = metrics.NewLatency(metrics.Meta{Name: "ui.present", SaveLabels: true, Group: metrics.GroupRender, Title: "Frame handoff",
 		Help: "Handing the frame to the renderer. It must never wait for terminal output.",
 		Warn: 1_000, Crit: 16_000})
-	renderFlush = metrics.NewLatency(metrics.Meta{Name: "render.flush", Group: metrics.GroupRender, Title: "Terminal write",
-		Help: "Diffing and writing a frame to the terminal on the renderer goroutine. Slow consoles (Windows) show here, not as input lag.",
+	renderFlush = metrics.NewLatency(metrics.Meta{Name: "render.flush", Group: metrics.GroupRender, Title: "Renderer flush",
+		Help: "Total renderer pass, including snapshot, diff and output. Compare snapshot lock and output write before attributing a stall.",
 		Warn: 16_000, Crit: 50_000, Stall: 100_000})
-	renderBytes = metrics.NewCounter(metrics.Meta{Name: "render.bytes", Group: metrics.GroupRender, Title: "Terminal output", Unit: "bytes",
+	renderSnapshot = metrics.NewLatency(metrics.Meta{Name: "render.snapshot", Group: metrics.GroupRender, Title: "Snapshot lock held", Help: "Time the writer held the producer snapshot lock. Frame handoff waits on this lock, not the terminal writer.", Warn: 8000, Crit: 16000})
+	renderWrite    = metrics.NewLatency(metrics.Meta{Name: "render.write", Group: metrics.GroupRender, Title: "Output write", Help: "Time spent writing encoded frame bytes to the output writer. Excludes snapshot and diff.", Warn: 16000, Crit: 50000})
+	renderBytes    = metrics.NewCounter(metrics.Meta{Name: "render.bytes", Group: metrics.GroupRender, Title: "Terminal output", Unit: "bytes",
 		Help: "Bytes written to the terminal. Large steady output with no visible change is wasted repaint."})
 )
 
@@ -96,6 +98,12 @@ func (o *LoopObserver) ObserveLoop(sample tea.LoopSample) {
 // ObserveFlush runs on the renderer goroutine.
 func (o *LoopObserver) ObserveFlush(sample tea.FlushSample) {
 	renderFlush.Observe(sample.Duration)
+	if sample.SnapshotHold > 0 {
+		renderSnapshot.Observe(sample.SnapshotHold)
+	}
+	if sample.OutputWrite > 0 {
+		renderWrite.Observe(sample.OutputWrite)
+	}
 	renderBytes.Add(uint64(sample.Bytes))
 	if sample.Bytes > 0 {
 		o.displayNS.Store(int64(max(16*time.Millisecond, min(sample.Duration, 250*time.Millisecond))))

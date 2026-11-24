@@ -35,9 +35,9 @@ func CommandMetadata(result command.Result) string {
 	parts := []string{string(d.Status)}
 	if result.ExitCode != nil {
 		parts = append(parts, fmt.Sprintf("exit %d", *result.ExitCode))
-	} else if d.Status == command.Running {
+	} else if result.TaskID == "" && d.Status == command.Running {
 		parts = append(parts, "exit unknown")
-	} else if d.Status == command.Killed {
+	} else if result.TaskID == "" && d.Status == command.Killed {
 		parts = append(parts, "exit unavailable")
 	}
 	if d.Handle != "" {

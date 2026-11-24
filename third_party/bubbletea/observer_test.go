@@ -48,6 +48,7 @@ type recordingObserver struct {
 	mu      sync.Mutex
 	present []time.Duration
 	flushes int
+	slowest FlushSample
 }
 
 func (o *recordingObserver) ObserveLoop(s LoopSample) {
@@ -58,9 +59,12 @@ func (o *recordingObserver) ObserveLoop(s LoopSample) {
 	}
 }
 
-func (o *recordingObserver) ObserveFlush(FlushSample) {
+func (o *recordingObserver) ObserveFlush(s FlushSample) {
 	o.mu.Lock()
 	o.flushes++
+	if s.OutputWrite > o.slowest.OutputWrite {
+		o.slowest = s
+	}
 	o.mu.Unlock()
 }
 
@@ -108,6 +112,9 @@ func TestFrameHandoffDoesNotWaitForTerminalWrites(t *testing.T) {
 	}
 	if elapsed := time.Duration(sendElapsed.Load()); elapsed > 200*time.Millisecond {
 		t.Fatalf("the event loop stalled %v behind a terminal write", elapsed)
+	}
+	if observer.slowest.OutputWrite < 300*time.Millisecond || observer.slowest.SnapshotHold >= observer.slowest.OutputWrite || observer.slowest.Duration < observer.slowest.OutputWrite {
+		t.Fatalf("slow output was not distinguished from snapshot contention: %+v", observer.slowest)
 	}
 	if observer.flushes == 0 {
 		t.Fatal("no flush samples recorded")

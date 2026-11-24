@@ -17,7 +17,7 @@ func (m *App) terminateBackgroundJob(request backgroundjobs.TerminateRequest) te
 	if projection == nil || projection.backgroundJobs != request.Target || job.Status != "running" {
 		return nil
 	}
-	ref := fileio.AsyncCmdRef{Handle: job.Handle, PID: job.PID, StartedAt: job.StartedAt}
+	ref := fileio.AsyncCmdRef{TaskID: job.TaskID, Handle: job.Handle, PID: job.PID, StartedAt: job.StartedAt}
 	terminate, err := m.ws.PrepareAsyncCommandTermination(job.OwnerID, ref)
 	if err != nil {
 		m.Feedback.NotifyError(err.Error())
@@ -55,7 +55,7 @@ func (m *App) revealBackgroundJob(request backgroundjobs.RevealRequest) {
 	if sub == nil || sub.renderer == nil {
 		return
 	}
-	_, ok := sub.renderer.RevealCommand(command.ExecutionID(job.PID, job.StartedAt))
+	_, ok := sub.renderer.RevealCommand(command.JobID(job.TaskID, job.PID, job.StartedAt))
 	if !ok {
 		m.Feedback.NotifyInfo("The conversation does not show this command.")
 		return
