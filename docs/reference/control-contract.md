@@ -73,7 +73,7 @@ requested, not that the server connected. `diagnostics.workspace` view
 `problems` lists project problems per server and file with counts and the top
 messages, and each closed file that Crude could not check with the reason; the lsp view adds recent unexpected exits, whether Crude is
 restarting the server, the server's own bounded evidence (labelled as server
-data) and the closed-file check.
+data) and one `project_check` record per fallback launch, with root, checked, total, unchecked and pause reason.
 `settings.fields` reports that same caller-specific authority. Exact leaf writes
 can create a missing map entry from its declared schema (for example, a new
 language launch command); they share `setting.ApplyEdits` with ordinary

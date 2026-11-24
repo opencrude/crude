@@ -28,6 +28,7 @@ type lspWorkspaceDiagnosticsClient interface {
 
 // workspacePullState is one server instance's workspace request loop.
 type workspacePullState struct {
+	ctx    context.Context
 	cancel context.CancelFunc
 	// failed ends the loop for this instance after repeated errors.
 	failed bool
@@ -43,7 +44,7 @@ var workspacePullRest = 2 * time.Second
 // workspace diagnostics: it offers them, they work, and the user lets Crude
 // look at closed files.
 func (m *LSPManager) workspacePullLocked(state *lspClientState) bool {
-	if state == nil || state.client == nil || state.closing || state.stopped || state.workspacePull.failed ||
+	if m.forceFallback || state == nil || state.client == nil || state.closing || state.stopped || state.workspacePull.failed ||
 		!m.settings.Diagnostics || m.settings.ProjectCheckMode() == setting.ProjectCheckOff {
 		return false
 	}
@@ -57,12 +58,15 @@ func (m *LSPManager) tickWorkspacePullLocked() {
 	for key, state := range m.states {
 		wanted := state.status == LSPConnected && m.projectCheckAllowedLocked() && m.workspacePullLocked(state)
 		switch {
-		case !wanted && state.workspacePull.cancel != nil:
+		case !wanted && state.workspacePull.cancel != nil && state.workspacePull.ctx.Err() == nil:
 			state.workspacePull.cancel()
-			state.workspacePull.cancel = nil
+			// The loop releases its slot on return, before a replacement starts.
+			if m.projectCheckAllowedLocked() && !state.closing && !state.stopped {
+				m.requestProjectCheckLocked()
+			}
 		case wanted && state.workspacePull.cancel == nil:
 			ctx, cancel := context.WithCancel(context.Background())
-			state.workspacePull.cancel = cancel
+			state.workspacePull.ctx, state.workspacePull.cancel = ctx, cancel
 			m.workspacePulls.Add(1)
 			go m.runWorkspacePull(ctx, key, state, state.client.(lspWorkspaceDiagnosticsClient), m.settingsGeneration)
 		}
@@ -71,6 +75,21 @@ func (m *LSPManager) tickWorkspacePullLocked() {
 
 func (m *LSPManager) runWorkspacePull(ctx context.Context, key string, state *lspClientState, client lspWorkspaceDiagnosticsClient, generation uint64) {
 	defer m.workspacePulls.Done()
+	defer func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if state.workspacePull.ctx == ctx {
+			state.workspacePull.cancel()
+			state.workspacePull.ctx, state.workspacePull.cancel = nil, nil
+			if !m.closed && m.states[key] == state {
+				if !m.workspacePullLocked(state) && m.projectCheckAllowedLocked() {
+					m.requestProjectCheckLocked()
+				} else {
+					m.signalLocked()
+				}
+			}
+		}
+	}()
 	errorsInRow := 0
 	for {
 		if !m.awaitWorkspacePullTurn(ctx, key, state, generation) {
@@ -91,10 +110,9 @@ func (m *LSPManager) runWorkspacePull(ctx context.Context, key string, state *ls
 			}
 			if errorsInRow >= workspacePullErrorLimit {
 				m.mu.Lock()
-				if m.states[key] == state {
+				if ctx.Err() == nil && m.states[key] == state && state.workspacePull.ctx == ctx {
 					// The closed-file check covers the server from now on.
 					state.workspacePull.failed = true
-					state.workspacePull.cancel = nil
 					m.bumpVersionLocked()
 					m.requestProjectCheckLocked()
 				}
@@ -126,7 +144,7 @@ func (m *LSPManager) awaitWorkspacePullTurn(ctx context.Context, key string, sta
 			m.mu.Unlock()
 			return false
 		}
-		wait := m.projectCheckWaitLocked(state.cmd, load)
+		wait := m.projectCheckWaitLocked(key, load)
 		measuring := load.Warming && wait == "" && m.settings.ProjectCheckMode() != setting.ProjectCheckAlways
 		m.mu.Unlock()
 		if wait == "" && !measuring {

@@ -107,6 +107,7 @@ type ServerRecord struct {
 	Package               string            `json:"package,omitempty"`
 	Hints                 *HintsRecord      `json:"hints,omitempty"`
 	DiagnosticScope       string            `json:"diagnostic_scope,omitempty"`
+	DiagnosticRootMarkers []string          `json:"diagnostic_root_markers,omitempty"`
 	Note                  string            `json:"note,omitempty"`
 	Sources               []string          `json:"sources,omitempty"`
 }
@@ -323,6 +324,12 @@ func validateServer(server ServerRecord) error {
 	}
 	if err := validateEnvironment(server.ID, server.Environment); err != nil {
 		return err
+	}
+	for _, marker := range server.DiagnosticRootMarkers {
+		name := strings.TrimSuffix(marker, "/")
+		if server.DiagnosticScope != ScopeProject || !validPattern(name) || name == "." || name == ".." || strings.ContainsAny(name, "*?[]:") {
+			return fmt.Errorf("%w: server %s invalid diagnostic root marker %q", errInvalidInput, server.ID, marker)
+		}
 	}
 	switch server.DiagnosticScope {
 	case "", ScopeProject, ScopeOpenFiles:

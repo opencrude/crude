@@ -130,7 +130,7 @@ func TestWithHintsMatchesLegacyResourceHints(t *testing.T) {
 	jsonEqual(t, "rust-analyzer explicit settings", got.Settings, map[string]any{"rust-analyzer": want})
 
 	jsonEqual(t, "pyright settings", server("pyright").WithHints(0, 0).Settings,
-		map[string]any{"python": map[string]any{"analysis": map[string]any{"diagnosticMode": "openFilesOnly"}}})
+		map[string]any{"python": map[string]any{"analysis": map[string]any{"diagnosticMode": "workspace"}}})
 	jsonEqual(t, "typescript init", server("typescript-language-server").WithHints(0, 2048).InitializationOptions,
 		map[string]any{"maxTsServerMemory": 2048, "tsserver": map[string]any{"useSyntaxServer": "never"}})
 

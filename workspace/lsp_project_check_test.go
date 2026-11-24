@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"crude/insight/facts"
+	"crude/internal/fileuri"
 	"crude/internal/sysload"
 	"crude/types/insight"
 	"crude/types/setting"
@@ -115,10 +116,10 @@ func TestRestartedServerRetiresOldClosedFileResults(t *testing.T) {
 }
 
 // The project check opens each closed file of a server that does not report
-// closed files, one at a time, skips vendored code, keeps every result and
+// closed files, skips vendored code, keeps every result and
 // never sends the open file again. Turning it off stops it. A server that
 // reports closed files itself (here the Go server, by catalog) is not asked.
-func TestProjectCheckCoversClosedFilesOneAtATime(t *testing.T) {
+func TestProjectCheckCoversAllEligibleFiles(t *testing.T) {
 	m, r, root := probeManager(t)
 	open := filepath.Join(root, "open.go")
 	source := editorSource(t, m, open, "package main\n")
@@ -134,15 +135,7 @@ func TestProjectCheckCoversClosedFilesOneAtATime(t *testing.T) {
 		createFile(t, path, "x = 1\n")
 	}
 	goCalls := len(goClient.snapshot())
-	m.mu.Lock()
-	m.lastEdit = time.Time{}
-	m.discovery = &assemblyDiscovery{root: root, languages: map[string]*discoveredLanguage{
-		"python": {id: "python", name: "Python", paths: append(slices.Clone(files), vendored)},
-		"go":     {id: "go", name: "Go", paths: []string{open, project}},
-	}}
-	m.checkPending = true
-	m.signalLocked()
-	m.mu.Unlock()
+	startProjectCheck(t, m, root, map[string][]string{"python": append(slices.Clone(files), vendored), "go": {open, project}})
 
 	for _, path := range files {
 		awaitProjectFact(t, m, path)
@@ -161,12 +154,12 @@ func TestProjectCheckCoversClosedFilesOneAtATime(t *testing.T) {
 		t.Fatalf("servers started: %d", len(clients))
 	}
 	calls := clients[1].snapshot()
-	open1, close1 := slices.Index(calls, "open:a.py:python:x = 1\n"), slices.Index(calls, "close:a.py")
-	open2 := slices.Index(calls, "open:b.py:python:x = 1\n")
-	if open1 < 0 || close1 < 0 || open2 < 0 || close1 > open2 {
-		t.Fatalf("files were not checked one at a time: %v", calls)
+	for _, name := range []string{"a.py", "b.py"} {
+		if !slices.Contains(calls, "open:"+name+":python:x = 1\n") {
+			t.Fatalf("missing fallback open: %v", calls)
+		}
 	}
-	awaitLSP(t, func() bool { return m.ProjectInsights().ProjectCheckTotal == 0 })
+	awaitLSP(t, func() bool { return len(m.ProjectInsights().Analysis) == 0 })
 
 	// A changed file is checked again; with the check off it is not.
 	settings := m.Settings()
@@ -193,7 +186,7 @@ func awaitProjectFact(t *testing.T, m *LSPManager, path string) {
 		}
 		if time.Now().After(deadline) {
 			batch, ok := m.FileDiagnostics(path)
-			t.Fatalf("%s was not checked: %+v, present=%v", filepath.Base(path), batch, ok)
+			t.Fatalf("%s was not checked: %+v, present=%v, unchecked=%+v", filepath.Base(path), batch, ok, m.UncheckedFiles())
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -211,7 +204,7 @@ func TestProjectCheckStartsFromAssemblyWithoutOpenFiles(t *testing.T) {
 	m.mu.Unlock()
 	m.publishAssembly(t.Context(), &assemblyDiscovery{root: root, languages: map[string]*discoveredLanguage{
 		"python": {id: "python", name: "Python", files: 1, sample: path, paths: []string{path}},
-	}}, insight.AssemblyPlan{State: insight.AssemblyReady, Generation: generation})
+	}}, insight.AssemblyPlan{State: insight.AssemblyReady, Generation: generation, Languages: []insight.AssemblyLanguage{{ID: "python", Status: insight.ToolReady}}})
 	awaitProjectFact(t, m, path)
 	if summary := m.ProjectInsights(); summary.Errors != 1 || summary.FilesAffected != 1 {
 		t.Fatalf("Problems does not count the closed file: %+v", summary)
@@ -237,14 +230,10 @@ func TestCloseTimeClearingKeepsTheCheckedResult(t *testing.T) {
 	if batch, ok := m.FileDiagnostics(path); !ok || !batch.FromProjectCheck() || len(batch.Diagnostics) != 1 {
 		t.Fatalf("the close-time clearing erased the checked result: %+v, present=%v", batch, ok)
 	}
-	m.mu.Lock()
-	reports := false
-	for _, state := range m.states {
-		reports = reports || state.reportsProject
-	}
-	m.mu.Unlock()
-	if reports {
-		t.Fatal("an empty close-time report marked the server as reporting the project")
+	for _, h := range m.ServerHealthSnapshots() {
+		if h.Scope == insight.CoverageProject {
+			t.Fatal("a close-time report promoted the server")
+		}
 	}
 }
 
@@ -264,7 +253,7 @@ func TestProjectCheckYieldsToBatteryAndContention(t *testing.T) {
 	m.mu.Unlock()
 	m.publishAssembly(t.Context(), &assemblyDiscovery{root: root, languages: map[string]*discoveredLanguage{
 		"python": {id: "python", name: "Python", files: 1, sample: path, paths: []string{path}},
-	}}, insight.AssemblyPlan{State: insight.AssemblyReady, Generation: generation})
+	}}, insight.AssemblyPlan{State: insight.AssemblyReady, Generation: generation, Languages: []insight.AssemblyLanguage{{ID: "python", Status: insight.ToolReady}}})
 
 	waits := func(reason string) {
 		t.Helper()
@@ -310,8 +299,8 @@ func TestProjectCheckWaitsForAFirstMeasurement(t *testing.T) {
 	m.mu.Unlock()
 	m.publishAssembly(t.Context(), &assemblyDiscovery{root: root, languages: map[string]*discoveredLanguage{
 		"python": {id: "python", name: "Python", files: 1, sample: path, paths: []string{path}},
-	}}, insight.AssemblyPlan{State: insight.AssemblyReady, Generation: generation})
-	awaitLSP(t, func() bool { return m.ProjectInsights().ProjectCheckTotal == 1 })
+	}}, insight.AssemblyPlan{State: insight.AssemblyReady, Generation: generation, Languages: []insight.AssemblyLanguage{{ID: "python", Status: insight.ToolReady}}})
+	awaitLSP(t, func() bool { m.mu.Lock(); defer m.mu.Unlock(); return m.checkRunning })
 	time.Sleep(1200 * time.Millisecond)
 	if _, ok := m.FileDiagnostics(path); ok {
 		t.Fatal("the check ran before it measured the computer")
@@ -338,21 +327,13 @@ func TestProjectCheckEndsWhenServersTakeTurns(t *testing.T) {
 	for _, path := range append(slices.Clone(python), c...) {
 		createFile(t, path, "x\n")
 	}
-	m.mu.Lock()
-	m.lastEdit = time.Time{}
-	m.discovery = &assemblyDiscovery{root: root, languages: map[string]*discoveredLanguage{
-		"python": {id: "python", name: "Python", paths: python},
-		"c":      {id: "c", name: "C", paths: c},
-	}}
-	m.checkPending = true
-	m.signalLocked()
-	m.mu.Unlock()
+	startProjectCheck(t, m, root, map[string][]string{"python": python, "c": c})
 
 	all := append(slices.Clone(python), c...)
 	for _, path := range all {
 		awaitProjectFact(t, m, path)
 	}
-	awaitLSP(t, func() bool { return m.ProjectInsights().ProjectCheckTotal == 0 })
+	awaitLSP(t, func() bool { return len(m.ProjectInsights().Analysis) == 0 })
 	started := len(r.snapshot())
 	// Retire the final process and wait on its actual removal, not elapsed time.
 	m.mu.Lock()
@@ -364,7 +345,7 @@ func TestProjectCheckEndsWhenServersTakeTurns(t *testing.T) {
 	m.mu.Unlock()
 	awaitLSP(t, func() bool { return len(m.ServerHealthSnapshots()) == 0 })
 	m.mu.Lock()
-	queue := m.projectCheckQueueLocked()
+	queue := uncheckedQueue(m)
 	m.mu.Unlock()
 	if len(queue) != 0 {
 		t.Fatalf("retiring servers queued already checked files: %+v", queue)
@@ -402,16 +383,31 @@ func TestRestartServerRechecksClosedFiles(t *testing.T) {
 	})
 }
 
+func uncheckedQueue(m *LSPManager) []string {
+	var out []string
+	for path, key := range m.inventory.owners {
+		if m.checkNeededLocked(path, key) {
+			out = append(out, path)
+		}
+	}
+	return out
+}
+
 func startProjectCheck(t *testing.T, m *LSPManager, root string, files map[string][]string) {
 	t.Helper()
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.discovery = &assemblyDiscovery{root: root, languages: map[string]*discoveredLanguage{}}
+	d := &assemblyDiscovery{root: root, languages: map[string]*discoveredLanguage{}}
 	for id, paths := range files {
-		m.discovery.languages[id] = &discoveredLanguage{id: id, paths: paths}
+		d.languages[id] = &discoveredLanguage{id: id, paths: paths}
 	}
+	m.mu.Lock()
 	m.lastEdit = time.Time{}
-	m.requestProjectCheckLocked()
+	gen := m.assemblyRequested
+	m.mu.Unlock()
+	plan := insight.AssemblyPlan{Generation: gen}
+	for id := range files {
+		plan.Languages = append(plan.Languages, insight.AssemblyLanguage{ID: id, Status: insight.ToolReady})
+	}
+	m.publishAssembly(t.Context(), d, plan)
 }
 
 func awaitProjectCheckEnd(t *testing.T, m *LSPManager) {
@@ -449,7 +445,7 @@ func TestProjectCheckDoesNotRestartAServerThatGivesNoResult(t *testing.T) {
 		m.settleProjectReportLocked(state, time.Now().Add(lspProjectSettleQuiet))
 		m.retireLocked(state)
 	}
-	queue := m.projectCheckQueueLocked()
+	queue := uncheckedQueue(m)
 	pending := m.checkPending
 	m.signalLocked()
 	m.mu.Unlock()
@@ -518,9 +514,9 @@ func TestProjectCheckUsesResolvedProviderIdentity(t *testing.T) {
 	defer m.mu.Unlock()
 	spec, _ := m.resolveServerLocked(path)
 	m.toolPaths = map[assemblyToolKey]string{{spec.ServerID, spec.Command}: filepath.Join(root, "new-checker")}
-	command, needed := m.needsProjectCheckLocked(path)
-	if !needed || command != filepath.Join(root, "new-checker") {
-		t.Fatalf("old launch result suppressed new provider: %q %v", command, needed)
+	next, _ := m.resolveServerLocked(path)
+	if !m.checkNeededLocked(path, lspServerKey(fileuri.FromPath(root), next)) {
+		t.Fatal("old launch result suppressed the new provider")
 	}
 }
 
@@ -602,7 +598,7 @@ func TestProjectCheckDoesNotBlameAFileForABusyComputer(t *testing.T) {
 		return !m.checkRunning && m.checkPending && !m.checkRetryAt.IsZero()
 	})
 	m.mu.Lock()
-	remembered, queued := len(m.checkResults), len(m.projectCheckQueueLocked())
+	remembered, queued := len(m.checkResults), len(uncheckedQueue(m))
 	m.mu.Unlock()
 	if remembered != 0 || queued != len(paths) || m.ProjectInsights().ProjectCheckUnchecked != 0 {
 		t.Fatalf("a busy computer was blamed on the files: remembered=%d queued=%d", remembered, queued)

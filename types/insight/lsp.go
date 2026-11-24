@@ -160,6 +160,15 @@ type LanguageServiceStatus struct {
 	ActionLabel string
 }
 
+// ServerAnalysis is fallback diagnostic coverage for one launch and project root.
+// Checked counts current answers, including empty reports. Unchecked counts
+// files that could not be checked, never successful answers.
+type ServerAnalysis struct {
+	ID, Server, Root          string
+	Checked, Total, Unchecked int
+	Active                    bool
+}
+
 type ProjectInsights struct {
 	// Language is the owner-derived user-facing status. Prefer it over the
 	// raw lifecycle fields below for any user-visible text.
@@ -187,11 +196,9 @@ type ProjectInsights struct {
 	DiagnosticsUnverified int
 	DiagnosticsLimited    int
 	CoverageDetail        string
-	// The check of files that are not open: files checked and to check in
-	// this pass, and why it waits ("while you type"), empty while it works.
-	ProjectCheckDone  int
-	ProjectCheckTotal int
-	ProjectCheckWait  string
+	// Analysis contains fallback servers only. ProjectCheckWait explains a pause.
+	Analysis         []ServerAnalysis
+	ProjectCheckWait string
 	// ProjectCheckUnchecked counts closed files whose server gave no usable
 	// result; the check does not try them again until they or the
 	// configuration change, or the user restarts the server.

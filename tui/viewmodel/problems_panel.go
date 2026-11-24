@@ -94,7 +94,7 @@ func (m *App) problemsStatus(insights insight.ProjectInsights) problems.Status {
 		}
 	}
 	if insights.Language.Action != insight.LanguageActionNone ||
-		insights.Language.State != insight.LanguageReady && insights.Language.Message != "" {
+		len(insights.Analysis) == 0 && insights.Language.State != insight.LanguageReady && insights.Language.Message != "" {
 		if insights.Language.Action == insight.LanguageActionNone {
 			status.Action, status.ActionLabel = "", ""
 		}
@@ -129,8 +129,10 @@ func (m *App) problemsStatus(insights insight.ProjectInsights) problems.Status {
 		parts = append(parts, fmt.Sprintf("%d stopped with an error", failed))
 		status.Attention = true
 	}
-	if check := projectCheckText(insights); check != "" {
-		parts = append(parts, check)
+	if len(insights.Analysis) > 0 {
+		status.Servers = strings.Join(parts, ", ")
+		status.Text, status.Progress = projectAnalysisText(insights, m.ws.RootPath())
+		return status
 	}
 	if len(parts) == 0 {
 		status.Text = "No language server is running."
@@ -140,16 +142,40 @@ func (m *App) problemsStatus(insights insight.ProjectInsights) problems.Status {
 	return status
 }
 
-// projectCheckText tells how far the check of closed files is.
-func projectCheckText(insights insight.ProjectInsights) string {
-	if insights.ProjectCheckTotal == 0 {
-		return ""
+// Project analysis shows only the servers for which Crude supplies files.
+func projectAnalysisText(insights insight.ProjectInsights, root string) (string, []string) {
+	counts := map[string]int{}
+	for _, r := range insights.Analysis {
+		counts[r.Server]++
 	}
-	progress := fmt.Sprintf("%d of %d", insights.ProjectCheckDone, insights.ProjectCheckTotal)
+	var parts []string
+	active := false
+	for _, r := range insights.Analysis {
+		name := r.Server
+		if counts[name] > 1 {
+			if rel, err := filepath.Rel(root, r.Root); err == nil {
+				name += " (" + filepath.ToSlash(rel) + ")"
+			}
+		}
+		text := fmt.Sprintf("%s %d/%d", name, r.Checked, r.Total)
+		if r.Unchecked > 0 {
+			text += fmt.Sprintf(" (%d unchecked)", r.Unchecked)
+		}
+		if r.Active {
+			active = true
+			parts = append([]string{text}, parts...)
+		} else {
+			parts = append(parts, text)
+		}
+	}
+	label := "Analyzing project"
+	if !active && insights.ProjectCheckUnchecked > 0 {
+		label = "Project analysis"
+	}
 	if insights.ProjectCheckWait != "" {
-		return "closed-file check waits " + insights.ProjectCheckWait + " (" + progress + ")"
+		label = "Analysis waits " + insights.ProjectCheckWait
 	}
-	return "checking closed files (" + progress + ")"
+	return label + ":", parts
 }
 
 func plural(n int, noun string) string {

@@ -716,8 +716,15 @@ GOMAXPROCS=2, `-count=3`, 20 000 messages of 4 lines (6.7 MB of text):
 
 | Benchmark | Result | Ceiling |
 |---|---|---|
-| `BenchmarkChatFindCount_20000Rows` | 15.8–16.1 ms, 415 MB/s, 3.3 KB, 1 alloc | 4,500 B / 3 allocs |
+| `BenchmarkChatFindCount_20000Rows` (query change) | 14.9–15.1 ms, 8–9 B, 1 alloc | 48 B / 3 allocs |
+| `BenchmarkChatFindFirstCount_20000Rows` (cold) | 14.9–15.5 ms, 247,696 B, 14 allocs | 252,000 B / 16 allocs |
 | `BenchmarkChatFindStreamFrame_20000Rows` | 78–90 µs, 304 B, 4 allocs | 450 B / 6 allocs |
+
+The count rows above were remeasured with Go 1.27.4, Linux amd64, three
+12-operation runs. The previous test amortized the one-time row cache over a
+machine-dependent iteration count: under load it reported 4,594 B/op for the
+same work. Cold and retained counts now have independent gates; the retained
+ceiling is tighter, not raised. Both still scan all 80,000 lines.
 
 The same text through `textsearch.Compile` (a case-insensitive regular
 expression, the editor's matcher) ran at 23–31 MB/s: 330–450 ms per query

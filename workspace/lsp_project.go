@@ -118,7 +118,7 @@ func (m *LSPManager) projectKeysLocked() []string {
 // start or an explicit start, and pause.
 func (m *LSPManager) projectWantedLocked(key string) bool {
 	_, ok := m.projects[key]
-	return ok && !m.projectWatchUnreliable && !m.paused && m.editorActiveLocked()
+	return (ok || key == m.checkTarget && m.checkLaunch && m.projectCheckAllowedLocked() || m.workspacePullLocked(m.states[key])) && !m.projectWatchUnreliable && !m.paused && m.editorActiveLocked()
 }
 
 func (m *LSPManager) removeProjectFactsLocked(match func(insight.Boundary) bool) {
@@ -139,7 +139,7 @@ func (m *LSPManager) receiveUnopenedDiagnostics(key string, owner *lspClientStat
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	sources := m.sources
-	if sources == nil || sources.Insight == nil || m.closed || m.paused || m.projectWatchUnreliable || m.analysisErrorLocked() != nil ||
+	if m.forceFallback || sources == nil || sources.Insight == nil || m.closed || m.paused || m.projectWatchUnreliable || m.analysisErrorLocked() != nil ||
 		m.states[key] != owner || owner.closing || owner.stopped || owner.teardownErr != nil || owner.instance == "" {
 		return
 	}
@@ -153,9 +153,12 @@ func (m *LSPManager) receiveUnopenedDiagnostics(key string, owner *lspClientStat
 	// the server as one that reports the project. Only a server that reports
 	// problems in closed files, or is known to, speaks for the project.
 	if len(p.Diagnostics) == 0 && !p.Limited && !m.reportsProjectLocked(key, owner) {
-		return
+		// Clear this server's own unsolicited result, not a retained disk view.
+		if previous, ok := sources.Insight.diagnostics.Snapshot(projectFactPrefix + path); !ok || previous.Boundary.Context.ID != key {
+			return
+		}
 	}
-	owner.reportedAt, owner.reportsProject = time.Now(), true
+	owner.reportedAt = time.Now()
 	if m.documents[path] != nil {
 		return
 	}
@@ -197,7 +200,7 @@ func (m *LSPManager) publishProjectFactLocked(sources *DocumentService, key stri
 	if _, err := store.Publish(p); err != nil && !errors.Is(err, facts.ErrSequence) {
 		m.noteDiagnosticLimitLocked(sources, err)
 	} else if err == nil && !p.Limited {
-		delete(m.checkResults, path)
+		m.dropCheckResultLocked(path)
 	}
 	m.bumpVersionLocked()
 }
@@ -216,7 +219,7 @@ func (m *LSPManager) retainDiskViewLocked(path string, doc *lspDocument) {
 	if state != nil {
 		root, err = fileuri.ToPath(state.rootURI)
 	}
-	if !ok || answer.ID == "" || answer.State == insight.Stale || answer.Limited || err != nil || state == nil ||
+	if m.projectWatchUnreliable || !ok || answer.ID == "" || answer.State == insight.Stale || answer.Limited || err != nil || state == nil ||
 		state.closing || state.stopped || state.instance == "" || answer.Boundary.Producer.InstanceID != state.instance ||
 		answer.Boundary.Source != doc.source {
 		if store.RemoveMatching(func(b insight.Boundary) bool { return b.Source == doc.source }) > 0 {
@@ -229,19 +232,25 @@ func (m *LSPManager) retainDiskViewLocked(path string, doc *lspDocument) {
 		prefix = projectFactPrefix
 	}
 	store.RemoveMatching(func(b insight.Boundary) bool { return b.Source == doc.source })
+	// A clean background answer needs only a receipt. Do not fill the
+	// editor store or every shell snapshot with thousands of empty reports.
+	if prefix == checkedFactPrefix && m.checkPaths[path] && len(answer.Diagnostics) == 0 && m.inventory != nil && m.inventory.owners[path] == doc.key {
+		m.rememberProjectCheckLocked(path, state.cmd, doc.key, "")
+		return
+	}
 	m.publishProjectFactLocked(m.sources, doc.key, state, root, path, prefix, insight.DiagnosticPublication{
 		Diagnostics: answer.Diagnostics, Detail: answer.Detail})
 }
 
 // reportsProjectLocked reports whether the server reports files that are not
-// open: the catalog says so, the server was seen doing it, or it offers
+// open: the project scope is declared, or this exact launch offers
 // workspace diagnostics that Crude requests.
 func (m *LSPManager) reportsProjectLocked(key string, state *lspClientState) bool {
-	if state != nil && (state.reportsProject || state.spec.DiagnosticScope == insight.CoverageProject || m.workspacePullLocked(state)) {
-		return true
+	if m.forceFallback {
+		return false
 	}
-	_, project := m.projects[key]
-	return project && state != nil && state.spec.DiagnosticScope == insight.CoverageProject
+	_, declared := m.projects[key]
+	return declared || m.workspacePullLocked(state)
 }
 
 // settleProjectReportLocked runs once per server instance, when it is idle
@@ -295,8 +304,6 @@ func (m *LSPManager) settleProjectReportLocked(state *lspClientState, now time.T
 		return ok && spec.Command == state.cmd
 	}) > 0 {
 		m.bumpVersionLocked()
-		m.requestProjectCheckLocked()
-	} else if len(m.projectCheckQueueLocked()) > 0 {
 		m.requestProjectCheckLocked()
 	}
 }

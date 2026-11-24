@@ -66,6 +66,7 @@ func TestFixtureLanguageServerHelper(t *testing.T) {
 		data, _ := json.Marshal(message)
 		fmt.Fprintf(os.Stdout, "Content-Length: %d\r\n\r\n%s", len(data), data)
 	}
+	legacy := os.Getenv("CRUDE_FIXTURE_MODE") == "document-push"
 	root := ""
 	check := func() {
 		_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
@@ -107,7 +108,11 @@ func TestFixtureLanguageServerHelper(t *testing.T) {
 			ID     json.RawMessage `json:"id"`
 			Method string          `json:"method"`
 			Params struct {
-				RootURI string `json:"rootUri"`
+				RootURI      string `json:"rootUri"`
+				TextDocument struct {
+					URI     string `json:"uri"`
+					Version int    `json:"version"`
+				} `json:"textDocument"`
 			} `json:"params"`
 		}
 		if json.Unmarshal(data, &msg) != nil {
@@ -136,7 +141,15 @@ func TestFixtureLanguageServerHelper(t *testing.T) {
 			}
 			write(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{"capabilities": map[string]any{}}})
 		case "initialized", "workspace/didChangeWatchedFiles":
-			check()
+			if !legacy {
+				check()
+			}
+		case "textDocument/didOpen", "textDocument/didChange":
+			if legacy {
+				d := msg.Params.TextDocument
+				write(map[string]any{"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": map[string]any{"uri": d.URI, "version": d.Version, "diagnostics": []any{}}})
+			}
+
 		case "exit":
 			os.Exit(0)
 		default:

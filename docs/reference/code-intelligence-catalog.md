@@ -30,7 +30,11 @@ TypeScript and TSX are four entries that share one server list.
 
 The diagnostic scope is declared data, not a measurement. `project` means the
 server documentation says it reports problems for files that are not open.
-`open-files` means it reports only for open files. An empty value means unknown.
+Optional `diagnostic_root_markers` limit that push declaration to roots that
+contain a matching regular file or directory (a directory name ends in `/`).
+`open-files` is the catalog baseline, not a veto on negotiated workspace pull.
+An empty value means unknown. The Pyright defaults request workspace analysis;
+explicit server settings win. Marksman checks recognized project folders only.
 
 ## Sources
 
@@ -70,8 +74,8 @@ It skips what Crude cannot use and lists each skip with `-v`.
 To update the catalog, change the pins or `authored.json`, then run:
 
 ```bash
-go run ./internal/catalogimport            # download, verify, write
-go run ./internal/catalogimport -check     # fail when catalog.json is stale
+go run ./tools/catalogimport            # download, verify, write
+go run ./tools/catalogimport -check     # fail when catalog.json is stale
 ```
 
 ## Behavior

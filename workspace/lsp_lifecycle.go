@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
@@ -45,12 +46,10 @@ type lspClientState struct {
 	lastUsed    time.Time
 	// connectedAt and reportedAt time the instance's own project report:
 	// settled is set once it is idle and quiet, and older results for files
-	// no view holds give way to it. reportsProject records that the server
-	// reported files that are not open, so Crude need not check them.
-	connectedAt    time.Time
-	reportedAt     time.Time
-	settled        bool
-	reportsProject bool
+	// no view holds give way to it.
+	connectedAt time.Time
+	reportedAt  time.Time
+	settled     bool
 	// workspacePull is the workspace diagnostic request loop of a server
 	// that offers it (lsp_workspace_pull.go).
 	workspacePull workspacePullState
@@ -88,7 +87,8 @@ type lspClosedDocument struct {
 
 func NewLSPManager(logger Logger, runtimes ...LSPRuntime) *LSPManager {
 	m := &LSPManager{
-		logger: logger, settings: setting.DefaultLSP(), runtime: defaultLSPRuntime{},
+		forceFallback: os.Getenv("CRUDE_TEST_LSP_FORCE_FALLBACK") == "1",
+		logger:        logger, settings: setting.DefaultLSP(), runtime: defaultLSPRuntime{},
 		analysisSettings: setting.DefaultWorkspaceAnalysis(), analysisIdentity: fileio.DirectoryIdentity,
 		states: make(map[string]*lspClientState), documents: make(map[string]*lspDocument),
 		updateTimers: make(map[string]*time.Timer), wake: make(chan struct{}, 1),
@@ -189,7 +189,11 @@ func (m *LSPManager) SetSettings(settings setting.LSP) {
 		}
 	}
 	if viewOnly {
-		m.requestProjectCheckLocked() // a pass stops itself when the check is turned off
+		if !m.projectCheckAllowedLocked() {
+			m.cancelProjectCheckLocked()
+		} else {
+			m.requestProjectCheckLocked()
+		}
 		m.bumpVersionLocked()
 		m.mu.Unlock()
 		return
@@ -527,7 +531,11 @@ func (m *LSPManager) reconcile() bool {
 			return true
 		}
 	}
-	for _, key := range m.projectKeysLocked() {
+	keys := m.projectKeysLocked()
+	if m.checkTarget != "" {
+		keys = append(keys, m.checkTarget)
+	}
+	for _, key := range keys {
 		state := m.states[key]
 		if state == nil || state.stopped || state.status == LSPConnected || !m.projectWantedLocked(key) {
 			continue
@@ -769,6 +777,7 @@ func (m *LSPManager) finishStart(key string, state *lspClientState, client LSPCl
 		state.assistance = insight.CloneLSPAssistance(assistance)
 		state.status, state.err, state.lastUsed = LSPConnected, "", time.Now()
 		state.restarting = false
+		state.workspacePull.failed = false
 		m.captureServerEvidenceLocked(state)
 		state.connectedAt, state.reportedAt, state.settled = state.lastUsed, time.Time{}, false
 	}
@@ -828,7 +837,7 @@ func (m *LSPManager) retireLocked(state *lspClientState) {
 	state.waiting, state.restarting, state.errorMessage = false, false, ""
 	if state.workspacePull.cancel != nil {
 		state.workspacePull.cancel()
-		state.workspacePull.cancel = nil
+		state.workspacePull.ctx, state.workspacePull.cancel = nil, nil
 	}
 	if state.ticket != nil {
 		state.ticket.Cancel() // No effect after Begin; the exact lease stays retained.
@@ -895,6 +904,7 @@ func (m *LSPManager) OpenFile(_ context.Context, source insight.Source, text str
 		}
 		doc.editor, doc.diskView = true, false
 	} else {
+		m.dropCheckResultLocked(path)
 		m.documents[path] = &lspDocument{text: text, source: source, revision: 1, editor: true}
 		// The open document now owns this file's facts. The project view of
 		// the file on disk gives way until the document closes again.
@@ -1027,6 +1037,9 @@ func (m *LSPManager) CloseFile(_ context.Context, path string) {
 		}
 	}
 	m.dropDocumentLocked(path, doc)
+	if doc != nil && m.inventory != nil && m.inventory.owners[path] != "" {
+		m.requestProjectCheckLocked()
+	}
 }
 
 // dropDocumentLocked forgets a document no holder wants and queues its
@@ -1185,7 +1198,7 @@ func (m *LSPManager) notifyWatchedFilesChanged(ctx context.Context, path string,
 		m.mu.Unlock()
 		return
 	}
-	if changeType == lspFileDeleted {
+	if changeType == lspFileDeleted && !m.projectWatchUnreliable && path != m.workspaceRoot {
 		m.forgetCheckedFactsLocked(path)
 	}
 	clients := m.watchedClientsLocked(path, !invalidated)
@@ -1300,6 +1313,7 @@ func (m *LSPManager) Refresh(root string) {
 	m.mu.Lock()
 	m.stopLocked()
 	clear(m.checkResults)
+	clear(m.checkCounts)
 	if m.sources != nil && m.sources.Insight != nil {
 		if m.sources.Insight.diagnostics.RemoveMatching(func(b insight.Boundary) bool {
 			return m.documents[b.Source.Path] == nil

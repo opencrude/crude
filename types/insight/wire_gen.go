@@ -6226,8 +6226,8 @@ func (z Producer) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *ProjectInsights) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 26
-	o = append(o, 0xdc, 0x0, 0x1a)
+	// array header, size 25
+	o = append(o, 0xdc, 0x0, 0x19)
 	o, err = z.Language.MarshalMsg(o)
 	if err != nil {
 		err = msgp.WrapError(err, "Language")
@@ -6254,8 +6254,18 @@ func (z *ProjectInsights) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.AppendInt(o, z.DiagnosticsUnverified)
 	o = msgp.AppendInt(o, z.DiagnosticsLimited)
 	o = msgp.AppendString(o, z.CoverageDetail)
-	o = msgp.AppendInt(o, z.ProjectCheckDone)
-	o = msgp.AppendInt(o, z.ProjectCheckTotal)
+	if z.Analysis == nil { // allownil: if nil
+		o = msgp.AppendNil(o)
+	} else {
+		o = msgp.AppendArrayHeader(o, uint32(len(z.Analysis)))
+		for za0001 := range z.Analysis {
+			o, err = z.Analysis[za0001].MarshalMsg(o)
+			if err != nil {
+				err = msgp.WrapError(err, "Analysis", za0001)
+				return
+			}
+		}
+	}
 	o = msgp.AppendString(o, z.ProjectCheckWait)
 	o = msgp.AppendInt(o, z.ProjectCheckUnchecked)
 	return
@@ -6273,8 +6283,8 @@ func (z *ProjectInsights) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 26 {
-		err = msgp.ArrayError{Wanted: 26, Got: zb0001}
+	if zb0001 != 25 {
+		err = msgp.ArrayError{Wanted: 25, Got: zb0001}
 		return
 	}
 	bts, err = z.Language.UnmarshalMsg(bts)
@@ -6387,15 +6397,32 @@ func (z *ProjectInsights) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.WrapError(err, "CoverageDetail")
 		return
 	}
-	z.ProjectCheckDone, bts, err = msgp.ReadIntBytes(bts)
-	if err != nil {
-		err = msgp.WrapError(err, "ProjectCheckDone")
-		return
-	}
-	z.ProjectCheckTotal, bts, err = msgp.ReadIntBytes(bts)
-	if err != nil {
-		err = msgp.WrapError(err, "ProjectCheckTotal")
-		return
+	if msgp.IsNil(bts) {
+		bts = bts[1:]
+		z.Analysis = nil
+	} else {
+		var zb0002 uint32
+		zb0002, bts, err = msgp.ReadArrayHeaderBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "Analysis")
+			return
+		}
+		if uint64(zb0002)*1 > uint64(len(bts)) {
+			err = msgp.ErrShortBytes
+			return
+		}
+		if z.Analysis != nil && cap(z.Analysis) >= int(zb0002) {
+			z.Analysis = (z.Analysis)[:zb0002]
+		} else {
+			z.Analysis = make([]ServerAnalysis, zb0002)
+		}
+		for za0001 := range z.Analysis {
+			bts, err = z.Analysis[za0001].UnmarshalMsg(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "Analysis", za0001)
+				return
+			}
+		}
 	}
 	z.ProjectCheckWait, bts, err = msgp.ReadStringBytes(bts)
 	if err != nil {
@@ -6413,7 +6440,11 @@ func (z *ProjectInsights) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *ProjectInsights) Msgsize() (s int) {
-	s = 3 + z.Language.Msgsize() + msgp.StringPrefixSize + len(z.ServerName) + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.StringPrefixSize + len(z.ServerError) + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.StringPrefixSize + len(z.TopIssue) + msgp.Int64Size + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.StringPrefixSize + len(z.CoverageDetail) + msgp.IntSize + msgp.IntSize + msgp.StringPrefixSize + len(z.ProjectCheckWait) + msgp.IntSize
+	s = 3 + z.Language.Msgsize() + msgp.StringPrefixSize + len(z.ServerName) + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.StringPrefixSize + len(z.ServerError) + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.StringPrefixSize + len(z.TopIssue) + msgp.Int64Size + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.StringPrefixSize + len(z.CoverageDetail) + msgp.ArrayHeaderSize
+	for za0001 := range z.Analysis {
+		s += z.Analysis[za0001].Msgsize()
+	}
+	s += msgp.StringPrefixSize + len(z.ProjectCheckWait) + msgp.IntSize
 	return
 }
 
@@ -7105,6 +7136,82 @@ func (z *RecentEdit) UnmarshalMsg(bts []byte) (o []byte, err error) {
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *RecentEdit) Msgsize() (s int) {
 	s = 1 + msgp.StringPrefixSize + len(z.Path) + msgp.IntSize + msgp.StringPrefixSize + len(z.Removed) + msgp.StringPrefixSize + len(z.Inserted) + msgp.StringPrefixSize + len(z.Author) + msgp.Int64Size
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z *ServerAnalysis) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 7
+	o = append(o, 0x97)
+	o = msgp.AppendString(o, z.ID)
+	o = msgp.AppendString(o, z.Server)
+	o = msgp.AppendString(o, z.Root)
+	o = msgp.AppendInt(o, z.Checked)
+	o = msgp.AppendInt(o, z.Total)
+	o = msgp.AppendInt(o, z.Unchecked)
+	o = msgp.AppendBool(o, z.Active)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *ServerAnalysis) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 7 {
+		err = msgp.ArrayError{Wanted: 7, Got: zb0001}
+		return
+	}
+	z.ID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "ID")
+		return
+	}
+	z.Server, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Server")
+		return
+	}
+	z.Root, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Root")
+		return
+	}
+	z.Checked, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Checked")
+		return
+	}
+	z.Total, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Total")
+		return
+	}
+	z.Unchecked, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Unchecked")
+		return
+	}
+	z.Active, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Active")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *ServerAnalysis) Msgsize() (s int) {
+	s = 1 + msgp.StringPrefixSize + len(z.ID) + msgp.StringPrefixSize + len(z.Server) + msgp.StringPrefixSize + len(z.Root) + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.BoolSize
 	return
 }
 
