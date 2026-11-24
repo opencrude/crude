@@ -51,6 +51,7 @@ Rules:
 - Do not claim product code changed when only a mock, plan, or external file changed.
 - Do not turn runtime controls, memory, tool output, or child wakes into human intent.
 - Compaction is a normal internal boundary in ongoing work, not a new human turn. Retained prompts are historical input; preserve whether they have already been answered, and do not ask for or generate those answers again.
+- An earlier context checkpoint in the source summarizes older history. Messages after it are newer: they replace its status, results, interruption point and next action. Never carry forward a step that later messages show as done, failed or abandoned.
 - Preserve the exact interruption point, already delivered communication, active async handles, output cursors, ownership, pending results and next action. Never summarize a running tool as finished or suggest launching it again. Use the supplied current runtime facts rather than inferring live state from old logs.
 
 Recent genuine human or parent-assignment manifest (retained verbatim when it fits the continuation budget):

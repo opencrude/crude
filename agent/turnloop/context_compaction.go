@@ -500,21 +500,34 @@ func (a *Agent) finishCheckpoint(ctx context.Context, msgs []provider.ChatMessag
 		retention = provider.EstimateTokens(checkpointMsg.ContentString(), targetModel)
 	}
 	retentionBudget := min(retention, available)
-	answered := latestHumanRequestAnswered(msgs[1:])
-	if role == "root" && a.LatestHumanTurnState != nil {
-		state, known, stateErr := a.LatestHumanTurnState(ctx)
-		if stateErr != nil {
-			return compactOutcome{}, fmt.Errorf("read durable human-turn state: %w", stateErr)
+	source := msgs[1:]
+	// Human input before pendingFrom was already answered; from there on it
+	// belongs to the turn still in progress. A child's assignment is always
+	// its pending instruction set.
+	pendingFrom := 0
+	if role == "root" {
+		running, known := false, false
+		if a.LatestHumanTurnState != nil {
+			state, stateKnown, stateErr := a.LatestHumanTurnState(ctx)
+			if stateErr != nil {
+				return compactOutcome{}, fmt.Errorf("read durable human-turn state: %w", stateErr)
+			}
+			running, known = state != "completed", stateKnown
 		}
-		if known {
-			answered = state == "completed"
-		}
+		pendingFrom = pendingHumanStart(source, running, known)
 	}
 	compacted := []provider.ChatMessage{checkpointMsg}
-	if role == "root" && answered {
-		// An answered request must not be replayed as a pending user turn, but
-		// its verbatim requirements must survive: carry it as marked history.
-		if answeredHumans := boundedRecentUserContext(msgs[1:], role, retentionBudget, available, targetModel); len(answeredHumans) > 0 {
+	// The turn in progress keeps its own request and steering verbatim first:
+	// they are what the agent is still doing.
+	recentUsers := boundedRecentUserContext(source[pendingFrom:], role, retentionBudget, available, targetModel)
+	used := 0
+	for _, message := range recentUsers {
+		used += provider.EstimateMessageTokens(message, targetModel)
+	}
+	if pendingFrom > 0 {
+		// Answered requests must not read as new turns, but their verbatim
+		// requirements must survive: carry them as marked history.
+		if answeredHumans := boundedRecentUserContext(source[:pendingFrom], role, max(0, retentionBudget-used), available-used, targetModel); len(answeredHumans) > 0 {
 			requests := make([]string, 0, len(answeredHumans))
 			for _, human := range answeredHumans {
 				requests = append(requests, human.ContentString())
@@ -522,13 +535,11 @@ func (a *Agent) finishCheckpoint(ctx context.Context, msgs []provider.ChatMessag
 			history := provider.NewTextMessage("user", rootprompt.AnsweredHumanRequests(requests))
 			history.InternalID = provider.NewMessageID()
 			history.Origin, history.Visibility = provider.OriginCheckpoint, provider.VisibilityContextOnly
-			if provider.EstimateMessageTokens(history, targetModel) <= available {
+			if provider.EstimateMessageTokens(history, targetModel) <= available-used {
 				compacted = append(compacted, history)
 			}
 		}
-		retentionBudget = 0
 	}
-	recentUsers := boundedRecentUserContext(msgs[1:], role, retentionBudget, available, targetModel)
 	compacted = append(compacted, recentUsers...)
 	compacted = append(compacted, continuity)
 	afterTokens := estimateCanonicalRequest(append([]provider.ChatMessage{msgs[0]}, compacted...), tools, targetModel)
@@ -712,7 +723,11 @@ func boundedRecentUserContext(messages []provider.ChatMessage, role string, budg
 	return selected
 }
 
-func latestHumanRequestAnswered(messages []provider.ChatMessage) bool {
+// pendingHumanStart returns where the human input of the unfinished turn
+// begins: after the last final answer. Durable turn state is authoritative
+// when known; a running turn keeps at least its latest human message pending
+// even after an interim answer, and a completed turn has nothing pending.
+func pendingHumanStart(messages []provider.ChatMessage, running, known bool) int {
 	latestHuman := -1
 	for index := len(messages) - 1; index >= 0; index-- {
 		if messages[index].IsGenuineUserInput() {
@@ -720,16 +735,28 @@ func latestHumanRequestAnswered(messages []provider.ChatMessage) bool {
 			break
 		}
 	}
-	if latestHuman < 0 {
-		return false
+	if latestHuman < 0 || known && !running {
+		return len(messages)
 	}
-	for _, message := range messages[latestHuman+1:] {
-		if message.Role == "assistant" && len(message.ToolCalls) == 0 &&
-			(strings.TrimSpace(message.ContentString()) != "" || strings.TrimSpace(message.Refusal) != "") {
-			return true
+	start := 0
+	for index := len(messages) - 1; index >= 0; index-- {
+		if finalAnswer(messages[index]) {
+			start = index + 1
+			break
 		}
 	}
-	return false
+	if start <= latestHuman {
+		return start
+	}
+	if known {
+		return latestHuman
+	}
+	return len(messages)
+}
+
+func finalAnswer(message provider.ChatMessage) bool {
+	return message.Role == "assistant" && len(message.ToolCalls) == 0 &&
+		(strings.TrimSpace(message.ContentString()) != "" || strings.TrimSpace(message.Refusal) != "")
 }
 
 func (a *Agent) Compact(

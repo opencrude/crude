@@ -31,14 +31,18 @@ shows:
   exclusive operation at once. New turns and queued input wait behind it, and
   its boundary row appears in every shell. It then waits on the context-aware
   turn gate (`agent/session/turn_gate.go`, a `semaphore.Weighted` like workspace
-  storage) for the finishing turn to release the context, and compacts the
-  settled context. Stop cancels the wait or the extraction; queued input stays
+  storage) for the finishing turn to release the context, discards any
+  background preparation, and compacts the complete settled context. Stop cancels the wait or the extraction; queued input stays
   queued.
 - **A turn is running.** The turn accepts the request and the footer says
   "Compaction will start after the current step." The run compacts before its
   next model request (trigger `requested`, shown as an ordinary compaction row
   marked "requested with /compact"), also when automatic compaction is off or
-  deferred, and then continues. A repeated `/compact` reports the request
+  deferred, and then continues the same work. A `wait` or `agent_wait` in
+  progress ends at once, and a slow command continues as a background handle,
+  so the next step comes now rather than after their timeouts. The checkpoint
+  always covers the complete current context: a checkpoint prepared earlier in
+  the background is discarded, never adopted with raw recent history behind it. A repeated `/compact` reports the request
   already accepted. If the turn ends before another step, the request becomes
   the exclusive operation above and runs before any other turn. If the turn is
   stopped or fails first, the request settles as a cancelled compaction row; it

@@ -200,6 +200,8 @@ func (s *Session) buildToolFnAtRoot(multiAgent bool, turnProvider *provider.Prov
 					return tools.ToolResult{Content: "Wait cancelled", Outcome: toolresult.Outcome{State: toolresult.Cancelled}}, nil
 				case "directed_event":
 					return tools.ToolResult{Content: "An event is ready.", AgentHint: rootprompt.HintWaitDirected}, nil
+				case "compaction_requested":
+					return tools.ToolResult{Content: "The wait ended early because the user asked to compact the context.", AgentHint: rootprompt.HintWaitCompaction}, nil
 				default:
 					return collaborationResult(observation, nil), nil
 				}
@@ -209,6 +211,8 @@ func (s *Session) buildToolFnAtRoot(multiAgent bool, turnProvider *provider.Prov
 			select {
 			case <-timer.C:
 				return tools.ToolResult{Content: waited}, nil
+			case <-s.compactionWake(identity.AgentID):
+				return tools.ToolResult{Content: "The wait ended early because the user asked to compact the context.", AgentHint: rootprompt.HintWaitCompaction}, nil
 			case <-ctx.Done():
 				return tools.ToolResult{Content: "Wait cancelled", Outcome: toolresult.Outcome{State: toolresult.Cancelled}}, nil
 			}
