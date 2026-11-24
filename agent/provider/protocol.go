@@ -71,6 +71,8 @@ type ProtocolInfo struct {
 // protocol, so the settings UI can offer them without type-switching on the
 // concrete implementation.
 type ProtocolOptions struct {
+	// NativeCompaction identifies the on-demand wire operation, not verified model support.
+	NativeCompaction string
 	// Store: the backend can persist conversation context server-side
 	// between requests (OpenAI "store").
 	Store bool
@@ -100,6 +102,8 @@ type ProtocolOptions struct {
 // request switches. Nil pointers mean "inherit the protocol default"; a
 // present pointer is an explicit on/off.
 type ProtocolSettings struct {
+	// Compaction selects the account checkpoint method. Empty means automatic.
+	Compaction string `json:"compaction,omitempty"`
 	// Store enables server-side context caching: the backend keeps the
 	// conversation so subsequent requests don't re-upload it. When nil the
 	// protocol default applies.

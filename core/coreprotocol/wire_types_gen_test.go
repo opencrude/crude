@@ -60,6 +60,7 @@ var wireTypes = []any{
 	new(p1.ScoredRecord),
 	new(p2.Account),
 	new(p2.CollaborationAttribution),
+	new(p2.CompactionObservation),
 	new(p2.DialSettings),
 	new(p2.MessageOrigin),
 	new(p2.OAuthCredentials),

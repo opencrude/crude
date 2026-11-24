@@ -46,13 +46,14 @@ func logIf(fn func(lg *logger.Logger)) {
 // Provider is a backend connection. Application credentials are owned by an
 // AccountManager; direct APIKey/SetOAuth remain transient client credentials.
 type Provider struct {
-	ID           string `json:"id"`
-	Name         string `json:"name"`
-	BaseURL      string `json:"base_url"`
-	APIKey       string `json:"-"`
-	AccountID    string `json:"-"` // application account identity, not OAuth.AccountID
-	Model        string `json:"model"`
-	StandardName string `json:"standard,omitempty"` // protocol ID; JSON key kept for stored configs
+	compactionCredential string
+	ID                   string `json:"id"`
+	Name                 string `json:"name"`
+	BaseURL              string `json:"base_url"`
+	APIKey               string `json:"-"`
+	AccountID            string `json:"-"` // application account identity, not OAuth.AccountID
+	Model                string `json:"model"`
+	StandardName         string `json:"standard,omitempty"` // protocol ID; JSON key kept for stored configs
 
 	dial             DialSettings
 	extraBody        map[string]any

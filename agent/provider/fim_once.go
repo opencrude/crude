@@ -213,7 +213,11 @@ func (p *Provider) validateFIM(req FIMOnceRequest) error {
 	if oauth != nil {
 		return fmt.Errorf("FIM does not support OAuth accounts or refresh")
 	}
-	if len(p.extraBody) != 0 || p.protocolSettings != nil || p.thinkingEffort != "" ||
+	ps := p.ProtocolSettings()
+	if ps != nil {
+		ps.Compaction = ""
+	}
+	if len(p.extraBody) != 0 || ps != nil && *ps != (ProtocolSettings{}) || p.thinkingEffort != "" ||
 		p.sampling.Temperature != nil || p.sampling.TopP != nil || len(p.requestExtras()) != 0 {
 		return fmt.Errorf("FIM refuses configured request extras and chat overrides")
 	}

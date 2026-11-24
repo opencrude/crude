@@ -85,6 +85,11 @@ fixed.
   checkpoints survive across runs; resumed runs seed their first projection
   from provider-reported usage (it used to fall back to local estimates that
   were half the real size on dense content).
+- Native compaction on custom connections: one account choice (Auto, Provider
+  only, Errand only), lazy per-route checks with synthetic input on Responses
+  and Messages, portable text kept beside the opaque item, and Errand for any
+  checkpoint the provider cannot finish in Auto. Server-side threshold
+  compaction is not used; the local planner decides when.
 - Shuffled, unbounded agent names and optional parent-chosen nicknames.
 - Guidance deferral runs pure reads; parents get a children-status notice on
   change; claim changes need only the new paths; per-role service tier and
@@ -132,29 +137,21 @@ serves them (the audit shows 96-97% cached input):
 
 ### Remaining
 
-1. **Provider-native compaction as an accelerator.** When the next request goes
-   to the same provider and model, use native compaction: OpenAI Responses
-   `context_management` (`type: "compaction"`, `compact_threshold`) or
-   `/responses/compact`, and Anthropic compaction. The returned item is opaque
-   and connection-bound, so treat it like opaque reasoning replay: only for
-   that connection, with Crude's portable checkpoint (already prepared in the
-   background) kept for model switches, resume and children. Needs live
-   verification against both APIs before it may replace a Crude checkpoint.
-2. **Agent-reported friction.** A `report_friction` tool (tool, call, error,
+1. **Agent-reported friction.** A `report_friction` tool (tool, call, error,
    suggestion) appended next to the session databases and raised as a Notice.
-3. **Agent identity and continuity.** Named agents keep a durable profile:
+2. **Agent identity and continuity.** Named agents keep a durable profile:
    personal memory, the work they did, their lineage, preferences learned from
    feedback. A resumed or re-spawned agent recognizes its own history.
-4. **Model routing by role.** Route each role (root reasoning, child coding,
+3. **Model routing by role.** Route each role (root reasoning, child coding,
    compaction, memory, review, search summarization) to a connection by
    capability, cost and latency, with survivable fallbacks the user approves.
-5. **Usage ledger per value.** Attribute tokens to outcomes (tool round,
+4. **Usage ledger per value.** Attribute tokens to outcomes (tool round,
    compaction, child, guidance) so users see which activities are worth their
    cost, and so the adaptive policies can be checked against data.
-6. **Schema weight.** ~11K schema tokens ride on every request (cached).
+5. **Schema weight.** ~11K schema tokens ride on every request (cached).
    Choose families per role once per run (never lazily mid-run, which breaks
    the cache) and trim the largest descriptions without losing contract text.
-7. **Names after failed launches.** A launch that fails before running keeps
+6. **Names after failed launches.** A launch that fails before running keeps
    its registered name, so a repeated nickname skips a numeral. Retire
    never-run registrations instead.
 

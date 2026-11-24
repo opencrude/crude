@@ -20,7 +20,8 @@ func (m *App) applySettingsShellInventory(effective setting.App) {
 	}
 	win := m.overlayHost.Window(ui.OverlayWorkspaceSettings)
 	body := m.settingsSurface(win)
-	if !body.UpdateShellInventory(effective.TerminalShells, effective.AgentShells) {
+	changed := body.UpdateCompactionChecks(effective.CompactionChecks)
+	if !body.UpdateShellInventory(effective.TerminalShells, effective.AgentShells) && !changed {
 		return
 	}
 	if frame, ok := win.Content.(*ui.WindowFrameWidget); ok {

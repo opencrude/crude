@@ -2,7 +2,11 @@ package provider
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"log/slog"
+	"reflect"
 	"sync"
 )
 
@@ -106,20 +110,45 @@ func (m *AccountManager) replaceLocked(accounts map[string]Account) {
 		}
 		account := cloneAccount(input)
 		if old := m.accounts[id]; old != nil && sameAccountCredentials(old.account, account) {
+			if accountCompactionMethod(old.account) != accountCompactionMethod(account) {
+				currentSupport().cancelFlights(id)
+			}
 			old.account = account
 			next[id] = old
 		} else {
 			next[id] = &accountSlot{account: account}
 		}
 	}
+	for id, old := range m.accounts {
+		if next[id] != old {
+			if err := currentSupport().clearAccount(id, true); err != nil {
+				slog.Warn("Could not forget account compaction checks", "error", err)
+			}
+		}
+	}
 	m.accounts = next
 }
 
 func sameAccountCredentials(a, b Account) bool {
-	if a.ProviderID != b.ProviderID || a.APIKey != b.APIKey || (a.OAuth == nil) != (b.OAuth == nil) || a.Connection.ProviderURL != b.Connection.ProviderURL || a.Connection.AuthType != b.Connection.AuthType || a.Connection.AuthHeader != b.Connection.AuthHeader || a.Connection.APIStandard != b.Connection.APIStandard {
+	if a.ProviderID != b.ProviderID || a.APIKey != b.APIKey || (a.OAuth == nil) != (b.OAuth == nil) || a.Connection.ProviderURL != b.Connection.ProviderURL || a.Connection.AuthType != b.Connection.AuthType || a.Connection.AuthHeader != b.Connection.AuthHeader || a.Connection.APIStandard != b.Connection.APIStandard || !reflect.DeepEqual(a.Connection.Headers, b.Connection.Headers) || !reflect.DeepEqual(a.Connection.ExtraBody, b.Connection.ExtraBody) {
 		return false
 	}
 	return a.OAuth == nil || *a.OAuth == *b.OAuth
+}
+
+func compactionCredential(a Account) string {
+	id := a.APIKey
+	if a.OAuth != nil {
+		id = a.OAuth.AccountID
+	}
+	sum := sha256.Sum256([]byte(id))
+	return hex.EncodeToString(sum[:])
+}
+func accountCompactionMethod(a Account) string {
+	if a.Connection.Protocol != nil {
+		return a.Connection.Protocol.Compaction
+	}
+	return ""
 }
 
 type accountBinding struct {
@@ -157,6 +186,7 @@ func (m *AccountManager) Bind(p *Provider, accountID string) error {
 	p.oauth = nil
 	p.APIKey = ""
 	p.AccountID = accountID
+	p.compactionCredential = compactionCredential(slot.account)
 	p.authMu.Unlock()
 	m.mu.RUnlock()
 	return nil

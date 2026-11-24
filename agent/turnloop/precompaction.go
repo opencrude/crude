@@ -524,6 +524,11 @@ func (a *Agent) compactorFor(useMain bool, window, targetTokens int) *Agent {
 		compactor.CompactionRetentionTokens, compactor.MaxOutputTokens = a.CompactionRetentionTokens, a.MaxOutputTokens
 		compactor.CompactionAgentProfile = a.CompactionAgentProfile
 	}
+	if !useMain {
+		compactor.NativeCompactionProvider = a.Provider
+		compactor.CompactionTargetOutput = a.MaxOutputTokens
+		compactor.CompactionConfigError = a.CompactionConfigError
+	}
 	compactor.PrepareCompaction, compactor.CommitCompaction = nil, nil
 	compactor.CompactionTargetTokens = max(1, targetTokens)
 	return compactor
@@ -544,6 +549,10 @@ func (e *compactionStorageError) Unwrap() error { return e.err }
 // sections, learned ceilings.
 func compactionModelUnavailable(err error) bool {
 	if err == nil || errors.Is(err, context.Canceled) || provider.IsContextWindowExceeded(err) {
+		return false
+	}
+	var native *nativeCheckpointError
+	if errors.As(err, &native) {
 		return false
 	}
 	var status *provider.StatusError

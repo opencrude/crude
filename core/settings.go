@@ -256,6 +256,7 @@ func (a *actor) captureSettings() (coreprotocol.SettingsFetchResult, setting.Age
 	if u, err := url.Parse(app.Network.ProxyURL); err == nil {
 		out.ProxyCredentialsPresent = u.User != nil || u.RawQuery != ""
 	}
+	out.CompactionChecks = provider.CompactionObservations(app.Accounts)
 	for id, account := range app.Accounts {
 		out.Accounts[id] = publicAccount(account)
 	}

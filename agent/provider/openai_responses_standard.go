@@ -29,6 +29,7 @@ func (s *OpenAIResponsesStandard) Info() ProtocolInfo {
 		WebSearch:    WebSearchTool,
 		Streaming:    FramingSSE,
 		Options: ProtocolOptions{
+			NativeCompaction:    "responses/compact",
 			Store:               true,
 			StoreDefault:        true,
 			MediaReplayRecovery: true,
@@ -185,6 +186,17 @@ func encodeResponsesInput(messages []ChatMessage, start int) ([]any, error) {
 		}
 	}
 	for _, msg := range messages[start:] {
+		if item := nativeItem(msg, "openai-responses"); item != nil {
+			var window []json.RawMessage
+			if err := json.Unmarshal(item.Data, &window); err != nil {
+				return nil, err
+			}
+			for _, raw := range window {
+				input = append(input, raw)
+			}
+			continue
+		}
+
 		preservedMessage := false
 		preservedCalls := make(map[string]bool)
 		if msg.Role == "assistant" {

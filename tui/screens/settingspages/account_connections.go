@@ -1,8 +1,10 @@
 package settingspages
 
 import (
+	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"crude/agent/provider"
 	"crude/tui/ui"
@@ -80,6 +82,9 @@ func (m *Model) buildAccountEditorForm() *ui.FormModel {
 	}
 	fields = append(fields, headers, ui.SeparatorFieldState("account-protocol", "Wire protocol"), ui.SelectFieldState(accountFieldProtocol, "Protocol", providerStandard(account.ProviderID, connection), standardOptions(nil), "Request and response wire format."))
 	fields = append(fields, m.protocolFieldsFor(account.ProviderID, connection, "")...)
+	if !edit.isNew && m.hasCompactionCheck(account.ID) {
+		fields = append(fields, ui.BoolFieldState("forget-compaction", "Forget compaction checks", edit.forgetCompaction, "Save to check again at next use. Conversations stay unchanged."))
+	}
 	fields = append(fields, dialerFields(connection.Dialer)...)
 	fields = append(fields, ui.SeparatorFieldState("account-request-options", "Request options"))
 	request := m.extraBodyField(connection)
@@ -104,6 +109,17 @@ func (m *Model) protocolFieldsFor(providerID string, cfg provider.Template, pref
 	options, settings := proto.Info().Options, cfg.Protocol
 	var fields []*ui.FieldState
 	add := func(field *ui.FieldState) { field.ID = prefix + field.ID; fields = append(fields, field) }
+	{
+		method := "auto"
+		if settings != nil && settings.Compaction != "" {
+			method = settings.Compaction
+		}
+		hint := "Auto checks the model at first use. Errand is the fallback."
+		if options.NativeCompaction == "" {
+			hint = "Auto uses Errand. This wire has no bounded native check."
+		}
+		add(ui.SelectFieldState(fieldCompactionMethod, "Compaction", method, []ui.FormOption{{ID: "auto", Label: "Auto"}, {ID: provider.CompactionProviderOnly, Label: "Provider only"}, {ID: provider.CompactionErrandOnly, Label: "Errand only"}}, hint))
+	}
 	if options.Store {
 		label := "Off (default)"
 		if options.StoreDefault {
@@ -144,6 +160,9 @@ func (m *Model) storeAccountEditorForm() {
 		return
 	}
 	draft := provider.CloneAccount(m.accountEditor.draft)
+	if m.fieldAt(catAccounts, "forget-compaction") != nil {
+		m.accountEditor.forgetCompaction = m.value(catAccounts, "forget-compaction") == "on"
+	}
 	draft.Label = strings.TrimSpace(m.value(catAccounts, fieldAccountLabel))
 	connection := provider.CloneTemplate(draft.Connection)
 	oldAuth, oldEndpoint := connection.AuthType, connection.ProviderURL
@@ -225,4 +244,78 @@ func requiredHeaderNameValidator(value ui.FieldValue) []string {
 		return []string{"Enter the credential header name."}
 	}
 	return nil
+}
+
+func (m *Model) hasCompactionCheck(account string) bool {
+	for _, v := range m.layerBase.CompactionChecks {
+		if v.AccountID == account && v.Until > time.Now().Unix() {
+			return true
+		}
+	}
+	return false
+}
+
+// compactionHint states the observed native support for the selected model.
+func (m *Model) compactionHint(account, model string) string {
+	a, ok := m.accounts[account]
+	if !ok {
+		return ""
+	}
+	if p, ok := provider.ProtocolByID(providerStandard(a.ProviderID, a.Connection)); !ok || p.Info().Options.NativeCompaction == "" {
+		return ""
+	}
+	if o := a.Connection.Protocol; o != nil && o.Compaction == provider.CompactionErrandOnly {
+		return "Errand compacts for this account."
+	}
+	for _, v := range m.layerBase.CompactionChecks {
+		if v.AccountID != account || v.Model != model || v.Until <= time.Now().Unix() {
+			continue
+		}
+		switch v.Status {
+		case "verified":
+			return "Native compaction verified."
+		case "unavailable":
+			return "No native compaction; Auto uses Errand."
+		default:
+			return "Native check failed; retrying later."
+		}
+	}
+	return "Native compaction checked at first use."
+}
+
+// UpdateCompactionChecks refreshes the selected model's hint without touching drafts.
+func (s *WorkspaceSettingsSurface) UpdateCompactionChecks(checks []provider.CompactionObservation) bool {
+	if s == nil || s.model == nil || slices.Equal(s.model.layerBase.CompactionChecks, checks) {
+		return false
+	}
+	m := s.model
+	m.layerBase.CompactionChecks = slices.Clone(checks)
+	for i := range m.categories {
+		if m.isAgentCategory(i) {
+			m.syncCompactionHint(i)
+		}
+	}
+	return true
+}
+func (m *Model) syncCompactionHint(category int) {
+	form := m.categories[category].Form
+	if form == nil {
+		return
+	}
+	field := form.Field(fieldContextCompaction)
+	if field == nil {
+		return
+	}
+	a, model := m.effectiveConnection(category)
+	field.Description = compactAtDescription(m.compactionHint(a, model))
+}
+
+// compactAtDescription is the one help text of "Compact context at". The
+// model's native compaction state comes first and the rest stays short enough
+// for one hint line in a desktop-size Settings window.
+func compactAtDescription(hint string) string {
+	if hint == "" {
+		return "Blank is Auto (cost and capacity aware). A percent compacts there; 0 is off."
+	}
+	return hint + " Blank is Auto; a percent compacts there; 0 is off."
 }

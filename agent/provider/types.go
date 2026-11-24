@@ -359,6 +359,7 @@ func (c *MessageContent) UnmarshalJSON(data []byte) error {
 }
 
 type ChatMessage struct {
+	nativeReplay      bool                // Set only on a checked outgoing projection; never persisted.
 	InternalID        string              `json:"internal_id,omitempty"`
 	DisplayContent    string              `json:"display_content,omitempty"`
 	ReferenceLabels   []string            `json:"reference_labels,omitempty"`

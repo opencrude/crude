@@ -55,6 +55,7 @@ type completionResult struct {
 	ReplaySourceModel          string
 	ResponseReference          *provider.ResponseReference
 	ResponseContinuationReason string
+	nativeReplayRecovered      bool
 }
 
 func (r completionResult) hasOutput() bool {
@@ -148,7 +149,11 @@ func (a *Agent) completeStreamWithOptions(
 	if a.Provider == nil {
 		return completionResult{}, fmt.Errorf("agent provider is nil")
 	}
+	canonical := msgs
 	msgs, prefixHash := provider.ProjectReplayMessages(msgs, a.Provider)
+	if !requestOptions.compaction && a.Provider.PortableReplayTooLarge(canonical, msgs) {
+		return completionResult{}, provider.ErrCheckpointReplayNeedsCompaction
+	}
 	req := provider.ChatRequest{
 		ResponseContinuationScope: a.Provider.ResponseContinuationScope(a.Model),
 		MediaReplayRecovery:       a.Provider.MediaReplayRecoveryEnabled(),
@@ -210,6 +215,16 @@ func (a *Agent) completeStreamWithOptions(
 		ctx, client, &req, prefixHash, streamStart,
 		emit, emitThinking, onToolCallStart, onToolCallDelta,
 	)
+	if consumeErr != nil && !result.hasOutput() && ctx.Err() == nil {
+		if portable, ok := a.Provider.RecoverNativeReplay(msgs, consumeErr); ok {
+			if a.Provider.PortableReplayTooLarge(canonical, provider.FilterReplayMessages(portable, a.Provider)) {
+				return result, provider.ErrCheckpointReplayNeedsCompaction
+			}
+			retryResult, retryErr := a.completeStreamWithOptions(ctx, portable, tools, emit, emitThinking, onToolCallStart, onToolCallDelta, onRetry, onRequestAccepted, onRequestProgress, requestOptions)
+			retryResult.nativeReplayRecovered = true
+			return retryResult, retryErr
+		}
+	}
 	result.ReplayScope = a.Provider.ReplayScope()
 	result.ReplayPrefixHash = prefixHash
 	result.ReplaySourceModel = a.Model

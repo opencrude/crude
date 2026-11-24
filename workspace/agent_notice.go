@@ -13,6 +13,7 @@ import (
 // resource status before delivering typed presentation facts to attached shells.
 const (
 	NoticeResponseContinuationUnavailable = "response_continuation_unavailable"
+	NoticeCompactionRoute                 = "compaction_route_notice"
 	NoticeMemorySaved                     = "memory_saved"
 	NoticeMemoryRankingUnavailable        = "memory_ranking_unavailable"
 	NoticeAsyncCommandStatus              = "async_command_status"
@@ -40,7 +41,7 @@ type AgentNotice struct {
 func NoticeFromEvent(evt AgentEvent) (AgentNotice, bool) {
 	notice := AgentNotice{Type: evt.Type, AgentID: evt.AgentID, Identity: evt.Identity}
 	switch evt.Type {
-	case NoticeResponseContinuationUnavailable, NoticeAttachmentExcluded, NoticeMemoryRankingUnavailable:
+	case NoticeResponseContinuationUnavailable, NoticeAttachmentExcluded, NoticeMemoryRankingUnavailable, NoticeCompactionRoute:
 		data, _ := evt.Data.(map[string]any)
 		notice.Reason, _ = data["reason"].(string)
 	case NoticeMemorySaved:
@@ -94,6 +95,8 @@ func (w *Workspace) ApplyAgentNotice(notice AgentNotice) {
 			w.Status.recordBackgroundCommands(owner, notice.Commands)
 		}
 		return
+	case NoticeCompactionRoute:
+		n.Severity, n.Source, n.Summary, n.Detail = statuscenter.SeverityInfo, "compaction", "Compaction method changed", notice.Reason
 	case NoticeMemoryRankingUnavailable:
 		n.Severity, n.Source, n.Summary, n.Detail = statuscenter.SeverityWarning, "memory", "Memory ranking skipped.", notice.Reason
 	case NoticeAttachmentExcluded:

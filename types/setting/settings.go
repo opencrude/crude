@@ -24,10 +24,11 @@ const (
 // AccountChange is one identity-scoped application account mutation.
 // Removal also releases the application settings that use the account.
 type AccountChange struct {
-	ID         string
-	ProviderID string
-	Before     *provider.Account
-	After      *provider.Account
+	ForgetCompaction bool
+	ID               string
+	ProviderID       string
+	Before           *provider.Account
+	After            *provider.Account
 	// RemovalPreview binds the confirmation to the consequences shown in Settings.
 	RemovalPreview string
 }
@@ -700,6 +701,7 @@ func cloneAppSettings(s App) App {
 	out.LocalHistory.ExtraIgnorePatterns = append([]string(nil), s.LocalHistory.ExtraIgnorePatterns...)
 	out.LSP = CloneLSP(s.LSP)
 	out.Terminal = CloneTerminal(s.Terminal)
+	out.CompactionChecks = slices.Clone(s.CompactionChecks)
 	out.TerminalShells = CloneTerminalShells(s.TerminalShells)
 	out.AgentShells = CloneTerminalShells(s.AgentShells)
 	return out

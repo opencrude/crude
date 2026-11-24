@@ -324,6 +324,64 @@ func (z *CollaborationAttribution) Msgsize() (s int) {
 }
 
 // MarshalMsg implements msgp.Marshaler
+func (z *CompactionObservation) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 4
+	o = append(o, 0x94)
+	o = msgp.AppendString(o, z.AccountID)
+	o = msgp.AppendString(o, z.Model)
+	o = msgp.AppendString(o, z.Status)
+	o = msgp.AppendInt64(o, z.Until)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *CompactionObservation) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 4 {
+		err = msgp.ArrayError{Wanted: 4, Got: zb0001}
+		return
+	}
+	z.AccountID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "AccountID")
+		return
+	}
+	z.Model, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Model")
+		return
+	}
+	z.Status, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Status")
+		return
+	}
+	z.Until, bts, err = msgp.ReadInt64Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Until")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *CompactionObservation) Msgsize() (s int) {
+	s = 1 + msgp.StringPrefixSize + len(z.AccountID) + msgp.StringPrefixSize + len(z.Model) + msgp.StringPrefixSize + len(z.Status) + msgp.Int64Size
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
 func (z *DialSettings) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
 	// array header, size 7
@@ -500,8 +558,9 @@ func (z *OAuthCredentials) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *ProtocolSettings) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 6
-	o = append(o, 0x96)
+	// array header, size 7
+	o = append(o, 0x97)
+	o = msgp.AppendString(o, z.Compaction)
 	if z.Store == nil {
 		o = msgp.AppendNil(o)
 	} else {
@@ -539,8 +598,13 @@ func (z *ProtocolSettings) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 6 {
-		err = msgp.ArrayError{Wanted: 6, Got: zb0001}
+	if zb0001 != 7 {
+		err = msgp.ArrayError{Wanted: 7, Got: zb0001}
+		return
+	}
+	z.Compaction, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Compaction")
 		return
 	}
 	if msgp.IsNil(bts) {
@@ -623,7 +687,7 @@ func (z *ProtocolSettings) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *ProtocolSettings) Msgsize() (s int) {
-	s = 1
+	s = 1 + msgp.StringPrefixSize + len(z.Compaction)
 	if z.Store == nil {
 		s += msgp.NilSize
 	} else {

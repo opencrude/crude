@@ -375,7 +375,7 @@ Responses delta uploads and inline-image replay recovery are specified in
   remain separate from the economic rule. Connection and tool-list changes
   use their own request or attempt boundaries. A child follows its launch role's passive settings, including named profile
   overrides. This does not change its tool permissions or file ownership.
-- **Preparation leads.** Background preparation starts halfway to the trigger
+- **Preparation leads for the portable path.** Background preparation starts halfway to the trigger
   (a quarter of the excess once three quarters of the quality floor is
   reached, halfway in tokens for capacity and explicit percentages) and runs while the agent keeps working, at most one job per
   agent. A ready checkpoint is adopted when the trigger fires; in adaptive
@@ -384,8 +384,9 @@ Responses delta uploads and inline-image replay recovery are specified in
   in a slot owned by the session (roots) or the child loop, so it survives the
   end of a run and the next run adopts it when its source is still the start
   of the context (`contextDigest` over message identities). A connection
-  that refused concurrent requests (learned in `model-catalog.db`) compacts
-  synchronously instead.
+  that refused concurrent requests (learned in `model-catalog.db`), or whose
+  next checkpoint will try [native compaction](#native-compaction-on-custom-connections),
+  compacts synchronously instead.
 - **What is adopted.** Every model-written checkpoint covers the entire history at the boundary. A background snapshot covers complete rounds. If new messages arrive, finish the checkpoint from the prepared summary and the new messages, without rereading the old prefix. The full original history remains authoritative for archival and bounded human retention. Only the checkpoint, retained input, fresh runtime handoff, current system instructions and tools continue. No raw tool tail is attached behind a rewritten prefix. Manual and overflow requests use the complete current source directly. See the [cache evidence and seven-wire comparison](../issues/2026-11-24-compaction-cache-misses.md).
 - **Survival.** Background failures back off exponentially and never block.
   The capacity margin is the largest step growth since the last checkpoint,
@@ -393,7 +394,7 @@ Responses delta uploads and inline-image replay recovery are specified in
   the compaction model's adaptive handling (chunking, staged sections,
   learned output ceilings, retries) has failed because the connection is
   unavailable (credentials, missing model, outage), the agent's own
-  model writes that one checkpoint, including when it shares the endpoint with a different extractor model. If no full checkpoint fits, stop recoverably with the original history. Do not commit a partial rewrite and send its cold tool tail.
+  model writes that one checkpoint, including when it shares the endpoint with a different extractor model. Provider only never does this. If no full checkpoint fits, stop recoverably with the original history. Do not commit a partial rewrite and send its cold tool tail.
 - **Visibility.** Preparation is reported as `context_precompaction`
   (`started`, `progress`, `ready`, `failed`, `cancelled`, `discarded`). The
   owning slot publishes lifecycle directly; extractor progress uses one adapter,
@@ -406,6 +407,79 @@ Responses delta uploads and inline-image replay recovery are specified in
   unfinished job, that wait is announced as the job's boundary; if the job then
   fails or its checkpoint does not fit, the boundary settles as a deferred
   failure before the run compacts synchronously, so no boundary stays active.
+
+## Native compaction on custom connections
+
+The account selects **how** to compact. The agent's fullness setting still decides **when**.
+No capability check runs on startup, Settings entry, model selection or passive resume.
+Auto waits for an actual compaction boundary before spending on either model when
+its wire has a native candidate. Manual, in-run requested, automatic, child and Errand
+loop-end checkpoints use the serving connection, not the extractor's credentials, for
+native work. Errand only keeps the portable path, including background preparation.
+In Auto, Errand prepares in the background only when the route is known to refuse
+or is in a cooldown; otherwise the native attempt needs the exact boundary source.
+Provider only never charges an Errand fallback.
+
+| Wire | First-use decision |
+|---|---|
+| OpenAI Responses, including a translated model | Try `responses/compact`. A valid stored-response anchor and a delta of at most 32 KiB can do real work without a probe. Without that proof use an inert challenge. On a missing or incompatible standalone operation, test the final `compaction_trigger` item on the configured Responses endpoint using synthetic input. Learn the working operation; do not send the actual history to both. |
+| Anthropic Messages | Read the exact model's `capabilities.compaction.summarize.supported` with `compact-2026-09-04`. Use the on-demand `compaction` parameter. A missing declaration is not a refusal. Check an unadvertised route with synthetic input and a continuation carrying its signed block. |
+| Chat Completions, Gemini generateContent, Gemini Interactions, Ollama, ChatGPT Codex HTTP | No bounded native check is implemented for these adapters. Auto uses a full portable checkpoint without probing. Provider only reports the limitation. In particular the streaming Codex subscription adapter strips output caps; public Responses compatibility is not evidence for a cheap subscription probe. |
+
+A successful HTTP status or a text summary does not establish support. Require a
+valid native item and a continuation on that account. The synthetic check asks for a
+random code that is absent from the follow-up prompt. It has a 20-second deadline,
+small input and output allowances, no tools, no redirects and no automatic HTTP
+retries. Unsupported account request overrides are not silently discarded. The native
+operation, verification and export each account for their own reported usage.
+
+**What is saved.** Keep the complete returned Responses window, or the signed
+Messages block. Reject oversized or unusable output rather than trim it into an
+invalid artifact. A same-model continuation from an opaque window produces portable
+text (also used if a signed summary does not provide the required sections).
+The existing four-section validator, bounded human/assignment retention, refreshed
+runtime handoff and transactional source archive apply before installation. A
+compatible connection can replay the native item. Another account, model, wire or
+changed system prefix gets the portable checkpoint; it never receives the opaque
+item. Forgetting discovery does not invalidate a working conversation's prefix.
+
+**Failure and deletion.** The application model catalog keeps model/route evidence,
+not prompts or keys. A verified result lasts seven days; a definite negative lasts
+one day. A transient check failure retains the last verdict and uses an exponential
+cooldown (one to five minutes). A later eligible compaction rechecks; this is not a
+background polling service. Concurrent checks share a route flight. Forgetting checks,
+removing/reconnecting the account or changing its compaction policy fences in-flight
+work. Removing the account clears its evidence and attempt records. A clone has a new
+identity. Startup prunes orphaned or superseded support observations.
+
+**Recovery.** In Auto a native failure does not stop a run. When the native route
+cannot finish a checkpoint (a refusal, timeout, outage, unusable item or incomplete
+handoff), Errand writes the full portable checkpoint for that boundary and the run
+continues; the portable rules above apply if Errand also fails. The first change of method goes to Notices rather than inserting a new
+agent message; later fallbacks during the same cooldown are silent. Provider only
+never charges Errand. A definite refusal stops recoverably and names the setting to
+change. An outage or uncertain result keeps its provider cause, so run recovery
+retries it with the normal countdown.
+
+Only a refused synthetic check, or a second definite failure in a row, is negative
+evidence. One failure of a verified route is a cooldown; the next eligible compaction
+after it checks the route with synthetic input before real history is sent, even when
+the model advertises support. An unverified stored-response delta that finds no
+standalone operation is sent once to the create operation instead.
+
+A native POST has no idempotency contract. A write-ahead fingerprint of the owner,
+route and source stops automatic resubmission of that source for five minutes (the
+shared retry ceiling), including after a crash. Meanwhile Auto uses Errand and
+Provider only waits. A confirmed input rejection releases the marker, an explicit
+`/compact` can send again, and forgetting a check does not clear it. If the core
+cannot open the catalog, Auto uses Errand and Provider only stops: native billing is
+not attempted with an in-memory substitute.
+
+A rejected saved artifact before output can use portable text without rerunning any
+tool. If doing so would replay more than 8,192 estimated tokens behind a changed
+prefix without an accepted portable turn, request a full checkpoint instead. A
+timeout, partial output or arbitrary 5xx is not such proof. These limits protect
+particular request paths; they are not a total billing guarantee.
 
 ## Compaction operations
 
@@ -420,7 +494,7 @@ Responses delta uploads and inline-image replay recovery are specified in
   about checkpoint size and is left alone. A human `/compact` already registered
   makes it unnecessary. The replaced context records reason `loop_end_compaction`.
 
-- Automatic and manual compaction use the resolved Errand category model for
+- For the portable method, automatic and manual compaction use the resolved Errand category model for
   a combined no-tools extraction of four sections (intent, work, state,
   continuation) over one immutable durable source, falling back to one request
   per section when needed. Fitting sources preserve message order but are not guaranteed cache hits; oversized
@@ -643,9 +717,7 @@ estimation without reported usage remains approximate, and media contents are no
 text fragments. Oversized text extraction keeps media descriptors while the
 exact media-bearing source remains archived. System/tool envelopes that alone
 exhaust a model, unavailable providers, and reductions that cannot converge fail
-closed with the source retained. General model-visible tool-output offload and
-provider-native remote compaction are separate future work, not implied by this
-implementation.
+closed with the source retained. General model-visible tool-output offload remains separate. Native support and its limits are described above.
 
 Complete project-guidance intake is a separate pipeline, not conversation
 compaction or permission to load every referenced document. Its 64 MiB source

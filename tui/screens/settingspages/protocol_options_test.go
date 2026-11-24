@@ -1,6 +1,7 @@
 package settingspages
 
 import (
+	"strings"
 	"testing"
 
 	"crude/agent/provider"
@@ -256,5 +257,47 @@ func TestAutofillCapabilitiesFromModelEntry(t *testing.T) {
 	}
 	if got := form.Field(fieldModalityPrefix + provider.ModalityAudio).Value.String(); got != "no" {
 		t.Errorf("audio toggle autofill = %q, want no", got)
+	}
+}
+
+func TestAccountCompactionChoicesAndDeferredForget(t *testing.T) {
+	m := newTestModel(t, setting.App{})
+	m.layerBase.CompactionChecks = []provider.CompactionObservation{{AccountID: "test", Model: "m", Status: "verified", Until: 1 << 40}}
+	m.rebuildAccountsForm()
+	if got := m.compactionHint("test", "m"); got != "Native compaction verified." {
+		t.Fatalf("model evidence = %q", got)
+	}
+	// The built form and a later observation update show the same help text.
+	built := m.categories[catMain].Form.Field(fieldContextCompaction).Description
+	if !strings.HasSuffix(built, "0 is off.") || len(built) > 91 {
+		t.Fatalf("built help = %q", built)
+	}
+	m.SetValueForTest(catMain, fieldConnection, "test")
+	m.SetValueForTest(catMain, fieldModel, "m")
+	if got := m.categories[catMain].Form.Field(fieldContextCompaction).Description; got != compactAtDescription("Native compaction verified.") || len(got) > 91 {
+		t.Fatalf("selected model help = %q", got)
+	}
+	for _, choice := range []string{"provider", "errand", "auto"} {
+		m.SetValueForTest(catAccounts, fieldCompactionMethod, choice)
+		change, err := m.accountEditChange()
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := "auto"
+		if cfg := change.After.Connection.Protocol; cfg != nil {
+			got = cfg.Compaction
+		}
+		if choice != got {
+			t.Fatalf("saved %s as %s", choice, got)
+		}
+	}
+	m.SetValueForTest(catAccounts, "forget-compaction", "on")
+	change, err := m.accountEditChange()
+	if err != nil || !change.ForgetCompaction || !m.accountEditorDirty() {
+		t.Fatalf("forget not staged: %+v %v", change, err)
+	}
+	m.cancelAccountEdit()
+	if !m.hasCompactionCheck("test") {
+		t.Fatal("cancelling editor changed discovered behavior")
 	}
 }

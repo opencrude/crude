@@ -519,7 +519,10 @@ steps:
 			}
 			// A connection that refused concurrent requests cannot prepare in
 			// the background beside the agent's own requests.
-			serial := provider.SameConnection(compactionConnection, a.Provider) && provider.ConcurrencyRefused(compactionConnection, compactionModel)
+			// Native compaction needs the exact boundary source on the main
+			// connection; Errand cannot prepare it ahead.
+			nativePlanned := a.Provider.NativeCompactionPlanned(a.Model)
+			serial := nativePlanned || provider.SameConnection(compactionConnection, a.Provider) && provider.ConcurrencyRefused(compactionConnection, compactionModel)
 			deferCompaction := func(at int) bool {
 				if overflowPressure || activeTokens >= hardLimit {
 					return false
@@ -610,7 +613,7 @@ steps:
 				slot.discard(job)
 				job = nil
 			}
-			if job != nil && (overflowPressure || requested != "") {
+			if job != nil && (overflowPressure || requested != "" || nativePlanned) {
 				// Manual requests own their operation ID; overflow starts from the exact source.
 				slot.discard(job)
 				job = nil
@@ -694,7 +697,7 @@ steps:
 				}
 				atCapacity := overflowPressure || activeTokens >= hardLimit
 				if compactErr != nil && ctx.Err() == nil && atCapacity && compactionModelUnavailable(compactErr) &&
-					a.CompactionProvider != nil && (a.CompactionProvider.Model != a.Model || !provider.SameConnection(a.CompactionProvider, a.Provider)) {
+					a.Provider.CompactionMethod() != provider.CompactionProviderOnly && a.CompactionProvider != nil && (a.CompactionProvider.Model != a.Model || !provider.SameConnection(a.CompactionProvider, a.Provider)) {
 					// Last resort: the next request cannot be sent and the
 					// configured compaction connection is unavailable (input
 					// limits are already adapted by the extractor). The
@@ -888,7 +891,7 @@ steps:
 			}
 		}
 		if err != nil {
-			if ctx.Err() == nil && !completion.hasOutput() && provider.IsContextWindowExceeded(err) &&
+			if ctx.Err() == nil && !completion.hasOutput() && (provider.IsContextWindowExceeded(err) || errors.Is(err, provider.ErrCheckpointReplayNeedsCompaction)) &&
 				a.ContextCompactionPercent != CompactionOff && overflowRecoveries < compactionStageRecoveries {
 				overflowRecoveries++
 				overflowPressure = true
@@ -1023,6 +1026,9 @@ steps:
 		}
 		if settled := a.observeReasoningVisibility(&completion); settled != reasoning.Unknown {
 			emit(AgentEvent{Type: "reasoning_classified", Data: settled})
+		}
+		if completion.nativeReplayRecovered {
+			emit(AgentEvent{Type: "compaction_route_notice", Data: map[string]any{"reason": "The provider rejected its saved checkpoint. Crude continued with the portable summary."}})
 		}
 		if !continuationWarningSent && (completion.ResponseContinuationReason == "response_not_stored" || completion.ResponseContinuationReason == "response_id_missing") {
 			continuationWarningSent = true

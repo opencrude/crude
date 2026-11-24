@@ -47,6 +47,11 @@ CREATE TABLE IF NOT EXISTS agent_output_limits (
  CREATE TABLE IF NOT EXISTS response_media_replay_limitations (
   provider_scope TEXT PRIMARY KEY, updated_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS compaction_attempts (scope TEXT NOT NULL,source TEXT NOT NULL,account TEXT NOT NULL,expires INTEGER NOT NULL, PRIMARY KEY(scope,source));
+CREATE TABLE IF NOT EXISTS compaction_support (
+ scope TEXT PRIMARY KEY, account TEXT NOT NULL, model TEXT NOT NULL,
+ state TEXT NOT NULL, expires INTEGER NOT NULL, failures INTEGER NOT NULL, retry_at INTEGER NOT NULL, method TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS connection_concurrency_refusals (
  provider_scope TEXT NOT NULL, account_id TEXT NOT NULL, model_id TEXT NOT NULL,
  updated_at INTEGER NOT NULL,
@@ -59,6 +64,7 @@ const learnedOutputLimitLifetime = 7 * 24 * time.Hour
 const learnedResponseMediaReplayLifetime = 7 * 24 * time.Hour
 
 var activeModelCatalog atomic.Pointer[ModelCatalog]
+var catalogUnavailable atomic.Bool
 
 var transientResponseMediaReplay = struct {
 	sync.Mutex
@@ -67,7 +73,12 @@ var transientResponseMediaReplay = struct {
 
 // UseModelCatalog installs the app-owned catalog. All readers use its immutable
 // memory snapshot; no model lookup performs database or network I/O.
-func UseModelCatalog(catalog *ModelCatalog) { activeModelCatalog.Store(catalog) }
+func UseModelCatalog(catalog *ModelCatalog) {
+	// An explicitly failed core catalog must not turn a durable spend guard into
+	// a process-local one. Standalone library users have no configured catalog.
+	catalogUnavailable.Store(catalog == nil)
+	activeModelCatalog.Store(catalog)
+}
 
 // LearnedOutputLimit returns the app-wide provider-confirmed output ceiling
 // for an agent profile and an exact account/endpoint/protocol/model connection.
@@ -159,19 +170,20 @@ type catalogSnapshot struct {
 }
 
 type ModelCatalog struct {
-	db        *sql.DB
-	sources   []ModelSource
-	snapshot  atomic.Pointer[catalogSnapshot]
-	updates   chan uint64
-	ctx       context.Context
-	cancel    context.CancelFunc
-	done      chan struct{}
-	start     sync.Once
-	close     sync.Once
-	refreshMu sync.Mutex
-	mediaMu   sync.RWMutex
-	media     map[string]time.Time
-	closeErr  error
+	compaction supportCache
+	db         *sql.DB
+	sources    []ModelSource
+	snapshot   atomic.Pointer[catalogSnapshot]
+	updates    chan uint64
+	ctx        context.Context
+	cancel     context.CancelFunc
+	done       chan struct{}
+	start      sync.Once
+	close      sync.Once
+	refreshMu  sync.Mutex
+	mediaMu    sync.RWMutex
+	media      map[string]time.Time
+	closeErr   error
 }
 
 func OpenModelCatalog(path string, sources []ModelSource) (*ModelCatalog, error) {
@@ -196,6 +208,11 @@ func OpenModelCatalog(path string, sources []ModelSource) (*ModelCatalog, error)
 		db: db, sources: slices.Clone(sources),
 		updates: make(chan uint64, 1), ctx: ctx, cancel: cancel, done: make(chan struct{}),
 		media: make(map[string]time.Time),
+	}
+	if err := c.compaction.load(db); err != nil {
+		cancel()
+		_ = db.Close()
+		return nil, err
 	}
 	if err := c.loadResponseMediaReplayLimitations(ctx); err != nil {
 		cancel()

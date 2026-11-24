@@ -115,10 +115,18 @@ func ProjectReplayMessages(messages []ChatMessage, current *Provider) ([]ChatMes
 	for _, message := range messages {
 		copy := message
 		copy.ProviderItems = nil
+		copy.nativeReplay = false
 		prefix := hasher.value()
 		eligible := message.ReplayScope == scope && message.ReplayPrefixHash != "" && message.ReplayPrefixHash == prefix
 		if eligible {
 			for _, item := range message.ProviderItems {
+				if item.Type == nativeWindowItem {
+					if len(result) == 1 && result[0].Role == "system" && message.Origin == OriginCheckpoint && current != nil && item.PrefixHash == prefix && item.SourceModel == current.Model && item.ReplayScope == current.compactionScope(current.Model) && !current.rejectedCheckpoint(message, item) {
+						copy.nativeReplay = true
+						copy.ProviderItems = append(copy.ProviderItems, cloneProviderItem(item))
+					}
+					continue
+				}
 				if item.ReplayScope == scope && item.PrefixHash == prefix {
 					copy.ProviderItems = append(copy.ProviderItems, cloneProviderItem(item))
 				}

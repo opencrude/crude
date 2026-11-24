@@ -139,6 +139,7 @@ func (m *Model) parentModelOptions(accountID string, parent *agentParent) []ui.F
 func (m *Model) syncAgentConnection(category int) {
 	if form := m.categories[category].Form; form != nil {
 		m.syncConnection(form, fieldConnection, fieldModel, m.parentOf(category))
+		m.syncCompactionHint(category)
 	}
 }
 

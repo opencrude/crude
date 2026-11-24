@@ -30,7 +30,7 @@ func (s *AnthropicStandard) Info() ProtocolInfo {
 		WebSearch:   WebSearchTool,
 		Streaming:   FramingSSE,
 		// "fast" is fast mode (the speed parameter), not a service tier.
-		Options: ProtocolOptions{ServiceTiers: []string{"auto", "standard_only", "fast"}},
+		Options: ProtocolOptions{NativeCompaction: "messages", ServiceTiers: []string{"auto", "standard_only", "fast"}},
 	}
 }
 
@@ -184,6 +184,11 @@ func encodeAnthropicMessages(messages []ChatMessage) (system []any, result []ant
 	}
 
 	for _, msg := range messages {
+		if item := nativeItem(msg, "anthropic"); item != nil {
+			appendMessage("assistant", []any{item.Data})
+			continue
+		}
+
 		if msg.Role == "system" || msg.Role == "developer" {
 			blocks, blockErr := anthropicTextAndImageBlocks(msg, false)
 			if blockErr != nil {
