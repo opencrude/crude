@@ -11,6 +11,7 @@ import (
 	"hash"
 	"io"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -21,7 +22,6 @@ const (
 	MaxFrontmatterBytes = 16 << 10
 	MaxInstructionBytes = 64 << 10
 	MaxFileBytes        = 8 << 20
-	MaxSkillBytes       = 32 << 20
 	MaxFiles            = 512
 	MaxEntries          = 1024
 	MaxPathDepth        = 32
@@ -113,8 +113,8 @@ func loadRoot(ctx context.Context, root *os.Root, path, name string) (Skill, err
 	skill.Path = path
 	skill.Instructions = string(instructions)
 	skill.records = make(map[string]fileRecord)
-	entries, total := 0, int64(0)
-	if err := collectFiles(ctx, root, ".", &skill, &entries, &total); err != nil {
+	entries := 0
+	if err := collectFiles(ctx, root, ".", &skill, &entries); err != nil {
 		return Skill{}, err
 	}
 	if skill.records["SKILL.md"] != definitionRecord {
@@ -236,7 +236,7 @@ func validateRelative(relative string) error {
 	return nil
 }
 
-func collectFiles(ctx context.Context, root *os.Root, directory string, skill *Skill, entries *int, total *int64) error {
+func collectFiles(ctx context.Context, root *os.Root, directory string, skill *Skill, entries *int) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -281,7 +281,7 @@ func collectFiles(ctx context.Context, root *os.Root, directory string, skill *S
 		}
 		if info.IsDir() {
 			skill.records[relative] = fileRecord{kind: "directory"}
-			if err := collectFiles(ctx, root, relative, skill, entries, total); err != nil {
+			if err := collectFiles(ctx, root, relative, skill, entries); err != nil {
 				return err
 			}
 			continue
@@ -289,20 +289,13 @@ func collectFiles(ctx context.Context, root *os.Root, directory string, skill *S
 		if len(skill.Files) >= MaxFiles {
 			return fmt.Errorf("%w: more than %d files", ErrLimit, MaxFiles)
 		}
-		limit := int64(MaxFileBytes)
+		limit := int64(math.MaxInt64) // Hash on disk; only instructions and requested previews enter memory.
 		if relative == "SKILL.md" {
 			limit = MaxDefinitionBytes
-		}
-		if remaining := int64(MaxSkillBytes) - *total; remaining < limit {
-			limit = remaining
 		}
 		_, record, err := consumeFile(ctx, root, relative, limit, io.Discard)
 		if err != nil {
 			return fmt.Errorf("inspect %s: %w", relative, err)
-		}
-		*total += record.size + int64(len(record.target))
-		if *total > MaxSkillBytes {
-			return fmt.Errorf("%w: skill exceeds %d bytes", ErrLimit, MaxSkillBytes)
 		}
 		skill.records[relative] = record
 		skill.Files = append(skill.Files, relative)
@@ -379,6 +372,7 @@ func consumeFile(ctx context.Context, root *os.Root, relative string, limit int6
 		return 0, fileRecord{}, err
 	}
 	defer file.Close()
+	limit = min(limit, before.Size())
 	hasher := sha256.New()
 	writer := io.MultiWriter(hasher, output)
 	buffer := make([]byte, 32<<10)

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -68,6 +69,7 @@ type OpenMsg struct {
 	Screen     *Screen
 	Generation int
 	Match      fileio.ProjectSearchMatch
+	Position   *editor.Position // clicked source line and rune column, both zero-based
 }
 
 type CloseMsg struct {
@@ -106,30 +108,32 @@ type Screen struct {
 	focus          func(ui.ComponentID)
 	icons          *filetree.IconResolver
 
-	results        []fileio.ProjectSearchMatch
-	groups         []resultGroup
-	rows           []displayRow
-	collapsed      map[string]bool
-	selected       int
-	selRow         int
-	histIdx        int
-	histDraft      string
-	loading        bool
-	errText        string
-	notice         string
-	duration       time.Duration
-	generation     int
-	previewNotice  string
-	previewSrc     *editor.Editor
-	caseSensitive  bool
-	wholeWord      bool
-	regex          bool
-	replacing      bool
-	resultH        int
-	listY0         int
-	previewSurf    *surface.Surface
-	rowsGeneration uint64
-	listGeneration uint64
+	results                []fileio.ProjectSearchMatch
+	groups                 []resultGroup
+	rows                   []displayRow
+	collapsed              map[string]bool
+	selected               int
+	selRow                 int
+	histIdx                int
+	histDraft              string
+	loading                bool
+	errText                string
+	notice                 string
+	duration               time.Duration
+	generation             int
+	previewNotice          string
+	previewHits            map[int]int
+	citedLine, citedColumn int
+	previewSrc             *editor.Editor
+	caseSensitive          bool
+	wholeWord              bool
+	regex                  bool
+	replacing              bool
+	resultH                int
+	listY0                 int
+	previewSurf            *surface.Surface
+	rowsGeneration         uint64
+	listGeneration         uint64
 }
 
 func New(th *theme.Theme) *Screen {
@@ -229,29 +233,44 @@ func (s *Screen) SetMode(mode Mode) {
 	s.sync()
 }
 
+// SelectedFilePath identifies the file to load, not an excerpt for one match.
 func (s *Screen) SelectedFilePath() string {
-	if s.mode == ModeFiles && s.selected >= 0 && s.selected < len(s.results) {
+	if path := s.LiteralFilePath(); path != "" {
+		return path
+	}
+	if s.selected >= 0 && s.selected < len(s.results) {
 		return s.results[s.selected].Path
 	}
 	return ""
 }
 
-func (s *Screen) SetFilePreview(text string, first, line, column int, notice string) {
+// LiteralFilePath is a user-entered absolute path in Go to File.
+func (s *Screen) LiteralFilePath() string { return s.exactPath() }
+
+// ClearFilePreview releases the old editor and its asynchronous syntax worker.
+func (s *Screen) ClearFilePreview() {
 	if s.previewSrc != nil {
 		s.previewSrc.Close()
 		s.previewSrc = nil
 	}
+	s.previewHits = nil
+	s.previewNotice = ""
+}
+
+// SetFilePreview installs a complete worker-prepared file for this selection.
+func (s *Screen) SetFilePreview(file *FilePreview, line, column int, notice string) {
+	s.ClearFilePreview()
 	s.previewNotice = notice
-	if notice != "" {
+	if file == nil {
 		return
 	}
-	ed := editor.NewPreview(s.th, s.SelectedFilePath(), text, first)
-	local := max(0, line-first)
-	col := editor.RuneIndexToVisualColumn(ed.TabWidth(), ed.LineText(local), column-1)
-	ed.SetCursorPosition(local, col)
-	ed.SetLandingRange(local, col, col+1)
-	ed.ScrollToCursor()
-	s.previewSrc = ed
+	s.citedLine, s.citedColumn = line, column
+	s.previewSrc = file.document.Open(s.th, s.SelectedFilePath())
+	s.previewHits = file.hits
+	st := s.previewSrc.Search()
+	st.Matches = file.matches
+	st.Open = len(file.matches) > 0
+	s.rebuildPreview()
 }
 func (s *Screen) SetReplacing(busy bool) { s.replacing = busy; s.sync() }
 func (s *Screen) Replacing() bool        { return s.replacing }
@@ -408,90 +427,47 @@ func (s *Screen) HandleSearchDebounced(msg ui.SearchDebouncedMsg) tea.Cmd {
 	return func() tea.Msg { return request }
 }
 
+// Navigating the same file changes only the caret and selected highlight.
 func (s *Screen) rebuildPreview() {
-	s.previewNotice = ""
-	if s.previewSrc != nil {
-		s.previewSrc.Close()
-	}
-	if s.selected < 0 || s.selected >= len(s.results) || s.results[s.selected].NameOnly {
-		s.previewSrc = nil
+	ed := s.previewSrc
+	if ed == nil {
 		return
 	}
-	result := s.results[s.selected]
-	if result.Context == "" {
-		s.previewSrc = nil
+	if ed.FilePath() != s.SelectedFilePath() {
+		s.ClearFilePreview()
 		return
 	}
-	preview := editor.NewPreview(s.th, result.Path, result.Context, result.ContextStart)
-	localLine := result.Line - result.ContextStart
-	if localLine < 0 {
-		localLine = 0
-	}
-	startCol := editor.RuneIndexToVisualColumn(preview.TabWidth(), result.LineText, result.Column)
-	endRune := result.EndColumn
-	if result.EndLine > result.Line {
-		endRune = len([]rune(result.LineText))
-	}
-	endCol := editor.RuneIndexToVisualColumn(preview.TabWidth(), result.LineText, max(endRune, result.Column+1))
-	preview.SetCursorPosition(localLine, startCol)
-	if !result.FuzzyOnly {
-		preview.SetLandingRange(localLine, startCol, endCol)
-	}
-	preview.ScrollToCursor()
-	s.applyPreviewMatches(preview, result)
-	s.previewSrc = preview
-}
-
-// applyPreviewMatches highlights EVERY match of the same file that falls
-// inside the preview excerpt through the editor's search-highlight path, so
-// the pane shows all hits on the previewed lines rather than only the
-// selected one. The selected match stays strongest via the landing cue.
-func (s *Screen) applyPreviewMatches(preview *editor.Editor, selected fileio.ProjectSearchMatch) {
-	lineCount := strings.Count(selected.Context, "\n") + 1
-	st := preview.Search()
-	st.Matches = nil
+	line, col := max(0, s.citedLine-1), max(0, s.citedColumn-1)
+	end := col + 1
+	st := ed.Search()
 	st.CurrentIdx = -1
-	for i, r := range s.results {
-		if r.Path != selected.Path || r.NameOnly {
-			continue
-		}
-		local := r.Line - selected.ContextStart
-		if local < 0 || local >= lineCount {
-			continue
-		}
-		if r.FuzzyOnly {
-			for _, pos := range r.TextMatches {
-				sc, ec := editor.RuneIndexToVisualColumn(preview.TabWidth(), r.LineText, pos), editor.RuneIndexToVisualColumn(preview.TabWidth(), r.LineText, pos+1)
-				if i == s.selected && st.CurrentIdx < 0 {
-					st.CurrentIdx = len(st.Matches)
-				}
-				st.Matches = append(st.Matches, editor.SearchMatch{Start: editor.Position{Line: local, Col: sc}, End: editor.Position{Line: local, Col: max(sc+1, ec)}})
+	if s.selected >= 0 && s.selected < len(s.results) {
+		r := s.results[s.selected]
+		if !r.NameOnly {
+			line, col, end = max(0, r.Line-1), r.Column, r.EndColumn
+			if r.EndLine > r.Line {
+				end = utf8.RuneCountInString(r.LineText)
 			}
-			continue
 		}
-		sc := editor.RuneIndexToVisualColumn(preview.TabWidth(), r.LineText, r.Column)
-		endLocal := local
-		endText := r.LineText
-		if r.EndLine > r.Line {
-			endLocal = r.EndLine - selected.ContextStart
-			if endLocal >= lineCount {
-				continue
+		if idx, ok := s.previewHits[s.selected]; ok {
+			st.CurrentIdx = idx
+			hit := st.Matches[idx]
+			ed.SetCursorPosition(hit.Start.Line, hit.Start.Col)
+			if hit.Start.Line == hit.End.Line {
+				ed.SetLandingRange(hit.Start.Line, hit.Start.Col, hit.End.Col)
 			}
-			endText = strings.Split(selected.Context, "\n")[endLocal]
+			ed.ScrollToCursor()
+			return
 		}
-		ec := editor.RuneIndexToVisualColumn(preview.TabWidth(), endText, r.EndColumn)
-		if endLocal == local && ec <= sc {
-			ec = sc + 1
-		}
-		if i == s.selected {
-			st.CurrentIdx = len(st.Matches)
-		}
-		st.Matches = append(st.Matches, editor.SearchMatch{
-			Start: editor.Position{Line: local, Col: sc},
-			End:   editor.Position{Line: endLocal, Col: ec},
-		})
 	}
-	st.Open = len(st.Matches) > 0
+	line = min(line, ed.LineCount()-1)
+	raw := ed.LineText(line)
+	col = editor.RuneIndexToVisualColumn(ed.TabWidth(), raw, col)
+	end = editor.RuneIndexToVisualColumn(ed.TabWidth(), raw, end)
+	ed.ClearSelection()
+	ed.SetCursorPosition(line, col)
+	ed.SetLandingRange(line, col, max(col+1, end))
+	ed.ScrollToCursor()
 }
 
 func (s *Screen) sync() {
@@ -660,8 +636,11 @@ func (s *Screen) replaceableCount() int {
 // the search filters. The file opener validates the literal path on the
 // core host when the user activates Open.
 func (s *Screen) exactPath() string {
+	if s.mode != ModeFiles {
+		return ""
+	}
 	value := s.Query()
-	if s.mode != ModeFiles || strings.ContainsAny(value, "\r\n\x00") {
+	if strings.ContainsAny(value, "\r\n\x00") {
 		return ""
 	}
 	if strings.HasPrefix(value, "/") && !strings.HasPrefix(value, "//") {
@@ -1246,7 +1225,17 @@ func (p *previewPane) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	default:
 		return ui.EventResult{}
 	}
-	return ui.EventResult{Handled: true, Cmd: ed.HandleEvent(msg), Invalidate: ui.InvalidatePaint}
+	cmd := ed.HandleEvent(msg)
+	if evt.Kind == ui.EventMouseClick && evt.MouseClick.Button == tea.MouseLeft && evt.MouseClick.Mod == 0 {
+		if pos, ok := ed.DoubleClickPosition(); ok {
+			line := ed.LineText(pos.Line)
+			pos.Col = utf8.RuneCountInString(line[:editor.VisualColToByteOffset(line, pos.Col, ed.TabWidth())])
+			match := fileio.ProjectSearchMatch{Path: ed.FilePath(), NameOnly: true, LineText: line}
+			open := OpenMsg{Screen: p.owner, Generation: p.owner.generation, Match: match, Position: &pos}
+			cmd = func() tea.Msg { return open }
+		}
+	}
+	return ui.EventResult{Handled: true, Cmd: cmd, Invalidate: ui.InvalidatePaint}
 }
 
 func (p *previewPane) CancelPointerCapture() {

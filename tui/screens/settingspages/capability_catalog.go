@@ -991,7 +991,7 @@ func mcpConnectionFields(value captypes.ConnectionConfig) []*ui.FieldState {
 		ui.BoolFieldState("launch", "Approve local launch", value.LaunchApproved, "Runs unsandboxed as you. Installation alone never approves launch."),
 		ui.SeparatorFieldState("mcp-secrets", "Secrets and limits"),
 		table("secrets", "Secret references", "Add reference", value.SecretRefs, "Map header or variable names to env:VARIABLE; no credential bytes stored here.", "Name", "Reference"),
-		capabilityIntField("timeout", "Timeout", "seconds", int64(max(1, value.TimeoutSeconds)), 1, 3600, "Operation deadline; unknown remote changes are never retried."),
+		capabilityIntField("timeout", "Timeout", "seconds", int64(value.TimeoutSeconds), 0, 3600, "Use 0 for the default. Local startup then has no time limit."),
 	}
 }
 

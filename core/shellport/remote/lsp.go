@@ -132,12 +132,15 @@ func (l *lspReplica) AllDiagnostics() map[string]insight.Diagnostics {
 	return cloneLSPDiagnostics(l.snapshot.Diagnostics)
 }
 func (l *lspReplica) DiagnosticSnapshot() shellport.LSPDiagnosticSnapshot {
-	return shellport.LSPDiagnosticSnapshot{Generation: l.snapshot.Generation, Version: l.snapshot.Version, Diagnostics: l.AllDiagnostics()}
+	return shellport.LSPDiagnosticSnapshot{Generation: l.snapshot.Generation, Version: l.snapshot.DiagnosticVersion, Diagnostics: l.AllDiagnostics()}
 }
 func (l *lspReplica) DiagnosticCursor() (string, uint64) {
-	return l.snapshot.Generation, l.snapshot.Version
+	return l.snapshot.Generation, l.snapshot.DiagnosticVersion
 }
-func (l *lspReplica) ContextCursor() (string, uint64) {
+func (l *lspReplica) ContextCursor(path string) (string, uint64) {
+	if caps, ok := l.snapshot.Assistance[filepath.Clean(path)]; ok && caps.ContextGeneration != 0 {
+		return l.snapshot.Generation, caps.ContextGeneration
+	}
 	return l.snapshot.Generation, l.snapshot.ContextGeneration
 }
 func (l *lspReplica) InlayHintsState() (bool, uint64) {

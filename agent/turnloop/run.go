@@ -1805,7 +1805,23 @@ func isAutoContinuableFinishReason(reason string) bool {
 func toolDefsToProviderDefs(tds []tools.ToolDef) []provider.ToolDef {
 	ephemeral := &provider.CacheControl{Type: "ephemeral"}
 	result := make([]provider.ToolDef, len(tds))
-	for i, td := range tds {
+	// Static definitions retain their positions when a server connects. The
+	// caller's selection still governs exactly which tools appear on the wire.
+	dynamicStart := len(tds)
+	for _, td := range tds {
+		if strings.HasPrefix(td.Function.Name, "mcp__") {
+			dynamicStart--
+		}
+	}
+	fixed, dynamic := 0, dynamicStart
+	for _, td := range tds {
+		i := fixed
+		if strings.HasPrefix(td.Function.Name, "mcp__") {
+			i = dynamic
+			dynamic++
+		} else {
+			fixed++
+		}
 		result[i] = provider.ToolDef{
 			Type: td.Type,
 			Function: provider.FunctionDef{
@@ -1822,22 +1838,7 @@ func toolDefsToProviderDefs(tds []tools.ToolDef) []provider.ToolDef {
 	return result
 }
 
-func allToolDefs() []provider.ToolDef {
-	ephemeral := &provider.CacheControl{Type: "ephemeral"}
-	result := make([]provider.ToolDef, len(tools.AgentTools))
-	for i, td := range tools.AgentTools {
-		result[i] = provider.ToolDef{
-			Type: td.Type,
-			Function: provider.FunctionDef{
-				Name:        td.Function.Name,
-				Description: td.Function.Description,
-				Parameters:  td.Function.Parameters,
-			},
-			CacheControl: ephemeral,
-		}
-	}
-	return result
-}
+func allToolDefs() []provider.ToolDef { return toolDefsToProviderDefs(tools.AgentTools) }
 
 func removeMessagesByInternalID(messages []provider.ChatMessage, ids []string) []provider.ChatMessage {
 	if len(messages) == 0 || len(ids) == 0 {

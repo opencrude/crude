@@ -1061,9 +1061,9 @@ func TestConnectedNavigationPrivateTargetRecoveryDoesNotInstallOrMove(t *testing
 		t.Fatal(err)
 	}
 	f.synchronize(t, f.engine.main)
-	_, contextGeneration := f.ws.LSPMgr.ContextCursor()
+	_, contextGeneration := f.ws.LSPMgr.ContextCursor("")
 	remoteJourneyUntil(t, f.shells, func() bool {
-		_, generation := one.app.ws.LSPMgr().ContextCursor()
+		_, generation := one.app.ws.LSPMgr().ContextCursor("")
 		_, current := f.main.CurrentInsightSource()
 		return generation == contextGeneration && current && one.app.ws.LSPMgr().ServerReady()
 	})
@@ -1083,7 +1083,7 @@ func TestConnectedNavigationPrivateTargetRecoveryDoesNotInstallOrMove(t *testing
 func TestConnectedNavigationOriginalContextPublicationBarrierIncludesNull(t *testing.T) {
 	f := newNavigationConnectedFixture(t, "null", "\t😀name\r\n")
 	one := f.shells[0]
-	_, oldContext := one.app.ws.LSPMgr().ContextCursor()
+	_, oldContext := one.app.ws.LSPMgr().ContextCursor("")
 	observed := make(chan struct{}, 1)
 	f.engine.mu.Lock()
 	f.engine.watched = observed
@@ -1103,7 +1103,7 @@ func TestConnectedNavigationOriginalContextPublicationBarrierIncludesNull(t *tes
 	if result.result.Boundary.Context.Generation <= oldContext {
 		t.Fatal("fixture failed to create a genuinely newer qualified context")
 	}
-	_, installed := one.app.ws.LSPMgr().ContextCursor()
+	_, installed := one.app.ws.LSPMgr().ContextCursor("")
 	if installed != oldContext {
 		t.Fatal("fixture installed the publication before the result")
 	}

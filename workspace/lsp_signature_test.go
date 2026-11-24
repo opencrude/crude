@@ -114,7 +114,7 @@ func TestSignatureManagerRetainsSourceAndRejectsContextChange(t *testing.T) {
 				}
 				return
 			}
-			owner, generation := manager.ContextCursor()
+			owner, generation := manager.ContextCursor("")
 			if got.err != nil || len(got.help.Signatures) != 1 ||
 				got.help.Boundary.Source.DocumentID != source.ID || got.help.Boundary.Source.Revision != source.Revision ||
 				got.help.Boundary.Source.Lifetime != source.AnalysisLifetime || got.help.Boundary.Source.WorkspaceGeneration != owner ||

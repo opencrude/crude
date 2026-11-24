@@ -83,7 +83,10 @@ evidence on their respective hosts. A remote core and a local shell do not
 silently share a clock or a store. Start with `builds`, then select `hours`,
 `stalls`, or `compare`. Set `build_id`, `against_build_id` and the exact metric in
 `page.filter` for `compare`. An example metric is `core.actor` or `ui.update`.
-Echo the returned `next` as `page` on continuation, without changing the selection.
+For `stalls`, `page.filter` matches the metric, an exact saved method label, or
+part of a recorded stack frame. Search for `paintMessageRow` to find a chat
+paint stall. Use `hours` with the request metric for historical timings without
+a sampled stack. Echo `next` as `page` without changing the selection.
 
 Both producers save closed windows from the existing metric rings about once
 per minute in local SQLite (`performance.db` under the selected Crude profile).

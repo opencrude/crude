@@ -64,7 +64,8 @@ type LSPIntegration struct {
 	progress map[string]bool
 	changed  chan struct{}
 
-	onDiagnostics func(insight.DiagnosticPublication)
+	onDiagnostics       func(insight.DiagnosticPublication)
+	onAssistanceChanged func()
 	// onUnopened receives unversioned publications for files this client has
 	// not opened, for example from a server that checks a whole project.
 	onUnopened func(path string, p insight.DiagnosticPublication)
@@ -93,7 +94,8 @@ func WithServerEnv(env map[string]string) LSPIntegrationOption {
 }
 
 type lspLaunch struct {
-	evidence *serverEvidence
+	completions map[string]registeredCompletion
+	evidence    *serverEvidence
 	// pull is this launch's pull diagnostic state; its work ends with Stop.
 	pull       *pullState
 	cancel     context.CancelFunc
@@ -429,11 +431,11 @@ func (l *LSPIntegration) OpenFile(ctx context.Context, filePath, languageID, tex
 	l.openFiles[fp] = state
 	l.versionCounter = version
 	l.signalLocked()
-	l.pullDocumentLocked(l.launch, fp, state, "")
+	l.pullDocumentLocked(l.launch, fp, state)
 	return version, nil
 }
 
-// UpdateFile sends the full text of an open file and returns the version that the server confirms.
+// UpdateFile synchronizes the new text using the change mode negotiated at startup.
 func (l *LSPIntegration) UpdateFile(ctx context.Context, filePath, text string, boundary insight.Boundary) (int, error) {
 	fp, err := diagnosticPath(filePath, boundary)
 	if err != nil {
@@ -459,9 +461,11 @@ func (l *LSPIntegration) updateFileLocked(ctx context.Context, path string, stat
 		return 0, errors.New("LSP wire version exhausted")
 	}
 	version := l.versionCounter + 1
-	if err := l.client.NotifyDidChangeTextDocument(ctx, state.uri, version, []protocol.TextDocumentContentChangeEvent{
-		{Value: protocol.TextDocumentContentChangeWholeDocument{Text: text}},
-	}); err != nil {
+	change, err := documentChange(l.client.DocumentChangeKind(), state.text, text)
+	if err != nil {
+		return 0, err
+	}
+	if err := l.client.NotifyDidChangeTextDocument(ctx, state.uri, version, []protocol.TextDocumentContentChangeEvent{change}); err != nil {
 		return 0, fmt.Errorf("send didChange: %w", err)
 	}
 	state.text, state.boundary = text, cloneBoundary(boundary)
@@ -469,8 +473,61 @@ func (l *LSPIntegration) updateFileLocked(ctx context.Context, path string, stat
 	state.changed = true
 	l.versionCounter = version
 	l.signalLocked()
-	l.pullDocumentLocked(l.launch, path, state, "")
+	l.pullDocumentLocked(l.launch, path, state)
 	return version, nil
+}
+
+// ErrNoDocumentChanges means this producer does not synchronize edited text.
+var ErrNoDocumentChanges = errors.New("the language server does not accept document changes")
+
+// The workspace supplies immutable before/after text. Encode one contiguous
+// splice against the previous version. Neither UTF-8 nor a CRLF may be split.
+func documentChange(kind protocol.TextDocumentSyncKind, before, after string) (protocol.TextDocumentContentChangeEvent, error) {
+	switch kind {
+	case protocol.Full:
+		return protocol.TextDocumentContentChangeEvent{Value: protocol.TextDocumentContentChangeWholeDocument{Text: after}}, nil
+	case protocol.Incremental:
+		start, oldEnd, newEnd := 0, len(before), len(after)
+		if before == after {
+			oldEnd, newEnd = 0, 0
+		} else {
+			for start < oldEnd && start < newEnd && before[start] == after[start] {
+				start++
+			}
+			for start > 0 && (!changeBoundary(before, start) || !changeBoundary(after, start)) {
+				start--
+			}
+			for oldEnd > start && newEnd > start && before[oldEnd-1] == after[newEnd-1] {
+				oldEnd--
+				newEnd--
+			}
+			for !changeBoundary(before, oldEnd) || !changeBoundary(after, newEnd) {
+				oldEnd++
+				newEnd++
+			}
+		}
+		point := func(i int) (protocol.Position, error) {
+			line, col, err := lspedit.Position(before, i)
+			return protocol.Position{Line: uint32(line), Character: uint32(col)}, err
+		}
+		from, err := point(start)
+		if err != nil {
+			return protocol.TextDocumentContentChangeEvent{}, err
+		}
+		to := from
+		if oldEnd != start {
+			to, err = point(oldEnd)
+			if err != nil {
+				return protocol.TextDocumentContentChangeEvent{}, err
+			}
+		}
+		return protocol.TextDocumentContentChangeEvent{Value: protocol.TextDocumentContentChangePartial{Range: &protocol.Range{Start: from, End: to}, Text: after[start:newEnd]}}, nil
+	default:
+		return protocol.TextDocumentContentChangeEvent{}, ErrNoDocumentChanges
+	}
+}
+func changeBoundary(s string, i int) bool {
+	return i == len(s) || utf8.RuneStart(s[i]) && (i == 0 || s[i] != '\n' || s[i-1] != '\r')
 }
 
 func (l *LSPIntegration) availableLocked(ctx context.Context) error {
@@ -523,7 +580,7 @@ func (l *LSPIntegration) NotifySave(ctx context.Context, path, text string, reas
 	}
 	_ = l.client.NotifyDocumentSave(ctx, state.uri, text, reason, before)
 	if !before {
-		l.pullDocumentLocked(l.launch, filepath.Clean(path), state, "")
+		l.pullDocumentLocked(l.launch, filepath.Clean(path), state)
 	}
 }
 

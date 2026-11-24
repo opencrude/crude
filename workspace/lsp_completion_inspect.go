@@ -72,33 +72,46 @@ func (w *Workspace) InspectLSPCompletion(ctx context.Context, owner document.Own
 	}
 	out := insight.LSPCompletionInspection{SetID: id, Digest: digest, ItemID: itemID, Boundary: set.Boundary,
 		WireVersion: set.WireVersion, FeatureGeneration: set.FeatureGeneration, Documentation: row.Documentation, ResolveState: "initial",
-		Detail: "The original insertion is unchanged. Documentation and detail are inert provider text."}
-	if !resolve {
-		if row.Insertion.TextEdit == nil {
-			return insight.LSPCompletionInspection{}, errors.New("retained completion lost its original primary edit")
-		}
-		edits := append([]insight.LSPTextEdit{*row.Insertion.TextEdit}, row.Insertion.AdditionalTextEdits...)
-		if _, err := lspedit.Apply(string(text), edits); err != nil {
-			return insight.LSPCompletionInspection{}, err
-		}
-	} else if hasCached {
-		out.Documentation, out.ResolveState = cached, "resolved"
-	} else if !set.ResolveSupported {
-		out.ResolveState = "unsupported"
-	} else {
+		Detail: "The primary insertion is unchanged."}
+	// If the original already declares its edits, accepting it needs no resolve.
+	// Otherwise a provider can supply imports even when no docs reader was opened.
+	needResolve := set.ResolveSupported && (resolve || row.Insertion.AdditionalTextEdits == nil)
+	resolved := cached
+	if needResolve && !hasCached {
 		response, err := w.LSPMgr.ResolveCompletion(requestCtx, set.Boundary, set.WireVersion, original)
 		if err != nil {
 			return insight.LSPCompletionInspection{}, err
 		}
 		if response.Unsupported {
-			return insight.LSPCompletionInspection{}, errors.New("the original provider no longer advertises completion resolution")
+			return insight.LSPCompletionInspection{}, errors.New("the original provider no longer offers completion resolution")
 		}
-		doc, err := lspcompletion.ResolveDocumentation(original, response.JSON)
+		resolved, err = lspcompletion.Resolve(original, response.JSON)
 		if err != nil {
 			return insight.LSPCompletionInspection{}, err
 		}
-		out.Documentation, out.ResolveState = completionDocumentation(doc), "resolved"
 	}
+	if needResolve && resolve {
+		out.Documentation, out.ResolveState = completionDocumentation(resolved.Documentation), "resolved"
+	} else if resolve {
+		out.ResolveState = "unsupported"
+	}
+	if !resolve || len(resolved.Additional) > 0 {
+		if row.Insertion.TextEdit == nil {
+			return insight.LSPCompletionInspection{}, errors.New("the primary insertion is missing")
+		}
+		extras := row.Insertion.AdditionalTextEdits
+		if resolved.Additional != nil {
+			extras = resolved.Additional
+		}
+		edits := append([]insight.LSPTextEdit{*row.Insertion.TextEdit}, extras...)
+		if _, err := lspedit.Apply(string(text), edits); err != nil {
+			return insight.LSPCompletionInspection{}, err
+		}
+		if !resolve {
+			out.AdditionalEdits = slices.Clone(resolved.Additional)
+		}
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.completionViews[key] != entry || time.Now().After(entry.expires) {
@@ -116,17 +129,24 @@ func (w *Workspace) InspectLSPCompletion(ctx context.Context, owner document.Own
 	if err := requestCtx.Err(); err != nil {
 		return insight.LSPCompletionInspection{}, err
 	}
-	if resolve && out.ResolveState == "resolved" && !hasCached {
-		// Cache only display data, never a resolved insertion or raw object.
-		size := len(out.Documentation.Detail) + len(out.Documentation.Value) + 128
-		if !s.completionBudgetLocked(entry, entry.bytes+size) {
-			return insight.LSPCompletionInspection{}, errors.New("retained completion documentation exceeds its consumer bound")
-		}
-		if _, exists := entry.resolved[itemID]; !exists {
-			entry.resolved[itemID] = out.Documentation
+	if needResolve && !hasCached {
+		if prior, ok := entry.resolved[itemID]; ok {
+			if !slices.Equal(prior.Additional, resolved.Additional) {
+				return insight.LSPCompletionInspection{}, errors.New("the server returned different edits for the same suggestion")
+			}
+		} else {
+			size := len(resolved.Detail) + len(resolved.Value) + 128
+			for _, e := range resolved.Additional {
+				size += len(e.NewText) + 48
+			}
+			if !s.completionBudgetLocked(entry, entry.bytes+size) {
+				return insight.LSPCompletionInspection{}, errors.New("resolved suggestion is too large")
+			}
+			entry.resolved[itemID] = resolved
 			entry.bytes += size
 		}
 	}
+
 	out.Boundary.Context.UnknownInputs = slices.Clone(out.Boundary.Context.UnknownInputs)
 	return out, nil
 }

@@ -136,8 +136,8 @@ func TestCapabilityConfigureIsMetadataOnlyAndInvocationIsIndependent(t *testing.
 	if _, err := service.Activate(context.Background(), actor, "local:review", false); err == nil {
 		t.Fatal("manual-only skill activated automatically")
 	}
-	if _, err := service.Activate(context.Background(), actor, "local:review", true); !errors.Is(err, skills.ErrLimit) {
-		t.Fatalf("explicit activation did not validate resource limits: %v", err)
+	if _, err := service.Activate(context.Background(), actor, "local:review", true); err != nil {
+		t.Fatalf("a bundled asset was treated as a model input: %v", err)
 	}
 	if err := os.Remove(filepath.Join(source, "oversized-resource")); err != nil {
 		t.Fatal(err)
@@ -215,23 +215,23 @@ func skillArchive(t *testing.T, entries ...archiveFixtureEntry) []byte {
 func TestCapabilityArchiveRejectsUnsafePathsAndIgnoresUnselectedLinks(t *testing.T) {
 	for _, entry := range []archiveFixtureEntry{{name: "repo/elsewhere/../../escape"}, {name: "/absolute"}, {name: "repo/other\\escape"}} {
 		t.Run(entry.name, func(t *testing.T) {
-			if err := extractSkill(context.Background(), skillArchive(t, entry), "skills/review", t.TempDir(), 1024); err == nil {
+			if err := extractSkill(context.Background(), bytes.NewReader(skillArchive(t, entry)), "skills/review", t.TempDir(), 1024); err == nil {
 				t.Fatal("unsafe unselected entry escaped validation")
 			}
 		})
 	}
-	if err := extractSkill(context.Background(), skillArchive(t,
+	if err := extractSkill(context.Background(), bytes.NewReader(skillArchive(t,
 		archiveFixtureEntry{name: "repo/other/link", kind: tar.TypeSymlink},
 		archiveFixtureEntry{name: "repo/skills/review/SKILL.md", body: "---\nname: review\ndescription: Review evidence\n---\nUse exact versions.\n"},
-	), "skills/review", t.TempDir(), 1024); err != nil {
+	)), "skills/review", t.TempDir(), 1024); err != nil {
 		t.Fatalf("safe unselected link blocked the selected skill: %v", err)
 	}
-	if err := extractSkill(context.Background(), skillArchive(t,
+	if err := extractSkill(context.Background(), bytes.NewReader(skillArchive(t,
 		archiveFixtureEntry{name: "repo/skills/review/link", kind: tar.TypeSymlink},
-	), "skills/review", t.TempDir(), 1024); err == nil {
+	)), "skills/review", t.TempDir(), 1024); err == nil {
 		t.Fatal("selected skill link was accepted")
 	}
-	if err := extractSkill(context.Background(), skillArchive(t), "../bad", t.TempDir(), 1024); err == nil {
+	if err := extractSkill(context.Background(), bytes.NewReader(skillArchive(t)), "../bad", t.TempDir(), 1024); err == nil {
 		t.Fatal("unsafe subtree accepted")
 	}
 }

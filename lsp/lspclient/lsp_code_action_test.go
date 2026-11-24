@@ -77,12 +77,12 @@ func TestCodeActionAdapterServerHelper(t *testing.T) {
 		switch request.Method {
 		case "initialize":
 			save("initialize.json", request.Params)
-			result = `{"capabilities":{"codeActionProvider":{"resolveProvider":true}}}`
+			result = `{"capabilities":{"textDocumentSync":1,"codeActionProvider":{"resolveProvider":true}}}`
 			if mode == "unsupported" {
-				result = `{"capabilities":{}}`
+				result = `{"capabilities":{"textDocumentSync":1}}`
 			}
 			if mode == "no-resolve" {
-				result = `{"capabilities":{"codeActionProvider":true}}`
+				result = `{"capabilities":{"textDocumentSync":1,"codeActionProvider":true}}`
 			}
 		case "textDocument/codeAction", "codeAction/resolve":
 			save("requested.json", request.Params)

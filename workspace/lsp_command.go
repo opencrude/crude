@@ -46,7 +46,7 @@ func (m *LSPManager) ExecuteCodeActionCommand(ctx context.Context, expected insi
 			boundary, wire = doc.boundary, doc.wireVersion
 			boundary.Context.UnknownInputs = append([]string(nil), boundary.Context.UnknownInputs...)
 		}
-		generation := m.contextGeneration
+		generation := m.producerContextLocked(boundary.Context.ID)
 		m.mu.Unlock()
 		if !sameInsightBoundary(boundary, expected) || wire != expectedWire || wire <= 0 ||
 			boundary.Context.Generation != generation {
@@ -66,7 +66,7 @@ func (m *LSPManager) ExecuteCodeActionCommand(ctx context.Context, expected insi
 		current := m.documents[filepath.Clean(expected.Source.Path)]
 		exact := current == doc && current != nil && current.opened && !current.syncPending &&
 			current.wireVersion == wire && sameInsightBoundary(current.boundary, boundary) &&
-			generation == m.contextGeneration
+			generation == m.producerContextLocked(boundary.Context.ID)
 		m.mu.Unlock()
 		if !exact {
 			return errors.New("code-action source or context changed while the command ran")

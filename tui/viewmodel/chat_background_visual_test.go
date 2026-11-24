@@ -90,3 +90,50 @@ func (m *chatBackgroundVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	_, cmd := m.App.Update(msg)
 	return m, cmd
 }
+
+// TestDesktopActivityVisualAcceptance drives the actual shell paint used by
+// tuishot. The test never launches a desktop server or sends a real click.
+func TestDesktopActivityVisualAcceptance(t *testing.T) {
+	if os.Getenv("CRUDE_VISUAL_MCP_ACTIVITY") != "1" {
+		t.Skip("requires sequential tuishot capture")
+	}
+	app := newEditorPaintApp(t, t.TempDir())
+	app.Tree.Visible = false
+	app.AddOrchestrator("desktop-work")
+	app.onboarding.trust.askedOwner, app.onboarding.trust.askedGen = app.ws, app.workspaceSwitchGen.Load()
+	state := app.ws.AgentMgr().Get("desktop-work").State
+	for _, message := range []conversation.Message{{InternalID: "ask", Role: conversation.RoleUser, Content: "Inspect the settings window."}, {InternalID: "click", Role: conversation.RoleTool, ToolName: "mcp__desktop__Click", ToolStatus: "success", Content: "Clicked the settings tab."}, {InternalID: "think", Role: conversation.RoleThinking, Content: "Check the visible selection."}, {InternalID: "shot", Role: conversation.RoleTool, ToolName: "mcp__desktop__Screenshot", ToolStatus: "success", Content: "Captured the settings window."}, {InternalID: "failed", Role: conversation.RoleTool, ToolName: "mcp__desktop__App", ToolStatus: "error", Content: "Window not found."}} {
+		state.Messages.AppendMessage(message)
+	}
+	app.syncAgentMessages(state.ID, false)
+	m := &desktopActivityCapture{App: app}
+	program := tea.NewProgram(m, tea.WithWidthMethod(ansi.GraphemeWidth))
+	app.SetProgram(program)
+	if _, err := program.Run(); err != nil {
+		t.Fatal(err)
+	}
+	if !m.seen {
+		t.Fatal("desktop group or failed call was not painted")
+	}
+}
+
+type desktopActivityCapture struct {
+	*App
+	seen bool
+}
+
+func (m *desktopActivityCapture) Init() tea.Cmd { return tickCmd() }
+func (m *desktopActivityCapture) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if key, ok := msg.(tea.KeyPressMsg); ok && key.Code == tea.KeyF9 {
+		return m, tea.Quit
+	}
+	_, cmd := m.App.Update(msg)
+	if !m.seen && m.mainSurf != nil {
+		screen := bufferPlain(m.mainSurf.Buffer())
+		if strings.Contains(screen, "Used 2 MCP tools") && strings.Contains(screen, "MCP App") {
+			m.seen = true
+			return m, tea.Batch(cmd, func() tea.Msg { return os.WriteFile(os.Getenv("CRUDE_CAPTURE_EVIDENCE"), []byte("grouped\n"), 0600) })
+		}
+	}
+	return m, cmd
+}

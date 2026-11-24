@@ -20,12 +20,12 @@ func TestAssistanceCapabilitiesAndRequestContextsOnWire(t *testing.T) {
 	}
 	path := filepath.Join(root, "held-out.fixture")
 	openTestFile(t, integration, ctx, path, "held-out", "join(a, )")
-	caps := integration.AssistanceCapabilities()
+	caps := integration.AssistanceCapabilities("")
 	if !caps.Completion || !caps.SignatureHelp || !reflect.DeepEqual(caps.CompletionTriggers, []string{":", "@"}) || !reflect.DeepEqual(caps.SignatureTriggers, []string{"?"}) || !reflect.DeepEqual(caps.SignatureRetriggers, []string{";"}) {
 		t.Fatalf("lost initialized capabilities: %+v", caps)
 	}
 	caps.CompletionTriggers[0] = "corrupt"
-	if integration.AssistanceCapabilities().CompletionTriggers[0] != ":" {
+	if integration.AssistanceCapabilities("").CompletionTriggers[0] != ":" {
 		t.Fatal("capability observations alias the transport")
 	}
 	for _, trigger := range []insight.LSPCompletionContext{{}, {TriggerKind: 2, TriggerCharacter: ":"}, {TriggerKind: 3}} {

@@ -25,7 +25,7 @@ func continuationFixture(t *testing.T, endpoint string) (*Provider, ChatRequest)
 	req := ChatRequest{Model: p.Model, ResponseContinuationScope: p.ResponseContinuationScope(p.Model),
 		Messages: []ChatMessage{NewTextMessage("system", strings.Repeat("stable policy\n", 8000)), NewTextMessage("user", "inspect")}}
 	message := ChatMessage{Role: "assistant", Content: TextContent(""), ToolCalls: []ToolCall{{ID: "patch", Type: "custom", Function: FunctionCall{Name: "apply_patch", Arguments: "patch"}}}}
-	BindResponseReference(&message, &ResponseReference{ID: "response-1", Scope: req.ResponseContinuationScope, InputHash: ResponseInputHash(req.Messages, req.Tools)})
+	BindResponseReference(&message, &ResponseReference{ID: "response-1", Scope: req.ResponseContinuationScope, InputHash: MessagePrefixHash(req.Messages)})
 	req.Messages = append(req.Messages, message, ChatMessage{Role: "tool", ToolCallID: "patch", Content: TextContent("written")})
 	return p, req
 }
@@ -39,7 +39,7 @@ func inlineMediaContinuationFixture(t *testing.T, endpoint string) (*Provider, C
 	})
 	BindResponseReference(&req.Messages[2], &ResponseReference{
 		ID: "response-1", Scope: req.ResponseContinuationScope,
-		InputHash: ResponseInputHash(req.Messages[:2], req.Tools),
+		InputHash: MessagePrefixHash(req.Messages[:2]),
 	})
 	req.MediaReplayRecovery = p.MediaReplayRecoveryEnabled()
 	return p, req
@@ -110,7 +110,7 @@ func TestResponsesContinuationMediaReplayLearningIsAdaptive(t *testing.T) {
 }
 
 func TestResponsesContinuationResetsOnExactContextOrConnectionChange(t *testing.T) {
-	for _, change := range []string{"system", "output", "tools", "model", "account", "endpoint", "partial", "compaction", "attachment"} {
+	for _, change := range []string{"system", "output", "model", "account", "endpoint", "partial", "compaction", "attachment"} {
 		t.Run(change, func(t *testing.T) {
 			p, req := continuationFixture(t, "https://api.openai.com/v1")
 			switch change {
@@ -118,8 +118,6 @@ func TestResponsesContinuationResetsOnExactContextOrConnectionChange(t *testing.
 				req.Messages[0].Content = TextContent("new policy")
 			case "output":
 				req.Messages[2].ToolCalls[0].Function.Arguments = "changed patch"
-			case "tools":
-				req.Tools = []ToolDef{{Type: "function", Function: FunctionDef{Name: "read_file"}}}
 			case "model":
 				req.Model = "another-model"
 				req.ResponseContinuationScope = p.ResponseContinuationScope(req.Model)
@@ -135,7 +133,7 @@ func TestResponsesContinuationResetsOnExactContextOrConnectionChange(t *testing.
 				req.Messages = req.Messages[1:]
 			case "attachment":
 				req.Messages[1] = NewMultiPartMessage("user", []ContentPart{{Type: "image_url", ImageURL: &ImageURL{URL: "data:image/png;base64,YQ=="}}})
-				BindResponseReference(&req.Messages[2], &ResponseReference{ID: "response-1", Scope: req.ResponseContinuationScope, InputHash: ResponseInputHash(req.Messages[:2], req.Tools)})
+				BindResponseReference(&req.Messages[2], &ResponseReference{ID: "response-1", Scope: req.ResponseContinuationScope, InputHash: MessagePrefixHash(req.Messages[:2])})
 				req.Messages[1] = NewMultiPartMessage("user", []ContentPart{{Type: "image_url", ImageURL: &ImageURL{URL: "data:image/png;base64,Yg=="}}})
 			}
 			if previous, start := responseContinuation(&req); previous != "" || start != 0 {
@@ -430,7 +428,7 @@ func TestContinuationMediaReplayRecoveryRequiresExactEvidence(t *testing.T) {
 	}})
 	BindResponseReference(&remote.Messages[2], &ResponseReference{
 		ID: "response-1", Scope: remote.ResponseContinuationScope,
-		InputHash: ResponseInputHash(remote.Messages[:2], remote.Tools),
+		InputHash: MessagePrefixHash(remote.Messages[:2]),
 	})
 	if continuationMediaReplayRejected(&remote, planResponseContinuation(&remote, false), exact) {
 		t.Fatal("remote image URL triggered inline media recovery")
@@ -443,7 +441,7 @@ func TestContinuationMediaReplayRecoveryRequiresExactEvidence(t *testing.T) {
 	}})
 	BindResponseReference(&invalid.Messages[2], &ResponseReference{
 		ID: "response-1", Scope: invalid.ResponseContinuationScope,
-		InputHash: ResponseInputHash(invalid.Messages[:2], invalid.Tools),
+		InputHash: MessagePrefixHash(invalid.Messages[:2]),
 	})
 	if continuationMediaReplayRejected(&invalid, planResponseContinuation(&invalid, false), exact) {
 		t.Fatal("malformed local image triggered provider replay recovery")
@@ -555,5 +553,24 @@ func TestResponsesContinuationNeverReplaysAcceptedOutputOrCancellation(t *testin
 				t.Fatalf("unsafe replay: requests=%d want=%d", requests, want)
 			}
 		})
+	}
+}
+
+// The provider already has the screenshot. Changing this request's callable
+// tools must neither upload that screenshot again nor retain a revoked tool.
+func TestResponsesToolChangeKeepsStoredImageHistory(t *testing.T) {
+	_, req := inlineMediaContinuationFixture(t, "https://example.test/v1")
+	req.Tools = []ToolDef{{Type: "function", Function: FunctionDef{Name: "new_tool", Parameters: json.RawMessage(`{"type":"object"}`)}}}
+	body, err := (&OpenAIResponsesStandard{}).EncodeRequest(&req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire struct {
+		Previous string                  `json:"previous_response_id"`
+		Input    []json.RawMessage       `json:"input"`
+		Tools    []struct{ Name string } `json:"tools"`
+	}
+	if err = json.Unmarshal(body, &wire); err != nil || wire.Previous != "response-1" || len(wire.Input) != 1 || strings.Contains(string(body), "base64,") || len(wire.Tools) != 1 || wire.Tools[0].Name != "new_tool" {
+		t.Fatalf("tool change resent history or lost current selection: previous=%q input=%d tools=%v err=%v", wire.Previous, len(wire.Input), wire.Tools, err)
 	}
 }

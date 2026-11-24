@@ -307,7 +307,8 @@ func startCoreFileWatch(root string, publish func(coreprotocol.FileChange), noti
 						}
 					}
 				}
-				if !git && notify != nil {
+				// Directory metadata changes do not modify every source below it.
+				if !git && notify != nil && (!dirs[key] || event.Op&(fsnotify.Create|fsnotify.Remove|fsnotify.Rename) != 0) {
 					kind := 2
 					if event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
 						kind = 3

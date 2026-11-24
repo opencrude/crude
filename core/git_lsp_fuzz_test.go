@@ -558,6 +558,6 @@ func FuzzCoreLSPRequests(f *testing.F) {
 	})
 }
 
-func (*semanticLSPClient) AssistanceCapabilities() insight.LSPAssistanceCapabilities {
+func (*semanticLSPClient) AssistanceCapabilities(string) insight.LSPAssistanceCapabilities {
 	return insight.LSPAssistanceCapabilities{Completion: true, CompletionTriggers: []string{"."}, SignatureHelp: true, SignatureTriggers: []string{"(", ","}}
 }

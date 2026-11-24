@@ -246,6 +246,6 @@ func (*immediateTreeDiagClient) AwaitDiagnostics(context.Context, string) (insig
 	return insight.DiagnosticPublication{}, true
 }
 
-func (*immediateTreeDiagClient) AssistanceCapabilities() insight.LSPAssistanceCapabilities {
+func (*immediateTreeDiagClient) AssistanceCapabilities(string) insight.LSPAssistanceCapabilities {
 	return insight.LSPAssistanceCapabilities{Completion: true, CompletionTriggers: []string{"."}, SignatureHelp: true, SignatureTriggers: []string{"(", ","}}
 }

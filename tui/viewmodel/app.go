@@ -446,21 +446,22 @@ type App struct {
 	completion            *completionState
 	completionIntent      *completionIntent
 	// suggest owns Errand's editor suggestions in this shell.
-	suggest              suggestionState
-	completionSequence   uint64
-	inlayViews           map[*editor.Editor]*inlayViewState
-	inlayViewSequence    uint64
-	semanticViews        map[*editor.Editor]*semanticViewState
-	semanticViewSequence uint64
-	occurrence           *occurrenceRequest
-	inlayInspector       *inlayInspectorState
-	editorSnippet        *editorSnippetState
-	editorGhost          *editorGhostView
-	lspDiagnostics       shellport.LSPDiagnosticConsumer
-	lspFacts             map[string]insight.Diagnostics
-	lspTreeProjection    map[string]diagnosticTreeProjection
-	lspTreeVisible       bool
-	reveals              map[string]revealAnim // in-flight popup reveal animations (overlay ID → anim)
+	suggest                      suggestionState
+	completionSequence           uint64
+	inlayViews                   map[*editor.Editor]*inlayViewState
+	inlayViewSequence            uint64
+	semanticViews                map[*editor.Editor]*semanticViewState
+	semanticViewSequence         uint64
+	occurrence                   *occurrenceRequest
+	inlayInspector               *inlayInspectorState
+	editorSnippet                *editorSnippetState
+	editorGhost                  *editorGhostView
+	lspDiagnostics               shellport.LSPDiagnosticConsumer
+	lspFacts                     map[string]insight.Diagnostics
+	listedErrors, listedWarnings int
+	lspTreeProjection            map[string]diagnosticTreeProjection
+	lspTreeVisible               bool
+	reveals                      map[string]revealAnim // in-flight popup reveal animations (overlay ID → anim)
 
 	OnQuit        func()
 	OnExitMessage func()

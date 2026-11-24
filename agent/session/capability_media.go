@@ -83,18 +83,20 @@ func capabilityMediaResult(result captypes.Result, original error, policy *tools
 		out.Outcome = toolresult.Outcome{State: toolresult.Uncertain, Summary: "Effects are unknown. Check the remote state."}
 		out.AgentHint = prompt.HintUncertain
 	}
-	if result.IsError {
-		if !result.Unknown && result.Code == captypes.WebSearchOutage {
-			out.Outcome = toolresult.Outcome{State: toolresult.Failed, Code: result.Code, Summary: "No search method answered."}
+	if result.Code == captypes.WebSearchOutage && result.IsError && !result.Unknown {
+		out.Outcome = toolresult.Outcome{State: toolresult.Failed, Code: result.Code, Summary: "No search method answered."}
+	}
+	switch {
+	case original != nil:
+		// Transport and local evidence errors already have an owning diagnostic.
+		fmt.Fprintf(&blockText, "\n%s", original)
+	case result.IsError:
+		reason := strings.TrimSpace(text.String())
+		if len(result.Content) != 1 || result.Content[0].Type != "text" || reason == "" || len(result.Structured) != 0 || result.Unknown {
+			reason = "MCP server reported a tool failure."
+			blockText.WriteString("\n" + reason)
 		}
-		blockText.WriteString("\nMCP server reported a tool failure.")
-		if original == nil {
-			original = errors.New("MCP server reported a tool failure")
-		} else {
-			fmt.Fprintf(&blockText, "\nMCP operation failed: %v", original)
-		}
-	} else if original != nil {
-		fmt.Fprintf(&blockText, "\nMCP operation failed: %v", original)
+		original = errors.New(reason)
 	}
 	flush()
 	out.Content = strings.TrimSpace(text.String())

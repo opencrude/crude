@@ -42,6 +42,7 @@ type LSPResult struct {
 }
 
 type LSPSnapshot struct {
+	DiagnosticVersion    uint64                                       `json:"diagnostic_version"`
 	Generation           string                                       `json:"generation"`
 	ContextGeneration    uint64                                       `json:"context_generation"`
 	Version              uint64                                       `json:"version"`

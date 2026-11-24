@@ -14,7 +14,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"time"
 
 	"crude/agent/mcpclient"
 	"crude/agent/skills"
@@ -52,7 +51,6 @@ type Service struct {
 	candidates       map[string]Candidate
 	store            captypes.RegistrationStore
 	closed           bool
-	taskGrants       map[string]map[string]taskGrant
 	launches         map[string]map[string]string
 	runs             map[string]string
 	host             captypes.HostDispatcher
@@ -72,8 +70,6 @@ func New(root, cache string, db *sql.DB) (*Service, error) {
 	service := &Service{root: root, cache: cache, db: db, settings: captypes.Normalize(captypes.Settings{}), entries: make(map[string]captypes.Entry), skills: make(map[string]skills.Skill), bindings: make(map[string]map[string]binding)}
 	service.clients = service.newMCPManager(root)
 	service.clients.SetCredentialDirectory(filepath.Join(filepath.Dir(cache), "credentials"))
-	service.hostStates = make(map[string]map[string]captypes.ConnectionState)
-	service.taskGrants = make(map[string]map[string]taskGrant)
 	service.launches = make(map[string]map[string]string)
 	service.runs = make(map[string]string)
 	service.hostStates = make(map[string]map[string]captypes.ConnectionState)
@@ -180,10 +176,6 @@ func (s *Service) configure(ctx context.Context, settings captypes.Settings) err
 	for _, clients := range s.executionClients {
 		clients.Configure(settings.Connections)
 	}
-	// Run-local grants and launch authorizations bind the exact connection,
-	// policy and source they were authorized under, so a change to any of
-	// those revokes exactly them. Removing or editing an unrelated connection
-	// keeps every other grant of the run.
 	s.hostStates = make(map[string]map[string]captypes.ConnectionState)
 	s.settings, s.entries, s.skills = settings, entries, loaded
 	s.generation++
@@ -194,6 +186,7 @@ func (s *Service) configure(ctx context.Context, settings captypes.Settings) err
 // Snapshot returns the entries, connections and settings with current web search observations.
 func (s *Service) Snapshot() captypes.Snapshot {
 	snapshot := s.snapshot()
+	snapshot.StoredSecrets = s.clients.SecretNames()
 	snapshot.WebSearch = s.webSearchObservations(snapshot.Settings.WebSearchRoutes)
 	return snapshot
 }
@@ -201,7 +194,7 @@ func (s *Service) Snapshot() captypes.Snapshot {
 func (s *Service) snapshot() captypes.Snapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	snapshot := captypes.Snapshot{Generation: s.generation, Settings: captypes.Clone(s.settings), Connections: s.clients.States(), StoredSecrets: s.clients.SecretNames()}
+	snapshot := captypes.Snapshot{Generation: s.generation, Settings: captypes.Clone(s.settings), Connections: s.clients.States()}
 	states := make(map[string]captypes.ConnectionState)
 	for _, state := range snapshot.Connections {
 		states[state.ID] = state
@@ -238,7 +231,6 @@ func (s *Service) admitRun(ctx context.Context, actor captypes.RuntimeActor) err
 	s.mu.Lock()
 	var retired *mcpclient.Manager
 	if prior := s.runs[actorKey(actor)]; prior != taskKey(actor) {
-		delete(s.taskGrants, prior)
 		delete(s.launches, prior)
 		retired = s.executionClients[prior]
 		delete(s.executionClients, prior)
@@ -263,26 +255,26 @@ func (s *Service) Prepare(ctx context.Context, actor captypes.RuntimeActor) (cap
 		return captypes.RuntimeSnapshot{}, err
 	}
 	recoveryNotices := s.recoverConnections(ctx, actor)
-	snapshot := s.actorSnapshot(actor)
-	prepared := captypes.RuntimeSnapshot{Generation: snapshot.Generation, RunID: actor.RunID, TurnGeneration: actor.TurnGeneration, Notices: recoveryNotices}
-	for i, connection := range snapshot.Connections {
-		if connection.State != "connected" || actor.DisabledForSession(connection.ID) {
-			continue
-		}
-		if connection.Cached {
-			if err := s.actorClients(actor).Refresh(ctx, connection.ID); err != nil {
+	clients := s.actorClients(actor)
+	states := clients.Catalog()
+	refreshed := false
+	s.mu.RLock()
+	settings, generation := s.settings, s.generation
+	s.mu.RUnlock()
+	prepared := captypes.RuntimeSnapshot{Generation: generation, RunID: actor.RunID, TurnGeneration: actor.TurnGeneration, Notices: recoveryNotices}
+	for _, connection := range states {
+		if connection.State == "connected" && connection.Cached && !actor.DisabledForSession(connection.ID) {
+			if err := clients.Refresh(ctx, connection.ID); err != nil {
 				prepared.Notices = append(prepared.Notices, "MCP discovery needs attention: "+connection.ID+": "+err.Error())
-				continue
-			}
-			for _, current := range s.actorClients(actor).States() {
-				if current.ID == connection.ID {
-					snapshot.Connections[i] = current
-					break
-				}
+			} else {
+				refreshed = true
 			}
 		}
 	}
-	s.selectTools(actor, snapshot.Settings, snapshot.Connections, &prepared)
+	if refreshed {
+		states = clients.Catalog()
+	}
+	s.selectTools(actor, settings, states, &prepared)
 	return prepared, nil
 }
 
@@ -290,30 +282,30 @@ func (s *Service) Prepare(ctx context.Context, actor captypes.RuntimeActor) (cap
 // and an activation result. Earlier connections consume the same global budget.
 func (s *Service) selectTools(actor captypes.RuntimeActor, settings captypes.Settings, states []captypes.ConnectionState, prepared *captypes.RuntimeSnapshot) {
 	schemaBytes := 0
+	limited := false
 	for _, connection := range states {
 		if connection.State != "connected" || connection.Cached || actor.DisabledForSession(connection.ID) {
 			continue
 		}
+		config, registered := settings.Connections[connection.ID]
+		if !registered || config.Disabled || config.Source != "" && (!settings.Sources[config.Source].Trusted || settings.Sources[config.Source].Disabled) {
+			continue
+		}
 		for _, tool := range connection.Tools {
-			tool, ok := s.selectedTool(actor, settings.Connections[connection.ID], tool)
-			if !ok {
+			if !tool.Selected || !actorAllows(actor, tool.Name, tool.Effect) {
 				continue
 			}
-			if len(prepared.Tools) >= settings.Acquisition.MaxTools || schemaBytes+len(tool.InputSchema) > settings.Acquisition.MaxSchemaBytes {
-				prepared.Notices = append(prepared.Notices, "Tool schema budget reached; use capability_search to select a bounded set of relevant tools.")
-				break
+			if settings.Acquisition.MaxTools > 0 && len(prepared.Tools) >= settings.Acquisition.MaxTools || settings.Acquisition.MaxSchemaBytes > 0 && schemaBytes+len(tool.InputSchema) > settings.Acquisition.MaxSchemaBytes {
+				limited = true
+				continue
 			}
 			prepared.Tools = append(prepared.Tools, tool)
 			schemaBytes += len(tool.InputSchema)
 		}
 	}
-}
-
-func (s *Service) selectedTool(actor captypes.RuntimeActor, config captypes.ConnectionConfig, tool captypes.Tool) (captypes.Tool, bool) {
-	if grant, ok := s.taskAccess(actor, config, tool.OriginalName); ok && !grant.Disabled && grant.Fingerprint == tool.Fingerprint {
-		tool.Selected, tool.Effect, tool.Scope, tool.Reason = true, grant.Effect, grant.Scope, ""
+	if limited {
+		prepared.Notices = append(prepared.Notices, "Some tools do not fit the request limits. Change the limits in Acquisition settings or turn off tools you do not need.")
 	}
-	return tool, tool.Selected && !actor.DisabledForSession(config.ID) && actorAllows(actor, tool.Name, tool.Effect)
 }
 
 // recoverConnections starts built-in servers and reconnects connections that
@@ -322,13 +314,9 @@ func (s *Service) selectedTool(actor captypes.RuntimeActor, config captypes.Conn
 // own; a notice is returned only for connections that used to work.
 func (s *Service) recoverConnections(ctx context.Context, actor captypes.RuntimeActor) []string {
 	s.mu.RLock()
-	configs := captypes.Clone(s.settings).Connections
+	configs, sources := s.settings.Connections, s.settings.Sources
 	s.mu.RUnlock()
 	clients := s.localActorClients(actor)
-	states := make(map[string]captypes.ConnectionState)
-	for _, state := range clients.States() {
-		states[state.ID] = state
-	}
 	ids := make([]string, 0, len(configs))
 	for id := range configs {
 		ids = append(ids, id)
@@ -354,11 +342,11 @@ func (s *Service) recoverConnections(ctx context.Context, actor captypes.Runtime
 	}
 	for _, id := range ids {
 		config := configs[id]
-		state := states[id]
-		if config.Disabled || config.Host == "shell" || actor.DisabledForSession(id) {
+		state := clients.ConnectionStatus(id)
+		if config.Disabled || config.Host == "shell" || actor.DisabledForSession(id) || config.Source != "" && (!sources[config.Source].Trusted || sources[config.Source].Disabled) {
 			continue
 		}
-		if state.State == "connected" {
+		if state == "connected" {
 			notice(id, "")
 			continue
 		}
@@ -368,14 +356,10 @@ func (s *Service) recoverConnections(ctx context.Context, actor captypes.Runtime
 			}
 			// External servers reconnect off the request path; their tools
 			// return on a later step instead of delaying this one.
-			if state.State != "connecting" {
-				go func(id string, config captypes.ConnectionConfig) {
-					recoverCtx, cancel := context.WithTimeout(context.Background(), connectionTimeout(config))
-					defer cancel()
-					_ = clients.Recover(recoverCtx, id)
-				}(id, config)
+			if state != "connecting" {
+				go func() { _ = clients.Recover(context.Background(), id) }()
 			}
-			if state.State == "failed" {
+			if state == "failed" {
 				notice(id, fmt.Sprintf("MCP connection %s is unavailable. Automatic reconnect is enabled.", id))
 			}
 			continue
@@ -421,11 +405,7 @@ func (s *Service) SetSecrets(ctx context.Context, values map[string]string) erro
 			continue
 		}
 		for _, clients := range managers {
-			connected := false
-			for _, state := range clients.States() {
-				connected = connected || state.ID == id && state.State == "connected"
-			}
-			if connected {
+			if clients.ConnectionStatus(id) == "connected" {
 				_ = clients.Restart(ctx, id)
 			}
 		}
@@ -437,7 +417,7 @@ func actorAllows(actor captypes.RuntimeActor, name string, effect captypes.Effec
 	if slices.Contains(actor.DeniedTools, name) || len(actor.AllowedTools) > 0 && !slices.Contains(actor.AllowedTools, name) {
 		return false
 	}
-	return slices.Contains(actor.Effects, effect)
+	return effect.AllowedBy(func(e captypes.Effect) bool { return slices.Contains(actor.Effects, e) })
 }
 
 // Execute runs one capability tool call, such as search, activation or a resource read.
@@ -498,7 +478,7 @@ func (s *Service) Execute(ctx context.Context, actor captypes.RuntimeActor, snap
 				}
 				environment = decoded
 			default:
-				return captypes.Result{}, fmt.Errorf("capability_activate accepts id, an optional scope and an optional environment; %q is not recognized, and MCP grants belong to mcp_request_access", key)
+				return captypes.Result{}, fmt.Errorf("capability_activate accepts id, an optional scope and an optional environment; %q is not recognized", key)
 			}
 		}
 		if id == "" {
@@ -508,18 +488,6 @@ func (s *Service) Execute(ctx context.Context, actor captypes.RuntimeActor, snap
 			return captypes.Result{}, errors.New("capability_activate scope must be application or workspace")
 		}
 		return s.activate(ctx, actor, id, false, scope, environment)
-	case "mcp_request_access":
-		if !actorAllows(actor, name, captypes.EffectRead) {
-			return captypes.Result{}, errors.New("MCP access requests are denied for this agent")
-		}
-		id, _ := params["connection_id"].(string)
-		if id == "" || len(params) != 2 {
-			return captypes.Result{}, errors.New("mcp_request_access requires only connection_id and exact grants")
-		}
-		if actor.DisabledForSession(id) {
-			return captypes.Result{}, captypes.ErrSessionDisabled(id)
-		}
-		return s.activateAccess(ctx, actor, id, params["grants"])
 	case "mcp_read_resource":
 		if !actorAllows(actor, name, captypes.EffectRead) {
 			return captypes.Result{}, errors.New("resource reads are denied for this agent")
@@ -561,7 +529,8 @@ func (s *Service) Execute(ctx context.Context, actor captypes.RuntimeActor, snap
 			return captypes.Result{}, errors.New("dynamic request belongs to an expired run")
 		}
 		s.mu.RLock()
-		config := captypes.Clone(s.settings).Connections[tool.ConnectionID]
+		config := s.settings.Connections[tool.ConnectionID]
+		source, exists := s.settings.Sources[config.Source]
 		currentRun := s.runs[actorKey(actor)]
 		s.mu.RUnlock()
 		if currentRun != taskKey(actor) {
@@ -571,15 +540,9 @@ func (s *Service) Execute(ctx context.Context, actor captypes.RuntimeActor, snap
 			return captypes.Result{}, errors.New("MCP connection is disabled")
 		}
 		if config.Source != "" {
-			s.mu.RLock()
-			source, exists := s.settings.Sources[config.Source]
-			s.mu.RUnlock()
 			if !exists || source.Disabled || !source.Trusted {
 				return captypes.Result{}, errors.New("MCP source is unavailable or untrusted")
 			}
-		}
-		if grant, ok := s.taskAccess(actor, config, tool.OriginalName); ok {
-			return s.actorClients(actor).CallAuthorized(ctx, tool, params, config, grant)
 		}
 		return s.actorClients(actor).Call(ctx, tool, params)
 	}
@@ -1056,7 +1019,6 @@ func (s *Service) Close() {
 	clients := s.executionClients
 	s.executionClients = make(map[string]*mcpclient.Manager)
 	s.hostStates = make(map[string]map[string]captypes.ConnectionState)
-	s.taskGrants = make(map[string]map[string]taskGrant)
 	s.launches = make(map[string]map[string]string)
 	s.runs = make(map[string]string)
 	s.mu.Unlock()
@@ -1082,11 +1044,4 @@ func searchHit(actor captypes.RuntimeActor, entry captypes.Entry) captypes.Searc
 		hit.State, hit.Reason = "not started", "capability_activate starts it after the session's Manual/Auto Review/YOLO policy authorizes the launch"
 	}
 	return hit
-}
-
-func connectionTimeout(config captypes.ConnectionConfig) time.Duration {
-	if config.TimeoutSeconds > 0 {
-		return time.Duration(config.TimeoutSeconds) * time.Second
-	}
-	return 30 * time.Second
 }

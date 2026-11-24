@@ -2373,13 +2373,14 @@ func (z *EditorPredictionStatus) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *LSPAssistanceCapabilities) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 8
-	o = append(o, 0x98)
+	// array header, size 9
+	o = append(o, 0x99)
 	// array header, size 3
 	o = append(o, 0x93)
 	o = msgp.AppendString(o, z.Producer.InstanceID)
 	o = msgp.AppendString(o, z.Producer.Provider)
 	o = msgp.AppendString(o, z.Producer.ToolIdentity)
+	o = msgp.AppendUint64(o, z.ContextGeneration)
 	o, err = z.SynchronizedSource.MarshalMsg(o)
 	if err != nil {
 		err = msgp.WrapError(err, "SynchronizedSource")
@@ -2427,8 +2428,8 @@ func (z *LSPAssistanceCapabilities) UnmarshalMsg(bts []byte) (o []byte, err erro
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 8 {
-		err = msgp.ArrayError{Wanted: 8, Got: zb0001}
+	if zb0001 != 9 {
+		err = msgp.ArrayError{Wanted: 9, Got: zb0001}
 		return
 	}
 	var zb0002 uint32
@@ -2458,6 +2459,11 @@ func (z *LSPAssistanceCapabilities) UnmarshalMsg(bts []byte) (o []byte, err erro
 	z.Producer.ToolIdentity, bts, err = msgp.ReadStringBytes(bts)
 	if err != nil {
 		err = msgp.WrapError(err, "Producer", "ToolIdentity")
+		return
+	}
+	z.ContextGeneration, bts, err = msgp.ReadUint64Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "ContextGeneration")
 		return
 	}
 	bts, err = z.SynchronizedSource.UnmarshalMsg(bts)
@@ -2567,7 +2573,7 @@ func (z *LSPAssistanceCapabilities) UnmarshalMsg(bts []byte) (o []byte, err erro
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *LSPAssistanceCapabilities) Msgsize() (s int) {
-	s = 1 + 1 + msgp.StringPrefixSize + len(z.Producer.InstanceID) + msgp.StringPrefixSize + len(z.Producer.Provider) + msgp.StringPrefixSize + len(z.Producer.ToolIdentity) + z.SynchronizedSource.Msgsize() + msgp.Uint64Size + msgp.BoolSize + msgp.ArrayHeaderSize
+	s = 1 + 1 + msgp.StringPrefixSize + len(z.Producer.InstanceID) + msgp.StringPrefixSize + len(z.Producer.Provider) + msgp.StringPrefixSize + len(z.Producer.ToolIdentity) + msgp.Uint64Size + z.SynchronizedSource.Msgsize() + msgp.Uint64Size + msgp.BoolSize + msgp.ArrayHeaderSize
 	for za0001 := range z.CompletionTriggers {
 		s += msgp.StringPrefixSize + len(z.CompletionTriggers[za0001])
 	}
@@ -2857,8 +2863,20 @@ func (z *LSPCompletionEntry) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *LSPCompletionInspection) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 9
-	o = append(o, 0x99)
+	// array header, size 10
+	o = append(o, 0x9a)
+	if z.AdditionalEdits == nil { // allownil: if nil
+		o = msgp.AppendNil(o)
+	} else {
+		o = msgp.AppendArrayHeader(o, uint32(len(z.AdditionalEdits)))
+		for za0001 := range z.AdditionalEdits {
+			o, err = z.AdditionalEdits[za0001].MarshalMsg(o)
+			if err != nil {
+				err = msgp.WrapError(err, "AdditionalEdits", za0001)
+				return
+			}
+		}
+	}
 	o = msgp.AppendString(o, z.SetID)
 	o = msgp.AppendString(o, z.Digest)
 	o = msgp.AppendString(o, z.ItemID)
@@ -2891,9 +2909,36 @@ func (z *LSPCompletionInspection) UnmarshalMsg(bts []byte) (o []byte, err error)
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 9 {
-		err = msgp.ArrayError{Wanted: 9, Got: zb0001}
+	if zb0001 != 10 {
+		err = msgp.ArrayError{Wanted: 10, Got: zb0001}
 		return
+	}
+	if msgp.IsNil(bts) {
+		bts = bts[1:]
+		z.AdditionalEdits = nil
+	} else {
+		var zb0002 uint32
+		zb0002, bts, err = msgp.ReadArrayHeaderBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "AdditionalEdits")
+			return
+		}
+		if uint64(zb0002)*1 > uint64(len(bts)) {
+			err = msgp.ErrShortBytes
+			return
+		}
+		if z.AdditionalEdits != nil && cap(z.AdditionalEdits) >= int(zb0002) {
+			z.AdditionalEdits = (z.AdditionalEdits)[:zb0002]
+		} else {
+			z.AdditionalEdits = make([]LSPTextEdit, zb0002)
+		}
+		for za0001 := range z.AdditionalEdits {
+			bts, err = z.AdditionalEdits[za0001].UnmarshalMsg(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "AdditionalEdits", za0001)
+				return
+			}
+		}
 	}
 	z.SetID, bts, err = msgp.ReadStringBytes(bts)
 	if err != nil {
@@ -2946,7 +2991,11 @@ func (z *LSPCompletionInspection) UnmarshalMsg(bts []byte) (o []byte, err error)
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *LSPCompletionInspection) Msgsize() (s int) {
-	s = 1 + msgp.StringPrefixSize + len(z.SetID) + msgp.StringPrefixSize + len(z.Digest) + msgp.StringPrefixSize + len(z.ItemID) + z.Boundary.Msgsize() + msgp.IntSize + msgp.Uint64Size + z.Documentation.Msgsize() + msgp.StringPrefixSize + len(z.ResolveState) + msgp.StringPrefixSize + len(z.Detail)
+	s = 1 + msgp.ArrayHeaderSize
+	for za0001 := range z.AdditionalEdits {
+		s += z.AdditionalEdits[za0001].Msgsize()
+	}
+	s += msgp.StringPrefixSize + len(z.SetID) + msgp.StringPrefixSize + len(z.Digest) + msgp.StringPrefixSize + len(z.ItemID) + z.Boundary.Msgsize() + msgp.IntSize + msgp.Uint64Size + z.Documentation.Msgsize() + msgp.StringPrefixSize + len(z.ResolveState) + msgp.StringPrefixSize + len(z.Detail)
 	return
 }
 

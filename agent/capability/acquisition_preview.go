@@ -67,11 +67,11 @@ func (s *Service) PreviewAcquisition(ctx context.Context, id string, scope capty
 		connection := candidate.Connection
 		preview.Requirements = append(preview.Requirements, "Transport: "+connection.Transport)
 		if connection.Transport == "stdio" {
-			preview.Requirements = append(preview.Requirements, "Executable: "+connection.Command, "Local launch requires explicit approval; filesystem and network scope are not a sandbox")
+			preview.Requirements = append(preview.Requirements, fmt.Sprintf("Launch: %s %q", connection.Command, connection.Args), "Local launch requires explicit approval; filesystem and network scope are not a sandbox")
 		} else {
 			preview.Requirements = append(preview.Requirements, "Endpoint: "+connection.URL)
 		}
-		preview.RequestedAccess = []string{"Tools are not granted by installation; review each observed schema, effect and scope", "External MCP mutations are outside native file ownership and undo"}
+		preview.RequestedAccess = []string{"Install saves the connection. Each tool call uses the current permission mode.", "External MCP mutations are outside native file ownership and undo"}
 	} else {
 		preview.RequestedAccess = []string{"Load source instructions; scripts still use native execution permissions"}
 		// Remote candidates carry a repository-relative subtree, not a path

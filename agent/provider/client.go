@@ -369,7 +369,7 @@ func (c *Client) Complete(ctx context.Context, req *ChatRequest) (*ChatResponse,
 		}
 		if decoded.ContinuationID != "" && canonicalRequest.ResponseContinuationScope != "" && len(decoded.Choices) > 0 {
 			BindResponseReference(&decoded.Choices[0].Message, &ResponseReference{ID: decoded.ContinuationID,
-				Scope: canonicalRequest.ResponseContinuationScope, InputHash: ResponseInputHash(canonicalRequest.Messages, canonicalRequest.Tools)})
+				Scope: canonicalRequest.ResponseContinuationScope, InputHash: MessagePrefixHash(canonicalRequest.Messages)})
 		}
 		return decoded, nil
 	}

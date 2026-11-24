@@ -126,8 +126,8 @@ func lspSnapshot(manager *workspace.LSPManager) coreprotocol.LSPSnapshot {
 	// Version precedes contents so a concurrent publication cannot be hidden:
 	// the owner broadcast announces it and the client reads a newer complete snapshot.
 	generation, version := manager.DiagnosticCursor()
-	out := coreprotocol.LSPSnapshot{Available: true, Generation: generation, Version: version}
-	_, out.ContextGeneration = manager.ContextCursor()
+	out := coreprotocol.LSPSnapshot{Available: true, Generation: generation, Version: manager.Version(), DiagnosticVersion: version}
+	_, out.ContextGeneration = manager.ContextCursor("")
 	out.Diagnostics = manager.AllDiagnostics()
 	out.Symbols = make(map[string][]insight.LSPSymbol)
 	for path, symbols := range manager.AllDocumentSymbols() {

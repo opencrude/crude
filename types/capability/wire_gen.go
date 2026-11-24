@@ -1730,8 +1730,8 @@ func (z *HostReply) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *HostRequest) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 13
-	o = append(o, 0x9d)
+	// array header, size 12
+	o = append(o, 0x9c)
 	o = msgp.AppendString(o, z.StopConnectID)
 	o = msgp.AppendString(o, z.ID)
 	o = msgp.AppendString(o, z.WorkspaceID)
@@ -1751,15 +1751,6 @@ func (z *HostRequest) MarshalMsg(b []byte) (o []byte, err error) {
 	if err != nil {
 		err = msgp.WrapError(err, "Tool")
 		return
-	}
-	if z.Grant == nil {
-		o = msgp.AppendNil(o)
-	} else {
-		o, err = z.Grant.MarshalMsg(o)
-		if err != nil {
-			err = msgp.WrapError(err, "Grant")
-			return
-		}
 	}
 	o, err = z.Arguments.MarshalMsg(o)
 	if err != nil {
@@ -1792,8 +1783,8 @@ func (z *HostRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 13 {
-		err = msgp.ArrayError{Wanted: 13, Got: zb0001}
+	if zb0001 != 12 {
+		err = msgp.ArrayError{Wanted: 12, Got: zb0001}
 		return
 	}
 	z.StopConnectID, bts, err = msgp.ReadStringBytes(bts)
@@ -1835,22 +1826,6 @@ func (z *HostRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
 	if err != nil {
 		err = msgp.WrapError(err, "Tool")
 		return
-	}
-	if msgp.IsNil(bts) {
-		bts, err = msgp.ReadNilBytes(bts)
-		if err != nil {
-			return
-		}
-		z.Grant = nil
-	} else {
-		if z.Grant == nil {
-			z.Grant = new(ToolGrant)
-		}
-		bts, err = z.Grant.UnmarshalMsg(bts)
-		if err != nil {
-			err = msgp.WrapError(err, "Grant")
-			return
-		}
 	}
 	bts, err = z.Arguments.UnmarshalMsg(bts)
 	if err != nil {
@@ -1911,13 +1886,7 @@ func (z *HostRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *HostRequest) Msgsize() (s int) {
-	s = 1 + msgp.StringPrefixSize + len(z.StopConnectID) + msgp.StringPrefixSize + len(z.ID) + msgp.StringPrefixSize + len(z.WorkspaceID) + z.Actor.Msgsize() + msgp.StringPrefixSize + len(z.Operation) + z.Connection.Msgsize() + msgp.BoolSize + z.Tool.Msgsize()
-	if z.Grant == nil {
-		s += msgp.NilSize
-	} else {
-		s += z.Grant.Msgsize()
-	}
-	s += z.Arguments.Msgsize() + msgp.StringPrefixSize + len(z.URI) + msgp.StringPrefixSize + len(z.Prompt) + msgp.MapHeaderSize
+	s = 1 + msgp.StringPrefixSize + len(z.StopConnectID) + msgp.StringPrefixSize + len(z.ID) + msgp.StringPrefixSize + len(z.WorkspaceID) + z.Actor.Msgsize() + msgp.StringPrefixSize + len(z.Operation) + z.Connection.Msgsize() + msgp.BoolSize + z.Tool.Msgsize() + z.Arguments.Msgsize() + msgp.StringPrefixSize + len(z.URI) + msgp.StringPrefixSize + len(z.Prompt) + msgp.MapHeaderSize
 	if z.PromptArguments != nil {
 		for za0001, za0002 := range z.PromptArguments {
 			_ = za0002
@@ -3419,8 +3388,9 @@ func (z *SourceConfig) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *Tool) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 11
-	o = append(o, 0x9b)
+	// array header, size 12
+	o = append(o, 0x9c)
+	o = msgp.AppendString(o, z.ServerRevision)
 	o = msgp.AppendString(o, z.Name)
 	o = msgp.AppendString(o, z.Description)
 	if z.InputSchema == nil { // allownil: if nil
@@ -3455,8 +3425,13 @@ func (z *Tool) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 11 {
-		err = msgp.ArrayError{Wanted: 11, Got: zb0001}
+	if zb0001 != 12 {
+		err = msgp.ArrayError{Wanted: 12, Got: zb0001}
+		return
+	}
+	z.ServerRevision, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "ServerRevision")
 		return
 	}
 	z.Name, bts, err = msgp.ReadStringBytes(bts)
@@ -3548,7 +3523,7 @@ func (z *Tool) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *Tool) Msgsize() (s int) {
-	s = 1 + msgp.StringPrefixSize + len(z.Name) + msgp.StringPrefixSize + len(z.Description) + msgp.BytesPrefixSize + len(rawJSONToBytes(z.InputSchema)) + msgp.BytesPrefixSize + len(rawJSONToBytes(z.OutputSchema)) + msgp.StringPrefixSize + len(z.ConnectionID) + msgp.StringPrefixSize + len(z.OriginalName) + msgp.StringPrefixSize + len(z.Fingerprint) + msgp.StringPrefixSize + len(string(z.Effect)) + msgp.StringPrefixSize + len(z.Scope) + msgp.BoolSize + msgp.StringPrefixSize + len(z.Reason)
+	s = 1 + msgp.StringPrefixSize + len(z.ServerRevision) + msgp.StringPrefixSize + len(z.Name) + msgp.StringPrefixSize + len(z.Description) + msgp.BytesPrefixSize + len(rawJSONToBytes(z.InputSchema)) + msgp.BytesPrefixSize + len(rawJSONToBytes(z.OutputSchema)) + msgp.StringPrefixSize + len(z.ConnectionID) + msgp.StringPrefixSize + len(z.OriginalName) + msgp.StringPrefixSize + len(z.Fingerprint) + msgp.StringPrefixSize + len(string(z.Effect)) + msgp.StringPrefixSize + len(z.Scope) + msgp.BoolSize + msgp.StringPrefixSize + len(z.Reason)
 	return
 }
 

@@ -41,7 +41,7 @@ func (m *LSPManager) codeActionRequest(ctx context.Context, path string, call fu
 			boundary, wire = doc.boundary, doc.wireVersion
 			boundary.Context.UnknownInputs = slices.Clone(boundary.Context.UnknownInputs)
 		}
-		generation := m.contextGeneration
+		generation := m.producerContextLocked(boundary.Context.ID)
 		m.mu.Unlock()
 		if boundary.Source.Kind != "canonical" || boundary.Source.DocumentID == "" ||
 			boundary.Context.Generation != generation || wire <= 0 {
@@ -61,7 +61,7 @@ func (m *LSPManager) codeActionRequest(ctx context.Context, path string, call fu
 		current := m.documents[filepath.Clean(path)]
 		exact := current == doc && current != nil && current.opened && !current.syncPending &&
 			current.wireVersion == wire && sameInsightBoundary(current.boundary, boundary) &&
-			generation == m.contextGeneration
+			generation == m.producerContextLocked(boundary.Context.ID)
 		m.mu.Unlock()
 		if !exact {
 			return errors.New("code-action source or context changed during the request")

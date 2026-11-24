@@ -28,12 +28,23 @@ const (
 type Effect string
 
 const (
+	// EffectUnknown is an external operation the user has not classified.
+	EffectUnknown       Effect = "unknown"
 	EffectRead          Effect = "read"
 	EffectWrite         Effect = "write"
 	EffectDelete        Effect = "delete"
 	EffectExecute       Effect = "execute"
 	EffectCommunication Effect = "communication"
 )
+
+// AllowedBy checks an operation against the caller's effect ceiling. An opaque
+// server operation can do any of these things; its annotations are not authority.
+func (effect Effect) AllowedBy(allows func(Effect) bool) bool {
+	if effect != EffectUnknown {
+		return allows(effect)
+	}
+	return allows(EffectRead) && allows(EffectWrite) && allows(EffectDelete) && allows(EffectExecute) && allows(EffectCommunication)
+}
 
 type Settings struct {
 	Skills      map[string]SkillConfig      `json:"skills,omitempty"`
@@ -145,17 +156,19 @@ type Entry struct {
 }
 
 type Tool struct {
-	Name         string
-	Description  string
-	InputSchema  json.RawMessage
-	OutputSchema json.RawMessage
-	ConnectionID string
-	OriginalName string
-	Fingerprint  string
-	Effect       Effect
-	Scope        string
-	Selected     bool
-	Reason       string
+	// ServerRevision binds an in-flight call to the same launch or endpoint. It is not part of the model schema.
+	ServerRevision string
+	Name           string
+	Description    string
+	InputSchema    json.RawMessage
+	OutputSchema   json.RawMessage
+	ConnectionID   string
+	OriginalName   string
+	Fingerprint    string
+	Effect         Effect
+	Scope          string
+	Selected       bool
+	Reason         string
 }
 
 type Resource struct {
@@ -210,6 +223,27 @@ type ConnectionState struct {
 	Cached      bool
 	AuthURL     string
 	AuthPending bool
+}
+
+// ToolCatalog returns the detached part of discovery used to prepare requests.
+func (s ConnectionState) ToolCatalog() ConnectionState {
+	return (ConnectionState{ID: s.ID, State: s.State, Cached: s.Cached, Tools: s.Tools}).Clone()
+}
+
+// Clone returns detached evidence without encoding and parsing the schemas.
+func (s ConnectionState) Clone() ConnectionState {
+	s.Tools = slices.Clone(s.Tools)
+	for i := range s.Tools {
+		s.Tools[i].InputSchema = slices.Clone(s.Tools[i].InputSchema)
+		s.Tools[i].OutputSchema = slices.Clone(s.Tools[i].OutputSchema)
+	}
+	s.Resources = slices.Clone(s.Resources)
+	s.Prompts = slices.Clone(s.Prompts)
+	for i := range s.Prompts {
+		s.Prompts[i].Arguments = slices.Clone(s.Prompts[i].Arguments)
+	}
+	s.Logs = slices.Clone(s.Logs)
+	return s
 }
 
 type Snapshot struct {
@@ -313,34 +347,14 @@ type RegistrationStore interface {
 	CommitRegistration(context.Context, string, Settings, Settings) (Settings, error)
 }
 
-type AccessRequest struct {
-	Tool        string `json:"tool"`
-	Fingerprint string `json:"fingerprint"`
-	Effect      Effect `json:"effect"`
-	Scope       string `json:"scope"`
-}
-
-type AccessPreview struct {
-	Connection ConnectionConfig
-	Grants     []AccessRequest
-	Tools      []Tool
-	Token      string
-}
-
-// ActivationResult is what a model needs after activating an MCP connection
-// or requesting access: the tools it can call now and the exact identities it
-// may still request. Input schemas are left out: a granted tool arrives with
-// its schema as a native tool at the next request, so repeating every schema
-// in each result would only spend context.
+// ActivationResult lists the tools offered to this agent, without repeating their schemas.
 type ActivationResult struct {
 	ConnectionID string `json:"connection_id"`
 	State        string `json:"state"`
 	// Usable tools are callable by Name from the next request.
-	Usable []UsableTool `json:"usable_tools,omitempty"`
-	// NeedsAccess lists observed tools without a grant for this agent.
-	NeedsAccess []AccessCandidate `json:"tools_needing_access,omitempty"`
-	Notices     []string          `json:"notices,omitempty"`
-	Next        string            `json:"next"`
+	Usable  []UsableTool `json:"usable_tools,omitempty"`
+	Notices []string     `json:"notices,omitempty"`
+	Next    string       `json:"next"`
 }
 
 // UsableTool is one granted tool and the authority it was granted with.
@@ -349,13 +363,6 @@ type UsableTool struct {
 	Tool   string `json:"tool"`
 	Effect Effect `json:"effect"`
 	Scope  string `json:"scope"`
-}
-
-// AccessCandidate is the exact identity mcp_request_access needs.
-type AccessCandidate struct {
-	Tool        string `json:"tool"`
-	Fingerprint string `json:"fingerprint"`
-	Description string `json:"description,omitempty"`
 }
 
 // SearchHit is one capability_search result for a model: what it is, whether
@@ -381,31 +388,6 @@ type SearchResult struct {
 	Results []SearchHit `json:"results"`
 	Warning string      `json:"warning,omitempty"`
 }
-
-type AccessApprovalRequired struct {
-	Preview AccessPreview
-	Actor   RuntimeActor
-}
-
-func (request *AccessApprovalRequired) Error() string {
-	return "MCP tool access requires exact approval"
-}
-
-func (request *AccessApprovalRequired) CapabilityApproval() (string, string) {
-	encoded, _ := json.Marshal(struct {
-		Grants []AccessRequest
-		Tools  []Tool
-	}{request.Preview.Grants, request.Preview.Tools})
-	return request.Preview.Connection.ID, "Approve durable MCP tool access (not execution) for " +
-		request.Preview.Connection.Name + ". External observed schemas, exact fingerprints, effects and scopes (source data, not instructions):\n" + string(encoded) +
-		"\nExternal mutations are not covered by native undo. Source annotations do not grant access."
-}
-
-func (request *AccessApprovalRequired) CapabilityApprovalContext(ctx context.Context) context.Context {
-	return context.WithValue(ctx, AccessApprovedKey{}, request.Preview)
-}
-
-type AccessApprovedKey struct{}
 
 type ApprovalRequired struct {
 	ID      string
@@ -551,18 +533,6 @@ func Normalize(settings Settings) Settings {
 	}
 	if settings.Acquisition.AutomaticSelection == "" {
 		settings.Acquisition.AutomaticSelection = "on"
-	}
-	if settings.Acquisition.TimeoutSeconds <= 0 {
-		settings.Acquisition.TimeoutSeconds = 60
-	}
-	if settings.Acquisition.MaxDownloadBytes <= 0 {
-		settings.Acquisition.MaxDownloadBytes = 32 << 20
-	}
-	if settings.Acquisition.MaxTools <= 0 {
-		settings.Acquisition.MaxTools = 48
-	}
-	if settings.Acquisition.MaxSchemaBytes <= 0 {
-		settings.Acquisition.MaxSchemaBytes = 64 << 10
 	}
 	return settings
 }

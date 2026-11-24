@@ -484,7 +484,7 @@ func (catalog *capabilityCatalog) detailActions(button func(string, string) ui.A
 		state := catalog.connectionState()
 		switch catalog.detailPage {
 		case "tools", "access":
-			primary = append(primary, button("Inspect schema", "inspect-item"), button("Review grant", "review-grant"))
+			primary = append(primary, button("Inspect schema", "inspect-item"), button("Tool access", "review-grant"))
 		case "resources":
 			primary = append(primary, button("Fetch preview", "resource"), button("Stage context", "stage-context"))
 		case "prompts":
@@ -610,7 +610,7 @@ func (catalog *capabilityCatalog) buildDetailForm() *ui.FormModel {
 		}
 		return formModel(capabilityReadOnly("schema", "Search methods", "Only Crude's built-in web connection has search methods.", ""))
 	case "tools", "access":
-		return formModel(capabilityReadOnly("schema", "Tool schema and effective access", "Select a tool and Inspect schema. Review grant assigns an explicit effect, scope and observed fingerprint; server annotations are not grants.", "MCP writes are outside native file ownership and undo unless explicitly integrated."))
+		return formModel(capabilityReadOnly("schema", "Tool schema and effective access", "Select a tool. Choose Tool access to switch it off or set its effect.", "MCP writes are outside native file ownership and undo unless explicitly integrated."))
 	case "resources":
 		return formModel(ui.TextFieldState("uri", "Resource URI", "", "Select a resource or enter its exact URI."), capabilityReadOnly("preview", "Resource preview", "Fetch preview reads explicitly. Stage context attaches only a successfully fetched preview to the owning composer.", ""))
 	case "prompts":
@@ -779,7 +779,7 @@ func capabilityToolDetail(tool captypes.Tool) string {
 		encoded, _ := json.MarshalIndent(schema, "", "  ")
 		text = string(encoded)
 	}
-	return fmt.Sprintf("Stable name: %s\nOriginal: %s\nDescription: %s\nEffect: %s\nScope: %s\nFingerprint: %s\nEffective: %s\n\n%s", tool.Name, tool.OriginalName, tool.Description, tool.Effect, tool.Scope, tool.Fingerprint, mapDefault(tool.Reason, "Granted; agent role and selection still apply"), text)
+	return fmt.Sprintf("Stable name: %s\nOriginal: %s\nDescription: %s\nEffect: %s\nScope: %s\nFingerprint: %s\nEffective: %s\n\n%s", tool.Name, tool.OriginalName, tool.Description, tool.Effect, tool.Scope, tool.Fingerprint, mapDefault(tool.Reason, "On. Calls follow the current permission mode."), text)
 }
 
 func (catalog *capabilityCatalog) inspectItem() {
@@ -803,7 +803,7 @@ func (catalog *capabilityCatalog) inspectItem() {
 		stored := catalog.views[catalog.viewKey()]
 		stored.inspected = value.Name
 		catalog.views[catalog.viewKey()] = stored
-		form = formModel(capabilityReadOnly("schema", "Schema and effective access", capabilityToolDetail(value), "Annotations do not grant authority. Changed fingerprints require review."))
+		form = formModel(capabilityReadOnly("schema", "Schema and tool access", capabilityToolDetail(value), "The permission mode applies to each call. A changed tool cannot use an old effect rule."))
 	case captypes.Resource:
 		form.SetValue("uri", ui.StringValue(value.URI))
 	case captypes.Prompt:
@@ -1120,7 +1120,8 @@ func (catalog *capabilityCatalog) beginGrant() ui.EventResult {
 	}
 	connection := captypes.Clone(catalog.owner.model.capabilities).Connections[catalog.id]
 	grant := connection.Grants[tool.OriginalName]
-	fields := []*ui.FieldState{capabilityReadOnly("grant-tool", "Stable tool identity", tool.Name, tool.Description), capabilityReadOnly("grant-original", "Server tool identity", tool.OriginalName, "Grant keys are the server's exact original tool names."), capabilityReadOnly("grant-fingerprint", "Observed fingerprint", tool.Fingerprint, "Saving binds this grant to these exact observed bytes."), ui.CheckboxFieldState("grant-enabled", "Allow selected operation", !grant.Disabled && grant.Fingerprint == tool.Fingerprint && grant.Effect != "", "A role or workspace ceiling can still deny use."), ui.SelectFieldState("grant-effect", "Effect", string(grant.Effect), []ui.FormOption{{ID: "", Label: "Choose explicitly"}, {ID: "read", Label: "Read"}, {ID: "write", Label: "Write"}, {ID: "delete", Label: "Delete"}, {ID: "execute", Label: "Execute"}, {ID: "communication", Label: "Communication"}}, "Never infer authority from a read-only annotation."), ui.TextFieldState("grant-scope", "Resource scope", grant.Scope, "Explicit approved boundary; a scope label alone does not sandbox remote effects.")}
+	fields := []*ui.FieldState{capabilityReadOnly("grant-tool", "Tool", tool.Name, tool.Description), capabilityReadOnly("grant-original", "Server name", tool.OriginalName, ""), capabilityReadOnly("grant-fingerprint", "Definition", tool.Fingerprint, "A changed definition cannot use this effect rule."), ui.CheckboxFieldState("grant-enabled", "Use this tool", !grant.Disabled, "Turn this tool off for this connection."), ui.SelectFieldState("grant-effect", "Tool effect", string(grant.Effect), []ui.FormOption{{ID: "", Label: "Review the call"}, {ID: "read", Label: "Read"}, {ID: "write", Label: "Write"}, {ID: "delete", Label: "Delete"}, {ID: "execute", Label: "Execute"}, {ID: "communication", Label: "Communication"}}, "Leave unclassified tools on Review the call. Choose Read only if the tool cannot make changes."), ui.TextFieldState("grant-scope", "Resource scope", grant.Scope, "For a classified tool, name the resources it can use. This does not limit the server itself.")}
+
 	catalog.edit = "grant"
 	catalog.draftOriginal = captypes.Action{Kind: captypes.KindMCP, ID: catalog.id, Connection: &connection}
 	catalog.owner.model.capabilityDraft = formModel(fields...)
@@ -1149,13 +1150,21 @@ func (catalog *capabilityCatalog) grantAction() (captypes.Action, error) {
 	}
 	effect := captypes.Effect(value("grant-effect"))
 	enabled := form.Field("grant-enabled").Value.Bool()
-	if enabled && (!slices.Contains([]captypes.Effect{captypes.EffectRead, captypes.EffectWrite, captypes.EffectDelete, captypes.EffectExecute, captypes.EffectCommunication}, effect) || strings.TrimSpace(value("grant-scope")) == "") {
+	if effect != "" && (!slices.Contains([]captypes.Effect{captypes.EffectRead, captypes.EffectWrite, captypes.EffectDelete, captypes.EffectExecute, captypes.EffectCommunication}, effect) || strings.TrimSpace(value("grant-scope")) == "") {
 		return captypes.Action{}, fmt.Errorf("choose an explicit effect and non-empty resource scope")
 	}
 	copy := captypes.Clone(captypes.Settings{Connections: map[string]captypes.ConnectionConfig{catalog.id: *connection}}).Connections[catalog.id]
 	if copy.Grants == nil {
 		copy.Grants = make(map[string]captypes.ToolGrant)
 	}
-	copy.Grants[value("grant-original")] = captypes.ToolGrant{Effect: effect, Scope: strings.TrimSpace(value("grant-scope")), Fingerprint: value("grant-fingerprint"), Disabled: !enabled}
+	rule := captypes.ToolGrant{Disabled: !enabled}
+	if effect != "" {
+		rule.Effect, rule.Scope, rule.Fingerprint = effect, strings.TrimSpace(value("grant-scope")), value("grant-fingerprint")
+	}
+	if rule == (captypes.ToolGrant{}) {
+		delete(copy.Grants, value("grant-original"))
+	} else {
+		copy.Grants[value("grant-original")] = rule
+	}
 	return captypes.Action{Operation: "save-connection", Kind: captypes.KindMCP, ID: catalog.id, Connection: &copy}, nil
 }

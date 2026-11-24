@@ -430,7 +430,7 @@ func (m *diagnosticDetailsVisualModel) setupDiagnosticDetails() error {
 		}
 		d := facts.Diagnostics[0]
 		b := facts.Boundary
-		owner, generation := v.ws.LSPMgr().ContextCursor()
+		owner, generation := v.ws.LSPMgr().ContextCursor("")
 		if d.Line != 2 || d.Col != 25 || d.EndLine != 2 || d.EndCol != 26 ||
 			d.Severity != insight.DiagError || d.Source != "compiler" ||
 			!strings.HasPrefix(d.Message, "cannot use 1") || len(d.Message) < 2500 ||

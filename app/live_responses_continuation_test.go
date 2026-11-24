@@ -129,7 +129,7 @@ func TestLiveResponsesHistoricalSessionReplay(t *testing.T) {
 	if p.ProtocolID() != "openai-responses" {
 		t.Fatalf("account uses %s, need Responses", p.ProtocolID())
 	}
-	messages := provider.FilterReplayMessages(state.Messages, nil, p)
+	messages := provider.FilterReplayMessages(state.Messages, p)
 	messages = append(messages, provider.NewTextMessage("user", "This request only verifies historical wire replay. Do not perform earlier tasks or call any tool. Reply exactly REPLAY_OK."))
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
@@ -254,7 +254,7 @@ func liveResponsesRequest(t *testing.T, ctx context.Context, p *provider.Provide
 	result := liveResponsesResult{text: text.String(), reason: reason}
 	if continuationID != "" {
 		result.reference = &provider.ResponseReference{ID: continuationID, Scope: request.ResponseContinuationScope,
-			InputHash: provider.ResponseInputHash(request.Messages, request.Tools)}
+			InputHash: provider.MessagePrefixHash(request.Messages)}
 	}
 	return body, result
 }

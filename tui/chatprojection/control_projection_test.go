@@ -151,3 +151,38 @@ func TestCrudeReadKeepsItsBranchThroughLiveSettlement(t *testing.T) {
 		t.Fatalf("settlement moved the activity tree: before=%+v after=%+v", previous, rows)
 	}
 }
+
+func TestDesktopActivityKeepsBranchThroughSettlement(t *testing.T) {
+	for _, width := range []int{80, 160} {
+		r := newActivityRenderer()
+		messages := []conversation.ChatMessage{
+			{InternalID: "click", Role: conversation.RoleTool, ToolName: "mcp__desktop__Click", ToolStatus: "success", Content: "Clicked."},
+			{InternalID: "thought", Role: conversation.RoleThinking, Content: "Check the result."},
+			{InternalID: "shot", Role: conversation.RoleTool, ToolName: "mcp__desktop__Screenshot", ToolStatus: "calling", ToolPreviewPhase: conversation.ToolPreviewStreaming},
+		}
+		r.SyncMessages(messages, 1, 0)
+		rows, _, _ := r.ExportMessageRows(width)
+		if len(rows) != 1 || rows[0].ID != "activity:click" {
+			t.Fatalf("desktop calls are separate at %d columns (items=%d)", width, len(rows))
+		}
+		before := rows[0]
+		messages[2].ToolStatus, messages[2].Content = "success", "Captured."
+		r.SyncMessages(messages, 2, 0)
+		rows, _, _ = r.ExportMessageRows(width)
+		if len(rows) != 1 || rows[0].ID != before.ID || len(rows[0].Lines) != len(before.Lines) || rows[0].LeafToggles[2] != "click" || rows[0].LeafToggles[3] != "shot" || before.LeafToggles[2] != "click" {
+			t.Fatalf("settling screenshot moved the other calls: before %v %v after %v %v", before.Lines, before.LeafToggles, rows[0].Lines, rows[0].LeafToggles)
+		}
+		cold := newActivityRenderer()
+		cold.SyncMessages(messages, 1, 0)
+		hydrated, _, _ := cold.ExportMessageRows(width)
+		if !reflect.DeepEqual(hydrated[0].Lines, rows[0].Lines) {
+			t.Fatal("restored desktop activity changed")
+		}
+		messages[2].ToolStatus = "error"
+		r.SyncMessages(messages, 3, 0)
+		rows, _, _ = r.ExportMessageRows(width)
+		if rows[len(rows)-1].ID != "shot" {
+			t.Fatal("tool failure hidden in a group")
+		}
+	}
+}

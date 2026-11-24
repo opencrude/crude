@@ -61,6 +61,7 @@ type suggestionState struct {
 }
 
 type suggestionIntent struct {
+	caret      editor.Position
 	editor     *editor.Editor
 	revision   uint64
 	generation uint64
@@ -238,7 +239,7 @@ func (m *App) scheduleSuggestion(ed *editor.Editor, pause time.Duration, automat
 	ctx, cancel := context.WithCancel(base)
 	now := time.Now()
 	due := now.Add(pause)
-	m.suggest.intent = &suggestionIntent{editor: ed, revision: ed.Revision(), generation: generation,
+	m.suggest.intent = &suggestionIntent{caret: editor.Position{Line: ed.CursorLine(), Col: ed.CursorCol()}, editor: ed, revision: ed.Revision(), generation: generation,
 		began: now, due: due, deadline: due.Add(5 * time.Second), automatic: automatic, follow: follow, cancel: cancel}
 	m.editorCommands = append(m.editorCommands, func() tea.Msg {
 		timer := time.NewTimer(max(time.Millisecond, time.Until(due)))
@@ -324,7 +325,7 @@ func (m *App) drainSuggestionIntent(now time.Time) tea.Cmd {
 		return nil
 	}
 	ed := intent.editor
-	if !m.suggestionEditorOwnsInput(ed) || ed.Revision() != intent.revision ||
+	if !m.suggestionEditorOwnsInput(ed) || ed.Revision() != intent.revision || ed.CursorLine() != intent.caret.Line || ed.CursorCol() != intent.caret.Col ||
 		!m.acceptsLSPGeneration(intent.generation) || now.After(intent.deadline) {
 		m.cancelSuggestionIntent()
 		return nil

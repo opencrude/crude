@@ -144,11 +144,11 @@ func (m *App) syncSemanticTokens() tea.Cmd {
 	if m.EditorState != nil && m.EditorState.ActiveView != "" {
 		mark(m.EditorState.Editor)
 	}
-	contextOwner, contextGeneration := service.ContextCursor()
 	var commands []tea.Cmd
 	for _, view := range m.semanticViews {
 		source, ready := view.editor.CurrentInsightSource()
 		first, last, painted := view.editor.VisibleSourceLines()
+		contextOwner, contextGeneration := service.ContextCursor(view.editor.FilePath())
 		producer := service.FileProducer(view.editor.FilePath())
 		if !connected || producer.InstanceID == "" || contextOwner == "" || contextOwner != source.WorkspaceGeneration {
 			m.forgetSemantic(view)
@@ -207,7 +207,7 @@ func (m *App) semanticCurrent(r *semanticRequest) bool {
 	if r == nil || r.view == nil || m.semanticViews[r.view.editor] != r.view || r.view.request != r || !r.view.visible || r.view.workspace != m.ws || m.asyncIOStopped.Load() || !m.acceptsLSPGeneration(r.view.generation) || r.ctx.Err() != nil || !r.view.editor.IsOpen() || r.view.editor.Revision() != r.revision || !r.view.editor.MatchesInsightSource(r.source) || m.ws.LSPMgr() == nil || m.ws.LSPMgr().FileProducer(r.source.Path) != r.producer {
 		return false
 	}
-	owner, generation := m.ws.LSPMgr().ContextCursor()
+	owner, generation := m.ws.LSPMgr().ContextCursor(r.source.Path)
 	return owner == r.contextOwner && generation <= r.contextGeneration
 }
 func (m *App) startSemanticRequest(msg semanticDueMsg) tea.Cmd {

@@ -274,6 +274,6 @@ func (noopLSPClient) AwaitDiagnostics(context.Context, string) (insight.Diagnost
 	return insight.DiagnosticPublication{}, true
 }
 
-func (noopLSPClient) AssistanceCapabilities() insight.LSPAssistanceCapabilities {
+func (noopLSPClient) AssistanceCapabilities(string) insight.LSPAssistanceCapabilities {
 	return insight.LSPAssistanceCapabilities{Completion: true, CompletionTriggers: []string{"."}, SignatureHelp: true, SignatureTriggers: []string{"(", ","}}
 }

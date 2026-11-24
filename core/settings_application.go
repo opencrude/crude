@@ -164,9 +164,6 @@ func (a *actor) prepareApplicationSettings(request coreprotocol.Request) (func(c
 			run := prepared.PrepareAction(in.Action)
 			operation = func(ctx context.Context) (setting.App, coreprotocol.Value, error) {
 				s, entries, content, published, e := run(ctx)
-				if in.Action.Operation == "test" {
-					content = ""
-				}
 				return published, wire(publicCapabilityResult(s, entries, content)), e
 			}
 		}

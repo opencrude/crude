@@ -52,6 +52,10 @@ func TestArchiveSurvivesReopenAndComparesExactBuilds(t *testing.T) {
 	clock = at.Add(3 * time.Second)
 	measure.Observe(30 * time.Microsecond)
 	write(newer, clock, clock.Add(time.Second))
+	traced := metrics.ArchiveWindow{From: clock.Unix() + 1, Until: clock.Unix() + 2, Stalls: []metrics.ArchiveStall{{At: clock, Series: "ui.view", Label: "Tick", Stack: []string{"crude/tui/chatprojection.PaintLine (paint.go:159)"}}}}
+	if err := storeArchiveWindow(ctx, db, newer, traced); err != nil {
+		t.Fatal(err)
+	}
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -80,6 +84,12 @@ func TestArchiveSurvivesReopenAndComparesExactBuilds(t *testing.T) {
 	stalls, err := InspectArchive(ctx, &pages, "owner", path, "core", ArchiveQuery{Page: inspect.Request{View: "stalls", Filter: "archive.fixture.latency"}})
 	if err != nil || stalls.Total != 17 || strings.Contains(string(stalls.Records[0].Value), "private-path") {
 		t.Fatalf("stalls missing, duplicated, or private label escaped: %+v %v", stalls, err)
+	}
+	for _, term := range []string{"Tick", "chatprojection.PaintLine"} {
+		p, err := InspectArchive(ctx, &pages, "owner", path, "core", ArchiveQuery{Build: newer.Build, Page: inspect.Request{View: "stalls", Filter: term}})
+		if err != nil || p.Total != 1 {
+			t.Fatalf("could not locate saved incident by %s: %+v %v", term, p, err)
+		}
 	}
 	builds, err := InspectArchive(ctx, &pages, "owner", path, "core", ArchiveQuery{})
 	if err != nil || builds.Total != 2 {

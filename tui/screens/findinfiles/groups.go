@@ -98,10 +98,7 @@ func (s *Screen) rebuildRows() {
 // setResults replaces the flat result set and rebuilds groups, rows, and the
 // initial selection (the first match row).
 func (s *Screen) setResults(results []fileio.ProjectSearchMatch) {
-	if s.previewSrc != nil {
-		s.previewSrc.Close()
-		s.previewSrc = nil
-	}
+	s.ClearFilePreview()
 	s.results = results
 	s.previewNotice = ""
 	s.collapsed = make(map[string]bool)

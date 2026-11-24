@@ -58,18 +58,19 @@ type CapabilitySearchMethodView struct {
 
 // CapabilityConnectionView is the agent-visible summary of one connection.
 type CapabilityConnectionView struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Transport string `json:"transport"`
-	State     string `json:"state"`
-	Builtin   bool   `json:"builtin,omitempty"`
-	Disabled  bool   `json:"disabled,omitempty"`
-	// Tools are granted to every run; ToolsOff were switched off by the user;
-	// ToolsNeedAccess have no durable grant and need mcp_request_access.
-	Tools           []string `json:"tools,omitempty"`
-	ToolsOff        []string `json:"tools_off,omitempty"`
-	ToolsNeedAccess []string `json:"tools_need_access,omitempty"`
-	Secrets         []string `json:"secrets,omitempty"`
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	Transport    string   `json:"transport"`
+	State        string   `json:"state"`
+	Builtin      bool     `json:"builtin,omitempty"`
+	Disabled     bool     `json:"disabled,omitempty"`
+	Tools        []string `json:"tools,omitempty"`
+	ToolsOff     []string `json:"tools_off,omitempty"`
+	ToolsChanged []string `json:"tools_changed,omitempty"`
+	// Rules are the user's saved classifications, included for an exact inspection.
+	Rules   map[string]captypes.ToolGrant `json:"tool_rules,omitempty"`
+	Cached  bool                          `json:"cached_catalog,omitempty"`
+	Secrets []string                      `json:"secrets,omitempty"`
 }
 
 type CapabilityControlView struct {
@@ -126,16 +127,17 @@ func (a *actor) prepareControlCapabilities(in control.Request, owner coreprotoco
 		if !exists || input.Tool == "" || input.Enabled == nil {
 			return controlFailure(in, control.Invalid, "an installed connection id, tool and enabled are required")
 		}
-		grant, granted := existing.Grants[input.Tool]
-		if *input.Enabled && !granted && !existing.IsBuiltin() {
-			return controlFailure(in, control.Invalid, "tool access for an external server is granted with mcp_request_access, which reviews its exact schema and effect")
-		}
+		grant := existing.Grants[input.Tool]
 		grant.Disabled = !*input.Enabled
 		existing.Grants = cloneGrants(existing.Grants)
-		existing.Grants[input.Tool] = grant
+		if grant == (captypes.ToolGrant{}) {
+			delete(existing.Grants, input.Tool)
+		} else {
+			existing.Grants[input.Tool] = grant
+		}
 		action.Operation, action.Connection, action.Scope = "save-connection", &existing, scopeOf(existing)
 		secrets = keepConnectionSecrets()
-	case "capabilities.save_connection":
+	case "capabilities.save_connection", "capabilities.test_connection":
 		if input.Connection == nil || input.Connection.ID == "" {
 			return controlFailure(in, control.Invalid, "connection.id is required")
 		}
@@ -146,6 +148,9 @@ func (a *actor) prepareControlCapabilities(in control.Request, owner coreprotoco
 		}
 		merged, updates := mergeControlConnection(existing, *input.Connection)
 		action.Operation, action.Connection, action.Scope, secrets = "save-connection", &merged, scopeOf(existing), &updates
+		if in.CommandID == "capabilities.test_connection" {
+			action.Operation = "test"
+		}
 	case "capabilities.save_search_method", "capabilities.test_search_method":
 		route := captypes.WebSearchRoute{ID: input.ID}
 		saved := slices.IndexFunc(current.WebSearchRoutes, func(existing captypes.WebSearchRoute) bool { return existing.ID == input.ID })
@@ -215,8 +220,8 @@ func (a *actor) prepareControlCapabilities(in control.Request, owner coreprotoco
 		if !ok {
 			return fault(rpc, "operation_failed", "capability result is unreadable")
 		}
-		view := capabilityControlView(result)
-		if action.Operation == captypes.TestWebSearchRoute {
+		view := capabilityControlView(result, input.ID)
+		if action.Operation == captypes.TestWebSearchRoute || action.Operation == "test" {
 			view.TestResult = result.Content
 		}
 		response.Value = view
@@ -293,7 +298,7 @@ func mergeControlConnection(existing captypes.ConnectionConfig, input controlCon
 	return merged, updates
 }
 
-func capabilityControlView(result coreprotocol.CapabilityResult) CapabilityControlView {
+func capabilityControlView(result coreprotocol.CapabilityResult, idFilter string) CapabilityControlView {
 	snapshot := result.Snapshot
 	view := CapabilityControlView{Revision: result.Revision, StoredSecrets: slices.Clone(snapshot.StoredSecrets)}
 	states := make(map[string]captypes.ConnectionState)
@@ -301,21 +306,36 @@ func capabilityControlView(result coreprotocol.CapabilityResult) CapabilityContr
 		states[state.ID] = state
 	}
 	for id, config := range snapshot.Settings.Connections {
+		if idFilter != "" && id != idFilter {
+			continue
+		}
 		state := states[id]
 		entry := CapabilityConnectionView{ID: id, Name: config.Name, Transport: config.Transport, State: state.State, Builtin: config.IsBuiltin(), Disabled: config.Disabled}
 		if entry.State == "" {
 			entry.State = "not started"
 		}
+		entry.Cached = state.Cached
+		if idFilter != "" {
+			entry.Rules = config.Grants
+		}
+		seen := map[string]bool{}
 		for _, tool := range state.Tools {
+			seen[tool.OriginalName] = true
 			switch {
 			case tool.Selected:
-				entry.Tools = append(entry.Tools, tool.Name)
+				entry.Tools = append(entry.Tools, tool.OriginalName)
 			case config.Grants[tool.OriginalName].Disabled:
-				entry.ToolsOff = append(entry.ToolsOff, tool.Name)
+				entry.ToolsOff = append(entry.ToolsOff, tool.OriginalName)
 			default:
-				entry.ToolsNeedAccess = append(entry.ToolsNeedAccess, tool.Name)
+				entry.ToolsChanged = append(entry.ToolsChanged, tool.OriginalName)
 			}
 		}
+		for name, rule := range config.Grants {
+			if rule.Disabled && !seen[name] {
+				entry.ToolsOff = append(entry.ToolsOff, name)
+			}
+		}
+		sort.Strings(entry.ToolsOff)
 		if builtin, ok := captypes.Builtin(config.Command); config.IsBuiltin() && ok {
 			for _, secret := range builtin.Secrets {
 				status := "unset"

@@ -217,10 +217,12 @@ and [VS Code cursor movement](https://github.com/microsoft/vscode/blob/main/src/
   Persist large pastes off Update, preserve gesture order, block Send until
   persistence completes, and fence results to session/agent/workspace/draft.
   A failed or unbound store never falls back to dumping the wall into the input.
-  Inline and file-backed pasted text share Pasted Text labels and native
-  click-to-view/edit; keep the composer mounted underneath. Reference loads and
-  saves are off-UI, complete within the 64 MiB read bound, epoch/preimage-checked,
-  and keep edits visible on failure. Projection locks never cover attachment I/O.
+  With **Open attachments in → Crude**, a composer pasted-text chip opens a
+  normal editable document tab in the initiating pane. A file-backed paste
+  opens its original file on the core host. An inline paste becomes a private
+  session file on first editor open, preserving its ID, label and exact bytes.
+  The normal editor owns unsaved changes, Undo, Save and disk conflicts. Opening
+  the tab never submits or clears the composer draft.
 - Clipboard images use binary `CreateRequest.Data` throughout the connected/local
   capture path, never Base64 text in `Content`. Validate MIME/signature before
   storing. Faulty already-stored image captures are explicitly excluded from
@@ -234,10 +236,8 @@ and [VS Code cursor movement](https://github.com/microsoft/vscode/blob/main/src/
   once in the provider request and the existing user-visible completion deadline.
 - Attachment paint and hit testing share `ReferenceChips` geometry. Filename
   bodies open; separate three-cell remove targets only detach the draft.
-  Pasted text and images open the same native reference window from composer,
-  posted transcript and Prompt History. Composer pasted text stays editable;
-  sent/history previews are read-only with Close, never Save. File-backed pasted
-  text is not an external-app hand-off. Images decode original bounded media
+  Sent and historical attachments open a read-only viewer. Composer images use
+  the image viewer; editable pasted text uses the editor tab. Images decode original bounded media
   bytes off Update and paint a terminal-cell preview inside that same window;
   connected reads use the exact reference owner's verified media download, not
   a server path interpreted on the client. Bulk read metadata omits captured text;

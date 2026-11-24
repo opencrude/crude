@@ -33,7 +33,6 @@ type ComposeParams struct {
 }
 
 type composeCtx struct {
-	pad       string
 	padW      int
 	rowInnerW int // InnerW minus external main gutter
 	paneSBW   int
@@ -60,7 +59,6 @@ func buildComposeCtx(p ComposeParams) composeCtx {
 	}
 
 	return composeCtx{
-		pad:       strings.Repeat(" ", padW),
 		padW:      padW,
 		rowInnerW: rowInnerW,
 		paneSBW:   paneSBW,
@@ -68,55 +66,19 @@ func buildComposeCtx(p ComposeParams) composeCtx {
 	}
 }
 
-type composeRowGeometry struct {
-	contentMax int
-	padRight   int
-	gutter     int
-}
-
-// layoutComposeRow is the single source for both native paint geometry and
-// composed test rows. Every value is bounded by rowInnerW; narrow terminals
-// never gain synthetic minimum-width columns. Only pane rows reserve the
-// nested pane gutter, so other rows keep their width while a pane scrolls.
-func layoutComposeRow(ctx composeCtx, contentVisW int, paneRow bool) composeRowGeometry {
-	contentW := max(0, contentVisW)
-	contentMax := ctx.rowInnerW
-	gutter := 0
-	if ctx.paneSBW > 0 && paneRow {
-		gutter = min(ctx.rowInnerW, ctx.paneSBW+ctx.paneGapW)
-		contentMax = max(0, ctx.rowInnerW-gutter)
-	}
-	contentW = min(contentW, contentMax)
-
-	padRight := max(0, contentMax-contentW)
-	return composeRowGeometry{
-		contentMax: contentMax,
-		padRight:   padRight,
-		gutter:     gutter,
-	}
-}
-
-// RowLayout describes compose geometry for one chat row at paint time.
+// RowLayout describes the cells available to one row. Its bounds depend on
+// the viewport and pane gutters, not the width of the text being painted.
 type RowLayout struct {
-	PadLeft    int
-	RowInnerW  int
-	ContentMax int
-	PadRight   int
-	GutterCols int // pane scrollbar followed by one blank separator column
+	PadLeft, RowInnerW, ContentMax int
+	GutterCols                     int // pane scrollbar followed by one blank separator column
 }
 
-// LayoutRow mirrors ComposeRow width math without building ANSI strings.
-func LayoutRow(p ComposeParams, contentVisW int, pane chatprojection.PaneLineInfo) RowLayout {
-	ctx := buildComposeCtx(p)
-	geometry := layoutComposeRow(ctx, contentVisW, pane.PaneID != "")
-
-	return RowLayout{
-		PadLeft:    ctx.padW,
-		RowInnerW:  ctx.rowInnerW,
-		ContentMax: geometry.contentMax,
-		PadRight:   geometry.padRight,
-		GutterCols: geometry.gutter,
+func (ctx composeCtx) row(pane bool) RowLayout {
+	gutter := 0
+	if pane && ctx.paneSBW > 0 {
+		gutter = min(ctx.rowInnerW, ctx.paneSBW+ctx.paneGapW)
 	}
+	return RowLayout{PadLeft: ctx.padW, RowInnerW: ctx.rowInnerW, ContentMax: ctx.rowInnerW - gutter, GutterCols: gutter}
 }
 
 // ComposeRow builds one full-width composed chat row. Compose reserves nested
@@ -133,21 +95,20 @@ func ComposeRow(p ComposeParams, vpRow int, globalLine int, rawLine string, pane
 func composeOneRow(ctx composeCtx, line string, paneRow bool) string {
 	trimmed := rendering.TrimRightAnsiSpaces(line)
 	visW := rendering.VisibleWidth(trimmed)
-	geometry := layoutComposeRow(ctx, visW, paneRow)
-	if visW > geometry.contentMax {
-		if geometry.contentMax == 0 {
+	geometry := ctx.row(paneRow)
+	if visW > geometry.ContentMax {
+		if geometry.ContentMax == 0 {
 			trimmed = ""
 		} else {
-			trimmed = rendering.TruncateLine(trimmed, geometry.contentMax)
+			trimmed = rendering.TruncateLine(trimmed, geometry.ContentMax)
 		}
 		visW = rendering.VisibleWidth(trimmed)
-		geometry = layoutComposeRow(ctx, visW, paneRow)
 	}
 
 	// The gutter reserve is spaces only; native paint fills the final gutter
 	// cell. At narrow widths it shrinks with the row instead of overflowing.
-	inner := trimmed + strings.Repeat(" ", geometry.padRight) + strings.Repeat(" ", geometry.gutter)
-	return ctx.pad + inner + ctx.pad
+	pad := strings.Repeat(" ", ctx.padW)
+	return pad + trimmed + strings.Repeat(" ", max(0, geometry.ContentMax-visW)+geometry.GutterCols) + pad
 }
 
 // Compose builds full-width chat row geometry with scrollbar gutters.

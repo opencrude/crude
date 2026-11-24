@@ -110,8 +110,15 @@ func shows(c cell.Cell, source string) bool {
 // ApplyLine. Arranging each run on its own would split a right-to-left
 // phrase at every color change.
 func (b *CellBuffer) WriteLogical(x, y int, text string, fg, bg cell.Color, attr cell.Attrs, links ...*cell.Link) int {
-	end, _ := b.writeText(x, y, text, fg, bg, attr, links)
+	end, _ := b.writeText(x, y, b.width, text, fg, bg, attr, links)
 	return end
+}
+
+// WriteLogicalUntil writes complete graphemes before the exclusive right edge.
+// complete is false when the next grapheme would cross it.
+func (b *CellBuffer) WriteLogicalUntil(x, y, right int, text string, fg, bg cell.Color, attr cell.Attrs, link *cell.Link) (end int, complete bool) {
+	end, _, complete = b.writeTextRun(x, y, min(right, b.width), text, fg, bg, attr, link)
+	return
 }
 
 // ArrangeLabel arranges one label that a painter wrote at (x, y) up to

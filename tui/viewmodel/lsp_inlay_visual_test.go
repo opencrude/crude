@@ -427,7 +427,7 @@ func (m *inlayVisualModel) qualifiedInlay(v *controlVisualModel) (*insight.LSPIn
 	}
 	set := r.result
 	b := set.Boundary
-	owner, generation := v.ws.LSPMgr().ContextCursor()
+	owner, generation := v.ws.LSPMgr().ContextCursor("")
 	if set.Answer != insight.LSPInlayHints || set.ID == "" || len(set.Digest) != 64 || set.WireVersion <= 0 ||
 		set.ViewID != view.id || set.Sequence != r.sequence || set.Range != r.span ||
 		set.Range.Start != (insight.LSPInlayPosition{}) || set.Range.End != (insight.LSPInlayPosition{Line: 8}) ||

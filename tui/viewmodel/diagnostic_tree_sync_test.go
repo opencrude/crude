@@ -2,7 +2,9 @@ package viewmodel
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"crude/tui/filetree"
 	"crude/tui/screens/problems"
@@ -60,6 +62,15 @@ func TestFileTreeMarkersMatchProblemsPanel(t *testing.T) {
 			rootNode.DiagErrors, rootNode.DiagWarnings, wantErrors, wantWarnings)
 	}
 
+	found := false
+	for _, seg := range app.footerStatusSegments() {
+		if seg.Action == "problems" {
+			found = strings.Contains(seg.Text, "2✕") && strings.Contains(seg.Text, "1⚠")
+		}
+	}
+	if !found {
+		t.Fatal("footer does not count the same retained rows as the tree and Problems")
+	}
 	// The tree switch hides the markers and never the list.
 	service.hideTree = true
 	app.drainLSPDiagnostics()
@@ -69,4 +80,15 @@ func TestFileTreeMarkersMatchProblemsPanel(t *testing.T) {
 	if errors, _ := problemRowCounts(app.problemsModel()); errors != 2 {
 		t.Fatal("switching the tree markers off removed problems from the panel")
 	}
+	// Simulate a pushed clear while the tree is hidden; no manual refresh.
+	delete(service.facts, older)
+	service.version++
+	app.Update(TickMsg(time.Now()))
+	service.hideTree = false
+	app.drainLSPDiagnostics()
+	errors, warnings := problemRowCounts(app.problemsModel())
+	if errors != 1 || warnings != 1 || rootNode.DiagErrors != errors || app.listedErrors != errors || app.listedWarnings != warnings {
+		t.Fatal("a removed problem survived in a projection")
+	}
+
 }

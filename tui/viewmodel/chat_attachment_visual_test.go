@@ -114,7 +114,7 @@ func (m *attachmentVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if key, ok := msg.(tea.KeyPressMsg); ok {
 		switch key.Code {
 		case tea.KeyF2:
-			return m, m.beginReferenceOverlay(m.text.ID)
+			return m, m.openAttachmentIn(m.text.ID, "crude")
 		case tea.KeyF3:
 			return m, m.click(m.text.Label)
 		case tea.KeyF4:

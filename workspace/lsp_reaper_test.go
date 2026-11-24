@@ -63,6 +63,6 @@ func (*reapableClient) AwaitDiagnostics(context.Context, string) (insight.Diagno
 	return insight.DiagnosticPublication{}, true
 }
 
-func (*reapableClient) AssistanceCapabilities() insight.LSPAssistanceCapabilities {
+func (*reapableClient) AssistanceCapabilities(string) insight.LSPAssistanceCapabilities {
 	return insight.LSPAssistanceCapabilities{Completion: true, CompletionTriggers: []string{"."}, SignatureHelp: true, SignatureTriggers: []string{"(", ","}}
 }

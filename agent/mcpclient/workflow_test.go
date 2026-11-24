@@ -243,10 +243,12 @@ func TestManagedWorkflowStdioApprovalIsolationAndContext(test *testing.T) {
 		test.Fatalf("resource or prompt identity was lost: %#v", state)
 	}
 	inspect := workflowTool(test, manager, config.ID, "inspect")
-	if inspect.Selected || inspect.Name != "mcp__stdio_workflow__inspect" {
+	if !inspect.Selected || inspect.Effect != captypes.EffectUnknown || inspect.Name != "mcp__stdio_workflow__inspect" {
 		test.Fatalf("server annotation granted a tool or changed its identity: %#v", inspect)
 	}
-	if _, err := manager.Call(ctx, inspect, map[string]any{"message": "denied"}); err == nil {
+	forged := inspect
+	forged.Effect = captypes.EffectRead
+	if _, err := manager.Call(ctx, forged, map[string]any{"message": "denied"}); err == nil {
 		test.Fatal("ungranted helper tool executed")
 	}
 	if _, err := os.Stat(filepath.Join(directory, "inspect.called")); !os.IsNotExist(err) {

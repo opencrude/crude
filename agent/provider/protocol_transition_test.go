@@ -38,7 +38,7 @@ func TestEveryWireProtocolReprojectsCanonicalHistoryWithoutMutation(t *testing.T
 				current := &Provider{ID: producer.ID, BaseURL: producer.BaseURL, StandardName: target.Info().ID}
 				prefix := []ChatMessage{NewTextMessage("system", "stable system policy"), NewTextMessage("developer", "stable developer policy"), NewTextMessage("user", "historical human request")}
 				assistant := decoded.Choices[0].Message
-				stamp := RequestPrefixHash(prefix, tools)
+				stamp := MessagePrefixHash(prefix)
 				assistant.ProviderItems = StampProviderItems(assistant.ProviderItems, producer, "producing-model", stamp)
 				assistant.ReplayScope, assistant.ReplayPrefixHash, assistant.ReplaySourceModel = producer.ReplayScope(), stamp, "producing-model"
 				history := append(prefix, assistant,
@@ -50,7 +50,7 @@ func TestEveryWireProtocolReprojectsCanonicalHistoryWithoutMutation(t *testing.T
 				if err != nil {
 					t.Fatal(err)
 				}
-				request := ChatRequest{Model: "target-model", Tools: tools, Messages: FilterReplayMessages(history, tools, current)}
+				request := ChatRequest{Model: "target-model", Tools: tools, Messages: FilterReplayMessages(history, current)}
 				body, err := target.EncodeRequest(&request)
 				if err != nil {
 					t.Fatal(err)
@@ -68,7 +68,7 @@ func TestEveryWireProtocolReprojectsCanonicalHistoryWithoutMutation(t *testing.T
 				if err != nil || !bytes.Equal(body, again) {
 					t.Fatal("unchanged configuration produced different wire bytes")
 				}
-				request.Messages = FilterReplayMessages(history, tools, current)
+				request.Messages = FilterReplayMessages(history, current)
 				again, err = target.EncodeRequest(&request)
 				if err != nil || !bytes.Equal(body, again) {
 					t.Fatal("reprojection rewrote the warm request prefix")

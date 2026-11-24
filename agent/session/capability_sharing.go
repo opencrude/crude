@@ -84,9 +84,6 @@ func sharedCapabilityID(tool string, params map[string]any) (string, string) {
 	case "capability_activate":
 		id, _ := params["id"].(string)
 		return "activated", id
-	case "mcp_request_access":
-		id, _ := params["connection_id"].(string)
-		return "granted access to", id
 	}
 	return "", ""
 }

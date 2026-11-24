@@ -49,7 +49,7 @@ func (extractor *compactionExtractor) request(source []provider.ChatMessage, dir
 	instruction.Origin, instruction.Visibility = provider.OriginCompactionRequest, provider.VisibilityContextOnly
 	messages := append([]provider.ChatMessage{extractor.system}, source...)
 	messages = append(messages, extractor.common, instruction)
-	input := estimateCanonicalRequest(provider.FilterReplayMessages(messages, nil, extractor.agent.Provider), nil, extractor.agent.Model)
+	input := estimateCanonicalRequest(provider.FilterReplayMessages(messages, extractor.agent.Provider), nil, extractor.agent.Model)
 	window := extractor.agent.Provider.ContextWindow(extractor.agent.Model)
 	// Each recursive source reduction gains its own response allowance; only a
 	// provider-confirmed output ceiling stays fixed across those requests.

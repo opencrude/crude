@@ -417,7 +417,7 @@ func (m *completionVisualModel) observeCompletion(phase int) error {
 			}
 			set = s.set
 			b := set.Boundary
-			owner, generation := v.ws.LSPMgr().ContextCursor()
+			owner, generation := v.ws.LSPMgr().ContextCursor("")
 			enabled, feature := v.ws.LSPMgr().CompletionsState()
 			if b.Source != current || owner != current.WorkspaceGeneration || generation != b.Context.Generation ||
 				b.Context.ID == "" || b.Context.Root != m.root || len(b.Context.UnknownInputs) == 0 ||

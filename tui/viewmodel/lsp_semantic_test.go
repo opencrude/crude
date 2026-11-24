@@ -18,8 +18,10 @@ type semanticCursorService struct {
 	unsynchronized bool
 }
 
-func (s *semanticCursorService) ServerReady() bool                    { return true }
-func (s *semanticCursorService) ContextCursor() (string, uint64)      { return "semantic-owner", s.cursor }
+func (s *semanticCursorService) ServerReady() bool { return true }
+func (s *semanticCursorService) ContextCursor(string) (string, uint64) {
+	return "semantic-owner", s.cursor
+}
 func (s *semanticCursorService) FileProducer(string) insight.Producer { return s.producer }
 func (s *semanticCursorService) FileSynchronized(insight.Source, uint64) bool {
 	return !s.unsynchronized

@@ -79,7 +79,7 @@ func (m *App) syncOccurrences() tea.Cmd {
 	}
 	producer := service.FileProducer(ed.FilePath())
 	source, current := ed.CurrentInsightSource()
-	contextOwner, contextGeneration := service.ContextCursor()
+	contextOwner, contextGeneration := service.ContextCursor(source.Path)
 	if producer.InstanceID == "" || !current || contextOwner == "" || contextOwner != source.WorkspaceGeneration {
 		m.resetOccurrences()
 		return nil
@@ -125,7 +125,7 @@ func (m *App) occurrenceCurrent(r *occurrenceRequest) bool {
 		return false
 	}
 	service := m.ws.LSPMgr()
-	owner, generation := service.ContextCursor()
+	owner, generation := service.ContextCursor(r.source.Path)
 	return service.ReferencesEnabled() && owner == r.contextOwner && generation <= r.contextGeneration
 }
 

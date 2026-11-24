@@ -42,15 +42,6 @@ func (request *ApprovalRequired) Evidence() map[string]any {
 		"source_policy": request.Preview.Source}
 }
 
-func (request *AccessApprovalRequired) CapabilityApprovalContextFor(ctx context.Context, origin string) context.Context {
-	return authorize(request.CapabilityApprovalContext(ctx), origin, request.Preview.Token, request.Actor)
-}
-
-func (request *AccessApprovalRequired) Evidence() map[string]any {
-	return map[string]any{"phase": "access", "token": request.Preview.Token, "connection": SafeConnection(request.Preview.Connection),
-		"grants": request.Preview.Grants, "tools": request.Preview.Tools}
-}
-
 // SafeConnection keeps the executable/endpoint and names of required inputs, not
 // credential values. The exact unredacted preimage remains internal only.
 func SafeConnection(config ConnectionConfig) ConnectionConfig {
@@ -141,7 +132,6 @@ type HostRequest struct {
 	Connection      ConnectionConfig
 	Authorized      bool
 	Tool            Tool
-	Grant           *ToolGrant
 	Arguments       jsondoc.Object
 	URI             string
 	Prompt          string

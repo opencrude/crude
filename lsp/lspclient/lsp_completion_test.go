@@ -169,7 +169,7 @@ func TestLSPCompletionFramedExpandedPlan(t *testing.T) {
 		if msg["method"] == "initialize" {
 			caps := msg["params"].(map[string]any)["capabilities"].(map[string]any)
 			completion := caps["textDocument"].(map[string]any)["completion"].(map[string]any)
-			want := `{"completionItem":{"commitCharactersSupport":true,"documentationFormat":["plaintext","markdown"],"insertReplaceSupport":true,"insertTextModeSupport":{"valueSet":[1,2]},"resolveSupport":{"properties":["documentation","detail"]},"snippetSupport":true},"contextSupport":true,"dynamicRegistration":false,"insertTextMode":1}`
+			want := `{"completionItem":{"commitCharactersSupport":true,"documentationFormat":["plaintext","markdown"],"insertReplaceSupport":true,"insertTextModeSupport":{"valueSet":[1,2]},"resolveSupport":{"properties":["documentation","detail","additionalTextEdits"]},"snippetSupport":true},"completionList":{"itemDefaults":["commitCharacters","editRange","insertTextFormat","insertTextMode","data"]},"contextSupport":true,"dynamicRegistration":true,"insertTextMode":1}`
 			actual, err := json.Marshal(completion)
 			if err != nil || string(actual) != want {
 				t.Fatalf("actual negotiated completion grants: %s, %v", actual, err)
@@ -325,7 +325,7 @@ func TestLSPCompletionFramedResolveOriginalIdentity(t *testing.T) {
 			got.Unsupported || !got.ResolveSupported {
 			t.Fatalf("resolved original %d: %+v, %v", i, got, err)
 		}
-		doc, err := lspcompletion.ResolveDocumentation(item.Original, got.JSON)
+		doc, err := lspcompletion.Resolve(item.Original, got.JSON)
 		if err != nil || doc.Detail != "resolved detail" || doc.Value != "**resolved**" || doc.Kind != "markdown" {
 			t.Fatalf("resolved documentation: %+v, %v", doc, err)
 		}
@@ -563,5 +563,29 @@ func TestLSPCompletionSourceByteBound(t *testing.T) {
 	}
 	if completionCallCount(completionTrace(t, l, ctx, path), "textDocument/completion") != 1 {
 		t.Fatal("oversized source reached server")
+	}
+}
+
+func TestRegisteredCompletionFollowsItsDocumentSelector(t *testing.T) {
+	l, _, ctx, root := startPullFixture(t, "completion-unsupported")
+	path := filepath.Join(root, "selected.go")
+	openTestFile(t, l, ctx, path, "go", "ab")
+	if l.AssistanceCapabilities(path).Completion {
+		t.Fatal("fixture advertised completion before registration")
+	}
+	changed := 0
+	l.OnAssistanceChanged(func() { changed++ })
+	err := l.registerCapabilities(l.launch, json.RawMessage(`{"registrations":[{"id":"custom","method":"textDocument/completion","registerOptions":{"documentSelector":[{"language":"go"}],"triggerCharacters":["#"],"resolveProvider":true}}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := l.AssistanceCapabilities(path); !c.Completion || len(c.CompletionTriggers) != 1 || c.CompletionTriggers[0] != "#" {
+		t.Fatal(c)
+	}
+	if _, err = l.RequestCompletions(ctx, path, 0, 2, insight.LSPCompletionContext{TriggerKind: 2, TriggerCharacter: "#"}); err != nil {
+		t.Fatal(err)
+	}
+	if err = l.unregisterCapabilities(l.launch, json.RawMessage(`{"unregisterations":[{"id":"custom","method":"textDocument/completion"}]}`)); err != nil || changed != 2 || l.AssistanceCapabilities(path).Completion {
+		t.Fatal("registration survived removal", changed, err)
 	}
 }

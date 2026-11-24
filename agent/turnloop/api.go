@@ -148,7 +148,7 @@ func (a *Agent) completeStreamWithOptions(
 	if a.Provider == nil {
 		return completionResult{}, fmt.Errorf("agent provider is nil")
 	}
-	msgs = provider.FilterReplayMessages(msgs, tools, a.Provider)
+	msgs, prefixHash := provider.ProjectReplayMessages(msgs, a.Provider)
 	req := provider.ChatRequest{
 		ResponseContinuationScope: a.Provider.ResponseContinuationScope(a.Model),
 		MediaReplayRecovery:       a.Provider.MediaReplayRecoveryEnabled(),
@@ -207,11 +207,11 @@ func (a *Agent) completeStreamWithOptions(
 	a.logger.Info("LLM", "prompt", "model", a.Model, "protocol", a.Provider.ProtocolID(), "msgs", len(msgs), "tools", len(tools))
 
 	result, consumeErr := a.consumeStream(
-		ctx, client, &req, streamStart,
+		ctx, client, &req, prefixHash, streamStart,
 		emit, emitThinking, onToolCallStart, onToolCallDelta,
 	)
 	result.ReplayScope = a.Provider.ReplayScope()
-	result.ReplayPrefixHash = provider.RequestPrefixHash(req.Messages, req.Tools)
+	result.ReplayPrefixHash = prefixHash
 	result.ReplaySourceModel = a.Model
 	result.LastPromptTokens = result.Usage.PromptTokens
 	if consumeErr != nil {
@@ -303,6 +303,7 @@ func (a *Agent) consumeStream(
 	ctx context.Context,
 	client *provider.Client,
 	req *provider.ChatRequest,
+	prefixHash string,
 	streamStart time.Time,
 	emit func(string),
 	emitThinking func(reasoning.Delta),
@@ -344,7 +345,7 @@ func (a *Agent) consumeStream(
 	finish := func() {
 		result.Content = content.String()
 		result.ReasoningContent = trace
-		result.ProviderItems = provider.StampProviderItems(provider.CanonicalizeProviderItems(result.ProviderItems), a.Provider, a.Model, provider.RequestPrefixHash(req.Messages, req.Tools))
+		result.ProviderItems = provider.StampProviderItems(provider.CanonicalizeProviderItems(result.ProviderItems), a.Provider, a.Model, prefixHash)
 		result.ToolCalls = finalizeToolCalls(toolCalls)
 		if a.Provider.ProtocolID() == "openai" {
 			for i := range result.ToolCalls {
@@ -394,7 +395,7 @@ func (a *Agent) consumeStream(
 		if req.ResponseContinuationScope != "" {
 			if update.ContinuationID != "" {
 				result.ResponseReference = &provider.ResponseReference{ID: update.ContinuationID, Scope: req.ResponseContinuationScope,
-					InputHash: provider.ResponseInputHash(req.Messages, req.Tools)}
+					InputHash: prefixHash}
 			}
 			if update.ContinuationReason != "" {
 				result.ResponseContinuationReason = update.ContinuationReason
@@ -547,7 +548,7 @@ func (a *Agent) logCompletedTurn(body []byte, result completionResult, streamSta
 	a.logger.Info("LLM", "response", "model", a.Model, "tool_calls", len(result.ToolCalls),
 		"prompt_tokens", result.Usage.PromptTokens, "completion_tokens", result.Usage.CompletionTokens,
 		"cached_tokens", result.Usage.PromptTokensCached, "continuation", result.ResponseContinuationReason,
-		"response_id_retained", result.ResponseReference != nil, "latency_ms", streamDuration)
+		"response_id_retained", result.ResponseReference != nil, "request_bytes", len(body), "latency_ms", streamDuration)
 
 	if a.turn == nil {
 		return

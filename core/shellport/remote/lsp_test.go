@@ -20,7 +20,7 @@ func TestLSPReplicaReadIsolationAndClear(t *testing.T) {
 		Settings:    setting.LSP{Languages: map[string]setting.LSPLanguage{"go": {Command: "gopls", Args: []string{"serve"}}}},
 		Health:      []statuscenter.LSPServerHealth{{ID: "one"}}, Connected: true, Ready: true, Status: workspace.LSPConnected}
 	l.install(s)
-	if owner, context := l.ContextCursor(); owner != "owner-1" || context != 3 {
+	if owner, context := l.ContextCursor(""); owner != "owner-1" || context != 3 {
 		t.Fatal("replica lost the independent semantic-context cursor", owner, context)
 	}
 	s.Diagnostics["a.go"].Diagnostics[0].Message = "changed"

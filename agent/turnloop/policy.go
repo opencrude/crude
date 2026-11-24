@@ -87,16 +87,18 @@ func PolicyAllowsMetadata(policy safety.Policy, metadata tools.ToolMetadata) boo
 		// must enforce the returned descriptor's exact effect before execution.
 		return policy.IsAllowed(safety.OpRead)
 	}
-	switch metadata.Effect {
-	case captypes.EffectRead, captypes.EffectCommunication:
-		return policy.IsAllowed(safety.OpRead)
-	case captypes.EffectWrite:
-		return policy.IsAllowed(safety.OpUpdate)
-	case captypes.EffectDelete:
-		return policy.IsAllowed(safety.OpDelete)
-	case captypes.EffectExecute:
-		return policy.IsAllowed(safety.OpExecute)
-	default:
-		return false
-	}
+	return metadata.Effect.AllowedBy(func(effect captypes.Effect) bool {
+		switch effect {
+		case captypes.EffectRead, captypes.EffectCommunication:
+			return policy.IsAllowed(safety.OpRead)
+		case captypes.EffectWrite:
+			return policy.IsAllowed(safety.OpUpdate)
+		case captypes.EffectDelete:
+			return policy.IsAllowed(safety.OpDelete)
+		case captypes.EffectExecute:
+			return policy.IsAllowed(safety.OpExecute)
+		default:
+			return false
+		}
+	})
 }

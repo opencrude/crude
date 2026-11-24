@@ -55,7 +55,7 @@ func stateFenceValue(topic, value int, version uint64) coreprotocol.WorkspaceSta
 		}, AgentDefaults: &setting.Agents{ActiveProfile: label, MaxConcurrent: value}}
 	case 2:
 		return coreprotocol.WorkspaceState{LSP: &coreprotocol.LSPSnapshot{
-			Version: uint64(value), Available: true, Connected: true, Ready: true,
+			Version: uint64(value), DiagnosticVersion: uint64(value + 1000), Available: true, Connected: true, Ready: true,
 			Status: insight.LSPConnected, ShowInEditor: true,
 			Generation:  "fuzz-owner",
 			Diagnostics: map[string]insight.Diagnostics{"/fuzz.go": {ID: label, Diagnostics: []insight.LSPDiagnostic{{Message: label, Line: value, Severity: insight.DiagWarning}}}},
@@ -125,7 +125,7 @@ func (a *stateFenceOracle) check(t *testing.T, w *Workspace) {
 	batch := diagnostics.Diagnostics["/fuzz.go"]
 	ds := batch.Diagnostics
 	connected, status, problem := w.LSPMgr().Status()
-	if diagnostics.Generation != "fuzz-owner" || batch.ID != stateFenceLabel(a.values[2]) || diagnostics.Version != uint64(a.values[2]) || len(diagnostics.Diagnostics) != 1 || len(ds) != 1 || ds[0].Message != stateFenceLabel(a.values[2]) || ds[0].Line != a.values[2] || ds[0].Severity != insight.DiagWarning || !connected || status != insight.LSPConnected || problem != "" || !w.LSPMgr().ServerReady() || !w.LSPMgr().ShowDiagnosticsInEditor() || w.LSPMgr().ShowDiagnosticsInTree() {
+	if diagnostics.Generation != "fuzz-owner" || batch.ID != stateFenceLabel(a.values[2]) || w.LSPMgr().Version() != uint64(a.values[2]) || diagnostics.Version != uint64(a.values[2]+1000) || len(diagnostics.Diagnostics) != 1 || len(ds) != 1 || ds[0].Message != stateFenceLabel(a.values[2]) || ds[0].Line != a.values[2] || ds[0].Severity != insight.DiagWarning || !connected || status != insight.LSPConnected || problem != "" || !w.LSPMgr().ServerReady() || !w.LSPMgr().ShowDiagnosticsInEditor() || w.LSPMgr().ShowDiagnosticsInTree() {
 		t.Fatal("LSP projection diverged")
 	}
 	infos := w.TermMgr().List()

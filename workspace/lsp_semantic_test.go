@@ -382,7 +382,7 @@ func TestSemanticReleasedViewCapacityRecovers(t *testing.T) {
 func TestSemanticFileSynchronizationPublishesReadiness(t *testing.T) {
 	f := newSemanticFixture(t, "abc\n")
 	m := f.w.LSPMgr
-	_, old := m.ContextCursor()
+	_, old := m.ContextCursor("")
 	if !m.FileSynchronized(f.source, old) {
 		t.Fatal("connected source did not expose synchronization")
 	}

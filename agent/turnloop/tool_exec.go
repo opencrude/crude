@@ -2,6 +2,8 @@ package turnloop
 
 import (
 	"context"
+	captypes "crude/types/capability"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -240,7 +242,7 @@ func isPotentiallyBlocking(name string) bool {
 		return true
 	// Approval-producing operations need the shared block response channel;
 	// without it an authorization prompt resolves as an immediate denial.
-	case "capability_activate", "mcp_request_access", "crude_control":
+	case "capability_activate", "crude_control":
 		return true
 	default:
 		return false
@@ -287,8 +289,10 @@ func (a *Agent) executeToolCall(ctx context.Context, tc provider.ToolCall, emit 
 			errOutcome.State = toolresult.Denied
 		}
 	}
+	var metadata tools.ToolMetadata
 	if errMsg == "" {
-		metadata, known := tools.NativeMetadata(tc.Function.Name)
+		var known bool
+		metadata, known = tools.NativeMetadata(tc.Function.Name)
 		if a.ToolMetadata != nil {
 			metadata, known = a.ToolMetadata(tc.Function.Name)
 		}
@@ -485,26 +489,48 @@ func (a *Agent) executeToolCall(ctx context.Context, tc provider.ToolCall, emit 
 		fileTarget = src + " → " + dst
 	}
 
+	// Files and external tools share one permission decision on the actual call.
+	needsPermission := fileCheck
+	operation, target, reason := fileOp, fileTarget, fmt.Sprintf("The %s tool modifies files on disk", tc.Function.Name)
+	question := fmt.Sprintf("Allow this %s operation on %s?", operation, target)
+	risk, riskLabel := safety.RiskProjectWrite, "write"
+	var approvalKeys []string
+	if metadata.Dynamic && metadata.Effect != captypes.EffectRead {
+		needsPermission = true
+		operation, target = "MCP call", tc.Function.Name
+		question = "Allow this tool call?"
+		reason = controlArgumentLines(json.RawMessage(tc.Function.Arguments))
+		risk = approvalRisk(map[string]any{"effect": metadata.Effect})
+		riskLabel = risk.String()
+		// Always allow covers only these arguments, this tool, server and contract.
+		key, _ := json.Marshal([]any{metadata.ServerRevision, metadata.Name, metadata.Scope, metadata.Effect, metadata.Fingerprint, params})
+		approvalKeys = []string{fmt.Sprintf("mcp:%x", sha256.Sum256(key))}
+	}
 	autoAllowed := false
 	reviewNote := ""
-	if fileCheck && !a.yoloEnabled() {
+	if needsPermission && !a.yoloEnabled() {
 		var denied *execResult
-		autoAllowed, reviewNote, denied = a.reviewPermission(ctx, tc, params, safety.RiskProjectWrite, emit)
+		if len(approvalKeys) > 0 && a.CommandApprovals != nil && a.CommandApprovals.CommandApproved(approvalKeys) {
+			autoAllowed = true
+			emitPermissionDecision(emit, tc, "always")
+		} else {
+			autoAllowed, reviewNote, denied = a.reviewPermission(ctx, tc, params, risk, emit)
+		}
 		if denied != nil {
 			return *denied
 		}
 	}
-	if fileCheck && !autoAllowed && !a.yoloEnabled() {
-		question := fmt.Sprintf("Allow this %s operation on %s?", fileOp, fileTarget)
+	if needsPermission && !autoAllowed && !a.yoloEnabled() {
+
 		drainStaleBlockResponses(blockResolveCh)
 		blockingData := map[string]string{
 			"block_id":    blockID,
-			"operation":   fileOp,
+			"operation":   operation,
 			"tool":        tc.Function.Name,
-			"target":      fileTarget,
+			"target":      target,
 			"question":    question,
-			"risk":        "write",
-			"reason":      fmt.Sprintf("The %s tool modifies files on disk", tc.Function.Name),
+			"risk":        riskLabel,
+			"reason":      reason,
 			"suggestion":  "",
 			"auto_review": reviewNote,
 		}
@@ -516,7 +542,7 @@ func (a *Agent) executeToolCall(ctx context.Context, tc provider.ToolCall, emit 
 		}
 		emit(AgentEvent{Type: "blocking", Data: blockingData})
 		wait := a.awaitPermission(ctx, blockResolveCh, blockID, func() (bool, *execResult) {
-			allowed, _, denied := a.reviewPermission(ctx, tc, params, safety.RiskProjectWrite, emit)
+			allowed, _, denied := a.reviewPermission(ctx, tc, params, risk, emit)
 			return allowed, denied
 		})
 		emit(AgentEvent{Type: "blocking_complete", Data: map[string]string{"block_id": blockID}})
@@ -532,15 +558,19 @@ func (a *Agent) executeToolCall(ctx context.Context, tc provider.ToolCall, emit 
 		} else {
 			emitPermissionDecision(emit, tc, resp)
 		}
-		if resp == "deny" {
-			errMsg := fmt.Sprintf("%s operation denied by the user.\nTarget: %s", fileOp, fileTarget)
-			a.logger.Warn("SAFETY", "denied", "tool", tc.Function.Name, "target", fileTarget, "op", fileOp)
+		if resp != "allow" && resp != "always" && resp != "reviewed" {
+			errMsg := fmt.Sprintf("%s operation denied by the user.\nTarget: %s", operation, target)
+			a.logger.Warn("SAFETY", "denied", "tool", tc.Function.Name, "target", fileTarget, "op", operation)
 			return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: errMsg, AgentHint: prompt.HintDenied, Outcome: toolresult.Outcome{State: toolresult.Denied}}, toolError: true}
 		}
 		a.logger.Info("BLOCK", "resolved", "response", resp, "operation", fileOp, "tool", tc.Function.Name)
 		// Scoped changes never grant a corresponding ordinary source write.
 		if resp == "always" && a.PlanInvestigation == nil {
-			if tc.Function.Name == "apply_patch" {
+			if len(approvalKeys) > 0 {
+				if a.CommandApprovals != nil {
+					a.CommandApprovals.ApproveCommand(approvalKeys)
+				}
+			} else if tc.Function.Name == "apply_patch" {
 				emit(AgentEvent{Type: "confirmation_always", Data: map[string]string{"operation": fileOp, "tool": tc.Function.Name, "patch_input": getStr(params, "input")}})
 			} else {
 				emit(AgentEvent{Type: "confirmation_always", Data: map[string]string{
@@ -548,8 +578,8 @@ func (a *Agent) executeToolCall(ctx context.Context, tc provider.ToolCall, emit 
 				}})
 			}
 		}
-	} else if fileCheck && a.yoloEnabled() {
-		a.logger.Debug("SAFETY", "yolo_skip", "tool", tc.Function.Name, "op", fileOp)
+	} else if needsPermission && a.yoloEnabled() {
+		a.logger.Debug("SAFETY", "yolo_skip", "tool", tc.Function.Name, "op", operation)
 	}
 
 	emit(AgentEvent{Type: "tool_call", Data: map[string]any{

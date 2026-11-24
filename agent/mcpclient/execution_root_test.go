@@ -59,9 +59,7 @@ func TestOfficialSDKBindsCwdAndRootsWithoutRebasingAbsoluteDirectory(t *testing.
 				t.Fatal(err)
 			}
 			tool := manager.States()[0].Tools[0]
-			tool.Selected, tool.Effect, tool.Scope = true, captypes.EffectRead, "fixture"
-			grant := captypes.ToolGrant{Fingerprint: tool.Fingerprint, Effect: tool.Effect, Scope: tool.Scope}
-			result, err := manager.CallAuthorized(t.Context(), tool, nil, config, grant)
+			result, err := manager.Call(t.Context(), tool, nil)
 			manager.Close()
 			if err != nil {
 				t.Fatal(err)

@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"context"
 	"crude/agent/prompthistory"
 	"database/sql"
 	"errors"
@@ -19,7 +20,7 @@ import (
 
 type ReferenceStore struct {
 	mu             sync.RWMutex
-	creationMu     sync.Mutex
+	mutationMu     sync.Mutex
 	reservedLabels map[string]bool
 	refs           map[string]sessiondb.Reference
 	counter        map[sessiondb.Kind]int
@@ -32,6 +33,7 @@ type ReferenceStore struct {
 // the core. The local implementation is ReferenceStore; a connected shell uses
 // a replica whose reads are local and whose writes are core requests.
 type SessionReferences interface {
+	PreparePastedTextFile(context.Context, sessiondb.Reference) (sessiondb.Reference, error)
 	ReadReferenceContent(id string) (content string, readOnly bool, err error)
 	SaveReferenceContent(expected sessiondb.Reference, original, content string) error
 	CreateReference(req sessiondb.CreateRequest) (sessiondb.Reference, error)
@@ -62,8 +64,8 @@ func NewReferenceStore(sessionID, sessionDir string, db *sql.DB) *ReferenceStore
 func (s *ReferenceStore) CreateReference(req sessiondb.CreateRequest) (sessiondb.Reference, error) {
 	// Serialize label allocation/publication without holding the projection
 	// lock across disk or SQLite. Get/List must stay usable while a paste stores.
-	s.creationMu.Lock()
-	defer s.creationMu.Unlock()
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
 	s.mu.Lock()
 	if req.Kind == "" {
 		req.Kind = sessiondb.KindPastedText
@@ -251,6 +253,8 @@ func (s *ReferenceStore) ImportReferenceFrom(source SessionReferences, old sessi
 }
 
 func (s *ReferenceStore) DeleteReference(id string) error {
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ref, ok := s.refs[id]
@@ -270,6 +274,8 @@ func (s *ReferenceStore) DeleteReference(id string) error {
 // uniquifier), persisted when a DB backs the store, and reflected in the
 // in-memory map. It returns the final label actually applied.
 func (s *ReferenceStore) RenameReference(id, label string) (string, bool) {
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ref, ok := s.refs[id]
@@ -353,6 +359,13 @@ func (s *ReferenceStore) ListReferences() []sessiondb.Reference {
 }
 
 func (s *ReferenceStore) AddExisting(ref sessiondb.Reference) {
+	// The ordinary local import already installed its exact result. Keep that
+	// projection-only read independent of unrelated file writes.
+	if current, ok := s.Reference(ref.ID); ok && current == ref {
+		return
+	}
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.refs == nil {

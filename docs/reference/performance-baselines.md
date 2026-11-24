@@ -37,6 +37,38 @@ workload. Tighten the allocation ceilings when all three have headroom. Use
 actual reference hardware for latency and dropped-frame claims; GOMAXPROCS=2
 on a faster processor is a useful contention test, not T470 certification.
 
+## Whole-file search previews (2026-11-24)
+
+`BenchmarkWholeFilePreviewViewport` paints a mounted 120×40 search window with
+100,000 source lines and 1,000 results. Checking all results at each painted
+cell took 1.39–1.55 ms. Selecting the candidates for each visible row once
+brought that to 214–217 µs in three native Windows runs. The benchmark excludes
+file transfer and initial indexing: those happen off the UI thread for the
+selected file, not for every result. This is not a cold-open latency claim.
+
+## MCP request preparation (2026-11-24)
+
+`BenchmarkPrepareConnectedToolCatalog` measures a live catalog of 48 tools,
+without network calls during measurement. Building an agent request used to
+assemble a Settings snapshot, read secret names and re-encode the same schemas.
+Using the request catalog directly reduced three native Windows runs from
+1.31–1.38 ms and 995–996 allocations to 33–34 µs and 66 allocations. This is
+local preparation time, not network latency or provider cache billing.
+
+## Chat row painting (2026-11-24)
+
+A saved 87 ms `ui.view` sample led through `paintMessageRow` to grapheme width.
+Another sample (117 ms) was in the cell writer. The streaming-frame CPU profile
+put 40% of the time in a second pass over trailing spaces. Row bounds come from
+the viewport and pane gutters, not from the text: the logical painter now clips
+the spans and owns padding and selection before bidi arrangement. The shell does
+not measure the row or paint its padding again.
+
+On this Windows machine, four runs of `BenchmarkChatStreamPaint_80x24` went
+from 95.8–98.8 µs to 56.0–59.2 µs. At 120×40 they went from 241–243 µs to
+143–145 µs. Both stayed at three allocations per frame. These are local timings,
+not proof every archived UI stall has disappeared. No gate was relaxed.
+
 ## Activation progress and renderer contention (2026-11-23)
 
 A Windows shell recorded a 572 ms `ui.present` stall waiting on `viewMu` and

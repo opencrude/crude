@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -111,4 +113,66 @@ func TestRegistryVariablesAndArgumentsAreProjectedLiterally(t *testing.T) {
 	if _, err := fixedRegistryArguments([]registryInput{{Value: "{secret}", Variables: map[string]registryInput{"secret": {Required: true}}}}); err == nil {
 		t.Fatal("unresolved declared command variable became a literal argument")
 	}
+}
+
+func TestPublishedPackageLaunchKeepsUpstreamArguments(t *testing.T) {
+	source := captypes.DefaultSources()[captypes.OfficialMCPRegistrySourceID]
+	server := registryServer{Name: "io.github.CursorTouch/Windows-MCP", Version: "1.0.1"}
+	pkg := registryPackage{RegistryType: "pypi", Identifier: "windows-mcp", Version: "0.8.1", RuntimeHint: "uvx", Transport: registryTransport{Type: "stdio"}}
+	for _, want := range []string{"serve", "publisher-subcommand"} {
+		if want != "serve" {
+			pkg.PackageArguments = []registryInput{{Type: "positional", Value: want}}
+		}
+		cfg, _, err := registryPackageConnection(source, server, pkg, "fixture")
+		if err != nil || !reflect.DeepEqual(cfg.Args, []string{"windows-mcp==0.8.1", want}) {
+			t.Fatal(cfg.Args, err)
+		}
+	}
+}
+
+// Opt-in handshake only: do not call Screenshot, Clipboard or any desktop operation.
+func TestPublishedWindowsPackageHandshake(t *testing.T) {
+	if os.Getenv("CRUDE_TEST_PUBLISHED_WINDOWS_MCP") != "1" || runtime.GOOS != "windows" {
+		t.Skip("requires explicit real package launch")
+	}
+	s, settings, _ := capabilityFixture(t)
+	source := captypes.DefaultSources()[captypes.OfficialMCPRegistrySourceID]
+	settings.Sources[source.ID] = source
+	if err := s.Configure(t.Context(), settings); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := s.DiscoverSource(t.Context(), "Windows-MCP", captypes.KindMCP, 30, source.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.Publisher != "io.github.CursorTouch/Windows-MCP" {
+			continue
+		}
+		preview, err := s.PreviewAcquisition(t.Context(), entry.ID, captypes.ScopeWorkspace, "install")
+		if err != nil {
+			t.Fatal(err)
+		}
+		acquired, err := s.AcquireReviewed(t.Context(), preview)
+		if err != nil {
+			t.Fatal(err)
+		}
+		config := acquired.Connections[entry.ID]
+		a, err := s.Test(t.Context(), config)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := s.Test(t.Context(), config)
+		if err != nil || len(a.Tools) == 0 || len(a.Tools) != len(b.Tools) {
+			t.Fatal("discovery failed", err)
+		}
+		for i, tool := range a.Tools {
+			if tool.Fingerprint != b.Tools[i].Fingerprint {
+				t.Fatalf("%s changed under identical pin", tool.OriginalName)
+			}
+		}
+		t.Logf("%s %q: %d stable tool definitions", config.Command, config.Args, len(a.Tools))
+		return
+	}
+	t.Fatal("published entry not returned")
 }

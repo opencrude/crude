@@ -32,7 +32,7 @@ const (
 type LSPClient interface {
 	OnDiagnostics(func(insight.DiagnosticPublication))
 	Start(context.Context) error
-	AssistanceCapabilities() insight.LSPAssistanceCapabilities
+	AssistanceCapabilities(string) insight.LSPAssistanceCapabilities
 	// Stop joins the owned process lifetime. A non-nil result means retirement
 	// could not be verified; its admission slot must not be reused.
 	Stop() error

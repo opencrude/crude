@@ -161,6 +161,11 @@ func (m *App) requestCompletion(automatic bool, trigger insight.LSPCompletionCon
 	}
 	enabled, feature := m.ws.LSPMgr().CompletionsState()
 	source, current := ed.CurrentInsightSource()
+	if !automatic && enabled && !current && source.Kind == "canonical" && source.DocumentID != "" && source.Lifetime != "" && source.WorkspaceGeneration != "" {
+		trigger.Producer = m.ws.LSPMgr().FileProducer(ed.FilePath())
+		m.retainCompletionIntent(ed, source, feature, trigger, "", false, true, time.Now())
+		return nil
+	}
 	if !enabled || !current || source.Kind != "canonical" || automatic && editorRetainsCompletionKeys(ed) {
 		if !automatic {
 			m.Feedback.NotifyInfo("Completion waits for acknowledged source text and enabled language intelligence")
@@ -186,7 +191,7 @@ func (m *App) requestCompletion(automatic bool, trigger insight.LSPCompletionCon
 	if m.FocusStack != nil {
 		s.focus = m.FocusStack.Top()
 	}
-	contextOwner, contextGeneration := m.ws.LSPMgr().ContextCursor()
+	contextOwner, contextGeneration := m.ws.LSPMgr().ContextCursor(s.source.Path)
 	if contextOwner == source.WorkspaceGeneration {
 		s.contextGeneration = contextGeneration
 	}
@@ -205,7 +210,7 @@ func (m *App) startCompletionRequest(s *completionState) tea.Cmd {
 		return nil
 	}
 	if s.busyAttempts > 0 {
-		owner, generation := m.ws.LSPMgr().ContextCursor()
+		owner, generation := m.ws.LSPMgr().ContextCursor(s.source.Path)
 		if owner != "" && owner != s.source.WorkspaceGeneration || s.contextGeneration > 0 && generation > s.contextGeneration {
 			m.closeCompletionPopup()
 			return nil
@@ -253,7 +258,7 @@ func (m *App) completionCurrent(s *completionState) bool {
 	if !s.shown {
 		return editorOwnsKeys
 	}
-	owner, generation := m.ws.LSPMgr().ContextCursor()
+	owner, generation := m.ws.LSPMgr().ContextCursor(s.source.Path)
 	if s.set == nil || owner != s.source.WorkspaceGeneration || generation != s.set.Boundary.Context.Generation ||
 		time.Now().After(s.set.ExpiresAt) {
 		return false
@@ -322,7 +327,7 @@ func (m *App) syncCompletion() tea.Cmd {
 		return nil
 	}
 	if s.requestErr != nil {
-		owner, generation := m.ws.LSPMgr().ContextCursor()
+		owner, generation := m.ws.LSPMgr().ContextCursor(s.source.Path)
 		if owner != "" && owner != s.source.WorkspaceGeneration || s.contextGeneration > 0 && generation > s.contextGeneration {
 			m.closeCompletionPopup()
 			return nil
@@ -340,7 +345,7 @@ func (m *App) syncCompletion() tea.Cmd {
 		return nil
 	}
 	set := s.set
-	owner, generation := m.ws.LSPMgr().ContextCursor()
+	owner, generation := m.ws.LSPMgr().ContextCursor(s.source.Path)
 	if owner != "" && owner != s.source.WorkspaceGeneration || generation > set.Boundary.Context.Generation || time.Now().After(set.ExpiresAt) {
 		m.closeCompletionPopup()
 		return nil
@@ -581,7 +586,11 @@ func (m *App) handleCompletionRead(msg completionReadMsg) bool {
 		return false
 	}
 	if read.accept {
-		if err := s.editor.ApplyHeldCompletion(read.hold, row.Insertion); err != nil {
+		insertion := row.Insertion
+		if result.AdditionalEdits != nil {
+			insertion.AdditionalTextEdits = result.AdditionalEdits
+		}
+		if err := s.editor.ApplyHeldCompletion(read.hold, insertion); err != nil {
 			m.Feedback.NotifyErrorDetail("Could not insert this suggestion. Try another suggestion.", err.Error())
 			return false
 		}

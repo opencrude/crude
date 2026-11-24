@@ -1,6 +1,8 @@
 package findinfiles
 
 import (
+	"context"
+	"crude/tui/editor"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -26,11 +28,12 @@ func TestPaintGoldenCellBufferContract(t *testing.T) {
 	screen.SetQuery("needle")
 	screen.ScheduleSearch()
 	screen.ApplySearchResults(screen.generation, []fileio.ProjectSearchMatch{
-		{Path: "/root/a.go", RelativePath: "a.go", Line: 1, EndColumn: 6, LineText: "needle alpha", Context: "needle alpha", ContextStart: 1},
-		{Path: "/root/b.go", RelativePath: "b.go", Line: 2, EndColumn: 6, LineText: "needle beta", Context: "first line\nneedle beta", ContextStart: 1},
+		{Path: "/root/a.go", RelativePath: "a.go", Line: 1, EndColumn: 6, LineText: "needle alpha"},
+		{Path: "/root/b.go", RelativePath: "b.go", Line: 2, EndColumn: 6, LineText: "needle beta"},
 	}, nil, 5*time.Millisecond)
 	// This golden covers the plain first frame. Syntax is asynchronous and
 	// can finish before paint under load; syntax colors have separate tests.
+	mountPreview(t, screen, "needle alpha")
 	screen.previewSrc.StopSyntax()
 	host.Layout()
 	buf := surface.NewCellBuffer(80, 24)
@@ -59,7 +62,8 @@ func TestResultActivationCapturesExactMatchAndQueryInvalidatesRows(t *testing.T)
 	s, _ := searchHost(t)
 	s.SetQuery("alpha")
 	s.ScheduleSearch()
-	s.ApplySearchResults(s.generation, []fileio.ProjectSearchMatch{{Path: "a", Line: 1, LineText: "alpha", Context: "alpha", ContextStart: 1, EndColumn: 5}}, nil, 0)
+	s.ApplySearchResults(s.generation, []fileio.ProjectSearchMatch{{Path: "a", Line: 1, LineText: "alpha", EndColumn: 5}}, nil, 0)
+	mountPreview(t, s, "alpha")
 	preview := s.previewSrc
 	cmd := s.openSelected()
 	s.SetQuery("beta")
@@ -76,7 +80,8 @@ func TestPreviewRuntimeThemePreservesExactSourceAndLanding(t *testing.T) {
 	s, h := searchHost(t)
 	s.SetQuery("target")
 	s.ScheduleSearch()
-	s.ApplySearchResults(s.generation, []fileio.ProjectSearchMatch{{Path: "a.go", Line: 1, Column: 1, EndColumn: 7, LineText: "\"target\"", Context: "\"target\"", ContextStart: 1}}, nil, 0)
+	s.ApplySearchResults(s.generation, []fileio.ProjectSearchMatch{{Path: "a.go", Line: 1, Column: 1, EndColumn: 7, LineText: "\"target\""}}, nil, 0)
+	mountPreview(t, s, `"target"`)
 	preview := s.previewSrc
 	h.SetTheme(theme.DefaultLight())
 	h.Layout()
@@ -90,8 +95,9 @@ func TestPreviewScrollSelectionAndResizeAreInteractive(t *testing.T) {
 	s, host := searchHost(t)
 	s.SetQuery("target")
 	s.ScheduleSearch()
-	context := strings.Repeat("source line\n", 8) + "target\n" + strings.Repeat("tail\n", 8)
-	s.ApplySearchResults(s.generation, []fileio.ProjectSearchMatch{{Path: "a", Line: 9, LineText: "target", EndColumn: 6, Context: context, ContextStart: 1}}, nil, 0)
+	source := strings.Repeat("source line\n", 8) + "target\n" + strings.Repeat("tail\n", 8)
+	s.ApplySearchResults(s.generation, []fileio.ProjectSearchMatch{{Path: "a", Line: 9, LineText: "target", EndColumn: 6}}, nil, 0)
+	mountPreview(t, s, source)
 	host.Layout()
 	buf := surface.NewCellBuffer(80, 24)
 	host.Paint(buf)
@@ -129,7 +135,8 @@ func TestPreviewStationaryDragRepeatsThroughMountedOwner(t *testing.T) {
 	s.SetQuery("target")
 	s.ScheduleSearch()
 	text := "target\n" + strings.Repeat("preview source line\n", 80)
-	s.ApplySearchResults(s.generation, []fileio.ProjectSearchMatch{{Path: "a", Line: 1, EndColumn: 6, LineText: "target", Context: text, ContextStart: 1}}, nil, 0)
+	s.ApplySearchResults(s.generation, []fileio.ProjectSearchMatch{{Path: "a", Line: 1, EndColumn: 6, LineText: "target"}}, nil, 0)
+	mountPreview(t, s, text)
 	host.Paint(surface.NewCellBuffer(80, 24))
 	r, ok := host.ScreenRect(PreviewID)
 	if !ok || r.H < 4 {
@@ -508,7 +515,8 @@ func TestProjectDiscoveryPreviewHighlightsOnlyMatchedRunes(t *testing.T) {
 	s, _ := searchHost(t)
 	s.SetQuery("hwe")
 	s.ScheduleSearch()
-	s.ApplySearchResults(s.Generation(), []fileio.ProjectSearchMatch{{Path: "a.go", RelativePath: "a.go", Line: 1, EndLine: 1, Column: 0, EndColumn: 16, LineText: "HandleWorkspaceEvent", Context: "HandleWorkspaceEvent", ContextStart: 1, FuzzyOnly: true, TextMatches: []int{0, 6, 15}}}, nil, 0)
+	s.ApplySearchResults(s.Generation(), []fileio.ProjectSearchMatch{{Path: "a.go", RelativePath: "a.go", Line: 1, EndLine: 1, Column: 0, EndColumn: 16, LineText: "HandleWorkspaceEvent", FuzzyOnly: true, TextMatches: []int{0, 6, 15}}}, nil, 0)
+	mountPreview(t, s, "HandleWorkspaceEvent")
 	if s.previewSrc == nil {
 		t.Fatal("missing discovery preview")
 	}
@@ -605,4 +613,17 @@ func bufferText(buf *surface.CellBuffer) string {
 		result.WriteByte('\n')
 	}
 	return filepath.ToSlash(result.String())
+}
+
+func mountPreview(t testing.TB, s *Screen, text string) {
+	t.Helper()
+	doc, err := editor.PreparePreview(context.Background(), s.SelectedFilePath(), []byte(text), editor.DefaultTabWidth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview, err := PrepareFilePreview(context.Background(), doc, s.SelectedFilePath(), s.Results())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.SetFilePreview(preview, 0, 0, "")
 }

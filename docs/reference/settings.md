@@ -333,25 +333,19 @@ MCP configuration cannot be hidden by an idle or cached transport state.
 
 MCP details include Overview, Connection, Tools, Resources, Prompts, Access and
 Activity. Connect/disconnect, detached Test, refresh, sign-in/out and Save
-connection are explicit operations. Each tool requires a selected effect, scope
-and current schema fingerprint. Unknown/changed operations remain denied; role,
-profile, session and runtime ceilings still apply. A server annotation is not a
-grant, and a scope label is not a local filesystem/network sandbox. Unsandboxed
-local launches require explicit approval. External MCP mutations are not covered
-by native file ownership or undo.
+connection are explicit operations. Use **Tool access** to turn off a tool or classify it for a restricted role.
+Unknown external effects require an unrestricted role; server annotations are not
+permission. Each call uses the ordinary permission mode. Manual, Auto Review
+and YOLO do not create separate sets of tools on each turn. A changed tool
+cannot inherit its old effect classification. Scope labels are not sandboxes.
+External writes do not participate in native undo.
 
-Agent `capability_activate` returns observed MCP tool fingerprints and the actual
-usable tool set. A connected server with zero usable tools is not reported as
-ready for tool execution. A separate `mcp_request_access` operation requests exact
-`grants` (original tool name, observed fingerprint, intended effect and resource
-scope). Activation itself accepts only the capability identity plus an optional
-`scope`, so providers that require every schema property cannot confuse skill
-activation with MCP access. New/changed grants require an immutable, explicit
-approval and are written at the connection's own binding; source trust, automatic
-acquisition, generic Always-read permission and agent selection cannot authorize
-them. Grants persist after restart, but restart itself never reconnects or
-replays tools. Explicit activation verifies current schemas before offering
-dynamic tools again.
+**Acquisition → Optional limits** applies the skill archive size limit to its
+transfer and selected extracted files. Zero sets no size or install deadline.
+Package runners manage their own downloads. Tool count and total schema size
+are optional request limits. Existing explicit settings are preserved. The
+bounded reads of untrusted protocol messages and model inputs remain separate
+from streamed on-disk skill assets.
 
 OAuth credentials are application-owned and bound to connection ID and endpoint.
 Sign in presents the authorization URL with an explicit Open browser action;
@@ -383,7 +377,7 @@ transports or access grants. A registration turned off in Settings shows "Off in
 Settings" and cannot be turned on per session; without a session switches are
 read-only. Running agents observe a change at their next request or tool call:
 an off MCP server's tools leave the request, and its calls, resource/prompt reads,
-access requests and `capability_activate` are refused; skills cannot be activated
+`capability_activate` are refused; skills cannot be activated
 and search marks them off. Instructions already loaded stay in context. The
 palette's **Session Skills** and **Session MCP Servers** actions open the same
 views; the composer has no
@@ -1114,7 +1108,8 @@ The unsaved `●` takes precedence. Workspace scope does not repeat the marker.
 **Interface → Attachments → Open attachments in** is an application/workspace
 preference (`ui.attachment_open`). **System app** (`system`, default) opens the
 OS-associated viewer/editor, **File manager** (`file-manager`) reveals the file,
-and **Crude** (`crude`) uses the native reference window. It applies to composer
+and **Crude** (`crude`) opens editable composer text in an editor tab. Images
+and read-only history use the native viewer. The preference applies to composer
 chips, keyboard activation, posted/resumed chat links and prompt-history
 attachments. Crude automatically selects native Kitty or Sixel graphics after
 capability and cell-geometry negotiation. Kitty needs true-colour identity and
@@ -1644,8 +1639,7 @@ stay human-owned and cannot approve themselves through generic buttons/keys.
 
 Capability acquisitions and exact stdio launch are eligible for Manual/Auto
 Review/YOLO within explicit denials, source trust, host and effect ceilings. Human
-MCP grant approval persists at the connection binding; reviewer/YOLO grants are
-run-local, not durable human authority. Authentication/consent remain user actions.
+tool classifications persist at the connection binding; an automatic decision approves the call, not permanent access. Authentication/consent remain user actions.
 Core is the default execution host; shell-host stdio requires an explicit absolute
 local directory and exact attachment epoch. Full manual shell-host configuration
 UI remains a limitation, not a promised automatic host selection.

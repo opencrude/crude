@@ -208,22 +208,17 @@ func (m *Model) SetDiagnostics(path string, errors, warnings, hints int) {
 	defer m.mu.Unlock()
 
 	fp := filepath.Clean(path)
-	if errors+warnings+hints <= 0 {
-		delete(m.diagnosticResolver, fp)
-		m.recomputeAggregateDiagnostics()
+	next := DiagCounts{errors, warnings, hints}
+	prev := m.diagnosticResolver[fp]
+	if next == prev {
 		return
 	}
-	m.diagnosticResolver[fp] = DiagCounts{Errors: errors, Warnings: warnings, Hints: hints}
-
-	// If the tree node doesn't exist yet (file is in a collapsed directory),
-	// load the parent directory so the node becomes available.  The directory
-	// stays collapsed: we only materialise the tree node so its diagnostic
-	// counts are set and propagated upward for aggregate display.
-	if _, ok := m.nodes[fp]; !ok && !m.noLocalIO && m.containsPath(fp) {
-		m.ensureDiagnosticsNode(fp)
+	if next == (DiagCounts{}) {
+		delete(m.diagnosticResolver, fp)
+	} else {
+		m.diagnosticResolver[fp] = next
 	}
-
-	m.recomputeAggregateDiagnostics()
+	m.addDiagnosticCounts(fp, DiagCounts{next.Errors - prev.Errors, next.Warnings - prev.Warnings, next.Hints - prev.Hints})
 }
 
 // ClearDiagnostics removes all per-file diagnostic counts and recomputes the
@@ -234,25 +229,6 @@ func (m *Model) ClearDiagnostics() {
 	defer m.mu.Unlock()
 	m.diagnosticResolver = make(map[string]DiagCounts)
 	m.recomputeAggregateDiagnostics()
-}
-
-// ensureDiagnosticsNode recursively loads parent directories until the
-// given file path has a node in m.nodes.  It does NOT expand any directory
-// The directory stays collapsed even though its children are loaded.
-func (m *Model) ensureDiagnosticsNode(fp string) {
-	parentPath := filepath.Dir(fp)
-	if parentPath == fp || parentPath == "." {
-		return // at filesystem root, can't go higher
-	}
-	parentNode, ok := m.nodes[parentPath]
-	if !ok {
-		// Grandparent not loaded yet: recurse.
-		m.ensureDiagnosticsNode(parentPath)
-		parentNode, ok = m.nodes[parentPath]
-	}
-	if ok && parentNode.Children == nil {
-		_ = m.loadDirectory(parentNode)
-	}
 }
 
 // recomputeAggregateDiagnostics recomputes DiagnosticCount/DiagErrors/
@@ -277,22 +253,28 @@ func (m *Model) recomputeAggregateDiagnostics() {
 	// Status may arrive before a directory page. Project unloaded descendants
 	// onto their nearest loaded ancestor without reading disk or inventing rows.
 	for path, counts := range m.diagnosticResolver {
-		if !m.containsPath(path) {
-			continue
+		m.addDiagnosticCounts(path, counts)
+	}
+}
+
+// addDiagnosticCounts touches only the nearest loaded node and its parents.
+// Directory paging reapplies the resolver when descendants become visible.
+func (m *Model) addDiagnosticCounts(path string, counts DiagCounts) {
+	if !m.containsPath(path) {
+		return
+	}
+	for current := path; ; current = filepath.Dir(current) {
+		if node := m.nodes[current]; node != nil {
+			for p := node; p != nil; p = p.Parent {
+				p.DiagnosticCount += counts.Errors + counts.Warnings + counts.Hints
+				p.DiagErrors += counts.Errors
+				p.DiagWarnings += counts.Warnings
+				p.DiagHints += counts.Hints
+			}
+			break
 		}
-		for current := path; ; current = filepath.Dir(current) {
-			if node := m.nodes[current]; node != nil {
-				for p := node; p != nil; p = p.Parent {
-					p.DiagnosticCount += counts.Errors + counts.Warnings + counts.Hints
-					p.DiagErrors += counts.Errors
-					p.DiagWarnings += counts.Warnings
-					p.DiagHints += counts.Hints
-				}
-				break
-			}
-			if parent := filepath.Dir(current); parent == current {
-				break
-			}
+		if parent := filepath.Dir(current); parent == current {
+			break
 		}
 	}
 }

@@ -3,22 +3,23 @@ package coreprotocol
 import "crude/agent/sessiondb"
 
 const (
-	ReferenceCreate         = "reference.create"
-	ReferenceImport         = "reference.import"
-	ReferenceReadContent    = "reference.read-content"
-	ReferenceSaveContent    = "reference.save-content"
-	ReferenceReadMedia      = "reference.read-media"
-	ReferenceRename         = "reference.rename"
-	ReferenceDelete         = "reference.delete"
-	ReferenceList           = "reference.list"
-	HistoryList             = "history.list"
-	HistoryRecord           = "history.record"
-	HistoryRestore          = "history.restore"
-	HistoryImportAttachment = "history.import-attachment"
-	HistoryReadMedia        = "history.read-media"
-	ReferenceMaxBytes       = 64 << 20
-	ReferenceUploadMaxBytes = 16 << 20
-	ReferenceChunkBytes     = 256 << 10
+	ReferencePrepareTextFile = "reference.prepare-text-file"
+	ReferenceCreate          = "reference.create"
+	ReferenceImport          = "reference.import"
+	ReferenceReadContent     = "reference.read-content"
+	ReferenceSaveContent     = "reference.save-content"
+	ReferenceReadMedia       = "reference.read-media"
+	ReferenceRename          = "reference.rename"
+	ReferenceDelete          = "reference.delete"
+	ReferenceList            = "reference.list"
+	HistoryList              = "history.list"
+	HistoryRecord            = "history.record"
+	HistoryRestore           = "history.restore"
+	HistoryImportAttachment  = "history.import-attachment"
+	HistoryReadMedia         = "history.read-media"
+	ReferenceMaxBytes        = 64 << 20
+	ReferenceUploadMaxBytes  = 16 << 20
+	ReferenceChunkBytes      = 256 << 10
 )
 
 // Metadata paths identify server resources; clients must never open them locally.

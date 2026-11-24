@@ -246,7 +246,9 @@ a race-only one.
 After production-source edits, explicitly run `go run ./tools/wiregen` in the
 canonical native cgo environment, inspect its generated diff, then run
 `go run ./tools/wiregen -check`. The check is nonmutating; it does not regenerate
-codecs or repair stale output. Make build/test/benchmark targets,
+codecs or repair stale output. Generation hides previous codecs from its own
+type loader. It leaves unchanged files alone and replaces changed files only
+after preparing the complete source. Make build/test/benchmark targets,
 `scripts/build.sh` and `scripts/release.py` check freshness. An arbitrary direct
 `go build` does not invoke generation or the check.
 

@@ -9,6 +9,8 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"crude/internal/clipboard"
+	"crude/tui/ui"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -17,6 +19,15 @@ func TestLargePasteVisualAcceptance(t *testing.T) {
 		t.Skip("requires the repository's dedicated terminal capture workflow")
 	}
 	app := newFullTestApp(t)
+	// Let the real trust prompt persist the user's restricted-mode choice.
+	root := t.TempDir()
+	db, err := workspace.OpenWorkspaceDB(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := wsOf(app)
+	w.RootPath, w.WorkspaceDB = root, db
+	setAttachmentDestination(t, app, setting.AttachmentOpenCrude)
 	wsOf(app).Logger = stubLogger{}
 	app.AddOrchestrator("paste-owner")
 	app.ActiveSession = workspace.NewSession("paste-owner", t.TempDir(), nil, stubLogger{})
@@ -33,7 +44,7 @@ func TestLargePasteVisualAcceptance(t *testing.T) {
 		writeText: func(string) error { return nil },
 	})
 	defer restore()
-	model := &largePasteVisualModel{App: app, content: content}
+	model := &largePasteVisualModel{App: app, content: content, t: t}
 	program := tea.NewProgram(model, tea.WithWidthMethod(ansi.GraphemeWidth))
 	app.SetProgram(program)
 	state := asyncIOStateFor(app)
@@ -43,12 +54,14 @@ func TestLargePasteVisualAcceptance(t *testing.T) {
 	if _, err := program.Run(); err != nil {
 		t.Fatal(err)
 	}
-	if len(app.RefStore().ListReferences()) != 1 {
+	if refs := app.RefStore().ListReferences(); len(refs) != 1 || app.EditorState.Editor == nil || app.EditorState.Editor.FilePath() != refs[0].FilePath || app.EditorState.Editor.Value() != content || app.overlayHost.IsOpen(ui.OverlayTextOverlay) {
 		t.Fatal("visual journey did not retain exactly one pasted attachment")
 	}
 }
 
 type largePasteVisualModel struct {
+	t     *testing.T
+	ready bool
 	*App
 	content string
 }
@@ -66,7 +79,7 @@ func (m *largePasteVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, command
 		case tea.KeyF4:
 			for _, ref := range m.RefStore().ListReferences() {
-				return m, m.beginReferenceOverlay(ref.ID)
+				return m, m.openAttachment(ref.ID, false)
 			}
 			return m, nil
 		case tea.KeyF9:
@@ -74,5 +87,6 @@ func (m *largePasteVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	_, command := m.App.Update(msg)
+	markCaptureReady(m.t, m.App, &m.ready)
 	return m, command
 }

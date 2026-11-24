@@ -52,15 +52,11 @@ func TestShellWorkerSDKExactOwnerMediaAndPassiveReconnect(t *testing.T) {
 		t.Fatalf("missing actual SDK inventory: %+v", connected)
 	}
 	tool := connected.States[0].Tools[0]
-	tool.Selected = true
-	tool.Effect = captypes.EffectRead
-	tool.Scope = "fixture"
-	grant := captypes.ToolGrant{Fingerprint: tool.Fingerprint, Effect: tool.Effect, Scope: tool.Scope}
 	call := r
 	call.ID = "picture"
 	call.Operation = "call"
 	call.Tool = tool
-	call.Grant = &grant
+	call.Actor.Effects = []captypes.Effect{captypes.EffectRead, captypes.EffectWrite, captypes.EffectDelete, captypes.EffectExecute, captypes.EffectCommunication}
 	reply := worker.Handle(t.Context(), call)
 	if reply.Error != "" {
 		t.Fatal(reply.Error)
@@ -80,7 +76,7 @@ func TestShellWorkerSDKExactOwnerMediaAndPassiveReconnect(t *testing.T) {
 	worker.mu.Lock()
 	retained := len(worker.receipts)
 	worker.mu.Unlock()
-	if retained != 1 {
+	if retained != 2 {
 		t.Fatalf("read receipts retained: %d", retained)
 	}
 	// Receipt reuse observes a retained outcome, never invokes the server twice.

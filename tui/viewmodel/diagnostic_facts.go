@@ -4,7 +4,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/core/shellport"
-	"crude/tui/editor"
+	"crude/tui/filetree"
 	"crude/types/insight"
 )
 
@@ -30,23 +30,30 @@ func (m *App) projectTreeDiagnostic(path string, facts insight.Diagnostics) {
 		return
 	}
 	m.lspTreeProjection[path] = projection
-	errors, warnings, hints := 0, 0, 0
+	var counts filetree.DiagCounts
 	if projection.visible {
-		for _, d := range facts.Diagnostics {
-			switch d.Severity {
-			case editor.DiagError:
-				errors++
-			case editor.DiagWarning:
-				warnings++
-			default:
-				hints++
-			}
-		}
+		counts = listedDiagnostics(facts)
 	}
-	m.Tree.Model.SetDiagnostics(path, errors, warnings, hints)
+	m.Tree.Model.SetDiagnostics(path, counts.Errors, counts.Warnings, counts.Hints)
 	if m.sidebarScreen != nil {
 		m.sidebarScreen.RefreshStatus()
 	}
+}
+
+// listedDiagnostics counts the retained rows, including ones marked out of date.
+// Navigation and current producer coverage have stricter source requirements.
+func listedDiagnostics(facts insight.Diagnostics) (c filetree.DiagCounts) {
+	for _, d := range facts.Diagnostics {
+		switch d.Severity {
+		case insight.DiagError:
+			c.Errors++
+		case insight.DiagWarning:
+			c.Warnings++
+		default:
+			c.Hints++
+		}
+	}
+	return
 }
 
 func (m *App) canNavigateDiagnostic(path string, facts insight.Diagnostics) bool {

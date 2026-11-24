@@ -16,16 +16,6 @@ import (
 	captypes "crude/types/capability"
 )
 
-// taskGrant is run-local access authorized under exact settings. It stays
-// valid exactly while its connection, acquisition policy and source stay as
-// authorized, so unrelated settings changes never revoke it.
-type taskGrant struct {
-	Connection captypes.ConnectionConfig
-	Policy     captypes.AcquisitionSettings
-	Source     captypes.SourceConfig
-	Grant      captypes.ToolGrant
-}
-
 func actorKey(actor captypes.RuntimeActor) string { return actor.SessionID + "\x00" + actor.ID }
 func taskKey(actor captypes.RuntimeActor) string {
 	shell := ""
@@ -33,17 +23,6 @@ func taskKey(actor captypes.RuntimeActor) string {
 		shell = fmt.Sprintf("/%s/%d", actor.ShellOwner.ClientID, actor.ShellOwner.Epoch)
 	}
 	return actorKey(actor) + "\x00" + actor.RunID + fmt.Sprintf("/%d/%d", actor.RuntimeEpoch, actor.TurnGeneration) + "\x00" + actor.ExecutionRoot + "\x00" + actor.WorkspaceID + shell
-}
-
-func (s *Service) taskAccess(actor captypes.RuntimeActor, config captypes.ConnectionConfig, name string) (captypes.ToolGrant, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if actor.RunID == "" || s.runs[actorKey(actor)] != taskKey(actor) {
-		return captypes.ToolGrant{}, false
-	}
-	grant, ok := s.taskGrants[taskKey(actor)][config.ID+"\x00"+name]
-	return grant.Grant, ok && reflect.DeepEqual(grant.Connection, config) &&
-		reflect.DeepEqual(grant.Policy, s.settings.Acquisition) && reflect.DeepEqual(grant.Source, s.settings.Sources[config.Source])
 }
 
 func previewToken(value any) string {
@@ -99,7 +78,7 @@ func (s *Service) activateConnection(ctx context.Context, actor captypes.Runtime
 	}
 	// A running server has nothing left to start: report its observed tools in
 	// this result instead of scheduling a job that would only reconnect it.
-	for _, state := range clients.States() {
+	for _, state := range clients.Catalog() {
 		if state.ID == config.ID && state.State == "connected" && !state.Cached {
 			return s.finishConnection(ctx, actor, entry, clients)
 		}
@@ -240,18 +219,11 @@ func (s *Service) localActorClients(actor captypes.RuntimeActor) *mcpclient.Mana
 	return clients
 }
 
-func (s *Service) actorSnapshot(actor captypes.RuntimeActor) captypes.Snapshot {
-	snapshot := s.snapshot()
-	snapshot.Connections = s.actorClients(actor).States()
-	return snapshot
-}
-
-// RevokeRun drops the grants, launches and clients that belong to one actor's run.
+// RevokeRun drops the launches and clients that belong to one actor's run.
 func (s *Service) RevokeRun(actor captypes.RuntimeActor) {
 	s.revokeHostRun(actor)
 	s.mu.Lock()
 	key := taskKey(actor)
-	delete(s.taskGrants, key)
 	delete(s.launches, key)
 	delete(s.hostStates, key)
 	if s.runs[actorKey(actor)] == key {

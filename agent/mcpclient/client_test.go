@@ -66,11 +66,13 @@ func TestManagedHTTPGrantAndPassiveConfigure(t *testing.T) {
 		t.Fatal(err)
 	}
 	tool := manager.States()[0].Tools[0]
-	if tool.Selected {
+	if !tool.Selected || tool.Effect != captypes.EffectUnknown {
 		t.Fatal("server annotation granted a tool")
 	}
-	if _, err := manager.Call(ctx, tool, map[string]any{}); err == nil || calls.Load() != 0 {
-		t.Fatal("ungranted operation executed")
+	forged := tool
+	forged.Effect = captypes.EffectRead
+	if _, err := manager.Call(ctx, forged, map[string]any{}); err == nil || calls.Load() != 0 {
+		t.Fatal("operation executed under a fabricated effect")
 	}
 	config.Grants = map[string]captypes.ToolGrant{"read": {Effect: captypes.EffectRead, Scope: "workspace", Fingerprint: tool.Fingerprint}}
 	manager.Configure(map[string]captypes.ConnectionConfig{config.ID: config})

@@ -104,6 +104,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 	} else {
 		e.ensureChromaColors(e.scrollY, e.scrollY+bodyH)
 	}
+	var searchIndices []int
 	carets := e.caretCells(ctx, sw, sbX, bodyH)
 	for y := 0; y < bodyH; y++ {
 		bufY := y
@@ -133,6 +134,15 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 			guideTo = guides.level(lineIdx) * indentSize
 		}
 		guideAt := func(col int) bool { return col < guideTo && col%indentSize == 0 }
+		searchIndices = searchIndices[:0]
+		if e.search != nil && e.search.Open {
+			for i := range e.search.Matches {
+				m := &e.search.Matches[i]
+				if m.Start.Line <= lineIdx && lineIdx <= m.End.Line {
+					searchIndices = append(searchIndices, i)
+				}
+			}
+		}
 		occurrences := e.lineOccurrences(lineIdx, showOccurrences)
 		removeFrom, removeTo, removing := e.ghostRemoval()
 		removing = removing && lineIdx >= removeFrom.Line && lineIdx <= removeTo.Line
@@ -291,7 +301,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 				// Determine search highlight for this cell. The
 				// current match is rendered with a stronger
 				// background; other matches get a softer tint.
-				searchMatchIdx, searchIsCurrent := e.searchHighlightAt(lineIdx, sourceCol)
+				searchMatchIdx, searchIsCurrent := e.searchHighlightAt(lineIdx, sourceCol, searchIndices)
 				occurrenceWrite, isOccurrence := occurrenceAt(occurrences, sourceCol)
 				if ri < len(clusters) && vCol < visCol+widths[ri] && vCol < lineVisW {
 					if vCol == visCol {
@@ -631,7 +641,7 @@ func (e *Editor) paintGrapheme(
 // Matches that span multiple lines have a Start and End with
 // different line numbers; the highlight extends from Start to
 // EndCol on Start.Line, and from Col=0 to EndCol on End.Line.
-func (e *Editor) searchHighlightAt(line, col int) (int, bool) {
+func (e *Editor) searchHighlightAt(line, col int, indices []int) (int, bool) {
 	if e.landing != nil && e.landingRevision == e.Revision() && line == e.landing.Start.Line && col >= e.landing.Start.Col && col < e.landing.End.Col {
 		return 0, true
 	}
@@ -640,10 +650,8 @@ func (e *Editor) searchHighlightAt(line, col int) (int, bool) {
 	}
 	matches := e.search.Matches
 	current := e.search.CurrentIdx
-	for i, m := range matches {
-		if line < m.Start.Line || line > m.End.Line {
-			continue
-		}
+	for _, i := range indices {
+		m := &matches[i]
 		if line == m.Start.Line && line == m.End.Line {
 			// Single-line match
 			if col >= m.Start.Col && col < m.End.Col {

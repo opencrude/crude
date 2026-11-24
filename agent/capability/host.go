@@ -190,11 +190,7 @@ func (w *HostWorker) Handle(ctx context.Context, r captypes.HostRequest) captype
 	case "inventory":
 		err = manager.Refresh(ctx, config.ID)
 	case "call":
-		if r.Grant != nil {
-			reply.Result, err = manager.CallAuthorized(ctx, r.Tool, r.Arguments, config, *r.Grant)
-		} else {
-			reply.Result, err = manager.Call(ctx, r.Tool, r.Arguments)
-		}
+		reply.Result, err = manager.Call(ctx, r.Tool, r.Arguments)
 	case "readResource":
 		reply.Result, err = manager.ReadResource(ctx, config.ID, r.URI)
 	case "getPrompt":
@@ -298,9 +294,9 @@ type actorClient interface {
 	Connect(context.Context, string) error
 	ConnectAuthorized(context.Context, string, captypes.ConnectionConfig) error
 	Refresh(context.Context, string) error
-	States() []captypes.ConnectionState
+	Catalog() []captypes.ConnectionState
 	Call(context.Context, captypes.Tool, map[string]any) (captypes.Result, error)
-	CallAuthorized(context.Context, captypes.Tool, map[string]any, captypes.ConnectionConfig, captypes.ToolGrant) (captypes.Result, error)
+
 	ReadResource(context.Context, string, string) (captypes.Result, error)
 	GetPrompt(context.Context, string, string, map[string]string) (captypes.Result, error)
 }
@@ -372,14 +368,14 @@ func (c routedClient) Refresh(ctx context.Context, id string) error {
 	_, err := c.remote(ctx, id, "inventory", captypes.HostRequest{})
 	return err
 }
-func (c routedClient) States() []captypes.ConnectionState {
-	states := c.local.States()
+func (c routedClient) Catalog() []captypes.ConnectionState {
+	states := c.local.Catalog()
 	c.s.mu.RLock()
 	defer c.s.mu.RUnlock()
 	for i, state := range states {
 		if c.s.settings.Connections[state.ID].Host == "shell" {
 			if remote, ok := c.s.hostStates[taskKey(c.actor)][state.ID]; ok {
-				states[i] = remote
+				states[i] = remote.ToolCatalog()
 			}
 		}
 	}
@@ -390,16 +386,6 @@ func (c routedClient) Call(ctx context.Context, t captypes.Tool, args map[string
 		return c.local.Call(ctx, t, args)
 	}
 	r, e := c.remote(ctx, t.ConnectionID, "call", captypes.HostRequest{Tool: t, Arguments: args})
-	return r.Result, e
-}
-func (c routedClient) CallAuthorized(ctx context.Context, t captypes.Tool, args map[string]any, config captypes.ConnectionConfig, g captypes.ToolGrant) (captypes.Result, error) {
-	if config.Host != "shell" {
-		return c.local.CallAuthorized(ctx, t, args, config, g)
-	}
-	if !reflect.DeepEqual(config, c.config(t.ConnectionID)) {
-		return captypes.Result{}, errors.New("MCP connection changed")
-	}
-	r, e := c.remote(ctx, t.ConnectionID, "call", captypes.HostRequest{Tool: t, Arguments: args, Grant: &g})
 	return r.Result, e
 }
 func (c routedClient) ReadResource(ctx context.Context, id, uri string) (captypes.Result, error) {

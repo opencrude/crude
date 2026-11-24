@@ -17,7 +17,6 @@ import (
 const (
 	maxProjectSearchResults  = 1000
 	maxProjectSearchFileSize = 4 << 20
-	projectSearchContext     = 6
 )
 
 // ProjectSearchOptions controls recursive filename and content matching.
@@ -44,9 +43,8 @@ type ProjectSearchMatch struct {
 	FuzzyOnly    bool  // discovery suggestion, never a replacement target
 	PathMatches  []int // rune positions in RelativePath
 	TextMatches  []int // rune positions in LineText
-	ContextStart int   // 1-based first line in Context
-	Context      string
-	Score        int
+
+	Score int
 }
 
 // ProjectFile is one file that Find in Files visits. Text holds the decoded
@@ -281,8 +279,6 @@ func (s *projectSearch) file(ctx context.Context, file ProjectFile) error {
 		for i := column; i < column+len([]rune(text[hit.Start:firstEnd])); i++ {
 			positions = append(positions, i)
 		}
-		start, end := contextBounds(lineIdx, len(lines))
-		end = max(end, min(len(lines), endLine+2))
 		s.results = append(s.results, ProjectSearchMatch{
 			Path:         filepath.ToSlash(path),
 			RelativePath: rel,
@@ -294,9 +290,8 @@ func (s *projectSearch) file(ctx context.Context, file ProjectFile) error {
 			NameMatched:  nameMatched,
 			PathMatches:  append([]int(nil), pathPositions...),
 			TextMatches:  positions,
-			ContextStart: start + 1,
-			Context:      strings.Join(lines[start:end], "\n"),
-			Score:        9000 + boolScore(nameMatched, 250),
+
+			Score: 9000 + boolScore(nameMatched, 250),
 		})
 		contentMatches++
 		exactLines[lineIdx] = true
@@ -320,8 +315,7 @@ func (s *projectSearch) file(ctx context.Context, file ProjectFile) error {
 			if !ok || len(positions) == 0 {
 				continue
 			}
-			start, end := contextBounds(lineIdx, len(lines))
-			s.suggestions = append(s.suggestions, ProjectSearchMatch{Path: filepath.ToSlash(path), RelativePath: rel, Line: lineIdx + 1, EndLine: lineIdx + 1, Column: positions[0], EndColumn: positions[len(positions)-1] + 1, LineText: line, FuzzyOnly: true, NameMatched: nameMatched, PathMatches: append([]int(nil), pathPositions...), TextMatches: positions, ContextStart: start + 1, Context: strings.Join(lines[start:end], "\n"), Score: score})
+			s.suggestions = append(s.suggestions, ProjectSearchMatch{Path: filepath.ToSlash(path), RelativePath: rel, Line: lineIdx + 1, EndLine: lineIdx + 1, Column: positions[0], EndColumn: positions[len(positions)-1] + 1, LineText: line, FuzzyOnly: true, NameMatched: nameMatched, PathMatches: append([]int(nil), pathPositions...), TextMatches: positions, Score: score})
 			contentMatches++
 		}
 	}
@@ -388,18 +382,6 @@ func stopProjectSearchIfFull(results []ProjectSearchMatch) error {
 	return nil
 }
 
-func contextBounds(lineIdx, lineCount int) (int, int) {
-	start := lineIdx - projectSearchContext
-	if start < 0 {
-		start = 0
-	}
-	end := lineIdx + projectSearchContext + 1
-	if end > lineCount {
-		end = lineCount
-	}
-	return start, end
-}
-
 func boolScore(v bool, score int) int {
 	if v {
 		return score
@@ -426,4 +408,31 @@ func projectSearchMatch(text string, fuzzy *textsearch.FuzzyMatcher, re *regexp.
 
 func fuzzyRuneMatch(text, query string, caseSensitive bool) ([]int, int, bool) {
 	return textsearch.Fuzzy(text, query, caseSensitive)
+}
+
+// SourceColumns locates a result in the current line. A changed buffer may
+// still contain the same match, but an ambiguous or missing hit never moves it.
+func (match ProjectSearchMatch) SourceColumns(current string) (int, int, bool) {
+	from, to := match.Column, match.EndColumn
+	if match.EndLine > match.Line {
+		to = len([]rune(match.LineText))
+	}
+	if current != strings.TrimSuffix(match.LineText, "\r") {
+		old := []rune(match.LineText)
+		if from < 0 || to <= from || to > len(old) {
+			return 0, 0, false
+		}
+		needle := string(old[from:to])
+		live := []rune(current)
+		if to > len(live) || string(live[from:to]) != needle {
+			// Relocate only one exact occurrence on the same line. Never guess
+			// between repeated hits or overwrite the live buffer with disk text.
+			if strings.Count(current, needle) != 1 {
+				return 0, 0, false
+			}
+			from = len([]rune(current[:strings.Index(current, needle)]))
+			to = from + len([]rune(needle))
+		}
+	}
+	return from, to, true
 }

@@ -329,7 +329,7 @@ func TestConnectedAutomaticCompletionKeepsShortSuggestionsCompact(t *testing.T) 
 	remoteJourneyUntil(t, shells, func() bool { return eds[0].Value() == "privateValue" && eds[1].Value() == "privateValue" })
 }
 
-func (c *typingCompletionClient) AssistanceCapabilities() insight.LSPAssistanceCapabilities {
+func (c *typingCompletionClient) AssistanceCapabilities(string) insight.LSPAssistanceCapabilities {
 	return insight.LSPAssistanceCapabilities{Completion: true, CompletionTriggers: []string{".", ":", "@"}, SignatureHelp: true, SignatureTriggers: []string{"(", ","}}
 }
 

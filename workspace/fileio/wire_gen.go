@@ -295,8 +295,8 @@ func (z *ProjectFileReplacement) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *ProjectSearchMatch) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 15
-	o = append(o, 0x9f)
+	// array header, size 13
+	o = append(o, 0x9d)
 	o = msgp.AppendString(o, z.Path)
 	o = msgp.AppendString(o, z.RelativePath)
 	o = msgp.AppendInt(o, z.Line)
@@ -323,8 +323,6 @@ func (z *ProjectSearchMatch) MarshalMsg(b []byte) (o []byte, err error) {
 			o = msgp.AppendInt(o, z.TextMatches[za0002])
 		}
 	}
-	o = msgp.AppendInt(o, z.ContextStart)
-	o = msgp.AppendString(o, z.Context)
 	o = msgp.AppendInt(o, z.Score)
 	return
 }
@@ -341,8 +339,8 @@ func (z *ProjectSearchMatch) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 15 {
-		err = msgp.ArrayError{Wanted: 15, Got: zb0001}
+	if zb0001 != 13 {
+		err = msgp.ArrayError{Wanted: 13, Got: zb0001}
 		return
 	}
 	z.Path, bts, err = msgp.ReadStringBytes(bts)
@@ -449,16 +447,6 @@ func (z *ProjectSearchMatch) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			}
 		}
 	}
-	z.ContextStart, bts, err = msgp.ReadIntBytes(bts)
-	if err != nil {
-		err = msgp.WrapError(err, "ContextStart")
-		return
-	}
-	z.Context, bts, err = msgp.ReadStringBytes(bts)
-	if err != nil {
-		err = msgp.WrapError(err, "Context")
-		return
-	}
 	z.Score, bts, err = msgp.ReadIntBytes(bts)
 	if err != nil {
 		err = msgp.WrapError(err, "Score")
@@ -470,7 +458,7 @@ func (z *ProjectSearchMatch) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *ProjectSearchMatch) Msgsize() (s int) {
-	s = 1 + msgp.StringPrefixSize + len(z.Path) + msgp.StringPrefixSize + len(z.RelativePath) + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.StringPrefixSize + len(z.LineText) + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.ArrayHeaderSize + (len(z.PathMatches) * (msgp.IntSize)) + msgp.ArrayHeaderSize + (len(z.TextMatches) * (msgp.IntSize)) + msgp.IntSize + msgp.StringPrefixSize + len(z.Context) + msgp.IntSize
+	s = 1 + msgp.StringPrefixSize + len(z.Path) + msgp.StringPrefixSize + len(z.RelativePath) + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.StringPrefixSize + len(z.LineText) + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.ArrayHeaderSize + (len(z.PathMatches) * (msgp.IntSize)) + msgp.ArrayHeaderSize + (len(z.TextMatches) * (msgp.IntSize)) + msgp.IntSize
 	return
 }
 

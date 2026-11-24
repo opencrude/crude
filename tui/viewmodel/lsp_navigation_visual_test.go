@@ -280,7 +280,7 @@ func (m *navigationVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Observe the original pushed-context barrier while it is still current,
 	// before target opening can legitimately advance the manager context.
 	if s := m.navigation; s != nil && s.shown && s.result != nil && !s.landing {
-		owner, generation := m.ws.LSPMgr().ContextCursor()
+		owner, generation := m.ws.LSPMgr().ContextCursor("")
 		if s.result.Boundary.Source.WorkspaceGeneration == owner && s.result.Boundary.Context.Generation == generation {
 			m.barrierBoundary = s.result.Boundary
 		}
@@ -405,7 +405,7 @@ func (m *navigationVisualModel) navigationQualification(kind, sourceName string,
 	return m.check(func(v *controlVisualModel) error {
 		r := m.lastResult
 		b := r.Boundary
-		owner, generation := v.ws.LSPMgr().ContextCursor()
+		owner, generation := v.ws.LSPMgr().ContextCursor("")
 		if m.lastResultErr != nil || r.Kind != kind || r.Answer != insight.LSPNavigationTargets ||
 			r.Line != line || r.Col != col || m.invokeLine != line || m.invokeCol != col ||
 			r.IncludeDeclaration != (kind == insight.LSPNavigationReferences) || r.WireVersion <= 0 ||

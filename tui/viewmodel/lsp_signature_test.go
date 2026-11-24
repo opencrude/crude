@@ -36,7 +36,7 @@ type signatureTestService struct {
 }
 
 func (s *signatureTestService) ServerReady() bool { return !s.notReady && !s.aggregateNotReady }
-func (s *signatureTestService) ContextCursor() (string, uint64) {
+func (s *signatureTestService) ContextCursor(string) (string, uint64) {
 	return "signature-owner", s.context
 }
 func (s *signatureTestService) RequestSignatureHelp(ctx context.Context, _ string, _, _ int, trigger insight.LSPSignatureContext) (insight.LSPSignatureHelp, error) {

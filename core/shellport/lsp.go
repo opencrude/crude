@@ -23,7 +23,7 @@ type LSPService interface {
 	// DiagnosticSnapshot is a non-destructive, versioned read for each shell.
 	DiagnosticSnapshot() LSPDiagnosticSnapshot
 	DiagnosticCursor() (generation string, version uint64)
-	ContextCursor() (generation string, context uint64)
+	ContextCursor(path string) (generation string, context uint64)
 	InlayHintsState() (enabled bool, generation uint64)
 	CompletionsState() (enabled bool, generation uint64)
 	// ReferencesEnabled is a constant-size feature-gate read for passive

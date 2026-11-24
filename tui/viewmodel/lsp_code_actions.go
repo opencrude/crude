@@ -250,7 +250,7 @@ func (m *App) syncCodeActions() {
 		return
 	}
 	b := s.result.set.Boundary
-	owner, generation := m.ws.LSPMgr().ContextCursor()
+	owner, generation := m.ws.LSPMgr().ContextCursor(b.Source.Path)
 	if owner == "" || owner != b.Source.WorkspaceGeneration || generation > b.Context.Generation || b.Source != s.source {
 		// It is not stored in s.set until the replica barrier accepts it.
 		m.runDetachedAsyncCmd(releaseCodeActionSet(s, s.result.set))

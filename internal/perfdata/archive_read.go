@@ -181,8 +181,8 @@ func archiveBuilds(ctx context.Context, db *sql.DB, src archiveReadSource, filte
 
 func archiveStalls(ctx context.Context, db *sql.DB, src archiveReadSource, filter string) ([]inspect.Record, bool, error) {
 	rows, err := db.QueryContext(ctx, `SELECT id,build,cohort,incarnation,evidence FROM performance_stalls
-	 WHERE role=? AND at>=? AND (?='' OR build=?) AND (?='' OR json_extract(evidence,'$.series')=?)
-	 ORDER BY at DESC,id DESC LIMIT ?`, src.Role, time.Unix(src.FromHour, 0).UnixNano(), src.Build, src.Build, filter, filter, archivePageRows+1)
+	 WHERE role=? AND at>=? AND (?='' OR build=?) AND (?='' OR json_extract(evidence,'$.series')=? OR json_extract(evidence,'$.label')=? OR EXISTS(SELECT 1 FROM json_each(evidence,'$.stack') f WHERE instr(f.value,?)>0))
+	 ORDER BY at DESC,id DESC LIMIT ?`, src.Role, time.Unix(src.FromHour, 0).UnixNano(), src.Build, src.Build, filter, filter, filter, filter, archivePageRows+1)
 	if err != nil {
 		return nil, false, err
 	}

@@ -1,6 +1,7 @@
 # Immediate action: unreliable LSP completion
 
-> Status: IN PROGRESS. The lost manual request is reproduced. No fix has landed.
+> Status: The reproduced editor and diagnostic failures are fixed in the working tree.
+> See [Repair and evidence](#repair-and-evidence). The investigation below describes the original behavior.
 
 On 2026-11-23 the user reported that suggestions sometimes disappear entirely.
 Even **Ctrl+Space** can do nothing when it worked a second earlier. This is not
@@ -29,7 +30,7 @@ source to be acknowledged at the instant the key arrives. It returns if the
 source is not ready. [Automatic completion](../../tui/viewmodel/lsp_completion_automatic.go)
 already keeps a bounded input intent until its exact edit is acknowledged.
 
-## Other findings
+## Other findings before the repair
 
 - **Both paths can discard a reply after an unrelated workspace event.** The
   [core completion fence](../../workspace/lsp_completion_request.go) and
@@ -84,3 +85,35 @@ accepts an edit. Use installed servers through the real editor to verify the
 wire order and the visible result for both automatic and manual requests.
 Distinguish no request sent, no candidates returned, and candidates rejected
 or hidden. Keep the automatic list passive and the editor responsive.
+
+## Repair and evidence
+
+- **Lost shortcut:** `TestManualCompletionSurvivesPendingEditWithoutAutomaticSuggestions`
+  holds the typed edit, sends Ctrl+Space, releases the receipt and sees the list
+  without a second shortcut. Escape prevents a late list. Both paths use the
+  same editor intent. A changed caret also retires pending inline suggestions.
+- **Unrelated events:** `TestCompletionSurvivesOnlyUnrelatedWatchedInput`
+  preserves the exact result across a change in another root and rejects it
+  after a change in the owning root. Neither path weakens the insertion guard.
+- **Wire support:** negotiated full/incremental changes, UTF-16 and CRLF range
+  boundaries, document-selected completion registrations, list defaults and
+  deferred same-document imports have adapter and acceptance regressions.
+- **A diagnostic loop starved completion.** A trace with installed Pyright
+  1.1.414 contained 986 `textDocument/diagnostic` requests and 985 cancellations
+  among its first 2,000 messages. Distinct registration IDs had the same
+  diagnostic identifier. One pull cancelled its own replacement before the
+  server could answer. Requests, reports and cancellation now follow the
+  document and diagnostic identifier, not the number of matching selectors.
+  Removing one selector preserves the report while another still matches.
+  A separate JSON-RPC fix delivers server requests with numeric ID zero.
+- **Real editor and project:** five consecutive native Windows runs offered and
+  accepted ordinary names and members. The eleven-file clean/error Pyright
+  batch and workspace diagnostics each passed twice. The framed overlap test
+  requires exactly two document requests, no cancellations and current results
+  across two versions. No product or test deadline was increased.
+
+The Performance report includes document pull attempts and cancellations. In
+`performance.archive.core`, compare `lsp.document_pulls` and
+`lsp.document_pulls_cancelled` in `hours` for the same build and period. These
+series cover recordings made after this change; they cannot reconstruct counts
+for an older build. Ordinary editing can cancel a request legitimately.

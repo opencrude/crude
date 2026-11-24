@@ -472,7 +472,7 @@ func (m *automaticSignatureVisualModel) observeAutomaticSignature(phase int) err
 			}
 			help = state.result.help
 			b := help.Boundary
-			owner, generation := v.ws.LSPMgr().ContextCursor()
+			owner, generation := v.ws.LSPMgr().ContextCursor("")
 			if b.Source != source || b.Source.WorkspaceGeneration != owner ||
 				b.Context.Generation != generation || b.Context.ID == "" || b.Context.Root != m.root ||
 				b.Producer.Provider != m.executable || b.Producer.InstanceID == "" ||

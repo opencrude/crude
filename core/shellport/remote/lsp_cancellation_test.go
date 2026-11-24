@@ -194,6 +194,6 @@ func TestSignatureRemoteServiceCancellationRetiresProviderAndKeepsAttachment(t *
 	}
 }
 
-func (*cancelledPortProvider) AssistanceCapabilities() insight.LSPAssistanceCapabilities {
+func (*cancelledPortProvider) AssistanceCapabilities(string) insight.LSPAssistanceCapabilities {
 	return insight.LSPAssistanceCapabilities{Completion: true, CompletionTriggers: []string{"."}, SignatureHelp: true, SignatureTriggers: []string{"(", ","}}
 }

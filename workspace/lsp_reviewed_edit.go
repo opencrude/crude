@@ -76,14 +76,14 @@ func (m *LSPManager) reviewedEditFence(boundary insight.Boundary, wireVersion in
 	defer m.mu.Unlock()
 	main := m.documents[filepath.Clean(boundary.Source.Path)]
 	if main == nil || !main.opened || main.syncPending || main.wireVersion != wireVersion ||
-		!sameInsightBoundary(main.boundary, boundary) || main.boundary.Context.Generation != m.contextGeneration {
+		!sameInsightBoundary(main.boundary, boundary) || main.boundary.Context.Generation != m.producerContextLocked(main.key) {
 		return nil, errors.New("reviewed edit source/provider/context is no longer synchronized")
 	}
 	state := m.states[main.key]
 	if state == nil || state.client == nil || state.closing || state.stopped || state.teardownErr != nil {
 		return nil, errors.New("reviewed edit provider is no longer available")
 	}
-	client, settingsGeneration, contextGeneration := state.client, m.settingsGeneration, m.contextGeneration
+	client, settingsGeneration, contextGeneration := state.client, m.settingsGeneration, m.producerContextLocked(main.key)
 	capture := func(path string, doc *lspDocument) reviewedLSPSource {
 		boundary := doc.boundary
 		boundary.Context.UnknownInputs = slices.Clone(boundary.Context.UnknownInputs)
@@ -110,7 +110,7 @@ func (m *LSPManager) reviewedEditFence(boundary insight.Boundary, wireVersion in
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		currentState := m.states[main.key]
-		if m.closed || m.paused || m.settingsGeneration != settingsGeneration || m.contextGeneration != contextGeneration ||
+		if m.closed || m.paused || m.settingsGeneration != settingsGeneration || m.producerContextLocked(main.key) != contextGeneration ||
 			currentState != state || state.client != client || state.closing || state.stopped || state.teardownErr != nil {
 			return errors.New("reviewed edit provider or semantic context changed")
 		}

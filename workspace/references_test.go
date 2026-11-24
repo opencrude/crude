@@ -451,3 +451,31 @@ func TestLabelExists(t *testing.T) {
 		t.Error("labelExists should not find non-existent label")
 	}
 }
+
+func TestInlinePasteFilePreservesIdentityAndReopens(t *testing.T) {
+	db, dir := setupRefStoreDB(t)
+	defer db.Close()
+	s := NewReferenceStore("sess1", dir, db)
+	original, err := s.CreateReference(sessiondb.CreateRequest{Kind: sessiondb.KindPastedText, Inline: true, Content: "a\r\n😀b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := s.PreparePastedTextFile(t.Context(), original)
+	if err != nil || file.ID != original.ID || file.Label != original.Label || file.Content != "" || file.Kind != sessiondb.KindPastedTextFile || file.FilePath == "" {
+		t.Fatal(file, err)
+	}
+	if got, err := s.PreparePastedTextFile(t.Context(), file); err != nil || got != file {
+		t.Fatal("reopen created another file", got, err)
+	}
+	if _, err = s.PreparePastedTextFile(t.Context(), original); err == nil {
+		t.Fatal("stale reference promoted twice")
+	}
+	stored, err := sessiondb.LoadPromptReferences(db)
+	if err != nil || len(stored) != 1 || stored[0] != file {
+		t.Fatal("durable preimage differs", stored, err)
+	}
+	data, err := os.ReadFile(file.FilePath)
+	if err != nil || string(data) != original.Content {
+		t.Fatal("captured bytes changed", err)
+	}
+}

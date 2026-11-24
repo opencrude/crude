@@ -16,6 +16,7 @@ Language servers consume decoded source; they do not own file encodings.
 
 | Date | Decision | From |
 |---|---|---|
+| 2026-11-24 | Show the whole selected file in Find, Replace and Go to File. Start at the result and open the double-clicked source line. Open editable pasted text in a normal editor tab. | User |
 | 2026-11-16 | Improve Find in Files performance; the current search feels slow. | User |
 | 2026-11-14 | Restore the Save File picker header. Use bounded filename and encoding controls, with a real encoding dropdown rather than the stepper. Keep the shared form and window assets. | User |
 | 2026-11-09 | A double click on empty main-tab rail opens a new unnamed buffer. An explicit save opens a practical save window using Attach Files as a visual reference. Automatic saving does not affect unnamed buffers; after the first explicit save they follow the normal setting. | User |

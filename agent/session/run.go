@@ -1427,7 +1427,7 @@ func (o *Orchestrator) handleBlockingEvent(data map[string]string, evt turnloop.
 		}
 		// Capability publication carries its own immutable preimage. A generic
 		// Read/Always permission cannot approve another install or changed grant.
-		if allowed && tool != "capability_activate" && tool != "mcp_request_access" {
+		if allowed && tool != "capability_activate" {
 			s.logger.Debug("PERM", "auto_allowed", "operation", op, "tool", tool, "target", target)
 			o.ResolveBlock(conversation.BlockResponse{RequestID: data["block_id"], Outcome: conversation.BlockAnswered, Value: "allow"})
 			agentID := evt.AgentID

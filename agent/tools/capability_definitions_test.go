@@ -9,8 +9,7 @@ import (
 func TestCapabilityToolGuidanceExplainsDiscoveryAndDurableUse(t *testing.T) {
 	expected := map[string][]string{
 		"capability_search":   {"distinctive keywords, not a sentence", "each keyword is matched separately", "search its name", "Omit kind", "descriptors, not loaded instructions", "exact ID unchanged", "Discovery is not an access grant"},
-		"capability_activate": {"not a display name or path", "user-owned application registrations", "scope \"workspace\"", "this project to own the binding", "bundled files resolve from that path", "Granted connections reconnect automatically", "connected is not access", "mcp_request_access", "starts a background job and returns its handle at once", "do not start it again or poll", "capabilities.save_connection"},
-		"mcp_request_access":  {"tools_needing_access", "every tool the task needs in one call", "grants add up", "strongest effect"},
+		"capability_activate": {"not a display name or path", "user-owned application registrations", "scope \"workspace\"", "this project to own the binding", "bundled files resolve from that path", "Connected MCP tools appear on the next request", "same permission mode", "starts a background job and returns its handle at once", "do not start it again or poll", "capabilities.save_connection"},
 	}
 	for _, tool := range CapabilityTools {
 		phrases, exists := expected[tool.Function.Name]
@@ -31,37 +30,16 @@ func TestCapabilityToolGuidanceExplainsDiscoveryAndDurableUse(t *testing.T) {
 	}
 }
 
-func TestCapabilityActivationAndAccessHaveDisjointRequiredSchemas(t *testing.T) {
-	found := make(map[string]bool)
+func TestCapabilityActivationRequiresOnlyID(t *testing.T) {
 	for _, tool := range CapabilityTools {
-		name := tool.Function.Name
-		if name != "capability_activate" && name != "mcp_request_access" {
-			continue
+		if tool.Function.Name == "mcp_request_access" {
+			t.Fatal("the model should not request a separate grant")
 		}
-		var schema struct {
-			Properties map[string]json.RawMessage `json:"properties"`
-			Required   []string                   `json:"required"`
-		}
-		if err := json.Unmarshal(tool.Function.Parameters, &schema); err != nil {
-			t.Fatal(err)
-		}
-		found[name] = true
-		if name == "capability_activate" {
-			// The binding and launch environment are optional explicit choices
-			// (an empty environment is a no-op); a provider requiring all
-			// properties must not be able to force MCP grant data into skill
-			// activation.
-			if len(schema.Properties) != 3 || schema.Properties["id"] == nil || schema.Properties["scope"] == nil ||
-				schema.Properties["environment"] == nil || schema.Properties["grants"] != nil ||
-				len(schema.Required) != 1 || schema.Required[0] != "id" {
-				t.Fatal("a provider requiring all properties could force MCP grant data into skill activation")
+		if tool.Function.Name == "capability_activate" {
+			var schema struct{ Required []string }
+			if err := json.Unmarshal(tool.Function.Parameters, &schema); err != nil || len(schema.Required) != 1 || schema.Required[0] != "id" {
+				t.Fatal("activation requires more than a capability ID")
 			}
-		} else if len(schema.Properties) != 2 || schema.Properties["connection_id"] == nil ||
-			schema.Properties["grants"] == nil || len(schema.Required) != 2 {
-			t.Fatal("exact access review lacks its own required connection/grant schema")
 		}
-	}
-	if len(found) != 2 {
-		t.Fatal("activation and exact MCP access are not separately discoverable")
 	}
 }

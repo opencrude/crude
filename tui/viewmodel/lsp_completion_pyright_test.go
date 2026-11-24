@@ -55,14 +55,21 @@ func TestConnectedAutomaticCompletionWithRealPyright(t *testing.T) {
 			})
 			shell := newRemoteJourneyShell(t, runtime, root)
 			ed := liveTestOpen(t, shell.app, path)
+			t.Cleanup(func() {
+				if t.Failed() {
+					source, ready := ed.CurrentInsightSource()
+					t.Logf("completion evidence: source=%+v acknowledged=%t caret=%d:%d caps=%+v intent=%+v request=%+v health=%+v", source, ready, ed.CursorLine(), ed.CursorCol(), shell.app.ws.LSPMgr().AssistanceCapabilities(path), shell.app.completionIntent, shell.app.completion, owned.LSPMgr.ServerHealthSnapshots())
+				}
+			})
 			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 			defer cancel()
 			if _, _, err := owned.LSPMgr.ProbeHover(ctx, path, insight.LSPSourcePosition{Line: 1, Column: 7}); err != nil {
 				t.Fatal(err)
 			}
 			remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool {
-				_, current := ed.CurrentInsightSource()
-				return current && shell.app.ws.LSPMgr().ServerReady()
+				source, current := ed.CurrentInsightSource()
+				caps := shell.app.ws.LSPMgr().AssistanceCapabilities(path)
+				return current && caps.Completion && caps.SynchronizedSource == source
 			})
 			ed.SetCursorPosition(strings.Count(declarations, "\n"), len(tc.initial))
 			shell.app.setFocusEditor()

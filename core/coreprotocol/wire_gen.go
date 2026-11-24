@@ -11048,8 +11048,9 @@ func (z *LSPResult) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *LSPSnapshot) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 21
-	o = append(o, 0xdc, 0x0, 0x15)
+	// array header, size 22
+	o = append(o, 0xdc, 0x0, 0x16)
+	o = msgp.AppendUint64(o, z.DiagnosticVersion)
 	o = msgp.AppendString(o, z.Generation)
 	o = msgp.AppendUint64(o, z.ContextGeneration)
 	o = msgp.AppendUint64(o, z.Version)
@@ -11152,8 +11153,13 @@ func (z *LSPSnapshot) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 21 {
-		err = msgp.ArrayError{Wanted: 21, Got: zb0001}
+	if zb0001 != 22 {
+		err = msgp.ArrayError{Wanted: 22, Got: zb0001}
+		return
+	}
+	z.DiagnosticVersion, bts, err = msgp.ReadUint64Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "DiagnosticVersion")
 		return
 	}
 	z.Generation, bts, err = msgp.ReadStringBytes(bts)
@@ -11401,7 +11407,7 @@ func (z *LSPSnapshot) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *LSPSnapshot) Msgsize() (s int) {
-	s = 3 + msgp.StringPrefixSize + len(z.Generation) + msgp.Uint64Size + msgp.Uint64Size + msgp.BoolSize + msgp.MapHeaderSize
+	s = 3 + msgp.Uint64Size + msgp.StringPrefixSize + len(z.Generation) + msgp.Uint64Size + msgp.Uint64Size + msgp.BoolSize + msgp.MapHeaderSize
 	if z.Diagnostics != nil {
 		for za0001, za0002 := range z.Diagnostics {
 			_ = za0002

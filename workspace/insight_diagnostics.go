@@ -38,7 +38,7 @@ func (m *LSPManager) DiagnosticCursor() (string, uint64) {
 	if m.sources == nil || m.sources.Insight == nil {
 		return "", m.version
 	}
-	return m.sources.Insight.generation, m.version
+	return m.sources.Insight.generation, m.sources.Insight.diagnostics.Version()
 }
 
 // AllDiagnostics returns every document diagnostic, or nil without an insight source.
@@ -97,11 +97,48 @@ func (m *LSPManager) invalidateDiagnosticsLocked(reason string) {
 // their producer: it republishes the files an edit affects, and the facts go
 // away when the producer stops or a document opens for the file.
 func (m *LSPManager) advanceContextLocked(reason string) {
-	m.contextGeneration++
+	m.advanceProducerContextsLocked(reason, nil)
+}
+
+// One sequence stamps only the producers affected by an input. Two roots can
+// share an executable, but never each other's pending queries or source views.
+func (m *LSPManager) advanceProducerContextsLocked(reason string, affected func(string, *lspClientState) bool) {
+	next := m.contextGeneration + 1
+	changed := false
+	for key, state := range m.states {
+		if state.contextGeneration == 0 {
+			state.contextGeneration = m.contextGeneration
+		}
+		if affected == nil || affected(key, state) {
+			state.contextGeneration = next
+			changed = true
+		}
+	}
+	if !changed && affected != nil {
+		return
+	}
+	m.contextGeneration = next
 	if m.sources != nil && m.sources.Insight != nil {
-		m.sources.Insight.diagnostics.InvalidateMatching(func(b insight.Boundary) bool { return !isProjectFact(b) }, reason)
+		m.sources.Insight.diagnostics.InvalidateMatching(func(b insight.Boundary) bool {
+			state := m.states[b.Context.ID]
+			return !isProjectFact(b) && (affected == nil || state != nil && state.contextGeneration == next)
+		}, reason)
 	}
 	m.bumpVersionLocked()
+}
+
+func (m *LSPManager) advancePathContextLocked(path, reason string) {
+	m.advanceProducerContextsLocked(reason, func(_ string, state *lspClientState) bool {
+		root, err := fileuri.ToPath(state.rootURI)
+		return err == nil && pathWithin(root, path)
+	})
+}
+
+func (m *LSPManager) producerContextLocked(key string) uint64 {
+	if state := m.states[key]; state != nil && state.contextGeneration != 0 {
+		return state.contextGeneration
+	}
+	return m.contextGeneration
 }
 
 func (m *LSPManager) diagnosticBoundaryLocked(doc *lspDocument, state *lspClientState) insight.Boundary {
@@ -111,7 +148,7 @@ func (m *LSPManager) diagnosticBoundaryLocked(doc *lspDocument, state *lspClient
 	}
 	return insight.Boundary{Source: doc.source,
 		Context: insight.Context{ID: doc.key, Root: root,
-			Generation: m.contextGeneration, UnknownInputs: []string{
+			Generation: m.producerContextLocked(doc.key), UnknownInputs: []string{
 				"Complete dependency and build graph has not been established.",
 				"Inherited environment and toolchain identity are not fully tracked.",
 				"Executable digest is unverified; tool identity describes launch configuration only.",

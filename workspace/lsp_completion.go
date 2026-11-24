@@ -41,7 +41,7 @@ type completionView struct {
 	cancel    context.CancelFunc
 	set       insight.LSPCompletionSet
 	originals map[string][]byte
-	resolved  map[string]insight.LSPCompletionDocumentation
+	resolved  map[string]lspcompletion.Resolution
 	bytes     int
 	check     func() error
 }
@@ -202,7 +202,7 @@ func (w *Workspace) RequestLSPCompletions(ctx context.Context, owner document.Ow
 		return insight.LSPCompletionSet{}, errors.New("retained completion evidence exceeds its 16 MiB consumer bound")
 	}
 	entry.set, entry.originals, entry.bytes, entry.check = result, originals, retained, check
-	entry.resolved = make(map[string]insight.LSPCompletionDocumentation)
+	entry.resolved = make(map[string]lspcompletion.Resolution)
 	return cloneCompletionSet(result), nil
 }
 
@@ -218,7 +218,7 @@ func (s *DocumentService) completionBudgetLocked(entry *completionView, proposed
 func normalizeCompletionSet(text string, line, col int, response insight.LSPCompletionResponse) (map[string][]byte, insight.LSPCompletionSet, int, error) {
 	out := insight.LSPCompletionSet{Boundary: response.Boundary, WireVersion: response.WireVersion, FeatureGeneration: response.FeatureGeneration, Line: line, Col: col,
 		ResolveSupported: response.ResolveSupported,
-		Detail:           "Standard completion evidence is unversioned. Only the original insertion is used; resolve may change documentation and detail only."}
+		Detail:           "Standard completion evidence is unversioned. The primary insertion is fixed. The server may supply additional edits for this file."}
 	out.Boundary.Context.UnknownInputs = slices.Clone(response.Boundary.Context.UnknownInputs)
 	if response.Unsupported {
 		if len(response.JSON) != 0 || response.ResolveSupported {

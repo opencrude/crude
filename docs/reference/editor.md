@@ -635,12 +635,20 @@ Go's regexp matcher. One immutable fuzzy query is prepared per project scan.
 No persistent index or content cache is introduced: each query still reads the
 current files, with the existing encoding, size, ignore and cancellation rules.
 The result list reconciles on source-row changes only. Moving selection updates
-the preview without reinstalling every list item; a new query closes the retired
-preview and invalidates all old actions.
+the preview without reinstalling the list. Find in Files, Replace in Files and
+Go to File load the complete selected text file on demand. Search results carry
+locations, not repeated excerpts. A worker decodes the selected file and builds
+its line, width, fold and highlight indexes. A visible unsaved buffer takes
+precedence over disk. Another hit in the same file reuses the mounted view.
+The initial landing is the selected occurrence or cited line and column. Scroll
+away and double-click a source cell to open the normal editor at that location.
+Changing files or closing the window cancels the read; stale results cannot
+open tabs or replace the current preview.
 
 Replacement plans are computed off Update from the canonical source, reject
 stale/invalid spans, and deduplicate identical hits. Planning is bounded
-to 16 MiB of source; preview is bounded to 1 MiB. An immutable, Cancel-default
+to 16 MiB of source; the replacement **diff review** is bounded to 1 MiB.
+These limits do not shorten the source shown in the search window. An immutable, Cancel-default
 review shows exact changes, file/replacement counts and skipped discovery hits.
 Apply requires a Local History safety snapshot, unchanged preimages and no
 dirty/pending/shared-document conflict. The workspace-edit transaction is the
@@ -1653,7 +1661,7 @@ opaque row ID, not a label-keyed reconstruction. Equal labels remain independent
 rows. Null, empty, unsupported static capability, unsupported insertions and
 provider failures remain distinct internally. Incomplete results ask the user
 to keep typing; unsupported suggestions are described in plain words.
-CompletionList defaults and dynamic registration are not advertised or accepted.
+Completion supports document selectors from dynamic registrations and the five standard list defaults. Item-level values win.
 The core derives each row's typed prefix from its validated primary range.
 The display uses the shared fzf matcher with the provider's `filterText` (or label)
 and orders matches by `sortText` (or label). Filtering preserves original row IDs,
@@ -1667,10 +1675,9 @@ protocol format names or normal loading-completion states. Markdown,
 links, terminal control bytes and commands are displayed literally, never
 interpreted or executed. If the original provider advertises resolve, selecting a
 row requests `completionItem/resolve` passively with its exact retained original
-object. Only detail and documentation may change. Missing or changed original
+object. Only detail, documentation and previously absent additional edits may be supplied. Missing or changed original
 fields, new insertion fields, changed opaque data/numeric tokens, sort/filter
-changes, edits and commands are refused atomically. A resolved object never
-replaces an insertion or its numeric plan. Revisiting a resolved row uses only
+changes, replacement edits and commands are refused atomically. Deferred imports are checked against the original source and primary range before acceptance. Revisiting a resolved row uses only
 that invocation's display cache; a late former-row answer cannot replace the
 selected reader.
 
@@ -1685,10 +1692,9 @@ boundaries retire old callbacks. A dedicated feature generation prevents an
 off/on settings cycle from reviving old evidence without restarting the server.
 Automatic absence/failure stays quiet; explicit requests give bounded feedback.
 
-Enter/Tab, a commit character or row activation first inspects the exact retained
-set ID/digest/item without resolve. The core validates all original
+Enter/Tab, a commit character or row activation inspects the exact retained set and row. Missing additional edits are resolved when the server offers resolution. The core validates all original
 primary/additional edits against the still-current canonical source. The shell
-then rechecks its original editor and applies only the initial insertion through
+then rechecks its original editor and applies the primary and checked additional edits through
 the existing editor transaction. Semantic activation reports local admission while
 that ordinary canonical edit is pending; a successful documentation read is not a
 text/save receipt.
@@ -1820,11 +1826,18 @@ session decks, unrelated overlays, tab/workspace changes and terminal blur are
 ownership boundaries too.
 
 The [completion owner](#completion-documentation-and-original-insertion) now
-retains original identity, presents incomplete-state evidence and resolves only
-documentation/detail. CompletionList defaults, provider commands,
-variables/transforms and richer semantic operations remain unsupported. Full
+retains row identity, applies shared list defaults and can resolve documentation,
+detail and previously absent edits such as imports. Provider commands and snippet
+variables/transforms remain unsupported. Full
 connected, native and whole-plan acceptance retain their own evidence and are
 not established by parser tests or this contract.
+
+An explicit shortcut received during a pending edit uses the same single intent
+as automatic completion. The edit receipt, not a second keypress, releases it.
+Escape, changed caret or selection, producer replacement and workspace changes
+cancel it. Project-input changes advance only the affected producer roots.
+The wire adapter uses UTF-16 ranged changes when requested and whole text for
+full-sync servers. A server that declines changes is not queried on unsent text.
 
 ### Shared diagnostic facts
 
@@ -1868,6 +1881,15 @@ teardown cannot restamp its first stale reason between shell snapshots. Only
 observing a new active boundary admits another invalidation or publication.
 Severity and editor/tree visibility filters are view policy, not mutations of
 the published batch.
+
+The Problems footer counts the same retained rows as the list and the tree;
+current server coverage remains a separate measure. Diagnostic publications
+update only loaded ancestors. They never load a directory to display a badge.
+A progress notification alone does not advance the diagnostic fact cursor.
+If a changed closed file still has stale findings after a native server's normal
+report, the existing closed-file scheduler can verify that file without scanning
+its clean neighbors. A skipped open-file workspace report is not a result-ID
+base for the next pull.
 
 Editor, shared Buffer, Problems/tree/footer and agent diagnostics use the same
 opaque batch ID. Editor projection requires actual canonical source identity,
@@ -1925,8 +1947,8 @@ Code's language client (`vscode-languageserver-node`,
 - **Providers.** The static `diagnosticProvider` and each
   `client/registerCapability` registration of `textDocument/diagnostic` are
   providers of the launch, matched to open documents by their document
-  selector (language, file scheme, LSP glob through doublestar). Other dynamic
-  registrations are refused, as before. `client/unregisterCapability` removes a
+  selector (language, file scheme, LSP glob through doublestar). Dynamic completion uses the same selector. Other methods are not advertised
+  for dynamic registration. `client/unregisterCapability` removes a
   provider and its part.
 - **Document pull.** A document is pulled after `didOpen`, after each admitted
   `didChange` (already paced by **Update delay**), after save and on

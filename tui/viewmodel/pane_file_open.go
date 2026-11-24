@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -40,6 +39,7 @@ type paneFilePrepared struct {
 }
 
 type paneFilesOpenedMsg struct {
+	clickedSource    bool
 	seq, generation  uint64
 	configGeneration uint64
 	manager          *editor.BufferManager
@@ -53,6 +53,7 @@ type paneFilesOpenedMsg struct {
 	position         *insight.LSPDiagnostic // raw UTF-16 range, including point locations
 	filePosition     *editor.Position       // model-authored one-based source reference, converted to zero-based
 	restore          *navLocation           // Go Back/Forward place of a reopened file
+	attachment       *attachmentOpenState
 	navigation       *paneNavigation
 	// window = landed tab in its own window (Open in window).
 	window bool
@@ -216,6 +217,16 @@ func (m *App) createPaneUntitled(group window.GroupID) tea.Cmd {
 }
 
 func (m *App) applyPaneFilesOpened(msg paneFilesOpenedMsg) tea.Cmd {
+	if a := msg.attachment; a != nil {
+		if !m.ownsAttachmentOpen(a) {
+			return releasePaneDocuments(msg)
+		}
+		defer m.cancelAttachmentOpen()
+		current, ok := a.store.Reference(a.ref.ID)
+		if !ok || current != a.ref {
+			return releasePaneDocuments(msg)
+		}
+	}
 	if msg.navigation != nil && !m.navigationCurrent(msg.navigation.owner) {
 		return releasePaneDocuments(msg)
 	}
@@ -339,6 +350,12 @@ func (m *App) applyPaneFilesOpened(msg paneFilesOpenedMsg) tea.Cmd {
 			opened = true
 		}
 	}
+	if a := msg.attachment; a != nil && opened && len(msg.files) == 1 {
+		if doc := m.EditorState.Tabs[msg.files[0].path]; doc != nil {
+			doc.Editor.SetDisplayTitle(a.ref.Caption())
+			m.syncEditorTabPresentation()
+		}
+	}
 	if msg.activePath != "" {
 		// A restored pane reopens its last selected document, not simply the
 		// last file in the remembered order.
@@ -385,8 +402,12 @@ func (m *App) applyPaneFilesOpened(msg paneFilesOpenedMsg) tea.Cmd {
 	if p := msg.filePosition; p != nil && m.EditorState.Editor != nil && len(msg.files) > 0 &&
 		m.EditorState.ActiveView == msg.files[len(msg.files)-1].path {
 		ed := m.EditorState.Editor
-		ed.SetCursorPosition(p.Line, editor.RuneIndexToVisualColumn(ed.TabWidth(), ed.LineText(p.Line), p.Col))
-		ed.ScrollToCursor()
+		if match := msg.landing; match != nil && msg.clickedSource && ed.LineText(p.Line) != match.LineText {
+			m.Feedback.NotifyInfo("The line changed. Choose its new location.")
+		} else {
+			ed.SetCursorPosition(p.Line, editor.RuneIndexToVisualColumn(ed.TabWidth(), ed.LineText(p.Line), p.Col))
+			ed.ScrollToCursor()
+		}
 	}
 	if p := msg.position; p != nil && m.EditorState.Editor != nil && m.EditorState.ActiveView == msg.files[len(msg.files)-1].path {
 		ed := m.EditorState.Editor
@@ -465,27 +486,10 @@ func (m *App) queueLiveNavigation(path string, position insight.LSPDiagnostic) b
 	return true
 }
 
-func searchLandingColumns(match fileio.ProjectSearchMatch, current string, tabW int) (start, end int, valid bool) {
-	from, to := match.Column, match.EndColumn
-	if match.EndLine > match.Line {
-		to = len([]rune(match.LineText))
-	}
-	if current != match.LineText {
-		old := []rune(match.LineText)
-		if from < 0 || to <= from || to > len(old) {
-			return 0, 0, false
-		}
-		needle := string(old[from:to])
-		live := []rune(current)
-		if to > len(live) || string(live[from:to]) != needle {
-			// Relocate only one exact occurrence on the same line. Never guess
-			// between repeated hits or overwrite the live buffer with disk text.
-			if strings.Count(current, needle) != 1 {
-				return 0, 0, false
-			}
-			from = len([]rune(current[:strings.Index(current, needle)]))
-			to = from + len([]rune(needle))
-		}
+func searchLandingColumns(match fileio.ProjectSearchMatch, current string, tabW int) (int, int, bool) {
+	from, to, ok := match.SourceColumns(current)
+	if !ok {
+		return 0, 0, false
 	}
 	return editor.RuneIndexToVisualColumn(tabW, current, from), editor.RuneIndexToVisualColumn(tabW, current, to), true
 }

@@ -405,18 +405,20 @@ func diagnosticTextLimit(s string, limit int) string {
 // A row is one server/file, not an editor open or a new diagnostic request.
 // Counts retain the complete stored batch; only the top message text is bounded.
 type problemFileInspection struct {
-	Path        string                     `json:"path"`
-	ServerID    string                     `json:"server_id"`
-	Provider    string                     `json:"provider"`
-	State       insight.State              `json:"state"`
-	Limited     bool                       `json:"limited"`
-	Errors      int                        `json:"errors"`
-	Warnings    int                        `json:"warnings"`
-	Information int                        `json:"information"`
-	Hints       int                        `json:"hints"`
-	Total       int                        `json:"total"`
-	Messages    []problemMessageInspection `json:"messages"`
-	Omitted     int                        `json:"messages_omitted"`
+	Detail           string                     `json:"detail,omitempty"`
+	ProducerInstance string                     `json:"producer_instance,omitempty"`
+	Path             string                     `json:"path"`
+	ServerID         string                     `json:"server_id"`
+	Provider         string                     `json:"provider"`
+	State            insight.State              `json:"state"`
+	Limited          bool                       `json:"limited"`
+	Errors           int                        `json:"errors"`
+	Warnings         int                        `json:"warnings"`
+	Information      int                        `json:"information"`
+	Hints            int                        `json:"hints"`
+	Total            int                        `json:"total"`
+	Messages         []problemMessageInspection `json:"messages"`
+	Omitted          int                        `json:"messages_omitted"`
 }
 
 type problemMessageInspection struct {
@@ -430,7 +432,7 @@ type problemMessageInspection struct {
 
 func problemInspection(path string, batch insight.Diagnostics) problemFileInspection {
 	out := problemFileInspection{Path: path, ServerID: batch.Boundary.Context.ID, Provider: diagnosticLabel(batch.Boundary.Producer.Provider),
-		State: batch.State, Limited: batch.Limited, Total: len(batch.Diagnostics)}
+		State: batch.State, Detail: diagnosticText(batch.Detail), ProducerInstance: batch.Boundary.Producer.InstanceID, Limited: batch.Limited, Total: len(batch.Diagnostics)}
 	diagnostics := slices.Clone(batch.Diagnostics)
 	sort.SliceStable(diagnostics, func(i, j int) bool {
 		a, b := diagnostics[i], diagnostics[j]

@@ -27,8 +27,8 @@ func TestSearchProjectFindsLiteralContentsAndFuzzyNames(t *testing.T) {
 	if len(content) == 0 || content[0].Line != 3 || content[0].NameOnly {
 		t.Fatalf("expected literal content match on line 3, got %+v", content)
 	}
-	if content[0].Context == "" || content[0].ContextStart != 1 {
-		t.Fatalf("expected preview context, got %+v", content[0])
+	if content[0].LineText != "func HandleWorkspaceEvent() {}" || content[0].Column != 5 {
+		t.Fatalf("expected exact source location, got %+v", content[0])
 	}
 
 	byName, err := SearchProject(context.Background(), root, "wsreg", ProjectSearchOptions{})

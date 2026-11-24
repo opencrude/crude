@@ -234,20 +234,15 @@ func TestLoadBudgets(t *testing.T) {
 			t.Fatalf("instruction budget = %v", err)
 		}
 	})
-	t.Run("resource", func(t *testing.T) {
+	t.Run("bundled asset is not a prompt", func(t *testing.T) {
 		directory := fixture(t, "test-skill", "name: test-skill\ndescription: Good.\n", "Body\n")
-		sparseFile(t, filepath.Join(directory, "oversized.bin"), skills.MaxFileBytes+1)
-		if _, err := skills.Load(directory); !errors.Is(err, skills.ErrLimit) {
-			t.Fatalf("resource budget = %v", err)
+		sparseFile(t, filepath.Join(directory, "asset.bin"), 65<<20)
+		skill, err := skills.Load(directory)
+		if err != nil {
+			t.Fatal(err)
 		}
-	})
-	t.Run("total-bytes", func(t *testing.T) {
-		directory := fixture(t, "test-skill", "name: test-skill\ndescription: Good.\n", "Body\n")
-		for number := 0; number < 5; number++ {
-			sparseFile(t, filepath.Join(directory, fmt.Sprintf("resource-%d.bin", number)), skills.MaxFileBytes)
-		}
-		if _, err := skills.Load(directory); !errors.Is(err, skills.ErrLimit) {
-			t.Fatalf("package byte budget = %v", err)
+		if _, err = skills.ReadFile(skill, "asset.bin", 1024); !errors.Is(err, skills.ErrLimit) {
+			t.Fatalf("oversized preview: %v", err)
 		}
 	})
 	t.Run("file-count", func(t *testing.T) {

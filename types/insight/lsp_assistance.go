@@ -6,7 +6,9 @@ import "slices"
 // the last synchronized source/context for the exact open file. Reading this
 // value never starts a server or sends a request.
 type LSPAssistanceCapabilities struct {
-	Producer            Producer
+	Producer Producer
+	// ContextGeneration tracks this producer even while a changed document awaits synchronization.
+	ContextGeneration   uint64
 	SynchronizedSource  Source
 	SynchronizedContext uint64
 	Completion          bool

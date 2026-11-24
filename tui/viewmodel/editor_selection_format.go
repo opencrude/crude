@@ -115,7 +115,7 @@ func (m *App) finishSelectionFormatting(msg selectionFormatResult) {
 		return
 	}
 	if msg.err == nil {
-		generation, version := m.ws.LSPMgr().ContextCursor()
+		generation, version := m.ws.LSPMgr().ContextCursor(s.path)
 		// A fast reply may precede its context topic. Retain it until that exact
 		// publication arrives; do not reject valid work or apply it speculatively.
 		if generation == "" || generation == msg.result.Boundary.Source.WorkspaceGeneration && version < msg.result.Boundary.Context.Generation {

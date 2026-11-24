@@ -94,11 +94,21 @@ func ParseDiagnosticSupport(raw json.RawMessage) (DiagnosticSupport, error) {
 	}
 	support := DiagnosticSupport{Identifier: options.Identifier, InterFileDependencies: options.InterFileDependencies,
 		WorkspaceDiagnostics: options.WorkspaceDiagnostics}
-	if options.DocumentSelector == nil {
-		return support, nil
+	var err error
+	support.Selector, err = ParseDocumentSelector(options.DocumentSelector)
+	return support, err
+}
+
+// ParseDocumentSelector decodes the common registration selector without guessing notebook or URI ownership.
+func ParseDocumentSelector(entries []json.RawMessage) (filters []DiagnosticFilter, err error) {
+	if len(entries) > maxDiagnosticSelectors {
+		return nil, ErrDiagnosticInvalid
 	}
-	support.Selector = []DiagnosticFilter{}
-	for _, entry := range options.DocumentSelector {
+	if entries == nil {
+		return filters, nil
+	}
+	filters = []DiagnosticFilter{}
+	for _, entry := range entries {
 		var filter struct {
 			Language string          `json:"language"`
 			Scheme   string          `json:"scheme"`
@@ -106,16 +116,16 @@ func ParseDiagnosticSupport(raw json.RawMessage) (DiagnosticSupport, error) {
 			Notebook json.RawMessage `json:"notebook"`
 		}
 		if json.Unmarshal(entry, &filter) != nil {
-			return DiagnosticSupport{}, ErrDiagnosticInvalid
+			return nil, ErrDiagnosticInvalid
 		}
 		pattern, err := globPattern(filter.Pattern)
 		if err != nil {
-			return DiagnosticSupport{}, err
+			return nil, err
 		}
-		support.Selector = append(support.Selector, DiagnosticFilter{Language: filter.Language, Scheme: filter.Scheme,
+		filters = append(filters, DiagnosticFilter{Language: filter.Language, Scheme: filter.Scheme,
 			Pattern: pattern, Notebook: len(filter.Notebook) != 0})
 	}
-	return support, nil
+	return filters, nil
 }
 
 // globPattern accepts a GlobPattern: a pattern string or a RelativePattern

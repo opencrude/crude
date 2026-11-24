@@ -576,7 +576,7 @@ func (m *imageFileVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch key.Code {
 		case tea.KeyF2:
 			if m.reference != nil {
-				return m, m.beginReferencePreview(*m.reference, true)
+				return m, m.beginReferencePreview(*m.reference)
 			}
 			_, cmd := m.App.Update(filetree.FileSelectedMsg{Path: m.path})
 			return m, cmd

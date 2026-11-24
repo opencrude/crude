@@ -175,7 +175,7 @@ func (b *CellBuffer) Resize(w, h int) {
 // Uses charmbracelet/x/ansi for grapheme cluster iteration and width measurement.
 // Returns the x position after the last written cell.
 func (b *CellBuffer) WriteString(x, y int, text string, fg, bg cell.Color, attr cell.Attrs, links ...*cell.Link) int {
-	end, arrange := b.writeText(x, y, text, fg, bg, attr, links)
+	end, arrange := b.writeText(x, y, b.width, text, fg, bg, attr, links)
 	if arrange {
 		b.arrangeLabel(x, y, end, text)
 	}
@@ -194,13 +194,17 @@ func firstCluster(s string) (string, int) {
 
 // writeText writes text in logical order and reports whether it contains a
 // character that can change its visual order.
-func (b *CellBuffer) writeText(x, y int, text string, fg, bg cell.Color, attr cell.Attrs, links []*cell.Link) (int, bool) {
-	if y < 0 || y >= b.height {
-		return x, false
-	}
+func (b *CellBuffer) writeText(x, y, right int, text string, fg, bg cell.Color, attr cell.Attrs, links []*cell.Link) (int, bool) {
 	var link *cell.Link
 	if len(links) > 0 {
 		link = links[0]
+	}
+	end, reorders, _ := b.writeTextRun(x, y, right, text, fg, bg, attr, link)
+	return end, reorders
+}
+func (b *CellBuffer) writeTextRun(x, y, right int, text string, fg, bg cell.Color, attr cell.Attrs, link *cell.Link) (int, bool, bool) {
+	if y < 0 || y >= b.height {
+		return x, false, false
 	}
 	curX := x
 	rest := text
@@ -219,8 +223,8 @@ func (b *CellBuffer) writeText(x, y int, text string, fg, bg cell.Color, attr ce
 			// Skip zero-width combining characters visually
 			continue
 		}
-		if curX >= b.width || curX+w > b.width {
-			break
+		if curX+w > right {
+			return curX, reorders, false
 		}
 		cellBG := bg
 		if bg.IsDefault() {
@@ -235,7 +239,7 @@ func (b *CellBuffer) writeText(x, y int, text string, fg, bg cell.Color, attr ce
 		b.Set(curX, y, cell.Cell{Char: r, Content: cluster, Width: uint8(w), Link: link, FG: fg, BG: cellBG, Attr: attr})
 		curX += w
 	}
-	return curX, reorders
+	return curX, reorders, true
 }
 
 // Clone creates a deep copy of the buffer.

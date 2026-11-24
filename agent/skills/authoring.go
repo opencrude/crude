@@ -117,7 +117,7 @@ func MakeLocalCopy(ctx context.Context, skill Skill, destination string) (Skill,
 			if err != nil {
 				return err
 			}
-			_, observed, copyErr := consumeFile(ctx, source, relative, MaxFileBytes, output)
+			_, observed, copyErr := consumeFile(ctx, source, relative, record.size, output)
 			if copyErr == nil && observed != record {
 				copyErr = ErrChanged
 			}

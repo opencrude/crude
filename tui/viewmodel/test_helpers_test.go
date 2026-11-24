@@ -2,6 +2,8 @@ package viewmodel
 
 import (
 	"crude/agent/turnloop"
+	"reflect"
+	"runtime"
 	"testing"
 	"time"
 
@@ -51,7 +53,12 @@ func runAppCommand(t *testing.T, app *App, command tea.Cmd) {
 	if entry, ok := liveTestFIFOs.Load(app); ok {
 		fifo = entry.(liveTestFIFO).fifo
 	}
-	results := make(chan tea.Msg, 64)
+	type commandResult struct {
+		id  int
+		msg tea.Msg
+	}
+	results := make(chan commandResult, 64)
+	waiting := map[int]string{}
 	pending, launched := 0, 0
 	launch := func(cmd tea.Cmd) {
 		if cmd == nil {
@@ -62,7 +69,9 @@ func runAppCommand(t *testing.T, app *App, command tea.Cmd) {
 			t.Fatal("app command journey did not settle")
 		}
 		pending++
-		go func() { results <- cmd() }()
+		id := launched
+		waiting[id] = runtime.FuncForPC(reflect.ValueOf(cmd).Pointer()).Name()
+		go func() { results <- commandResult{id, cmd()} }()
 	}
 	launch(command)
 	deadline := time.NewTimer(8 * time.Second)
@@ -70,7 +79,9 @@ func runAppCommand(t *testing.T, app *App, command tea.Cmd) {
 	for pending > 0 {
 		var message tea.Msg
 		select {
-		case message = <-results:
+		case result := <-results:
+			delete(waiting, result.id)
+			message = result.msg
 			pending--
 		case message = <-fifo:
 			// Fault-injection wrappers delegate this exact attachment. Match
@@ -85,7 +96,7 @@ func runAppCommand(t *testing.T, app *App, command tea.Cmd) {
 		case <-t.Context().Done():
 			t.Fatal("app command journey cancelled:", t.Context().Err())
 		case <-deadline.C:
-			t.Fatal("app command journey did not settle with its pushed publications")
+			t.Fatal("app command journey did not settle with its pushed publications:", waiting)
 		}
 		if batch, ok := message.(tea.BatchMsg); ok {
 			for _, cmd := range batch {
