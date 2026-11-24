@@ -16,6 +16,7 @@ import (
 // untouched credentials or other accounts.
 func (a *App) commitCoreAccount(change setting.AccountChange) (setting.App, error) {
 	var updated FileConfig
+	var forgetErr error
 	err := a.accounts.Commit(func(_ map[string]provider.Account) (map[string]provider.Account, error) {
 		a.configMu.Lock()
 		defer a.configMu.Unlock()
@@ -26,6 +27,9 @@ func (a *App) commitCoreAccount(change setting.AccountChange) (setting.App, erro
 			}
 			if change.Before != nil && change.Before.ID != change.ID {
 				return fmt.Errorf("invalid account precondition")
+			}
+			if change.ForgetCompaction && (change.Before == nil || !reflect.DeepEqual(current.Accounts[change.ID], *change.Before)) {
+				return fmt.Errorf("the account changed; review it before clearing checks")
 			}
 			if change.After == nil {
 				latest, exists := current.Accounts[change.ID]
@@ -71,12 +75,18 @@ func (a *App) commitCoreAccount(change setting.AccountChange) (setting.App, erro
 		a.fc = updated
 		a.persistedAccounts = cloneAccounts(updated.Accounts)
 		delete(a.rotationPredecessors, change.ID)
+		if change.ForgetCompaction {
+			forgetErr = provider.ForgetCompactionSupport(change.ID)
+		}
 		return updated.Accounts, nil
 	})
 	if err != nil {
 		return setting.App{}, err
 	}
 	a.notifyDefaultsChanged()
+	if forgetErr != nil {
+		return detachedCoreSettings(updated), fmt.Errorf("account saved, but compaction checks could not be cleared: %w", forgetErr)
+	}
 	return detachedCoreSettings(updated), nil
 }
 

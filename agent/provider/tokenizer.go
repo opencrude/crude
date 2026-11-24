@@ -39,6 +39,11 @@ func EstimateMessageTokens(msg ChatMessage, model string) int {
 	if msg.Refusal != "" && msg.Refusal != text {
 		tokens += EstimateTokens(msg.Refusal, model)
 	}
+	for _, item := range msg.ProviderItems {
+		if item.Type == nativeWindowItem && msg.Origin == OriginCheckpoint {
+			tokens = max(tokens, (len(item.Data)+3)/4)
+		}
+	}
 	if !hasReasoning {
 		for _, detail := range msg.ReasoningDetails {
 			tokens += estimateJSONText(detail, model)

@@ -32,10 +32,10 @@ func (a *actor) prepareApplicationSettings(request coreprotocol.Request) (func(c
 		if in.ID == "" {
 			return bad("invalid_request", "account identity is required")
 		}
-		if in.After == nil && (!exists || in.BeforeRevision != "" && in.BeforeRevision != entityRevision(before)) {
+		if (in.After == nil || in.ForgetCompaction) && (!exists || in.BeforeRevision != "" && in.BeforeRevision != entityRevision(before)) {
 			return bad("account_changed", "The account changed. Review it and try again.")
 		}
-		change := setting.AccountChange{ID: in.ID, ProviderID: before.ProviderID, RemovalPreview: in.RemovalPreview}
+		change := setting.AccountChange{ID: in.ID, ProviderID: before.ProviderID, RemovalPreview: in.RemovalPreview, ForgetCompaction: in.ForgetCompaction}
 		if exists {
 			copy := provider.CloneAccount(before)
 			change.Before = &copy

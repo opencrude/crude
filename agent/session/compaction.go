@@ -155,6 +155,10 @@ func (s *Session) compactionIdentity(agentID string) (providerID, accountID, mod
 	if s.runtimeProfile != nil {
 		effectiveCfg = s.runtimeProfile.EffectiveConfig(agentID)
 	}
+	main := effectiveCfg.ActiveDefaultCategory()
+	if p, err := effectiveCfg.providerForCategory(main); err == nil && p.UsesNativeCompaction() {
+		return p.ID, p.AccountID, main.Model
+	}
 	compactionCfg := effectiveCfg.CategoryConfig(CategoryErrand)
 	return effectiveCfg.providerIDForAccount(compactionCfg.AccountID), compactionCfg.AccountID, compactionCfg.Model
 }
@@ -380,21 +384,30 @@ func (s *Session) runPreparedCompaction(
 	}
 	activeCfg := effectiveCfg.ActiveDefaultCategory()
 	compactionCfg := effectiveCfg.CategoryConfig(CategoryErrand)
-	usageModel = compactionCfg.Model
-	turnProvider, err := effectiveCfg.providerForCategory(compactionCfg)
+	main, err := effectiveCfg.providerForCategory(activeCfg)
 	if err != nil {
-		return s.finishManualCompactionError(ctx, emit, operationID, trigger, turnloop.CompactResult{}, fmt.Errorf("configure compaction provider: %w", err))
+		return s.finishManualCompactionError(ctx, emit, operationID, trigger, turnloop.CompactResult{}, err)
 	}
-	compactAgent := s.newAgent(turnProvider, effectiveCfg.IsMultiAgentEnabled(), activeCfg.ModelModalities)
+	extractor, configErr := effectiveCfg.providerForCategory(compactionCfg)
+	if configErr != nil {
+		if !main.UsesNativeCompaction() {
+			return s.finishManualCompactionError(ctx, emit, operationID, trigger, turnloop.CompactResult{}, configErr)
+		}
+		extractor = main
+	}
+	usageModel = extractor.Model
+	compactAgent := s.newAgent(extractor, effectiveCfg.IsMultiAgentEnabled(), activeCfg.ModelModalities)
+	compactAgent.NativeCompactionProvider = main
+	compactAgent.CompactionTargetOutput = activeCfg.ModelMaxOutput
+	compactAgent.CompactionConfigError = configErr
 	compactAgent.AgentID = turnloop.AgentID(agentID)
 	compactAgent.TurnGeneration = generation + 1
 	compactAgent.CompactionTargetModel = activeCfg.Model
+	compactAgent.CompactionTargetWindow = main.ContextWindow(activeCfg.Model)
 	compactAgent.MaxOutputTokens = compactionCfg.ModelMaxOutput
 	_, agentProfile := activeProfileCfg(effectiveCfg)
 	compactAgent.CompactionAgentProfile = agentProfile + "/" + CategoryErrand
-	if targetProvider, targetErr := effectiveCfg.providerForCategory(activeCfg); targetErr == nil {
-		compactAgent.CompactionTargetWindow = targetProvider.ContextWindow(activeCfg.Model)
-	}
+	_, compactAgent.CompactionRetentionTokens = rootCompactionChoice(activeCfg)
 	compactAgent.PrepareCompaction = func(source turnloop.CompactionSource) error {
 		var err error
 		revision, err = s.beginRootCompaction(agentID, source)

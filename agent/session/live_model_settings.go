@@ -12,6 +12,7 @@ import (
 func (s *Session) bindLiveModelSettings(a *turnloop.Agent, initial *Config, current func() (*Config, CategoryConfig)) {
 	errand := initial.CategoryConfig(CategoryErrand)
 	source := a.CompactionProvider
+	previousAccount := initial.Accounts[errand.AccountID]
 	a.LiveSettings = func() turnloop.LiveSettings {
 		cfg, role := current()
 		live := turnloop.LiveSettings{MaxOutputTokens: a.MaxOutputTokens, CompactionProvider: source, CompactionMaxOutput: errand.ModelMaxOutput}
@@ -19,13 +20,13 @@ func (s *Session) bindLiveModelSettings(a *turnloop.Agent, initial *Config, curr
 		if role.Model == a.Model && role.AccountID == a.Provider.AccountID {
 			live.MaxOutputTokens = role.ModelMaxOutput
 		}
-		if next := cfg.CategoryConfig(CategoryErrand); !reflect.DeepEqual(next, errand) {
+		if next := cfg.CategoryConfig(CategoryErrand); !reflect.DeepEqual(next, errand) || !reflect.DeepEqual(cfg.Accounts[next.AccountID], previousAccount) {
 			p, err := cfg.providerForCategory(next)
+			source, errand, previousAccount = p, next, cfg.Accounts[next.AccountID]
+			a.CompactionConfigError = err
+			live.CompactionProvider, live.CompactionMaxOutput = p, next.ModelMaxOutput
 			if err != nil {
 				s.logger.Warn("CTX", "compaction_connection_rejected", "error", err.Error())
-			} else {
-				source, errand = p, next
-				live.CompactionProvider, live.CompactionMaxOutput = p, next.ModelMaxOutput
 			}
 		}
 		return live

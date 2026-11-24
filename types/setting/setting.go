@@ -255,8 +255,9 @@ type App struct {
 	Terminal     Terminal                    `json:"terminal,omitempty"`
 	// Shells are observations on the core host, never persisted choices. A local
 	// attachment may supply a different search environment for new terminals.
-	TerminalShells []TerminalShell `json:"-"`
-	AgentShells    []TerminalShell `json:"-"`
+	CompactionChecks []provider.CompactionObservation `json:"-"`
+	TerminalShells   []TerminalShell                  `json:"-"`
+	AgentShells      []TerminalShell                  `json:"-"`
 	// Network is application-owned: trust, proxy credentials and client
 	// identities must never be promoted by a project's settings overlay.
 	Network network.Settings `json:"network,omitempty"`

@@ -144,6 +144,9 @@ func (template Template) Validate() error {
 	if _, ok := canonicalProtocolID(template.APIStandard); !ok {
 		return fmt.Errorf("select a supported wire protocol")
 	}
+	if ps := template.Protocol; ps != nil && ps.Compaction != "" && ps.Compaction != CompactionProviderOnly && ps.Compaction != CompactionErrandOnly {
+		return fmt.Errorf("select a supported compaction method")
+	}
 	switch template.AuthType {
 	case AuthProtocol, AuthBearer, AuthNone:
 	case AuthCustomHeader:

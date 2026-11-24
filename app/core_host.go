@@ -117,8 +117,12 @@ func RunCore(opts CoreOptions) error {
 	}
 	catalog, catalogErr := provider.OpenModelCatalog(filepath.Join(dataDir, "model-catalog.db"), provider.DefaultModelSources())
 	if catalogErr != nil {
+		provider.UseModelCatalog(nil)
 		lg.Warn("CATALOG", "cache_unavailable", "error", catalogErr.Error())
 	} else {
+		if err := catalog.PruneCompactionSupport(application.accounts.Snapshot()); err != nil {
+			lg.Warn("CATALOG", "compaction_cleanup_failed", "error", err.Error())
+		}
 		provider.UseModelCatalog(catalog)
 		defer func() { _ = catalog.Close() }()
 	}

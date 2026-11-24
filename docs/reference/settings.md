@@ -103,6 +103,16 @@ explicit changes; unrelated preferences never replay the account map. Ordinary
 account edits do not require a configuration revision. Credential rotation still
 cannot revive a removed/reconnected account. Accounts remain application-only.
 
+**Compaction** in the account editor selects **Auto** (default), **Provider only**, or
+**Errand only**. Auto checks the selected wire and model at first need and uses
+Errand for any checkpoint the provider cannot finish. Provider only does not
+substitute another model. Errand only makes no native discovery
+requests. The agent's **Compact context at** help shows the selected model's
+observed support. **Forget compaction checks**, when offered, takes effect on
+Save; Cancel changes nothing. The next eligible compaction discovers again.
+This does not delete transcripts or force a cold replay of an existing checkpoint.
+See [native compaction](adaptive-context.md#native-compaction-on-custom-connections).
+
 **Removing an account cleans up application settings.** Before you confirm, the
 dialog shows which application settings change
 (`setting.AccountUses`). Confirming removes the account and, in the same file

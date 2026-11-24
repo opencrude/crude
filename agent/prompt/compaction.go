@@ -194,3 +194,8 @@ func AnsweredHumanRequests(requests []string) string {
 	out.WriteString("\n</answered_human_requests>")
 	return out.String()
 }
+
+// CompactionChallenge supplies inert text for a small native replay check.
+func CompactionChallenge(ticket string) (string, string) {
+	return "Remember the ticket code " + ticket + " exactly, including its prefix.", "What was the ticket code? Respond with only the exact code."
+}

@@ -860,6 +860,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 
 	var turnProvider, compactionProvider *provider.Provider
 	var compactionCfg CategoryConfig
+	var compactionConfigErr error
 	if !recoverStep(turnloop.RecoveryFailureConfiguration, func() error {
 		effectiveCfg = s.runtimeProfile.EffectiveConfig(o.ID)
 		if effectiveCfg == nil {
@@ -875,8 +876,11 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 			return err
 		}
 		compactionCfg = effectiveCfg.CategoryConfig(CategoryErrand)
-		compactionProvider, err = effectiveCfg.providerForCategory(compactionCfg)
-		return err
+		compactionProvider, compactionConfigErr = effectiveCfg.providerForCategory(compactionCfg)
+		if turnProvider.UsesNativeCompaction() {
+			return nil
+		}
+		return compactionConfigErr
 	}) {
 		return
 	}
@@ -915,6 +919,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	ag.MaxOutputTokens = activeCfg.ModelMaxOutput
 	ag.ReasoningContentKind = s.inferredReasoningKind(o.ID, turnProvider.ID, turnProvider.AccountID, turnProvider.Model)
 	ag.CompactionProvider = compactionProvider
+	ag.CompactionConfigError = compactionConfigErr
 	ag.CompactionMaxOutput = compactionCfg.ModelMaxOutput
 	_, agentProfile := activeProfileCfg(effectiveCfg)
 	ag.CompactionAgentProfile = agentProfile + "/" + CategoryErrand
@@ -1195,7 +1200,8 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		}
 		currentCompactionCfg := current.CategoryConfig(CategoryErrand)
 		currentCompactionProvider, err := current.providerForCategory(currentCompactionCfg)
-		if err != nil {
+		ag.CompactionConfigError = err
+		if err != nil && !currentProvider.UsesNativeCompaction() {
 			return "", err
 		}
 		activeCfg = category

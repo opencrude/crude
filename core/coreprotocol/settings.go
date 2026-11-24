@@ -128,10 +128,11 @@ type AccountDraft struct {
 	ExtraBody  SecretObject      `json:"extra_body"`
 }
 type AccountChangeRequest struct {
-	ID             string        `json:"id"`
-	After          *AccountDraft `json:"after"`
-	BeforeRevision string        `json:"before_revision,omitempty"`
-	RemovalPreview string        `json:"removal_preview,omitempty"`
+	ForgetCompaction bool          `json:"forget_compaction,omitempty"`
+	ID               string        `json:"id"`
+	After            *AccountDraft `json:"after"`
+	BeforeRevision   string        `json:"before_revision,omitempty"`
+	RemovalPreview   string        `json:"removal_preview,omitempty"`
 }
 type AccountModelsRequest struct {
 	AccountID string        `json:"account_id"`
@@ -141,15 +142,16 @@ type AccountModelsResult struct {
 	Models []setting.ModelEntry `json:"models"`
 }
 type SettingsFetchResult struct {
-	ApplicationRevision      string                     `json:"application_revision"`
-	WorkspaceRevision        string                     `json:"workspace_revision"`
-	CapabilitiesRevision     string                     `json:"capabilities_revision"`
-	Application              setting.App                `json:"application"`
-	Effective                setting.App                `json:"effective"`
-	Overrides                setting.WorkspaceOverrides `json:"overrides"`
-	Accounts                 map[string]AccountView     `json:"accounts"`
-	ProxyCredentialsPresent  bool                       `json:"proxy_credentials_present"`
-	ConnectionSecretsPresent map[string]bool            `json:"connection_secrets_present"`
+	CompactionChecks         []provider.CompactionObservation `json:"compaction_checks,omitempty"`
+	ApplicationRevision      string                           `json:"application_revision"`
+	WorkspaceRevision        string                           `json:"workspace_revision"`
+	CapabilitiesRevision     string                           `json:"capabilities_revision"`
+	Application              setting.App                      `json:"application"`
+	Effective                setting.App                      `json:"effective"`
+	Overrides                setting.WorkspaceOverrides       `json:"overrides"`
+	Accounts                 map[string]AccountView           `json:"accounts"`
+	ProxyCredentialsPresent  bool                             `json:"proxy_credentials_present"`
+	ConnectionSecretsPresent map[string]bool                  `json:"connection_secrets_present"`
 	// ConnectionSecretFields reports exactly which write-only connection fields
 	// hold a value, so shells can show and keep each one without receiving it.
 	ConnectionSecretFields map[string]ConnectionSecretPresence `json:"connection_secret_fields,omitempty"`

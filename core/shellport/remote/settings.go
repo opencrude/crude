@@ -98,6 +98,7 @@ func (w *Workspace) AppDefaults() setting.App {
 	value := setting.MergeAppWorkspace(w.settings.current.fetch.Application, setting.WorkspaceOverrides{})
 	value.Accounts = w.settings.accounts()
 	value.Capabilities = markStoredCapabilities(value.Capabilities, w.settings.current.fetch.ConnectionSecretFields)
+	value.CompactionChecks = slices.Clone(w.settings.current.fetch.CompactionChecks)
 	value.TerminalShells = setting.CloneTerminalShells(w.settings.current.fetch.TerminalShells)
 	value.AgentShells = setting.CloneTerminalShells(w.settings.current.fetch.AgentShells)
 	return value
@@ -127,6 +128,7 @@ func (w *Workspace) LoadAppSettings() setting.App {
 	setting.ApplyAppDefaults(&value)
 	value.Accounts = w.settings.accounts()
 	value.Capabilities = markStoredCapabilities(value.Capabilities, w.settings.current.fetch.ConnectionSecretFields)
+	value.CompactionChecks = slices.Clone(w.settings.current.fetch.CompactionChecks)
 	value.TerminalShells = setting.CloneTerminalShells(w.settings.current.fetch.TerminalShells)
 	value.AgentShells = setting.CloneTerminalShells(w.settings.current.fetch.AgentShells)
 	return value
@@ -205,8 +207,8 @@ func draft(after provider.Account, before coreprotocol.AccountView, exists bool)
 // SaveAccountChange saves an account change and refreshes the settings.
 func (w *Workspace) SaveAccountChange(change setting.AccountChange) error {
 	before, exists := w.settingsBase().Accounts[change.ID]
-	request := coreprotocol.AccountChangeRequest{ID: change.ID, RemovalPreview: change.RemovalPreview}
-	if change.After == nil && exists {
+	request := coreprotocol.AccountChangeRequest{ID: change.ID, RemovalPreview: change.RemovalPreview, ForgetCompaction: change.ForgetCompaction}
+	if (change.After == nil || change.ForgetCompaction) && exists {
 		request.BeforeRevision = before.Revision
 	}
 	if change.After != nil {

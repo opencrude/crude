@@ -663,6 +663,7 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec turnloop.SubAg
 			a.CompactionProvider = compactionProvider
 			a.CompactionMaxOutput = compactionCfg.ModelMaxOutput
 		} else {
+			a.CompactionConfigError = compactionErr
 			r.session.logger.Warn("COMPACT", "errand_provider_unavailable", "agent_id", spec.ID, "error", compactionErr.Error())
 		}
 	}
@@ -1758,7 +1759,8 @@ func (r *SubAgentRunner) runSubAgentLoop(
 		handle.Spec.Provider = currentProvider.ID
 		if compactionCfg := cfg.CategoryConfig(CategoryErrand); compactionCfg.Model != "" {
 			compactionProvider, compactionErr := cfg.providerForCategory(compactionCfg)
-			if compactionErr != nil {
+			handle.Agent.CompactionConfigError = compactionErr
+			if compactionErr != nil && !currentProvider.UsesNativeCompaction() {
 				return "", compactionErr
 			}
 			handle.Agent.CompactionProvider = compactionProvider

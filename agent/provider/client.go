@@ -284,6 +284,7 @@ func newHTTPClient(dial DialConfig) (*http.Client, error) {
 
 // Complete performs a non-streaming chat request.
 func (c *Client) Complete(ctx context.Context, req *ChatRequest) (*ChatResponse, error) {
+	c = c.checkpointClient(req)
 	req = c.withContinuationPolicy(withStreamFlag(req, false))
 	canonicalRequest := req
 	body, err := c.encodeChatRequest(req)
@@ -381,6 +382,7 @@ func (c *Client) Complete(ctx context.Context, req *ChatRequest) (*ChatResponse,
 // do not commit a stochastic response; content, reasoning, tool calls and opaque
 // provider items do. Next returns io.EOF after the terminal update.
 func (c *Client) Stream(ctx context.Context, req *ChatRequest) (*ChatStream, error) {
+	c = c.checkpointClient(req)
 	req = c.withContinuationPolicy(withStreamFlag(req, true))
 	body, err := c.encodeChatRequest(req)
 	if err != nil {

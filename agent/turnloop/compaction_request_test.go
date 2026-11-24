@@ -120,13 +120,20 @@ func TestRunAppliesLiveSettingsBeforeEachStep(t *testing.T) {
 }
 
 // The wire is Responses, the main model is Claude, and the summarizer uses a
-// separate Chat connection. No endpoint is contacted to guess its capabilities.
+// separate Chat connection. Only synthetic input may reach discovery.
 func TestCustomResponsesColdCheckpoint(t *testing.T) {
 	var mainCalls atomic.Int32
 	const old = "long historical assistant output: "
 	const instruction = "Continue checking the unresolved build error."
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mainCalls.Add(1)
+		if r.URL.Path == "/v1/responses/compact" {
+			b, _ := io.ReadAll(r.Body)
+			if strings.Contains(string(b), old) || strings.Contains(string(b), instruction) {
+				t.Error("probe received real history")
+			}
+			http.NotFound(w, r)
+			return
+		}
 		var body struct {
 			Model    string
 			Input    json.RawMessage
@@ -136,6 +143,14 @@ func TestCustomResponsesColdCheckpoint(t *testing.T) {
 			t.Error(err)
 			return
 		}
+		if strings.Contains(string(body.Input), "compaction_trigger") {
+			if strings.Contains(string(body.Input), old) || strings.Contains(string(body.Input), instruction) {
+				t.Fatal("trigger probe exposed conversation")
+			}
+			http.Error(w, `{"error":{"message":"unsupported compaction trigger"}}`, http.StatusBadRequest)
+			return
+		}
+		mainCalls.Add(1)
 		if r.URL.Path != "/v1/responses" || body.Model != "claude-gateway-test" || body.Previous != "" || !strings.Contains(string(body.Input), "context_checkpoint") || !strings.Contains(string(body.Input), instruction) || strings.Contains(string(body.Input), old) {
 			t.Errorf("unexpected cold request: path=%s model=%s bytes=%d anchor=%s", r.URL.Path, body.Model, len(body.Input), body.Previous)
 		}
@@ -165,5 +180,158 @@ func TestCustomResponsesColdCheckpoint(t *testing.T) {
 	a.Run(t.Context(), history, "system", func(e AgentEvent) { events = append(events, e) }, nil, "", nil)
 	if mainCalls.Load() != 1 || recorder.compactions.Load() != 1 || !hasEvent(events, "context_compacted") || hasEvent(events, "error") || len(archived) < len(history) || !strings.Contains(archived[1].ContentString(), old) {
 		t.Fatalf("main=%d extractions=%d archived=%d", mainCalls.Load(), recorder.compactions.Load(), len(archived))
+	}
+}
+
+func TestAutomaticNativeCheckpointRecoversRejectedArtifactBeforeOutput(t *testing.T) {
+	var paid, normal atomic.Int32
+	var observedTicket string
+	const handoff = "<<<intent>>>\nKeep the build passing\n<<<work>>>\nChecked inputs\n<<<state>>>\nTarget is blue\n<<<continuation>>>\nCheck the target"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		s := string(raw)
+		var body struct {
+			Instructions string
+			Input        json.RawMessage
+			Model        string
+			Stream       bool
+		}
+		_ = json.Unmarshal(raw, &body)
+		if body.Model != "fixture-native" {
+			t.Error("provider-only switched models")
+		}
+		if strings.HasSuffix(r.URL.Path, "/compact") {
+			token := "secret-real"
+			if strings.Contains(s, "old assistant evidence") {
+				paid.Add(1)
+			} else {
+				parts := strings.Fields(body.Instructions)
+				if len(parts) < 5 {
+					t.Error("missing probe code")
+					return
+				}
+				observedTicket = parts[4]
+				token = "secret-probe"
+			}
+			fmt.Fprintf(w, `{"object":"response.compaction","output":[{"type":"compaction","encrypted_content":%q}]}`, token)
+			return
+		}
+		if strings.Contains(s, "old assistant evidence") {
+			t.Error("old history replayed")
+		}
+		if !body.Stream {
+			answer := handoff
+			if strings.Contains(s, "secret-probe") {
+				answer = observedTicket
+			}
+			fmt.Fprintf(w, `{"object":"response","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":%q}]}]}`, strings.TrimSuffix(answer, ","))
+			return
+		}
+		if normal.Add(1) == 1 {
+			if !strings.Contains(s, "secret-real") {
+				t.Error("missing native window on main request")
+			}
+			http.Error(w, `{"error":{"message":"invalid compaction item"}}`, http.StatusBadRequest)
+			return
+		}
+		if strings.Contains(s, "secret-real") || !strings.Contains(s, "context_checkpoint") || !strings.Contains(s, "Target is blue") {
+			t.Error("main retry did not use portable state")
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_done\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"done\"}]}]}}\n\n")
+	}))
+	defer server.Close()
+	p := &provider.Provider{ID: "custom", AccountID: "native-e2e", StandardName: "openai-responses", Model: "fixture-native", BaseURL: server.URL}
+	p.SetProtocolSettings(&provider.ProtocolSettings{Compaction: provider.CompactionProviderOnly})
+	p.SetContextWindow(100000)
+	a := newTestAgent(t, p, p.Model)
+	a.ContextCompactionPercent = 20
+	history := []provider.ChatMessage{provider.NewTextMessage("assistant", strings.Repeat("old assistant evidence ", 4500)), provider.NewTextMessage("user", "Keep the build passing")}
+	var commits int
+	var events []AgentEvent
+	a.CommitCompaction = func(c CompactionCommit) error {
+		commits++
+		if len(c.Messages[0].ProviderItems) != 1 || c.ModelID != p.Model {
+			t.Error("committed the wrong source")
+		}
+		return nil
+	}
+	a.Run(t.Context(), history, "system", func(e AgentEvent) { events = append(events, e) }, nil, "", nil)
+	if a.RunFailure() != nil || commits != 1 || paid.Load() != 1 || normal.Load() != 2 || !hasEvent(events, "compaction_route_notice") {
+		t.Fatalf("failure=%v commits=%d native=%d normal=%d", a.RunFailure(), commits, paid.Load(), normal.Load())
+	}
+}
+
+// In Auto an uncertain native result must not stop the run or resend the
+// paid request: Errand writes the full checkpoint and the user is told once.
+func TestAutoUncertainNativeCheckpointUsesErrandAndContinues(t *testing.T) {
+	var paid, mainCalls atomic.Int32
+	var ticket atomic.Value
+	const old = "old assistant evidence "
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		s := string(raw)
+		var body struct {
+			Instructions string
+			Stream       bool
+		}
+		_ = json.Unmarshal(raw, &body)
+		if strings.HasSuffix(r.URL.Path, "/compact") {
+			if strings.Contains(s, old) {
+				paid.Add(1)
+				http.Error(w, `{"error":{"message":"upstream timed out"}}`, http.StatusBadGateway)
+				return
+			}
+			if parts := strings.Fields(body.Instructions); len(parts) > 4 {
+				ticket.Store(parts[4])
+			}
+			fmt.Fprint(w, `{"object":"response.compaction","output":[{"type":"compaction","encrypted_content":"probe-token"}]}`)
+			return
+		}
+		if !body.Stream {
+			answer, _ := ticket.Load().(string)
+			fmt.Fprintf(w, `{"object":"response","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":%q}]}]}`, answer)
+			return
+		}
+		mainCalls.Add(1)
+		if strings.Contains(s, old) || !strings.Contains(s, "context_checkpoint") {
+			t.Error("main request did not use the portable checkpoint")
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, `data: {"type":"response.completed","response":{"id":"resp_1","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}]}}`+"\n\n")
+	}))
+	defer gateway.Close()
+	recorder := &precompactionServer{}
+	summary := httptest.NewServer(recorder.handler(t))
+	defer summary.Close()
+	p := &provider.Provider{ID: "custom", AccountID: "auto-uncertain", StandardName: "openai-responses", Model: "auto-native", BaseURL: gateway.URL + "/v1"}
+	p.SetContextWindow(100_000)
+	a := newTestAgent(t, p, p.Model)
+	a.CompactionProvider = provider.FromPreset("openai-chat", "key", summary.URL)
+	a.CompactionProvider.Model = "extractor-test"
+	a.CompactionProvider.SetContextWindow(200_000)
+	a.ContextCompactionPercent = 10
+	var history []provider.ChatMessage
+	for i := range 14 {
+		history = append(history, provider.NewTextMessage("user", fmt.Sprintf("step %d", i)), provider.NewTextMessage("assistant", old+strings.Repeat("payload ", 1400)))
+	}
+	history = append(history, provider.NewTextMessage("user", "Continue the check."))
+	var events []AgentEvent
+	a.Run(t.Context(), history, "system", func(e AgentEvent) { events = append(events, e) }, nil, "", nil)
+	var reason string
+	for _, e := range events {
+		if e.Type == "compaction_route_notice" {
+			reason, _ = e.Data.(map[string]any)["reason"].(string)
+		}
+	}
+	if a.RunFailure() != nil || paid.Load() != 1 || recorder.compactions.Load() != 1 || mainCalls.Load() != 1 || hasEvent(events, "error") || !hasEvent(events, "context_compacted") {
+		t.Fatalf("failure=%v native=%d errand=%d main=%d", a.RunFailure(), paid.Load(), recorder.compactions.Load(), mainCalls.Load())
+	}
+	if reason != "The provider did not confirm native compaction (HTTP 502). Using Errand." {
+		t.Fatalf("notice %q", reason)
 	}
 }

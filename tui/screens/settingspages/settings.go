@@ -248,10 +248,11 @@ type Model struct {
 }
 
 type accountEdit struct {
-	original *provider.Account
-	draft    provider.Account
-	seedID   string
-	isNew    bool
+	forgetCompaction bool
+	original         *provider.Account
+	draft            provider.Account
+	seedID           string
+	isNew            bool
 }
 
 const (
@@ -570,7 +571,7 @@ func (m *Model) accountEditorDirty() bool {
 	if edit.isNew {
 		return m.categories[catAccounts].Form.AnyDirty() || edit.draft.Label != "" || edit.draft.APIKey != "" || edit.draft.OAuth != nil
 	}
-	return edit.original != nil && !reflect.DeepEqual(*edit.original, edit.draft)
+	return edit.forgetCompaction || edit.original != nil && !reflect.DeepEqual(*edit.original, edit.draft)
 }
 
 func (m *Model) buildHistoryForm(settings setting.LocalHistory) *ui.FormModel {
@@ -878,7 +879,7 @@ func (m *Model) accountEditChange() (setting.AccountChange, error) {
 		return setting.AccountChange{}, fmt.Errorf("configure this account's credentials")
 	}
 	a = provider.CloneAccount(a)
-	change := setting.AccountChange{ID: a.ID, ProviderID: a.ProviderID, Before: edit.original, After: &a}
+	change := setting.AccountChange{ID: a.ID, ProviderID: a.ProviderID, Before: edit.original, After: &a, ForgetCompaction: edit.forgetCompaction}
 	return change, nil
 }
 
@@ -965,6 +966,7 @@ func (m *Model) SignInRequest() (string, uint64) {
 
 // Field IDs for the protocol option, capability, and sampling rows.
 const (
+	fieldCompactionMethod    = "compaction-method"
 	fieldProtocolStore       = "protocol-store"
 	fieldProtocolMediaReplay = "protocol-media-replay-recovery"
 	fieldProtocolZDR         = "protocol-zdr"
@@ -1308,8 +1310,7 @@ func (m *Model) buildAgentForm(cfg setting.Category, isMain bool, modelSection .
 	fields = append(fields, modelSection...)
 	fields = append(fields, m.capabilityFields(cfg)...)
 	compactionField := optionalNumberField(fieldContextCompaction, "Compact context at", cfg.ContextCompactionPercent, "% full",
-		"Blank is Auto (cost and capacity aware). A percent compacts there; 0 is off.",
-		0, 100)
+		compactAtDescription(m.compactionHint(cfg.AccountID, cfg.Model)), 0, 100)
 	retentionField := optionalNumberField(fieldContextRetention, "Keep older input", cfg.ContextRetentionTokens, "tokens",
 		"Blank is Auto: older requests kept up to the checkpoint's size.",
 		setting.MinContextRetentionTokens, setting.MaxContextRetentionTokens)
@@ -1899,6 +1900,9 @@ func (m *Model) handleFieldChanged(category int, fieldID string) {
 		}
 		m.syncAgentConnection(category)
 		return
+	}
+	if m.isAgentCategory(category) && fieldID == fieldModel {
+		m.syncCompactionHint(category)
 	}
 	if (m.isAgentCategory(category) || category == catMemory) && fieldID == fieldModel {
 		m.autofillCapabilities(category)
@@ -2744,6 +2748,9 @@ func (m *Model) protocolSettingsFromForm(category int) *provider.ProtocolSetting
 		ReasoningSummaries:  m.triStateAt(category, fieldProtocolSummaries),
 		Truncation:          m.truncationAt(category, fieldProtocolTruncate),
 		ServiceTier:         m.value(category, fieldProtocolTier),
+	}
+	if method := m.value(category, fieldCompactionMethod); method != "auto" {
+		settings.Compaction = method
 	}
 	if settings == (provider.ProtocolSettings{}) {
 		return nil

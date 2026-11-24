@@ -60,13 +60,18 @@ type Agent struct {
 	// snapshot for this Agent instance. Native reads and dynamic tool results
 	// must use it instead of another role's settings or the mutable model catalog.
 	// Nil remains available for standalone agents that inherit catalog policy.
-	MediaReadPolicy        *tools.MediaReadPolicy
-	ControlTarget          *control.Target
-	ReasoningContentKind   reasoning.Kind
-	condensedSamples       int
-	rawSamples             int
-	sawRawReasoning        bool
-	CompactionProvider     *provider.Provider
+	MediaReadPolicy      *tools.MediaReadPolicy
+	ControlTarget        *control.Target
+	ReasoningContentKind reasoning.Kind
+	condensedSamples     int
+	rawSamples           int
+	sawRawReasoning      bool
+	CompactionProvider   *provider.Provider
+	// NativeCompactionProvider is the main connection for a detached extraction agent.
+	NativeCompactionProvider *provider.Provider
+	// CompactionConfigError preserves a missing Errand binding without blocking native use.
+	CompactionConfigError  error
+	CompactionTargetOutput int
 	CompactionTargetModel  string
 	CompactionTargetWindow int
 	CompactionTargetTokens int

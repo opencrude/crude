@@ -183,7 +183,10 @@ func TestFIMRefusesBeforeNetwork(t *testing.T) {
 		func(p *Provider) { p.SetOAuth(&OAuthCredentials{AccessToken: "no"}) },
 		func(p *Provider) { p.extraBody = map[string]any{"model": "override"} },
 		func(p *Provider) { p.extraBody = map[string]any{"unknown": true} },
-		func(p *Provider) { p.protocolSettings = &ProtocolSettings{} },
+		func(p *Provider) { p.protocolSettings = &ProtocolSettings{ServiceTier: "flex"} },
+		func(p *Provider) {
+			p.protocolSettings = &ProtocolSettings{Compaction: CompactionProviderOnly, ZeroDataRetention: true}
+		},
 		func(p *Provider) { p.thinkingEffort = "high" },
 		func(p *Provider) { v := 0.1; p.SetSampling(&v, nil) },
 		func(p *Provider) { p.headers = map[string]string{"Idempotency-Key": "x"} },
@@ -199,6 +202,12 @@ func TestFIMRefusesBeforeNetwork(t *testing.T) {
 	}
 	if calls.Load() != 0 {
 		t.Fatalf("invalid forms made %d requests", calls.Load())
+	}
+	// The account's compaction method is not a FIM request option.
+	compaction := &Provider{BaseURL: p.BaseURL, StandardName: "openai"}
+	compaction.SetProtocolSettings(&ProtocolSettings{Compaction: CompactionProviderOnly})
+	if got, err := compaction.CompleteFIMOnce(context.Background(), fimRequest()); err != nil || !got.Accepted {
+		t.Fatalf("compaction choice blocked FIM: %+v %v", got, err)
 	}
 }
 
