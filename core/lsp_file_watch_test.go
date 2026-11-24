@@ -204,7 +204,7 @@ func TestWatchGapFencesInflightCallbackFromReplacement(t *testing.T) {
 }
 
 func TestWatchRootLossRemainsUnreliable(t *testing.T) {
-	for _, operation := range []string{"rename", "remove", "replace"} {
+	for _, operation := range []string{"rename", "remove", "delete-first", "replace"} {
 		t.Run(operation, func(t *testing.T) {
 			parent := t.TempDir()
 			root := filepath.Join(parent, "project")
@@ -218,7 +218,16 @@ func TestWatchRootLossRemainsUnreliable(t *testing.T) {
 			w, r := watchManagerFixture(t, root, path)
 			m := w.LSPMgr
 			states := make(chan bool, 100)
-			watch, err := startCoreFileWatch(root, nil, m.NotifyWatchedFilesChanged, func(v bool) { m.SetProjectWatchReliable(v); states <- v })
+			notify := func(ctx context.Context, changed string, kind int) {
+				// Removing a nonempty root also reports child changes. Hold
+				// the child's callback in this case so root loss must fence
+				// the retained fact, regardless of native scheduling.
+				if operation == "remove" && changed == path {
+					<-ctx.Done()
+				}
+				m.NotifyWatchedFilesChanged(ctx, changed, kind)
+			}
+			watch, err := startCoreFileWatch(root, nil, notify, func(v bool) { m.SetProjectWatchReliable(v); states <- v })
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -237,7 +246,16 @@ func TestWatchRootLossRemainsUnreliable(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if operation == "remove" {
+			if operation == "delete-first" {
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+				watchAwait(t, "deleted file's problem to clear", func() bool {
+					f, _ := m.FileDiagnostics(path)
+					return len(f.Diagnostics) == 0
+				})
+			}
+			if operation == "remove" || operation == "delete-first" {
 				if err := os.RemoveAll(root); err != nil {
 					t.Fatal(err)
 				}
@@ -268,8 +286,20 @@ func TestWatchRootLossRemainsUnreliable(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(root, "nested", "edit"), []byte("x"), 0600); err != nil {
 				t.Fatal(err)
 			}
-			watchAwait(t, "stale diagnostics", func() bool { f, ok := m.FileDiagnostics(path); return ok && f.State == insight.Stale })
+			if operation != "delete-first" {
+				watchAwait(t, "stale diagnostics", func() bool {
+					f, ok := m.FileDiagnostics(path)
+					return ok && f.State == insight.Stale && len(f.Diagnostics) == 1 && f.Diagnostics[0].Message == "fixture error"
+				})
+			}
 			watch.Close()
+			if operation == "delete-first" {
+				// The server may report an empty batch after the confirmed
+				// deletion. Root loss must not make that evidence current.
+				if f, ok := m.FileDiagnostics(path); ok && (f.State != insight.Stale || len(f.Diagnostics) != 0) {
+					t.Fatalf("root loss revived evidence for a previously deleted file: %+v", f)
+				}
+			}
 			close(states)
 			for v := range states {
 				if v {

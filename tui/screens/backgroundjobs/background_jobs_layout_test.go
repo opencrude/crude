@@ -60,7 +60,7 @@ func TestMixedJobsLeadWithWorkAndKeepControlsAligned(t *testing.T) {
 	now := time.Now()
 	for _, width := range []int{68, 80, 120, 160} {
 		s := New(theme.DefaultDark())
-		s.SetJobs([]Job{{Handle: "tests", Command: "go test ./...", Status: "running", StartedAt: now}, {TaskID: "mcp", Handle: "auto-1", Command: "Desktop tools", Status: "running", Progress: command.Progress{Phase: "Connecting"}, StartedAt: now.Add(time.Second)}, {TaskID: "skill", Handle: "auto-2", Command: "Review guide", Status: "running", Progress: command.Progress{Phase: "Downloading", Current: 37, Total: 100}, StartedAt: now.Add(2 * time.Second)}, {Handle: "previous", Command: "go vet", Status: "failed", Error: "exit status 1", EndedAt: now, StartedAt: now.Add(3 * time.Second)}}, now)
+		s.SetJobs([]Job{{Handle: "tests", Command: "go test ./...", Status: "running", StartedAt: now}, {TaskID: "mcp", Handle: "auto-1", Command: "Desktop tools", Status: "running", Progress: command.Progress{Phase: "Connecting"}, StartedAt: now.Add(time.Second)}, {TaskID: "skill", Handle: "auto-2", Command: "Review guide", Status: "running", Progress: command.Progress{Phase: "Downloading skill", Current: 37, Total: 100}, StartedAt: now.Add(2 * time.Second)}, {Handle: "previous", Command: "go vet", Status: "failed", Error: "exit status 1", EndedAt: now, StartedAt: now.Add(3 * time.Second)}}, now)
 		host := ui.NewHost(theme.DefaultDark(), s)
 		host.Resize(width, 10)
 		buf := surface.NewCellBuffer(width, 10)
@@ -116,8 +116,8 @@ func TestColumnsShareWidthAcrossAllVisibleRows(t *testing.T) {
 			if !strings.HasPrefix(strings.TrimSpace(string(line[jobAt:])), name) {
 				t.Fatalf("%d: %q does not start under JOB: %s", width, name, string(line))
 			}
-			if status := string(line[statusAt:]); !strings.HasPrefix(status, "◜") && !strings.HasPrefix(status, "✗") {
-				t.Fatalf("%d: status of %q does not start under STATUS: %s", width, name, string(line))
+			if status, want := line[statusAt], []rune{'●', '✗', '◜'}[row]; status != want {
+				t.Fatalf("%d: status of %q does not start under STATUS with %c: %s", width, name, want, string(line))
 			}
 		}
 		failed := lines[5]

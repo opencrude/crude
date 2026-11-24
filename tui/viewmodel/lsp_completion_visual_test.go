@@ -417,7 +417,7 @@ func (m *completionVisualModel) observeCompletion(phase int) error {
 			}
 			set = s.set
 			b := set.Boundary
-			owner, generation := v.ws.LSPMgr().ContextCursor("")
+			owner, generation := v.ws.LSPMgr().ContextCursor(m.path)
 			enabled, feature := v.ws.LSPMgr().CompletionsState()
 			if b.Source != current || owner != current.WorkspaceGeneration || generation != b.Context.Generation ||
 				b.Context.ID == "" || b.Context.Root != m.root || len(b.Context.UnknownInputs) == 0 ||
@@ -535,7 +535,10 @@ func (m *completionVisualModel) verifyCompletionTrace(phase int) error {
 			TextDocument struct {
 				Completion struct {
 					DynamicRegistration bool `json:"dynamicRegistration"`
-					CompletionItem      struct {
+					CompletionList      struct {
+						ItemDefaults []string `json:"itemDefaults"`
+					} `json:"completionList"`
+					CompletionItem struct {
 						SnippetSupport bool                          `json:"snippetSupport"`
 						ResolveSupport struct{ Properties []string } `json:"resolveSupport"`
 					} `json:"completionItem"`
@@ -547,9 +550,10 @@ func (m *completionVisualModel) verifyCompletionTrace(phase int) error {
 		return err
 	}
 	caps := initialization.Capabilities.TextDocument.Completion
-	if caps.DynamicRegistration || !caps.CompletionItem.SnippetSupport ||
-		!reflect.DeepEqual(caps.CompletionItem.ResolveSupport.Properties, []string{"documentation", "detail"}) {
-		return fmt.Errorf("actual initialization not static doc/detail-only completion: %s", init[0].raw)
+	if !caps.DynamicRegistration || !caps.CompletionItem.SnippetSupport ||
+		!reflect.DeepEqual(caps.CompletionList.ItemDefaults, []string{"commitCharacters", "editRange", "insertTextFormat", "insertTextMode", "data"}) ||
+		!reflect.DeepEqual(caps.CompletionItem.ResolveSupport.Properties, []string{"documentation", "detail", "additionalTextEdits"}) {
+		return fmt.Errorf("unexpected completion capabilities in the original initialize request: %+v", caps)
 	}
 	serverInit, err := events("response 'initialize -", "Result: ")
 	if err != nil || len(serverInit) != 1 {

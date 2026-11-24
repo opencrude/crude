@@ -1632,7 +1632,7 @@ func (r *Renderer) buildRenderContext(msg *conversation.ChatMessage, suppressHea
 	case conversation.RoleUser, conversation.RoleAssistant, conversation.RoleAssignment:
 		if !isCommandOutcome(msg) {
 			contentWidth = innerW
-			if msg.Collaboration != nil {
+			if isCollaborationRow(msg) {
 				contentWidth = max(0, innerW-rendering.VisibleWidth(collaborationRail))
 			}
 			md = r.markdownAtWidth(contentWidth)
@@ -1819,13 +1819,18 @@ func (r *Renderer) shouldSuppressHeader(msgIdx int) bool {
 		return false
 	}
 	current := r.sync.Messages[msgIdx]
+	if current.IsHumanSteering() {
+		return false // an authored interruption is its own prompt
+	}
 	currentParty := messageParty(current.Role)
 	if currentParty == "" {
 		return false
 	}
 	for i := msgIdx - 1; i >= 0; i-- {
 		previous := r.sync.Messages[i]
-		if redundantStopNotice(previous) {
+		// Provider input may use the user role for runtime or peer evidence.
+		// Those rows never supply the author header for a human prompt.
+		if redundantStopNotice(previous) || currentParty == "user" && isCollaborationRow(previous) {
 			continue
 		}
 		if current.Role == conversation.RoleAssistant {

@@ -39,7 +39,10 @@ func (r *ProgressRule) SetActive(active bool) {
 
 // SetMeasurement selects a determinate fill when the producer knows a total.
 func (r *ProgressRule) SetMeasurement(current, total int64) { r.current, r.total = current, total }
-func (r *ProgressRule) NeedsFrame() bool                    { return r.active && r.total <= 0 }
+
+// NeedsFrame reports whether the active rule has indeterminate motion.
+func (r *ProgressRule) NeedsFrame() bool { return r.active && r.total <= 0 }
+
 func (r *ProgressRule) Paint(buf *surface.CellBuffer, ox, oy int, ctx PaintContext) {
 	b := r.Bounds()
 	if b.Empty() || r.tokens == nil {

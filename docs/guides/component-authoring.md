@@ -312,6 +312,8 @@ Rules:
 
 - Use `ui.ActivityDot`; never add a local `(frame/N)%2`, braille spinner,
   brightness pulse, color cycle, or terminal `AttrBlink` for product activity.
+  In Background Jobs, only downloads and connection handshakes use
+  `ui.ActivityArc`. Only a measured download adds a progress fill.
 - Keep the semantic color unchanged between filled and hollow phases. Shape is
   the animation; changing both shape and color reads as flicker.
 - Active chat lifecycle, thinking, tool, sub-agent, and live-session rows blink.

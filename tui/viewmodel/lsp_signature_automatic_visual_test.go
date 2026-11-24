@@ -634,60 +634,67 @@ func (m *automaticSignatureVisualModel) verifyAutomaticSignatureTrace(count int)
 	if err != nil {
 		return err
 	}
-	previousVersion := 0
+	// These three literal edits are independent of Crude's range builder. The
+	// installed provider negotiates incremental sync; each signature request
+	// must follow the exact edits it needs, never a synthesized full update.
+	type position struct{ Line, Character int }
+	edits := [...]struct {
+		column int
+		text   string
+	}{{12, "()"}, {13, "x"}, {14, ","}}
+	uri := fileuri.FromPath(m.path)
+	applied, nextChange, wireVersion := 0, 0, 0
 	for i, request := range requests {
-		wantCol, wantActive, wantText := 15, 1, automaticSignatureVisualComma
+		wantCol, wantActive := 15, 1
 		switch i {
 		case 0:
-			wantCol, wantActive, wantText = 13, 0, automaticSignatureVisualOpen
+			wantCol, wantActive = 13, 0
 		case 1:
-			wantCol, wantActive, wantText = 14, 0, automaticSignatureVisualArg
+			wantCol, wantActive = 14, 0
 		}
 		var params struct {
 			TextDocument struct{ URI string } `json:"textDocument"`
-			Position     struct {
-				Line, Character int
-			} `json:"position"`
+			Position     position             `json:"position"`
 		}
 		if err := json.Unmarshal(request.raw, &params); err != nil {
 			return err
 		}
-		if params.TextDocument.URI != fileuri.FromPath(m.path) || params.Position.Line != 2 || params.Position.Character != wantCol {
+		if params.TextDocument.URI != uri || params.Position != (position{2, wantCol}) {
 			return fmt.Errorf("original request not at literal typed call: %s", request.raw)
 		}
-		// Last actual whole-document notification BEFORE this request.
-		wireVersion, wireText := 0, ""
-		for _, event := range changes {
-			if event.offset >= request.offset {
-				break
-			}
+		for nextChange < len(changes) && changes[nextChange].offset < request.offset {
+			raw := changes[nextChange].raw
+			nextChange++
 			var change struct {
 				TextDocument struct {
 					URI     string `json:"uri"`
 					Version int    `json:"version"`
 				} `json:"textDocument"`
 				ContentChanges []struct {
-					Text  string          `json:"text"`
-					Range json.RawMessage `json:"range"`
+					Text  string                         `json:"text"`
+					Range *struct{ Start, End position } `json:"range"`
 				} `json:"contentChanges"`
 			}
-			if err := json.Unmarshal(event.raw, &change); err != nil {
+			if err := json.Unmarshal(raw, &change); err != nil {
 				return err
 			}
-			if change.TextDocument.URI != params.TextDocument.URI {
+			if change.TextDocument.URI != uri {
 				continue
 			}
-			if len(change.ContentChanges) != 1 || len(change.ContentChanges[0].Range) != 0 {
-				return fmt.Errorf("fixture expected one original whole-document update: %s", event.raw)
+			if applied >= len(edits) || len(change.ContentChanges) != 1 || change.TextDocument.Version <= wireVersion {
+				return fmt.Errorf("unexpected or out-of-order signature source update: %s", raw)
 			}
-			wireVersion, wireText = change.TextDocument.Version, change.ContentChanges[0].Text
+			want, got := edits[applied], change.ContentChanges[0]
+			at := position{2, want.column}
+			if got.Range == nil || got.Range.Start != at || got.Range.End != at || got.Text != want.text {
+				return fmt.Errorf("original incremental signature source update: want %q at %+v, got %s", want.text, at, raw)
+			}
+			applied++
+			wireVersion = change.TextDocument.Version
 		}
-		if wireVersion <= 0 || wireText != wantText || (i == 1 || i == 2) && wireVersion <= previousVersion ||
-			i == 3 && wireVersion != previousVersion {
-			return fmt.Errorf("original provider source before request %d: version=%d previous=%d text=%q want=%q",
-				i, wireVersion, previousVersion, wireText, wantText)
+		if want := min(i+1, len(edits)); applied != want {
+			return fmt.Errorf("before original signature request %d: provider got %d exact edits, want %d", i+1, applied, want)
 		}
-		previousVersion = wireVersion
 		var response struct {
 			Signatures []struct {
 				Label           string                            `json:"label"`

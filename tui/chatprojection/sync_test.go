@@ -1,12 +1,15 @@
 package chatprojection
 
 import (
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"crude/agent/provider"
 	"crude/tui/theme"
+	"crude/types/command"
 	"crude/types/conversation"
 )
 
@@ -103,6 +106,72 @@ func TestRendererSyncMessagesClearsAdmittedSteeringStatus(t *testing.T) {
 	after, _, _ := r.ExportMessageRows(80)
 	if len(after) != 1 || strings.Contains(strings.Join(after[0].Lines, "\n"), "Waiting to send") {
 		t.Fatalf("consumed human steering status remained painted: %#v", after)
+	}
+}
+
+func TestUserHeaderSurvivesBackgroundOutcomeAndSteeringAdmission(t *testing.T) {
+	const width = 80
+	newRenderer := func() *Renderer {
+		r := NewRenderer(theme.DefaultDark())
+		r.SetSize(width, 24)
+		r.SetChatAreaBounds(0, 20)
+		r.SetUsername("tester")
+		return r
+	}
+	stamp := time.Unix(1780000000, 0)
+	before := []conversation.ChatMessage{
+		{InternalID: "first", Role: conversation.RoleUser, Content: "Verify the change", Time: stamp},
+		{InternalID: "reply", Role: conversation.RoleAssistant, Content: "I am checking it", ModelID: "test-model", Time: stamp},
+		{InternalID: "job", Role: conversation.RoleUser, Origin: provider.OriginPeer, Collaboration: &provider.CollaborationAttribution{
+			Kind: "command_outcome", Command: &command.Outcome{Handle: "checks", Status: "failed", ExitCode: 1, ExitKnown: true},
+		}},
+		{InternalID: "read", Role: conversation.RoleTool, ToolName: "read_file", ToolStatus: "success"},
+	}
+	for _, origin := range []provider.MessageOrigin{provider.OriginHuman, provider.OriginHumanSteering} {
+		t.Run(string(origin), func(t *testing.T) {
+			r := newRenderer()
+			message := conversation.ChatMessage{InternalID: "follow", Role: conversation.RoleUser, Origin: origin,
+				Content: "Check the download and the attachment", Time: stamp.Add(time.Second), PendingSteering: origin == provider.OriginHumanSteering}
+			r.SyncMessages(before, 1, 1)
+			r.ExportMessageRows(width)
+			order := []string{"first", "reply", "job", "read", "follow"}
+			if !r.SyncChanges([]conversation.ChatMessage{message}, nil, order, 2, 1) {
+				t.Fatal("live message not installed")
+			}
+			assertPrompt := func(r *Renderer, waiting bool) []PaintLine {
+				t.Helper()
+				rows, _, _ := r.ExportMessageRows(width)
+				for _, row := range rows {
+					if row.ID != "follow" {
+						continue
+					}
+					text := strings.Join(row.Lines, "\n")
+					if len(row.Native) < 3 || !row.Native[1].HeaderRule || !strings.HasPrefix(row.Lines[1], "tester ") ||
+						!strings.Contains(text, message.Content) || strings.Contains(text, "Waiting to send") != waiting {
+						t.Fatalf("human prompt lost its own header or acknowledgement: %q", text)
+					}
+					return row.Native
+				}
+				t.Fatal("human prompt not painted")
+				return nil
+			}
+			assertPrompt(r, message.PendingSteering)
+			if message.PendingSteering {
+				message.PendingSteering = false
+				if !r.SyncChanges([]conversation.ChatMessage{message}, nil, nil, 3, 1) {
+					t.Fatal("steering acknowledgement not installed")
+				}
+			}
+			live := assertPrompt(r, false)
+			if origin == provider.OriginHumanSteering {
+				message.Collaboration = &provider.CollaborationAttribution{EventID: "original-event", Kind: "human_steering", SenderID: "human", SenderName: "tester", RunID: "original-run"}
+			}
+			cold := newRenderer()
+			cold.SyncMessages(append(slices.Clone(before), message), 1, 1)
+			if revived := assertPrompt(cold, false); !reflect.DeepEqual(live, revived) {
+				t.Fatalf("revived prompt ink or layout differs from live: %#v / %#v", live, revived)
+			}
+		})
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -16,6 +17,9 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/session"
+	"crude/agent/sessiondb"
+	"crude/tui/chatprojection"
+	"crude/types/conversation"
 	"crude/types/recovery"
 	"crude/types/statuscenter"
 )
@@ -407,13 +411,56 @@ func TestRemoteAppJourneyStaleIdleShellSteersPeerRun(t *testing.T) {
 	if two.app.ws.AgentMgr().Get(id).State.IsActive() {
 		t.Fatal("fixture did not retain the stale idle view")
 	}
-	two.app.Input.SetInput("Correction from stale idle shell")
+	ref, err := two.app.RefStore().CreateReference(sessiondb.CreateRequest{Kind: sessiondb.KindPastedText, Content: "Exact steering attachment bytes"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := "Correction from stale idle shell: " + ref.DisplayName()
+	two.app.Input.SetInput(text)
+	two.app.Input.UseReferenceIDs([]string{ref.ID})
 	two.app.setFocusInput()
 	_, cmd = two.app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	runAppCommand(t, two.app, cmd)
 	if two.app.Input.Value() != "" {
 		t.Fatal("authoritative live admission refused a stale idle shell")
 	}
+	prompt := func(shell remoteJourneyShell) (conversation.Message, bool) {
+		var matched conversation.Message
+		for _, entry := range shell.app.ws.AgentMgr().Get(shell.app.AgentView.ActiveID()).State.Messages.Messages() {
+			if entry.Content != text {
+				continue
+			}
+			if matched.InternalID != "" {
+				t.Fatal("steering prompt appeared twice")
+			}
+			matched = entry
+		}
+		return matched, matched.InternalID != ""
+	}
+	readRow := func(shell remoteJourneyShell, message conversation.Message) []chatprojection.PaintLine {
+		t.Helper()
+		_ = shell.app.View()
+		rows := shell.app.activeMessageList().ExportMessageRowsSnapshot(shell.app.chatReflowInnerW).Rows
+		for _, row := range rows {
+			if row.ID != message.InternalID {
+				continue
+			}
+			plain := strings.Join(row.Lines, "\n")
+			if len(row.Native) < 3 || !row.Native[1].HeaderRule || !strings.HasPrefix(row.Lines[1], "tester ") ||
+				strings.Contains(plain, "Waiting to send") != message.PendingSteering || !strings.Contains(plain, text) {
+				t.Fatalf("steering prompt lost its author or acknowledgement: %q", plain)
+			}
+			return row.Native
+		}
+		t.Fatal("steering prompt was not painted")
+		return nil
+	}
+	remoteJourneyUntil(t, shells, func() bool {
+		message, ok := prompt(one)
+		return ok && message.PendingSteering
+	})
+	pending, _ := prompt(one)
+	readRow(one, pending)
 	once.Do(func() { close(release) })
 	remoteJourneyUntil(t, shells, func() bool {
 		return calls.Load() == 2 && one.app.ws.AgentActivity(id).Status.Phase == statuscenter.AgentCompleted && two.app.ws.AgentActivity(id).Status.Phase == statuscenter.AgentCompleted
@@ -425,5 +472,32 @@ func TestRemoteAppJourneyStaleIdleShellSteersPeerRun(t *testing.T) {
 		}
 	default:
 		t.Fatal("correction never reached the provider")
+	}
+	live, ok := prompt(one)
+	if !ok || live.PendingSteering || live.InternalID != pending.InternalID || live.Origin != provider.OriginHumanSteering {
+		t.Fatal("live acknowledgement replaced or lost the original user prompt")
+	}
+	liveRows := readRow(one, live)
+	sessionID := one.app.ActiveSession.SessionID
+	for _, shell := range shells {
+		shell.app.StopAsyncIO()
+		if err := shell.app.CloseWorkspaceAttachment(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := runtime.Close(); err != nil {
+		t.Fatal(err)
+	}
+	resumed := newRemoteJourneyShell(t, remoteJourneyRuntime(t, server.URL), root)
+	runAppCommand(t, resumed.app, resumed.app.launcherResumeSession(sessionID, nil))
+	remoteJourneyUntil(t, []remoteJourneyShell{resumed}, func() bool { return resumed.app.AgentView.ActiveID() != "" })
+	cold, ok := prompt(resumed)
+	if !ok || cold.InternalID != live.InternalID || cold.PendingSteering || cold.Origin != provider.OriginHumanSteering || !cold.Time.Equal(live.Time) ||
+		cold.Collaboration == nil || cold.Collaboration.EventID == "" || cold.Collaboration.RunID == "" ||
+		len(cold.Attachments) != 1 || cold.Attachments[0].ReferenceID != ref.ID {
+		t.Fatalf("reopening changed the original steering evidence: %+v", cold)
+	}
+	if !reflect.DeepEqual(liveRows, readRow(resumed, cold)) || calls.Load() != 2 {
+		t.Fatal("reopened steering paints differently or replayed provider work")
 	}
 }

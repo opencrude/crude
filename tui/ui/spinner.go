@@ -61,7 +61,7 @@ const activityArcStepMillis = 160
 
 var activityArcFrames = [...]string{"◜", "◝", "◞", "◟"}
 
-// ActivityArc is the compact motion for work Crude starts outside its own UI.
+// ActivityArc is the compact motion for a download or connection handshake.
 // Frame is the same wall-clock millisecond used by ActivityDot.
 func ActivityArc(frame int) string {
 	return activityArcFrames[max(0, frame)/activityArcStepMillis%len(activityArcFrames)]

@@ -269,3 +269,9 @@ type ChatMessage struct {
 	CachedLines []string
 	CursorLine  int
 }
+
+// IsHumanSteering identifies an authored interruption, even when it carries
+// collaboration provenance for the durable admission.
+func (m *ChatMessage) IsHumanSteering() bool {
+	return m.Role == RoleUser && m.Origin == provider.OriginHumanSteering
+}

@@ -18,11 +18,13 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"crude/agent/provider"
 	"crude/agent/session"
 	agenttools "crude/agent/tools"
 	"crude/tui/rendering"
 	captypes "crude/types/capability"
 	"crude/types/command"
+	"crude/types/conversation"
 	"crude/types/setting"
 	"crude/workspace"
 	"crude/workspace/fileio"
@@ -212,6 +214,7 @@ type activationCapture struct {
 	changes  int
 	since    time.Time
 	ready    bool
+	header   bool
 }
 
 // Inspect the last painted job row without consuming a frame. Require more
@@ -265,6 +268,14 @@ func (m *activationCapture) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 	_, cmd := m.App.Update(msg)
+	if !m.header && m.chatReflowInnerW > 0 {
+		for _, row := range m.activeMessageList().ExportMessageRowsSnapshot(m.chatReflowInnerW).Rows {
+			if len(row.Lines) >= 3 && strings.TrimSpace(row.Lines[2]) == "Keep the download visible." && len(row.Native) >= 3 {
+				m.header = row.Native[1].HeaderRule && strings.HasPrefix(row.Lines[1], "Tester ")
+				break
+			}
+		}
+	}
 	if m.motionReady() {
 		return m, tea.Batch(cmd, func() tea.Msg { return os.WriteFile(m.evidence, []byte("motion\n"), 0600) })
 	}
@@ -281,7 +292,17 @@ func TestMeasuredJobMotionVisualAcceptance(t *testing.T) {
 	app := newFullTestApp(t)
 	wsOf(app).Logger = stubLogger{}
 	owner := &workspace.Session{SessionID: "job-motion", Settings: workspace.NewSessionSettingsState(setting.Settings{}, setting.Settings{}, nil)}
+	wsOf(app).Username = "Tester"
 	selectDeckSession(t, app, owner, "job-motion-agent")
+	state := app.ws.AgentMgr().Get("job-motion-agent").State
+	stamp := time.Now()
+	state.Messages.AppendMessage(conversation.Message{Role: conversation.RoleAssistant, Content: "I am checking the jobs.", Time: stamp})
+	state.Messages.AppendMessage(conversation.Message{Role: conversation.RoleUser, Origin: provider.OriginPeer,
+		Collaboration: &provider.CollaborationAttribution{Kind: "command_outcome", Command: &command.Outcome{Handle: "checks", Status: "failed", ExitCode: 1, ExitKnown: true}}, Time: stamp})
+	state.Messages.AppendMessage(conversation.Message{Role: conversation.RoleUser, Origin: provider.OriginHumanSteering,
+		Collaboration: &provider.CollaborationAttribution{Kind: "human_steering", SenderID: "human", SenderName: "Tester"},
+		Content:       "Keep the download visible.", Time: stamp})
+	app.syncAgentMessages(state.ID, true)
 	app.Tree.Visible = false
 	app.onboarding.trust.askedOwner, app.onboarding.trust.askedGen = app.ws, app.workspaceSwitchGen.Load()
 	now := time.Now()
@@ -299,5 +320,8 @@ func TestMeasuredJobMotionVisualAcceptance(t *testing.T) {
 	}
 	if !model.ready {
 		t.Fatal("native shell did not paint five consecutive arc steps")
+	}
+	if !model.header {
+		t.Fatal("native shell did not paint the human author header above the admitted prompt")
 	}
 }

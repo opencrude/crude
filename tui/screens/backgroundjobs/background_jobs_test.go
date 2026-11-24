@@ -184,20 +184,25 @@ func BenchmarkJobAnimationTick(b *testing.B) {
 	}
 }
 
-func TestJobArcMovesWithoutMovingLabelsOrFillingUnknownProgress(t *testing.T) {
+func TestJobAnimationsFollowPhaseWithoutMovingLabels(t *testing.T) {
 	now := time.Now()
 	jobs := []Job{
 		{Handle: "shell", Command: "go test", StartedAt: now, Status: "running"},
 		{Handle: "connect", TaskID: "connect", Command: "MCP server", StartedAt: now.Add(time.Second), Status: "running", Progress: command.Progress{Phase: "Connecting"}},
-		{Handle: "skill", TaskID: "skill", Command: "Skill files", StartedAt: now.Add(2 * time.Second), Status: "running", Progress: command.Progress{Phase: "Downloading", Current: 9, Total: 100}},
+		{Handle: "skill", TaskID: "skill", Command: "Skill files", StartedAt: now.Add(2 * time.Second), Status: "running", Progress: command.Progress{Phase: "Downloading skill", Current: 9, Total: 100}},
+		{Handle: "unknown", TaskID: "unknown", Command: "Other files", StartedAt: now.Add(3 * time.Second), Status: "running", Progress: command.Progress{Phase: "Downloading skill", Current: 9}},
+		{Handle: "verify", TaskID: "verify", Command: "Review guide", StartedAt: now.Add(4 * time.Second), Status: "running", Progress: command.Progress{Phase: "Verifying skill files"}},
+		{Handle: "install", TaskID: "install", Command: "Install guide", StartedAt: now.Add(5 * time.Second), Status: "running", Progress: command.Progress{Phase: "Installing"}},
+		{Handle: "list", TaskID: "list", Command: "List tools", StartedAt: now.Add(6 * time.Second), Status: "running", Progress: command.Progress{Phase: "Discovering MCP tools"}},
+		{Handle: "done", TaskID: "done", Command: "Previous job", StartedAt: now.Add(7 * time.Second), Status: "completed", EndedAt: now},
 	}
 	for _, width := range []int{80, 160} {
 		th := theme.DefaultDark()
 		screen := New(th)
 		screen.SetJobs(jobs, now)
 		host := ui.NewHost(th, screen)
-		host.Resize(width, 9)
-		buf := surface.NewCellBuffer(width, 9)
+		host.Resize(width, 12)
+		buf := surface.NewCellBuffer(width, 12)
 		paint := func(frame int) []string {
 			host.SetFrame(frame)
 			host.Paint(buf)
@@ -205,16 +210,19 @@ func TestJobArcMovesWithoutMovingLabelsOrFillingUnknownProgress(t *testing.T) {
 		}
 		first := paint(0)
 		status := strings.Index(first[2], "STATUS")
-		for i, want := range []rune("◜◝◞◟") {
-			frame := i * 160
-			lines := paint(frame)
-			for y := 4; y <= 6; y++ {
+		for _, step := range []struct {
+			frame    int
+			arc, dot rune
+		}{{0, '◜', '●'}, {160, '◝', '●'}, {320, '◞', '●'}, {400, '◞', '○'}, {480, '◟', '○'}, {800, '◝', '●'}} {
+			lines := paint(step.frame)
+			for y, want := range []rune{step.dot, step.arc, step.arc, step.arc, step.dot, step.dot, step.dot, '✓'} {
+				y += 4
 				row, baseline := []rune(lines[y]), []rune(first[y])
 				if row[status] != want || string(row[status+1:]) != string(baseline[status+1:]) {
-					t.Fatalf("%d: frame %d did not turn only the arc: %s", width, frame, lines[y])
+					t.Fatalf("%d: frame %d: want %c and the same label and controls: %s", width, step.frame, want, lines[y])
 				}
-				if y < 6 && strings.Contains(lines[y], "──") {
-					t.Fatalf("%d: unknown progress painted a bar: %s", width, lines[y])
+				if y != 6 && (strings.Contains(lines[y], "──") || strings.ContainsRune(lines[y], '%')) {
+					t.Fatalf("%d: row without a measured download painted progress: %s", width, lines[y])
 				}
 			}
 		}

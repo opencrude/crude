@@ -15,9 +15,10 @@ Linux workflow/installer checks, full-repo lint, design/docs/performance gates,
 build, full tests and full race tests. A native Windows job builds/tests with
 cgo and exercises both PowerShell 5.1 and 7 installers. Release jobs reuse these
 checks; see [releases](releases.md). Native CI configuration is not proof that the
-corresponding run has passed. Push, pull-request, tag and schedule triggers are
-absent; a workflow starts only from an explicit dispatch. Local checks and
-manual publication do not require a hosted workflow. The `instant` release mode
+corresponding run has passed. These verification and release workflows require
+explicit dispatch. The separate Conventions workflow checks layout and lint on
+pushes and pull requests. Local checks and manual publication do not require a
+hosted workflow. The `instant` release mode
 skips this chain by design and is not acceptance evidence for the skipped
 gates. See the [release modes](releases.md#release-modes) and the
 [website guide](website.md).
@@ -518,6 +519,18 @@ sequentially. `CRUDE_WAIT_VISUAL_HOLD_SECONDS` is capped at 120; inspect capture
 the sanitized result marker and a clean test exit independently. The connected
 TUI paints the same private core's event log; this is not distinct-host or
 cross-process-core acceptance.
+
+### Background jobs and steering headers
+
+`TestMeasuredJobMotionVisualAcceptance` uses the real shell with held job and
+admitted steering snapshots. Set `CRUDE_VISUAL_JOB_MOTION=1` and a new
+`CRUDE_CAPTURE_EVIDENCE` file. Run `scripts/tuishot.sh` at 160×40 and 80×24 with
+`await:motion`, a capture, and `quit:F9`. Inspect the ordinary job dot, connection
+arc, measured download, static failure, and the sender header above the prompt.
+The fixture observes the arc on the shared clock and requires a clean exit.
+`TestRemoteAppJourneyStaleIdleShellSteersPeerRun` separately sends a real
+steering prompt through a framed core and compares its settled rows and
+attachment identity with a cold reopen. Neither fixture uses an external model.
 
 ### Streaming separator and thinking pane acceptance
 

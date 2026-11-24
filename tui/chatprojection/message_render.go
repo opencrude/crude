@@ -1072,7 +1072,7 @@ func renderMessageContent(msg conversation.ChatMessage, ctx renderContext, suppr
 	var ml messageLines
 	switch msg.Role {
 	case conversation.RoleUser:
-		if msg.Collaboration != nil {
+		if isCollaborationRow(&msg) {
 			ml = renderCollaborationMessage(msg, ctx)
 		} else {
 			ml = renderUserMessage(msg, ctx, suppressHeader)
@@ -1109,7 +1109,13 @@ func renderMessageContent(msg conversation.ChatMessage, ctx renderContext, suppr
 	return ml
 }
 
+// A steering prompt retains journal provenance on replay, but the visible
+// message is still the human-authored prompt, not a collaboration card.
+func isCollaborationRow(msg *conversation.ChatMessage) bool {
+	return msg.Collaboration != nil && !msg.IsHumanSteering()
+}
+
 func messageHasPaneBackground(msg *conversation.ChatMessage) bool {
-	return msg.Role == conversation.RoleThinking || msg.Collaboration != nil && !isCommandOutcome(msg) ||
+	return msg.Role == conversation.RoleThinking || isCollaborationRow(msg) && !isCommandOutcome(msg) ||
 		msg.Role == conversation.RoleTool && tools.IsCollaborationTool(msg.ToolName)
 }

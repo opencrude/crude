@@ -581,7 +581,7 @@ func (w *Workspace) AdmitAgentSteering(agentID string, input provider.UserInput)
 		}
 		node.State.Messages.AppendMessageIfAbsent(conversation.Message{InternalID: input.InternalID,
 			Role: MessageRoleUser, Origin: provider.OriginHumanSteering, Content: input.DisplayContent(),
-			ReferenceLabels: labels, Attachments: inputAttachmentTargets(owner, input), Time: time.Now(), PendingSteering: true})
+			ReferenceLabels: labels, Attachments: inputAttachmentTargets(owner, input), Time: published.Event.CreatedAt, PendingSteering: true})
 		w.agentRevision++
 	}
 	return session.InputAdmissionReceipt{SessionID: owner.SessionID, AgentID: agentID, InputID: input.InternalID,

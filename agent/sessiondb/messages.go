@@ -331,10 +331,19 @@ func appendPersistedMessageTx(tx *sql.Tx, sessionID string, value persistedMessa
 	return nil
 }
 
-func loadPersistedMessageByInternalIDTx(tx *sql.Tx, internalID string) (persistedMessage, bool, error) {
+// LookupTranscriptDisplayMeta reads one committed message's display. Retries
+// retain it rather than reconstructing it from mutable attachments.
+func LookupTranscriptDisplayMeta(db *sql.DB, internalID string) (DisplayMeta, bool, error) {
+	row, found, err := loadPersistedMessageByInternalID(db, internalID)
+	return row.Meta, found, err
+}
+
+func loadPersistedMessageByInternalID(q interface {
+	Query(string, ...any) (*sql.Rows, error)
+}, internalID string) (persistedMessage, bool, error) {
 	// Any second match is an identity conflict. Sorting wide payloads by
 	// sequence number required a temporary B-tree even for a unique match.
-	rows, err := tx.Query(`SELECT role,origin,visibility,internal_id,collaboration_json,content,content_type,reasoning_content,reasoning,tool_calls,tool_name,tool_result,tool_call_id,tool_error,provider_items,cache_control,token_count,sequence_num,turn_number,agent_id,created_at,display_meta FROM messages WHERE internal_id=? LIMIT 2`, internalID)
+	rows, err := q.Query(`SELECT role,origin,visibility,internal_id,collaboration_json,content,content_type,reasoning_content,reasoning,tool_calls,tool_name,tool_result,tool_call_id,tool_error,provider_items,cache_control,token_count,sequence_num,turn_number,agent_id,created_at,display_meta FROM messages WHERE internal_id=? LIMIT 2`, internalID)
 	if err != nil {
 		return persistedMessage{}, false, err
 	}

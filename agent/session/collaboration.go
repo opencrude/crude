@@ -499,24 +499,30 @@ func (s *Session) newHumanSteeringRuntimeMessage(
 		prepareErr = fmt.Errorf("load human steering context for model %q: %w", model, loadErr)
 	}
 	message := prepared.Message
-	// Display fields are projections. A journal-authored original that already
-	// exists must remain byte-identical even after selection repair.
+	// A retry can repair attachment preparation, but it must retain the
+	// original message and the exact display already committed with it.
+	display := canonicalizeDisplayMeta(message, sessiondb.DisplayMeta{
+		DisplayRole: "user", DisplayContent: delivery.Event.Body,
+		ReferenceLabels: prepared.ReferenceLabels, Attachments: prepared.Attachments,
+	}, "", 0, delivery.Event.CreatedAt)
+	var displayErr error
 	for _, original := range state.Messages {
 		if original.InternalID == historyMessageID {
 			message = original
 			message.DisplayContent = delivery.Event.Body
+			var found bool
+			display, found, displayErr = sessiondb.LookupTranscriptDisplayMeta(db, historyMessageID)
+			if displayErr == nil && !found {
+				displayErr = fmt.Errorf("retained human steering %q has no transcript display", historyMessageID)
+			}
 			break
 		}
 	}
 	deltas := func() []sessiondb.ContextMessageDelta {
-		messages := append([]provider.ChatMessage{message}, prepared.Enrichment...)
-		result := make([]sessiondb.ContextMessageDelta, 0, len(messages))
-		for _, item := range messages {
-			meta := sessiondb.DisplayMeta{DisplayRole: "hidden_runtime_context", ContextOnly: true}
-			if item.InternalID == historyMessageID {
-				meta.DisplayRole, meta.DisplayContent, meta.ContextOnly = "user", delivery.Event.Body, false
-			}
-			meta = canonicalizeDisplayMeta(item, meta, "", 0, delivery.Event.CreatedAt)
+		result := make([]sessiondb.ContextMessageDelta, 0, 1+len(prepared.Enrichment))
+		result = append(result, contextDelta(message, display, 0, delivery.Event.CreatedAt, agentID))
+		for _, item := range prepared.Enrichment {
+			meta := canonicalizeDisplayMeta(item, sessiondb.DisplayMeta{DisplayRole: "hidden_runtime_context", ContextOnly: true}, "", 0, delivery.Event.CreatedAt)
 			result = append(result, contextDelta(item, meta, 0, delivery.Event.CreatedAt, agentID))
 		}
 		return result
@@ -545,6 +551,7 @@ func (s *Session) newHumanSteeringRuntimeMessage(
 		if prepareErr == nil {
 			deliveries = []collaboration.PendingDelivery{delivery}
 		}
+		err = errors.Join(err, displayErr)
 		if err == nil {
 			_, err = s.commitCollaborationAdmissions(db, sessionID, contextOwnerID, agentID, runID, runtimeEpoch,
 				loadContextRevision(state, found), deltas(), deliveries)
@@ -575,6 +582,9 @@ func (s *Session) newHumanSteeringRuntimeMessage(
 		Prepare: func(ctx context.Context, current []provider.ChatMessage) ([]provider.ChatMessage, error) {
 			mu.Lock()
 			defer mu.Unlock()
+			if displayErr != nil {
+				return nil, displayErr
+			}
 			retained := append(append([]provider.ChatMessage(nil), current...), prepared.Enrichment...)
 			prepared, prepareErr = s.humanSteeringMessage(context.WithoutCancel(ctx), delivery, configuration(), retained...)
 			return append([]provider.ChatMessage(nil), prepared.Enrichment...), prepareErr
@@ -584,6 +594,10 @@ func (s *Session) newHumanSteeringRuntimeMessage(
 			if settled {
 				mu.Unlock()
 				return collaboration.ErrStale
+			}
+			if displayErr != nil {
+				mu.Unlock()
+				return displayErr
 			}
 			current, err := store.Run(context.Background(), runID)
 			if err != nil || current.AgentID != agentID || current.RuntimeEpoch != runtimeEpoch || current.State.Terminal() {

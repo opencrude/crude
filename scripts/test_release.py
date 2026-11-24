@@ -129,7 +129,7 @@ class ReleaseTests(unittest.TestCase):
     def test_native_dependency_layout(self):
         prefix = release.ROOT / "third_party/libghostty-vt"
         self.assertFalse((release.ROOT / "deps").exists())
-        for name in ("GHOSTTY_PIN", "GHOSTTY_PIN.ps1", "GHOSTTY-LICENSE", "NATIVE-NOTICES", "README.md"):
+        for name in ("GHOSTTY_PIN", "GHOSTTY_PIN.ps1", "GHOSTTY-LICENSE", "NATIVE-NOTICES", "CRUDE.md"):
             with self.subTest(name=name):
                 self.assertTrue((prefix / name).is_file())
         match = re.search(r"^GHOSTTY_COMMIT=([0-9a-f]{40})$", (prefix / "GHOSTTY_PIN").read_text(), re.MULTILINE)
@@ -146,8 +146,9 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(set(paths), {f"third_party/libghostty-vt/{name}" for name in generated})
         self.assertIn("hashFiles('third_party/libghostty-vt/GHOSTTY_PIN*'", action)
 
-    def test_workflows_do_not_run_on_push_pull_request_or_tag(self):
+    def test_only_conventions_runs_automatically(self):
         expected = {
+            "conventions.yml": {"push", "pull_request"},
             "tui.yml": {"workflow_dispatch"},
             "release.yml": {"workflow_dispatch"},
             "native-preflight.yml": {"workflow_dispatch"},

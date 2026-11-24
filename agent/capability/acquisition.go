@@ -366,7 +366,7 @@ func (s *Service) installArtifact(ctx context.Context, key string, candidate Can
 		return "", "", err
 	}
 	defer func() { _ = archive.Close() }()
-	captypes.ReportProgress(ctx, "Downloading skill", 0, 0)
+	captypes.ReportProgress(ctx, command.PhaseDownloading, 0, 0)
 	var sink io.Writer = archive
 	hasher := sha256.New()
 	if candidate.Entry.Digest != "" {
@@ -490,7 +490,7 @@ func (r *transferReader) Read(p []byte) (int, error) {
 	pct := 100 * r.read / r.total
 	if pct != r.percent {
 		r.percent = pct
-		captypes.ReportProgress(r.ctx, "Downloading skill", r.read, r.total)
+		captypes.ReportProgress(r.ctx, command.PhaseDownloading, r.read, r.total)
 	}
 	return n, err
 }

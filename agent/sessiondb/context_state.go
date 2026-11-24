@@ -254,7 +254,7 @@ func appendTranscriptMessageTx(tx *sql.Tx, sessionID, contextOwnerID string, del
 		return false, err
 	}
 	desired := canonicalPersistedMessage(persistedMessage(delta))
-	existing, exists, err := loadPersistedMessageByInternalIDTx(tx, delta.Message.InternalID)
+	existing, exists, err := loadPersistedMessageByInternalID(tx, delta.Message.InternalID)
 	if err != nil {
 		return false, err
 	}
@@ -293,7 +293,7 @@ func validateReplacementMessagesTx(tx *sql.Tx, sessionID, agentID string, messag
 		if err := registerImmutableMessageTx(tx, sessionID, agentID, *message, "replacement"); err != nil {
 			return err
 		}
-		transcript, exists, err := loadPersistedMessageByInternalIDTx(tx, message.InternalID)
+		transcript, exists, err := loadPersistedMessageByInternalID(tx, message.InternalID)
 		if err != nil {
 			return err
 		}
@@ -380,7 +380,7 @@ func appendContextMessageTx(tx *sql.Tx, sessionID string, state *ContextState, d
 		inContext = true
 		break
 	}
-	transcript, inTranscript, err := loadPersistedMessageByInternalIDTx(tx, delta.Message.InternalID)
+	transcript, inTranscript, err := loadPersistedMessageByInternalID(tx, delta.Message.InternalID)
 	if err != nil {
 		return false, err
 	}
