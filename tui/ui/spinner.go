@@ -8,6 +8,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"crude/tui/rendering"
 	"crude/tui/theme"
 )
 
@@ -52,6 +53,32 @@ func ActivityDot(frame int) string {
 	)
 	width := ansi.GraphemeWidth.StringWidth(glyph)
 	return glyph + strings.Repeat(" ", max(0, target-width))
+}
+
+// activityArcStepMillis is the dwell of each quarter turn. The arc never
+// blinks off; a delayed paint samples the current quadrant, not a replay queue.
+const activityArcStepMillis = 160
+
+var activityArcFrames = [...]string{"◜", "◝", "◞", "◟"}
+
+// ActivityArc is the compact motion for work Crude starts outside its own UI.
+// Frame is the same wall-clock millisecond used by ActivityDot.
+func ActivityArc(frame int) string {
+	return activityArcFrames[max(0, frame)/activityArcStepMillis%len(activityArcFrames)]
+}
+
+// ActivityArcWidth reserves the maximum width under the shared terminal profile.
+func ActivityArcWidth() int {
+	width := 0
+	for _, glyph := range activityArcFrames {
+		width = max(width, rendering.VisibleWidth(glyph))
+	}
+	return width
+}
+
+// ActivityArcDelay is the time to the next visible change on the shared clock.
+func ActivityArcDelay(frame int) time.Duration {
+	return time.Duration(activityArcStepMillis-max(0, frame)%activityArcStepMillis) * time.Millisecond
 }
 
 // RecoverySquare shares the activity clock but denotes failed-attempt recovery,

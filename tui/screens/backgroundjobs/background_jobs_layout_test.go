@@ -81,3 +81,57 @@ func TestMixedJobsLeadWithWorkAndKeepControlsAligned(t *testing.T) {
 		}
 	}
 }
+
+// The reported deck: a failed activation whose short name kept a wide JOB
+// column while the error that explains it was cut after 34 cells. Widths are
+// decided from every visible row together, so each column has one position
+// for the whole table, the name takes what it needs and the error gets the
+// rest.
+func TestColumnsShareWidthAcrossAllVisibleRows(t *testing.T) {
+	now := time.Now()
+	failure := "server exited before it answered: Error: Missing command.\nserver stderr (tail):\nInstalled 84 packages\nError: Missing command."
+	jobs := []Job{
+		{Handle: "tests", Command: "go test ./...", Status: "running", StartedAt: now.Add(-time.Minute)},
+		{TaskID: "mcp", Handle: "auto-2", Command: "Fixture server", Status: "running", Progress: command.Progress{Phase: "Connecting"}, StartedAt: now.Add(-30 * time.Second)},
+		{TaskID: "use", Handle: "auto-1", Command: "Windows computer use", Status: "failed", Error: failure, StartedAt: now.Add(-44 * time.Second), EndedAt: now, Duration: 44 * time.Second},
+	}
+	for _, width := range []int{80, 134, 160} {
+		s := New(theme.DefaultDark())
+		s.SetJobs(jobs, now)
+		host := ui.NewHost(theme.DefaultDark(), s)
+		host.Resize(width, 9)
+		buf := surface.NewCellBuffer(width, 9)
+		host.Paint(buf)
+		lines := strings.Split(bufferText(buf), "\n")
+		header := lines[2]
+		statusAt := strings.Index(header, "STATUS")
+		jobAt := strings.Index(header, "JOB")
+		// The name column is as wide as its longest name, not wider.
+		if gap := statusAt - jobAt - rendering.VisibleWidth("Windows computer use"); gap != ui.TableMinGap {
+			t.Fatalf("%d: JOB column wastes %d cells:\n%s", width, gap-ui.TableMinGap, strings.Join(lines[:7], "\n"))
+		}
+		// Rows are ordered by start time.
+		for row, name := range []string{"go test ./...", "Windows computer use", "Fixture server"} {
+			line := []rune(lines[4+row])
+			if !strings.HasPrefix(strings.TrimSpace(string(line[jobAt:])), name) {
+				t.Fatalf("%d: %q does not start under JOB: %s", width, name, string(line))
+			}
+			if status := string(line[statusAt:]); !strings.HasPrefix(status, "◜") && !strings.HasPrefix(status, "✗") {
+				t.Fatalf("%d: status of %q does not start under STATUS: %s", width, name, string(line))
+			}
+		}
+		failed := lines[5]
+		if !strings.Contains(failed, "✗ Failed · Server exited") || strings.Contains(failed, "stderr") {
+			t.Fatalf("%d: the failure summary is not its first line: %s", width, failed)
+		}
+		if width >= 134 && !strings.Contains(failed, "Server exited before it answered: Error: Missing command.") {
+			t.Fatalf("%d: the error was cut although the row has room: %s", width, failed)
+		}
+		column := func(line string) int { return rendering.VisibleWidth(strings.SplitN(line, "Output", 2)[0]) }
+		for _, line := range lines[5:7] {
+			if column(line) != column(lines[4]) {
+				t.Fatalf("%d: Output is not aligned:\n%s", width, strings.Join(lines[4:7], "\n"))
+			}
+		}
+	}
+}

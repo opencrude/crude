@@ -59,12 +59,23 @@ base still require full comparison. `BenchmarkConsumeOneChangedRow` measured
 not a promise that a 572 ms live stall disappeared. Capture live stalls on the
 new build before attributing further work or changing budgets.
 
-The jobs deck requests the existing 16 ms clock only for a mounted indeterminate
-bar. A hidden deck or a measured transfer does not animate between observations.
-On the same machine, a clock check with 200 retained jobs formerly allocated
-41,240 bytes and sorted the inventory even when the displayed second had not
-changed. `BenchmarkJobAnimationTick` now allocates zero bytes between updates;
-it checks the next expiry and elapsed-second boundary without rebuilding rows.
+The jobs deck uses the shared clock at the next 160 ms arc boundary when it is
+visible. It does not request the 16 ms streaming cadence, and a hidden deck
+requests no animation. Measured fill changes only with byte counts. Columns
+measure mounted rows, and animation uses their retained status text; progress
+digits reserve a fixed width.
+
+On native Windows, the three-row `BenchmarkBackgroundJobsAnimationPaint` moved
+from 39–41 µs and 19 allocations to 34–36 µs and 13 allocations per paint (three
+250 ms runs, i7-9850H). `BenchmarkJobAnimationTick` still allocates zero bytes
+with 200 retained jobs between elapsed-second and expiry boundaries.
+
+`BenchmarkLongCommandPreview` (512 escaped script lines) keeps ordinary
+partial-input decoding at 117–120 µs. A trailing unfinished escape takes about
+142 µs versus 110–112 µs for the old raw fallback: a bounded prefix decode
+supplies the already decoded text. If the visible operand is unchanged, the
+stream publishes no preview event for that fragment, so it does not trigger
+transcript reflow.
 
 ## Per-tick allocation and frame handoff (2026-11-22, second pass)
 

@@ -639,6 +639,17 @@ and **Add up to** to 1–8 memories (default 2). Settings apply to root and chil
 runs, independent of delegation. The existing recall switch and turn limits
 still apply. A failed check leaves the agent running and posts a notice.
 
+Recall finds memories by meaning-bearing words, not exact spelling: the search
+index stems words ("edits" meets "edit"), and the words of the request come
+before long paths of the open files. Repetition is how a user shows what
+matters. When a later turn states a saved memory again, the Memory Agent adds
+that statement to the existing memory as a new revision instead of saving a
+copy. A memory supported by two or more statements gains weight in every recall
+and stays a candidate for ranking even when the current task uses other words,
+so the ranking model can bring a standing preference back while the agent
+works. Each ranking writes one `MEMORY ranked` log line with the candidates and
+their scores.
+
 **Model type** is one control shared by Memory ranking and the Auto Review
 Agent: **Automatic** (default), **Chat** or **Decision**. A decision model
 answers typed questions with probabilities; a chat model replies in text.

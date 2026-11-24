@@ -39,8 +39,12 @@ func (s *Session) publishCommandOutcome(agentID string, info fileio.AsyncCmdInfo
 		return
 	}
 	body := commandOutcomeBody(info)
+	sender := "Background command " + info.Handle
+	if info.TaskID != "" {
+		sender = "Background job " + info.Handle
+	}
 	_, err := store.Publish(context.Background(), collaboration.PublishRequest{
-		SenderID: agentID, SenderName: "Background command " + info.Handle,
+		SenderID: agentID, SenderName: sender,
 		IdempotencyKey: fmt.Sprintf("command-outcome:%s:%s:%d:%d", agentID, info.Handle, info.PID, info.StartedAt.UnixNano()),
 		RecipientIDs:   []string{agentID},
 		Origin:         collaboration.OriginRuntime, Kind: collaboration.EventCommandOutcome,
@@ -70,6 +74,10 @@ const commandOutcomeInlineBytes = 16 << 10
 // partial output keeps the status and the exact read cursor.
 func commandOutcomeBody(info fileio.AsyncCmdInfo) string {
 	prefix := fmt.Sprintf("Background command %q settled.\n", info.Handle)
+	if info.TaskID != "" {
+		// An activation is in-process work, not a shell command: name it.
+		prefix = fmt.Sprintf("Background job %q (%s) settled.\n", info.Handle, info.Command)
+	}
 	if settled := info.SettledOutput; settled != nil && settled.OutputDescriptor.OmittedBytes == 0 {
 		result := *settled
 		result.Retrieval = ""

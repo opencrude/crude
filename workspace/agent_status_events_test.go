@@ -69,8 +69,8 @@ func TestApplyAgentStatusEventLifecycleAndRequestDetails(t *testing.T) {
 	apply("done", map[string]any{"reason": "cancelled"})
 	requireAgentStatusPhase(t, w, node.ID, statuscenter.AgentCancelled, "Cancelled", false)
 	for _, op := range w.Status.Operations() {
-		if op.State != statuscenter.OperationSucceeded || op.EndedAt.IsZero() {
-			t.Fatalf("done left request running: %+v", op)
+		if op.State != statuscenter.OperationCancelled || op.EndedAt.IsZero() {
+			t.Fatalf("cancelled turn did not settle its requests as cancelled: %+v", op)
 		}
 	}
 }

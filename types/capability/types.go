@@ -327,18 +327,59 @@ type AccessPreview struct {
 	Token      string
 }
 
+// ActivationResult is what a model needs after activating an MCP connection
+// or requesting access: the tools it can call now and the exact identities it
+// may still request. Input schemas are left out: a granted tool arrives with
+// its schema as a native tool at the next request, so repeating every schema
+// in each result would only spend context.
 type ActivationResult struct {
-	ConnectionID string
-	State        string
-	UsableTools  []Tool
-	Tools        []Tool
-	Notices      []string
-	Next         string
+	ConnectionID string `json:"connection_id"`
+	State        string `json:"state"`
+	// Usable tools are callable by Name from the next request.
+	Usable []UsableTool `json:"usable_tools,omitempty"`
+	// NeedsAccess lists observed tools without a grant for this agent.
+	NeedsAccess []AccessCandidate `json:"tools_needing_access,omitempty"`
+	Notices     []string          `json:"notices,omitempty"`
+	Next        string            `json:"next"`
 }
 
+// UsableTool is one granted tool and the authority it was granted with.
+type UsableTool struct {
+	Name   string `json:"name"`
+	Tool   string `json:"tool"`
+	Effect Effect `json:"effect"`
+	Scope  string `json:"scope"`
+}
+
+// AccessCandidate is the exact identity mcp_request_access needs.
+type AccessCandidate struct {
+	Tool        string `json:"tool"`
+	Fingerprint string `json:"fingerprint"`
+	Description string `json:"description,omitempty"`
+}
+
+// SearchHit is one capability_search result for a model: what it is, whether
+// it can be used now, and the exact ID to activate.
+type SearchHit struct {
+	ID          string `json:"id"`
+	Kind        Kind   `json:"kind"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Installed   bool   `json:"installed,omitempty"`
+	State       string `json:"state"`
+	Reason      string `json:"reason,omitempty"`
+	Source      string `json:"source,omitempty"`
+	Transport   string `json:"transport,omitempty"`
+	Package     string `json:"package,omitempty"`
+	Version     string `json:"version,omitempty"`
+	Repository  string `json:"repository,omitempty"`
+}
+
+// SearchResult is the model-facing capability_search payload. Warning names
+// sources that could not answer; the results from the others remain usable.
 type SearchResult struct {
-	Entries []Entry
-	Warning string
+	Results []SearchHit `json:"results"`
+	Warning string      `json:"warning,omitempty"`
 }
 
 type AccessApprovalRequired struct {

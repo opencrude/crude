@@ -231,8 +231,8 @@ func TestAgentCapabilityActivationPersistsInWorkspaceSettingsWithoutShadowInstal
 	if err != nil {
 		t.Fatal(err)
 	}
-	var entries []captypes.Entry
-	if len(search.Content) != 1 || json.Unmarshal([]byte(search.Content[0].Text), &entries) != nil || len(entries) == 0 {
+	var found captypes.SearchResult
+	if len(search.Content) != 1 || json.Unmarshal([]byte(search.Content[0].Text), &found) != nil || len(found.Results) == 0 {
 		t.Fatalf("search result=%+v", search)
 	}
 	id := "local:review"

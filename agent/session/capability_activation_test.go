@@ -12,6 +12,7 @@ import (
 
 	"crude/agent/capability"
 	"crude/agent/collaboration"
+	"crude/agent/skills"
 	"crude/agent/tools"
 	"crude/agent/turnloop"
 	captypes "crude/types/capability"
@@ -34,8 +35,10 @@ func TestActivationBootstrapHelper(t *testing.T) {
 	TestSessionAutonomyStdioHelper(t)
 }
 
+// Activation is a job from its first instant: the handle returns before the
+// server answers, with no command promotion window to wait out.
 func TestSlowActivationSettlesWithDiscoveredToolsWithoutReplay(t *testing.T) {
-	setPromotionThreshold(t, 100*time.Millisecond)
+	setPromotionThreshold(t, time.Hour)
 	s := newTestSessionForPlan(t)
 	root := t.TempDir()
 	db, err := sql.Open("sqlite", filepath.Join(root, "capabilities.db"))
@@ -80,7 +83,7 @@ func TestSlowActivationSettlesWithDiscoveredToolsWithoutReplay(t *testing.T) {
 			t.Fatalf("activation did not return an exact running job: %s", content)
 		}
 		handle = job.OutputDescriptor.Handle
-	case <-time.After(3 * time.Second):
+	case <-time.After(2 * time.Second):
 		stop()
 		<-result
 		t.Fatal("actual MCP startup held the turn instead of returning a background handle")
@@ -112,17 +115,26 @@ func TestSlowActivationSettlesWithDiscoveredToolsWithoutReplay(t *testing.T) {
 	case <-time.After(6 * time.Second):
 		t.Fatal("no automatic activation settlement")
 	}
+	connected := false
 	for _, state := range service.Snapshot().Connections {
-		if state.ID == "slow" && state.State == "connected" && len(state.Tools) == 1 {
-			return
-		}
+		connected = connected || state.ID == "slow" && state.State == "connected" && len(state.Tools) == 1
 	}
-	t.Fatal("settling activation stopped the connected server")
+	if !connected {
+		t.Fatal("settling activation stopped the connected server")
+	}
+	// A running server has nothing left to start: its tools return in the
+	// result itself, and no second job appears.
+	again, err := live.ToolFn(t.Context(), "capability_activate", map[string]any{"id": "slow"})
+	if err != nil || !strings.Contains(again.Content, `"connection_id":"slow"`) || strings.Contains(again.Content, "background job") {
+		t.Fatalf("connected activation was not answered inline: %v %s", err, again.Content)
+	}
+	if len(manager.List()) != 1 {
+		t.Fatalf("connected activation started another job: %+v", manager.List())
+	}
 }
 
 func TestActivationOutcomeInterruptsBothWaitsWithoutConsumingDelivery(t *testing.T) {
 	s, store, owner, other := collaborationContractFixture(t)
-	setPromotionThreshold(t, 10*time.Millisecond)
 	manager, _ := promotionTestManager(t)
 	live := &turnloop.Agent{AsyncMgr: manager, WorkDir: t.TempDir()}
 	s.observeCommandOutcomes(manager, owner.ID)
@@ -170,5 +182,42 @@ func TestActivationOutcomeInterruptsBothWaitsWithoutConsumingDelivery(t *testing
 	peer, err := store.Page(ctx, collaboration.PageQuery{RecipientID: other.ID})
 	if err != nil || len(peer.Events) != 0 {
 		t.Fatalf("completion delivered to unrelated agent: %+v %v", peer, err)
+	}
+}
+
+// Installed instructions are local files: there is nothing to wait for, so
+// the agent reads them in the activation result and no job appears.
+func TestInstalledSkillAnswersInlineWithoutAJob(t *testing.T) {
+	setPromotionThreshold(t, time.Hour)
+	s := newTestSessionForPlan(t)
+	root := t.TempDir()
+	db, err := sql.Open("sqlite", filepath.Join(root, "capabilities.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	service, err := capability.New(root, t.TempDir(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close()
+	skill, err := skills.Create(filepath.Join(root, "review"), "review", "Review exact evidence before changing a file")
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := captypes.Normalize(captypes.Settings{Skills: map[string]captypes.SkillConfig{"local:review": {ID: "local:review", Name: "review", Path: skill.Path, Mode: "automatic"}}})
+	if err := service.Configure(t.Context(), settings); err != nil {
+		t.Fatal(err)
+	}
+	s.SetCapabilities(service, turnloop.NewFileOwnership())
+	live := sharingAgentFor(t, s, captypes.RuntimeActor{ID: "root"}, "Root")
+	manager, _ := promotionTestManager(t)
+	live.AsyncMgr, live.WorkDir = manager, root
+	out, err := live.ToolFn(t.Context(), "capability_activate", map[string]any{"id": "local:review"})
+	if err != nil || !strings.HasPrefix(out.Content, "<skill ") {
+		t.Fatalf("installed skill was not answered inline: %v %s", err, out.Content)
+	}
+	if jobs := manager.List(); len(jobs) != 0 {
+		t.Fatalf("loading installed instructions started a job: %+v", jobs)
 	}
 }

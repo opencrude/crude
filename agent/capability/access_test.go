@@ -50,11 +50,14 @@ func observedAccess(t *testing.T, service *Service, actor captypes.RuntimeActor)
 	if err := json.Unmarshal([]byte(result.Content[0].Text), &activation); err != nil {
 		t.Fatal(err)
 	}
-	if activation.State != "connected" || len(activation.UsableTools) != 0 || len(activation.Tools) != 1 || !strings.Contains(activation.Next, "grants") {
+	if activation.State != "connected" || len(activation.Usable) != 0 || len(activation.NeedsAccess) != 1 || !strings.Contains(activation.Next, "mcp_request_access") {
 		t.Fatalf("activation claimed access without a grant: %+v", activation)
 	}
+	if strings.Contains(result.Content[0].Text, "InputSchema") || strings.Contains(result.Content[0].Text, `"properties"`) {
+		t.Fatalf("activation repeated input schemas the granted tool brings itself: %s", result.Content[0].Text)
+	}
 	return map[string]any{"connection_id": "docs", "grants": []captypes.AccessRequest{
-		{Tool: "lookup", Fingerprint: activation.Tools[0].Fingerprint, Effect: captypes.EffectRead, Scope: "public test evidence"},
+		{Tool: "lookup", Fingerprint: activation.NeedsAccess[0].Fingerprint, Effect: captypes.EffectRead, Scope: "public test evidence"},
 	}}
 }
 
@@ -74,7 +77,7 @@ func TestMCPAgentAccessApprovalUseAndPassiveDurability(t *testing.T) {
 		t.Fatal(err)
 	}
 	var activation captypes.ActivationResult
-	if err := json.Unmarshal([]byte(result.Content[0].Text), &activation); err != nil || len(activation.UsableTools) != 1 {
+	if err := json.Unmarshal([]byte(result.Content[0].Text), &activation); err != nil || len(activation.Usable) != 1 || len(activation.NeedsAccess) != 0 {
 		t.Fatalf("approved activation has no usable tool: %+v %v", activation, err)
 	}
 	prepared, err := service.Prepare(t.Context(), actor)
@@ -240,8 +243,8 @@ func TestInstalledSearchUsesLocalStateAndHonorsLimit(t *testing.T) {
 	}
 	result, err := service.Execute(t.Context(), captypes.RuntimeActor{Effects: []captypes.Effect{captypes.EffectRead}}, captypes.RuntimeSnapshot{}, "capability_search",
 		map[string]any{"kind": "skill", "query": "review", "limit": float64(1)})
-	var entries []captypes.Entry
-	if err != nil || json.Unmarshal([]byte(result.Content[0].Text), &entries) != nil || len(entries) != 1 || !entries[0].Installed || networkCalls.Load() != 0 {
+	var found captypes.SearchResult
+	if err != nil || json.Unmarshal([]byte(result.Content[0].Text), &found) != nil || len(found.Results) != 1 || !found.Results[0].Installed || networkCalls.Load() != 0 {
 		t.Fatalf("installed search queried network or ignored limit: %+v %v requests=%d", result, err, networkCalls.Load())
 	}
 }
@@ -270,7 +273,7 @@ func TestEmptyCapabilitySearchReturnsAnEmptyCollection(t *testing.T) {
 	service, _, _ := capabilityFixture(t)
 	result, err := service.Execute(t.Context(), captypes.RuntimeActor{Effects: []captypes.Effect{captypes.EffectRead}},
 		captypes.RuntimeSnapshot{}, "capability_search", map[string]any{"kind": "mcp", "query": "missing"})
-	if err != nil || len(result.Content) != 1 || result.Content[0].Text != "[]" {
+	if err != nil || len(result.Content) != 1 || result.Content[0].Text != `{"results":[]}` {
 		t.Fatalf("empty discovery was ambiguous null data: %+v %v", result, err)
 	}
 }

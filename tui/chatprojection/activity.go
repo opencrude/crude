@@ -10,6 +10,7 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/tools"
 	"crude/tui/ui"
+	"crude/types/control"
 	"crude/types/conversation"
 	"crude/types/recovery"
 )
@@ -104,9 +105,20 @@ func activityEligible(msg *conversation.ChatMessage) bool {
 		}
 	}
 	switch msg.ToolName {
+	case "crude_control":
+		// Discovery-only commands and fully specified reads belong to the
+		// ordinary activity tree. A mutation receipt can describe unresolved
+		// effects, so keep that inspection and all unknown effects separate.
+		id := toolargs.ExtractArg(msg.ToolInput, "command")
+		if id == "operation.receipt" {
+			return false
+		}
+		descriptor, ok := control.Lookup(id)
+		return ok && !descriptor.HumanOnly && descriptor.Effect == control.Read &&
+			(msg.ToolStatus != conversation.ToolStatusSuccess || tools.ControlReceiptSucceeded(msg.Content))
 	case "exec_command", "write_stdin", "execute_command", "async_execute_command", "check_async_command", "read_async_output",
 		"read_file", "list_directory", "glob_files", "grep_files", "web_search", "web_fetch",
-		"arxiv_search", "recall_memory", "search_history", "wait",
+		"arxiv_search", "recall_memory", "search_history", "crude_commands", "wait",
 		"agent_list", "agent_inspect", "agent_wait", "board_read", "artifact_read":
 		return true
 	}
@@ -117,14 +129,15 @@ func activityEligible(msg *conversation.ChatMessage) bool {
 // compare by identity first, so an unchanged retained message costs a few
 // word comparisons instead of a JSON parse of its complete tool result.
 type eligibilityMemo struct {
-	role, toolName, toolStatus, permTag, subPaneID, content string
-	thinkingActive, thinkingInterrupted                     bool
-	eligible                                                bool
+	role, toolName, toolStatus, permTag, subPaneID, content, controlInput string
+	thinkingActive, thinkingInterrupted                                   bool
+	eligible                                                              bool
 }
 
 func (m *eligibilityMemo) matches(msg *conversation.ChatMessage) bool {
 	return m.role == msg.Role && m.toolName == msg.ToolName && m.toolStatus == msg.ToolStatus &&
 		m.permTag == msg.PermTag && m.subPaneID == msg.SubPaneID && m.content == msg.Content &&
+		(m.toolName != "crude_control" || m.controlInput == msg.ToolInput) &&
 		m.thinkingActive == msg.ThinkingActive && m.thinkingInterrupted == msg.ThinkingInterrupted
 }
 
@@ -140,8 +153,12 @@ func (r *Renderer) activityEligibleCached(msg *conversation.ChatMessage) bool {
 		r.eligibility = make(map[*conversation.ChatMessage]eligibilityMemo)
 	}
 	eligible := activityEligible(msg)
+	var controlInput string
+	if msg.ToolName == "crude_control" {
+		controlInput = msg.ToolInput
+	}
 	r.eligibility[msg] = eligibilityMemo{role: msg.Role, toolName: msg.ToolName, toolStatus: msg.ToolStatus,
-		permTag: msg.PermTag, subPaneID: msg.SubPaneID, content: msg.Content,
+		permTag: msg.PermTag, subPaneID: msg.SubPaneID, content: msg.Content, controlInput: controlInput,
 		thinkingActive: msg.ThinkingActive, thinkingInterrupted: msg.ThinkingInterrupted, eligible: eligible}
 	return eligible
 }
@@ -225,6 +242,10 @@ func activityLabel(name string, count int) string {
 		return "Recalled memory " + plural("time", "times")
 	case "search_history":
 		return "Searched history " + plural("time", "times")
+	case "crude_commands":
+		return "Looked up Crude commands " + plural("time", "times")
+	case "crude_control":
+		return "Inspected Crude " + plural("time", "times")
 	case "wait":
 		if count == 1 {
 			return "Waited"

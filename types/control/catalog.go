@@ -79,7 +79,7 @@ func Catalog(query string) []Descriptor {
 	for _, d := range commandCatalog {
 		match := ranked{descriptor: d}
 		if len(terms) > 0 {
-			id, text := strings.ToLower(d.ID), strings.ToLower(d.ID+" "+string(d.Input.Document))
+			id, text := strings.ToLower(d.ID), catalogText(d)
 			for _, term := range terms {
 				if strings.Contains(text, term) {
 					match.matched++
@@ -134,6 +134,37 @@ func catalogTerms(query string) []string {
 	return terms
 }
 
+// catalogText is what a query is matched against: the command ID, its
+// description and the names and descriptions of its fields. Schema keywords
+// such as "additionalProperties" or "string" describe every command, so they
+// would make every word like "add" or "string" match everything.
+func catalogText(d Descriptor) string {
+	var text strings.Builder
+	text.WriteString(d.ID)
+	var walk func(node any)
+	walk = func(node any) {
+		object, ok := node.(map[string]any)
+		if !ok {
+			return
+		}
+		if description, ok := object["description"].(string); ok {
+			text.WriteString(" " + description)
+		}
+		if properties, ok := object["properties"].(map[string]any); ok {
+			for name, property := range properties {
+				text.WriteString(" " + name)
+				walk(property)
+			}
+		}
+		walk(object["items"])
+	}
+	var document any
+	if json.Unmarshal(d.Input.Document, &document) == nil {
+		walk(document)
+	}
+	return strings.ToLower(text.String())
+}
+
 func Lookup(id string) (Descriptor, bool) {
 	for _, d := range commandCatalog {
 		if d.ID == id {
@@ -163,12 +194,12 @@ var commandCatalog = func() []Descriptor {
 	add("lsp.restart", Domain, Execute, "Restart one language server by its exact ID from diagnostics.workspace page.view=lsp, or use all to refresh every server and recheck closed files. Commits the restart request, not successful initialization. Read diagnostics.workspace again for results. Does not change launch settings or workspace trust.", `{"server":{"type":"string","description":"Exact server ID from the lsp view, or all."}}`, "server")
 	add("settings.get", Domain, Read, "Read redacted settings and exact revisions. Session scope requires target.session_id.", `{"scope":{"type":"string","enum":["application","workspace","session"],"description":"Defaults to workspace."}}`)
 	add("settings.fields", Domain, Read, "Discover exact ordinary JSON field paths, redacted values, schemas, ownership and revisions. Echo cursor for the next bounded page.", `{"scope":{"type":"string","enum":["application","workspace","session"]},"prefix":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":128},"cursor":{"type":"string"}}`, "scope", "limit")
-	add("capabilities.inspect", Domain, Read, "List MCP connections (state, usable and switched-off tools, built-in provider keys stored or unset), skills and stored secret names. Secret values are never returned.", `{}`)
+	add("capabilities.inspect", Domain, Read, "List MCP connections (state; tools granted to every run, tools switched off, and tools that still need mcp_request_access; built-in provider keys stored or unset), skills and stored secret names. A run's own Auto Review/YOLO grants are not listed: capability_activate reports them. Secret values are never returned.", `{}`)
 	add("capabilities.set_secret", Domain, Write, "Store a credential in Crude's secret store for the user, e.g. a search API key they gave you (EXA_API_KEY, BRAVE_SEARCH_API_KEY, TAVILY_API_KEY, SEARXNG_URL, JINA_API_KEY for the built-in web tools). Connections reference it as secret:NAME and reconnect to use it. Never echo the value back.", `{"name":{"type":"string","description":"Secret name, e.g. EXA_API_KEY"},"secret":{"type":"string","description":"The credential value (write-only)"}}`, "name", "secret")
 	add("capabilities.remove_secret", Domain, Delete, "Delete a stored secret by name.", `{"name":{"type":"string"}}`, "name")
 	add("capabilities.set_enabled", Domain, Write, "Enable or disable an installed MCP connection (including built-ins such as web) for every session.", `{"id":{"type":"string"},"enabled":{"type":"boolean"}}`, "id", "enabled")
 	add("capabilities.set_tool_enabled", Domain, Write, "Switch one tool of an installed MCP connection on or off. Enabling an external server's tool for the first time uses mcp_request_access instead.", `{"id":{"type":"string"},"tool":{"type":"string","description":"The server's tool name, e.g. arxiv_search"},"enabled":{"type":"boolean"}}`, "id", "tool", "enabled")
-	add("capabilities.save_connection", Domain, Execute, "Create or edit an MCP connection. Omitted fields keep their stored values. transport is http (Streamable HTTP; falls back to legacy SSE automatically), sse, or stdio (a local process). Put credentials in secret_refs as secret:NAME after capabilities.set_secret, not in headers or environment.", `{"connection":{"type":"object","additionalProperties":false,"properties":{"id":{"type":"string"},"name":{"type":"string"},"transport":{"type":"string","enum":["http","sse","stdio"]},"url":{"type":"string"},"command":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"directory":{"type":"string"},"environment":{"type":"object","additionalProperties":{"type":"string"}},"headers":{"type":"object","additionalProperties":{"type":"string"}},"secret_refs":{"type":"object","additionalProperties":{"type":"string"},"description":"Header or variable name to secret:NAME or env:NAME"},"auth":{"type":"string","enum":["none","oauth"]},"timeout_seconds":{"type":"integer","minimum":1,"maximum":3600},"launch_approved":{"type":"boolean"},"enabled":{"type":"boolean"}},"required":["id"]}}`, "connection")
+	add("capabilities.save_connection", Domain, Execute, "Add (install) or edit an MCP server connection, for example a server the catalogs lack. Then start it with capability_activate using the same id; activation launches it and reports its tools or the server's own error. Omitted fields keep their stored values. transport is http (Streamable HTTP; falls back to legacy SSE automatically), sse, or stdio (a local process). Put credentials in secret_refs as secret:NAME after capabilities.set_secret, not in headers or environment.", `{"connection":{"type":"object","additionalProperties":false,"properties":{"id":{"type":"string"},"name":{"type":"string"},"transport":{"type":"string","enum":["http","sse","stdio"]},"url":{"type":"string"},"command":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"directory":{"type":"string"},"environment":{"type":"object","additionalProperties":{"type":"string"}},"headers":{"type":"object","additionalProperties":{"type":"string"}},"secret_refs":{"type":"object","additionalProperties":{"type":"string"},"description":"Header or variable name to secret:NAME or env:NAME"},"auth":{"type":"string","enum":["none","oauth"]},"timeout_seconds":{"type":"integer","minimum":1,"maximum":3600},"launch_approved":{"type":"boolean"},"enabled":{"type":"boolean"}},"required":["id"]}}`, "connection")
 	add("capabilities.remove_connection", Domain, Delete, "Remove an installed MCP connection. Built-in connections can only be disabled.", `{"id":{"type":"string"}}`, "id")
 	add("capabilities.save_search_method", Domain, Write, "Add or edit an account search method of the built-in web_search (Application settings). Every method that is on runs with each search; charges can apply. Omit id to add one. Omitted fields keep their stored values. capabilities.inspect lists methods and their last result; the account's protocol decides whether a model is needed.", `{"id":{"type":"string","description":"Existing method ID; omit to add a method"},"account":{"type":"string","description":"Account ID"},"model":{"type":"string","description":"Model ID; ignored for protocols that search without a model"},"enabled":{"type":"boolean"}}`)
 	add("capabilities.remove_search_method", Domain, Delete, "Remove one account search method of the built-in web_search. The account does not change.", `{"id":{"type":"string"}}`, "id")

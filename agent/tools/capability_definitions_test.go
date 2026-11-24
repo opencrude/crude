@@ -8,16 +8,19 @@ import (
 
 func TestCapabilityToolGuidanceExplainsDiscoveryAndDurableUse(t *testing.T) {
 	expected := map[string][]string{
-		"capability_search":   {"short name or distinctive keywords", "Omit kind", "descriptors, not loaded instructions", "exact ID unchanged", "Discovery is not an access grant"},
-		"capability_activate": {"not a display name or path", "user-owned application registrations", "scope \"workspace\"", "this project to own the binding", "bundled files resolve from that path", "Granted connections reconnect automatically", "connected is not access", "mcp_request_access"},
+		"capability_search":   {"distinctive keywords, not a sentence", "each keyword is matched separately", "search its name", "Omit kind", "descriptors, not loaded instructions", "exact ID unchanged", "Discovery is not an access grant"},
+		"capability_activate": {"not a display name or path", "user-owned application registrations", "scope \"workspace\"", "this project to own the binding", "bundled files resolve from that path", "Granted connections reconnect automatically", "connected is not access", "mcp_request_access", "starts a background job and returns its handle at once", "do not start it again or poll", "capabilities.save_connection"},
+		"mcp_request_access":  {"tools_needing_access", "every tool the task needs in one call", "grants add up", "strongest effect"},
 	}
 	for _, tool := range CapabilityTools {
 		phrases, exists := expected[tool.Function.Name]
 		if !exists {
 			continue
 		}
+		// Field descriptions are part of the same guidance as the tool's own.
+		guidance := tool.Function.Description + string(tool.Function.Parameters)
 		for _, phrase := range phrases {
-			if !strings.Contains(tool.Function.Description, phrase) {
+			if !strings.Contains(guidance, phrase) {
 				t.Errorf("%s lacks lifecycle guidance %q", tool.Function.Name, phrase)
 			}
 		}

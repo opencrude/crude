@@ -143,6 +143,20 @@ them; they are not a template for language-specific modules.
 can lose the invocation while an edit awaits acknowledgement.
 See the [reproduction, protocol findings and exit test](../issues/2026-11-23-lsp-completion-immediate-action.md).
 
+**Validation repair: installed-server startup (2026-11-24): verified.** The
+JSON pull fixture uses the catalog launch recipe, which resolves npm's Windows
+shim to the package entry point. When any server advertises workspace
+pull during fallback, its borrowed disk views close before the first project
+request. Previously the server could send its one initial problem report while
+Crude still held the file open. The report was ignored, and the request could
+stay open without another report.
+
+`TestLateWorkspaceDiagnosticsDrainFallbackBeforeFirstRequest` holds the fallback
+view open until the capability arrives and checks the request order and first
+report. It, `TestPyrightWorkspaceDiagnostics` and
+`TestPullOnlyServerAgainstRealJSONServer` passed 12 runs on native Windows and
+six on Ubuntu under WSL, with installed servers. No timeout changed.
+
 **Project analysis by server and root (2026-11-23): implemented.** Use the existing root and
 launch identity for discovery, native reporting and the fallback. A single
 unsolicited file report establishes coverage for that file only. Test native

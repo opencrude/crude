@@ -1956,8 +1956,13 @@ Code's language client (`vscode-languageserver-node`,
   project reporter (`reportsProjectLocked`): coverage says "Checks the whole
   project" and the project check skips its files. `workspace/lsp_workspace_pull.go`
   keeps one `workspace/diagnostic` request per server with `previousResultIds`
-  and a partial result token. Reports for files that no document holds enter
-  `receiveUnopenedDiagnostics`, so an empty full report clears a file; reports
+  and a partial result token. If the provider registers while the project check
+  is borrowing files for the same server and root, Crude ends that fallback pass
+  and sends its pending `didClose` notifications before the first workspace
+  request. The cancelled checks do not mark files unchecked. This keeps an
+  initial project report from being mistaken for an open-file report. Reports
+  for files that no document holds enter `receiveUnopenedDiagnostics`, so an
+  empty full report clears a file; reports
   for open documents give way to their own pulls. When the server ends the
   request, Crude asks again after 2 seconds; after six errors in a row the
   project check covers the server. **Check closed files** governs it: Off starts

@@ -1,6 +1,35 @@
 package viewmodel
 
-import "strings"
+import (
+	"strings"
+	"time"
+
+	"crude/tui/ui"
+	"crude/workspace"
+)
+
+// One shell clock, with a slower cadence for a discrete glyph than for
+// continuous motion. A download snapshot never resets the arc's phase.
+func (m *App) nextTickDelay(now time.Time) time.Duration {
+	if m.wantsFastTick() {
+		return 16 * time.Millisecond
+	}
+	if m.mainPanes != nil {
+		for _, group := range m.mainPanes.groups {
+			if group.view == nil || group.deck.Empty() || group.view.deck == nil {
+				continue
+			}
+			deck := group.view.deck.projection
+			if deck == nil || deck.backgroundJobs == nil || !deck.backgroundJobs.NeedsActivityArc() {
+				continue
+			}
+			if panel := deck.deck.Active(); panel != nil && panel.Content == deck.backgroundJobs {
+				return ui.ActivityArcDelay(int(now.UnixMilli()))
+			}
+		}
+	}
+	return workspace.IdleTickInterval
+}
 
 // invalidateClockContent keeps the ordinary idle presentation opportunities,
 // but a composer's caret is not a mutation of the neighbouring transcript.

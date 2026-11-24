@@ -57,21 +57,51 @@ func historyE2EConfig(url string) *session.Config {
 
 func waitHistoryAgentDone(t *testing.T, sender *historyE2ESender, agentID string) {
 	t.Helper()
-	deadline := time.After(5 * time.Second)
+	waitHistoryAgentDoneAfterCommand(t, sender, agentID, "", 0)
+}
+
+// The provider and delivery stages keep the usual wait. Only an exact known
+// process gets its own bounded execution time; stream traffic cannot renew it.
+func waitHistoryAgentDoneAfterCommand(t *testing.T, sender *historyE2ESender, agentID, callID string, commandLimit time.Duration) {
+	t.Helper()
+	const turnWait = 5 * time.Second
+	deadline := time.NewTimer(turnWait)
+	defer deadline.Stop()
 	var lastRecovery any
+	var runningCommand bool
 	for {
 		select {
 		case event := <-sender.events:
-			if event.typ == "recovery" && event.agentID == agentID {
+			if event.agentID != agentID {
+				continue
+			}
+			switch event.typ {
+			case "recovery":
 				lastRecovery = event.data
-			}
-			if event.typ == "error" && event.agentID == agentID {
+			case "error":
 				t.Fatalf("real agent turn failed: %v", event.data)
-			}
-			if event.typ == "done" && event.agentID == agentID {
+			case "done":
+				if callID != "" {
+					t.Fatalf("real agent turn ended before command %s returned", callID)
+				}
 				return
+			case "tool_call", "tool_result":
+				data, _ := event.data.(map[string]any)
+				if callID == "" || data["tool_id"] != callID || data["name"] != "execute_command" {
+					continue
+				}
+				if event.typ == "tool_call" && !runningCommand {
+					runningCommand = true
+					deadline.Reset(commandLimit + turnWait)
+				} else if event.typ == "tool_result" && runningCommand {
+					callID, runningCommand = "", false
+					deadline.Reset(turnWait)
+				}
 			}
-		case <-deadline:
+		case <-deadline.C:
+			if runningCommand {
+				t.Fatalf("timed out waiting for command %s; last recovery: %+v", callID, lastRecovery)
+			}
 			t.Fatalf("timed out waiting for real agent turn; last recovery: %+v", lastRecovery)
 		}
 	}

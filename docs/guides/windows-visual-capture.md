@@ -248,8 +248,11 @@ Build the viewmodel test binary with the native cgo environment, then run
 `TestImageFileVisualAcceptance` with `CRUDE_VISUAL_IMAGE_FILE=1` or
 `TestSixelAttachmentVisualAcceptance` with
 `CRUDE_VISUAL_SIXEL_ATTACHMENT=1`. Set `CRUDE_VISUAL_EXPECT_GRAPHICS=1` and
-`CRUDE_VISUAL_EXPECT_SIXEL=1`. F2 enters the real file/reference open path; F9
-checks the last painted image descriptors, exits and writes `PASS image native`
+`CRUDE_VISUAL_EXPECT_SIXEL=1`. If the disposable workspace asks for trust,
+choose **Open in restricted mode** before F2. The file fixture emits `ready`
+when that prompt opens, for `await:ready` followed by `key:Enter`.
+F2 enters the real file/reference open path; F9 checks the last painted image
+placements, exits and writes `PASS image native`
 to `CRUDE_CAPTURE_EVIDENCE` only after the program returns and assertions pass.
 Use `quit:F9`. Fixtures never print test failures into a running TUI.
 

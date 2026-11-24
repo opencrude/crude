@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 
 	captypes "crude/types/capability"
 )
@@ -74,7 +75,74 @@ type registryCatalog struct {
 	} `json:"metadata"`
 }
 
+// registrySearchTerms turns a keyword query into the registry's own terms.
+// The registry matches one substring of a server name, so a sentence matches
+// nothing: each keyword is asked separately, and adjacent keywords are also
+// joined the way names join them ("computer use" also asks "computer-use").
+func registrySearchTerms(query string) []string {
+	words := newCapabilityQuery(query).terms
+	var terms []string
+	seen := make(map[string]bool)
+	add := func(term string) {
+		if len(term) >= 3 && !seen[term] && len(terms) < maxRegistrySearches {
+			seen[term] = true
+			terms = append(terms, term)
+		}
+	}
+	for i := 0; i+1 < len(words); i++ {
+		add(words[i] + "-" + words[i+1])
+	}
+	for _, word := range words {
+		add(word)
+	}
+	if len(terms) == 0 {
+		terms = []string{strings.TrimSpace(query)}
+	}
+	return terms
+}
+
+// maxRegistrySearches bounds the requests one search makes to a registry.
+const maxRegistrySearches = 8
+
+// discoverMCPRegistry asks the registry for every term of the query, then
+// ranks the union locally by name and description across all query words.
 func discoverMCPRegistry(ctx context.Context, source captypes.SourceConfig, query string, limit int) ([]Candidate, error) {
+	terms := registrySearchTerms(query)
+	results := make([][]Candidate, len(terms))
+	errs := make([]error, len(terms))
+	var wg sync.WaitGroup
+	for i, term := range terms {
+		wg.Go(func() { results[i], errs[i] = discoverMCPRegistryTerm(ctx, source, term, limit) })
+	}
+	wg.Wait()
+	positions := make(map[string]int)
+	var candidates []Candidate
+	for _, found := range results {
+		for _, candidate := range found {
+			if _, exists := positions[candidate.Entry.ID]; !exists {
+				positions[candidate.Entry.ID] = len(candidates)
+				candidates = append(candidates, candidate)
+			}
+		}
+	}
+	matcher := newCapabilityQuery(query)
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if (candidates[i].Entry.State == "unsupported") != (candidates[j].Entry.State == "unsupported") {
+			return candidates[j].Entry.State == "unsupported"
+		}
+		return matcher.score(candidates[i].Entry) > matcher.score(candidates[j].Entry)
+	})
+	if len(candidates) > limit {
+		candidates = candidates[:limit]
+	}
+	// A failed term is reported only when nothing answered the query.
+	if len(candidates) == 0 {
+		return nil, errors.Join(errs...)
+	}
+	return candidates, ctx.Err()
+}
+
+func discoverMCPRegistryTerm(ctx context.Context, source captypes.SourceConfig, query string, limit int) ([]Candidate, error) {
 	baseEndpoint, err := url.Parse(source.Location)
 	if err != nil {
 		return nil, err
@@ -110,6 +178,7 @@ func discoverMCPRegistry(ctx context.Context, source captypes.SourceConfig, quer
 		endpoint := *baseEndpoint
 		values := endpoint.Query()
 		values.Set("search", query)
+		values.Set("version", "latest")
 		values.Set("limit", fmt.Sprint(min(100, max(20, limit*4))))
 		if cursor != "" {
 			values.Set("cursor", cursor)

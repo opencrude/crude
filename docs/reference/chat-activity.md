@@ -40,7 +40,7 @@ focus or crossing modal boundaries.
 
 | Treatment | Tools |
 | --- | --- |
-| Aggregate after success | `exec_command`, `write_stdin`, `execute_command`, `async_execute_command`, `check_async_command`, `read_async_output`, `read_file`, `list_directory`, `glob_files`, `grep_files`, `web_search`, `web_fetch`, `arxiv_search`, `recall_memory`, `search_history`, `wait`, `agent_list`, `agent_inspect`, `agent_wait`, `board_read`, `artifact_read` |
+| Aggregate after success | `exec_command`, `write_stdin`, `execute_command`, `async_execute_command`, `check_async_command`, `read_async_output`, `read_file`, `list_directory`, `glob_files`, `grep_files`, `web_search`, `web_fetch`, `arxiv_search`, `recall_memory`, `search_history`, `wait`, `agent_list`, `agent_inspect`, `agent_wait`, `board_read`, `artifact_read`, `crude_commands`, known read-only `crude_control` commands |
 | Separate rows (expanded by default) | `apply_patch`, `edit_file`, `write_file`, `update_plan`, `get_plan` |
 | Separate rows (message open, details closed) | `agent_send`, `agent_respond`, `publish_report` |
 | Separate rows (settled results closed) | `delete_file`, `move_file`, `copy_file`, `agent_start`, `agent_control`, `kill_async_command`, `remember`, `update_memory`, `forget_memory`, `question`, `reply` |
@@ -52,6 +52,13 @@ as Markdown under the same rail as a received collaboration message
 (`appendCollaborationBody`). Expansion adds only the delivery details and the
 exact request; it does not repeat the text. A failed or stopped send has no
 delivered text and keeps the closed tool row.
+
+Crude command discovery and known read-only controls (such as `history.prompts`
+and `diagnostics.workspace`) share the ordinary activity tree. Use the exact
+command's catalog effect, not the gateway tool name. A settled read needs a
+successful receipt. Unknown effects, writes, operation receipts, and pending,
+partial, or failed results stay separate. The existing active and recent-round
+rules keep read leaves in place when results arrive.
 
 Unknown tools stay visible until intentionally classified. A failed or cancelled call, a child failure reported by an otherwise successful poll, and any required user action remain visible as boundaries. A background command's successful *start* is not evidence that the background job finished; label it as started, not completed. Never imply that all calls passed solely because their tool transport succeeded.
 
@@ -89,13 +96,15 @@ second terminal emulator. Original command-result bytes remain canonical.
 
 ## Capabilities and Peer Data
 
-A running activation shows its current phase on the originating call. A transfer
-with a known size shows measured bytes and a percentage, not elapsed-time
-progress. After promotion, the Background jobs deck owns live progress and the
-initial call remains a link target. Completion joins on the task identity, not
-the package runner's PID or the server name. An MCP server that downloads its
-own executable before initialization may not expose a total; Crude does not
-scrape arbitrary stderr, inspect private caches or proxy that download to guess.
+An activation that must acquire, install or launch returns its background job
+at once; its call reads **Activating** with the job handle and draws no progress
+of its own. The Background jobs deck owns live progress, and the call remains a
+link target. A transfer with a known size shows measured bytes and a
+percentage there, not elapsed-time progress. Completion joins on the task
+identity, not the package runner's PID or the server name, and arrives as a
+command outcome row. An MCP server that downloads its own executable before
+initialization may not expose a total; Crude does not scrape arbitrary stderr,
+inspect private caches or proxy that download to guess.
 
 
 `capability_search`, `capability_activate`, `agent_send`, `board_read`,
@@ -279,7 +288,10 @@ queries wrap to actual terminal width. Each leaf independently expands its full
 result. Errors stay outside folded success summaries: a clear failure header,
 readable neutral-colored output, and explicit disclosure for long diagnostics.
 Native command envelopes are decoded before painting; elapsed-time/exit/session
-metadata is not dumped as escaped JSON. A sub-agent retains its named pane.
+metadata is not dumped as escaped JSON. The live command preview publishes
+only decoded text. If a token stops inside an escape or UTF-16 pair, the decoded
+prefix stays in place and the next complete character continues the preview.
+The full wire input stays unchanged for execution. A sub-agent retains its named pane.
 
 `multi_tool_use.parallel` remains one canonical call. Its ordered children are
 transient projection leaves, not additional persisted messages or a second

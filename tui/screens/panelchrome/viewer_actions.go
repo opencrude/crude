@@ -40,7 +40,9 @@ func (b *ViewerButton) SetTokens(tokens *ui.TokenSet) {
 	if NerdFont(tokens.Theme()) {
 		b.glyph, b.inkCell = b.nerd, true
 	}
-	b.SetLabel(b.labelFor(b.fullWidth()))
+	// A palette-only rebuild may not run Layout. Keep the label fitted to
+	// the current allocation, not the width Measure would prefer.
+	b.SetLabel(b.labelFor(b.Bounds().W))
 }
 
 // fullWidth is "[ icon ]" with room for the icon's ink. A Nerd Font icon

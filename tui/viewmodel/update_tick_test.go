@@ -31,7 +31,7 @@ func TestWantsFastTick(t *testing.T) {
 	}
 }
 
-func TestOnlyMountedIndeterminateActivationKeepsFastTick(t *testing.T) {
+func TestOnlyMountedRunningJobsRequestArcCadence(t *testing.T) {
 	app := newFullTestApp(t)
 	session := &workspace.Session{SessionID: "bar", Settings: workspace.NewSessionSettingsState(setting.Settings{}, setting.Settings{}, nil)}
 	selectDeckSession(t, app, session, "bar-agent")
@@ -50,22 +50,21 @@ func TestOnlyMountedIndeterminateActivationKeepsFastTick(t *testing.T) {
 		return rendering.StripAnsi(app.View().RenderContent())
 	}
 	show()
-	if !app.wantsFastTick() {
-		t.Fatal("visible indeterminate progress used idle cadence")
+	onBoundary := time.UnixMilli(1600)
+	if app.wantsFastTick() || app.nextTickDelay(onBoundary) != 160*time.Millisecond || app.nextTickDelay(onBoundary.Add(60*time.Millisecond)) != 100*time.Millisecond {
+		t.Fatal("visible arc did not request discrete steps of the shared clock")
 	}
 	job.Progress.Current, job.Progress.Total = 37, 100
 	if painted := show(); !strings.Contains(painted, "37%") {
 		t.Fatalf("new measured frame did not display: %s", painted)
 	}
-	if app.wantsFastTick() {
-		t.Fatal("measured progress repaints between observations")
+	if app.wantsFastTick() || app.nextTickDelay(onBoundary) != 160*time.Millisecond {
+		t.Fatal("a measured transfer changed the arc cadence")
 	}
-	job.Progress.Total = 0
-	show()
 	app.openSessionSettings()
 	app.forceFrame()
 	app.View()
-	if app.wantsFastTick() {
-		t.Fatal("hidden job kept the fast clock")
+	if app.nextTickDelay(onBoundary) != workspace.IdleTickInterval {
+		t.Fatal("hidden job kept the arc clock")
 	}
 }

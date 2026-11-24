@@ -34,10 +34,13 @@ is in [settings design](settings-design.md#skills-and-mcp-store).
   settings registration maps (config.json for application scope, the sparse
   workspace overlay for workspace scope), never a second shadow install table.
   Preserve neighboring installs/preferences and fence the exact source, policy,
-  selected preimage and workspace lifetime. MCP activation exposes observed
-  fingerprints separately from usable tools; separate `mcp_request_access` grants require
+  selected preimage and workspace lifetime. MCP activation lists usable tools
+  separately from tools that need access (name, fingerprint, bounded description;
+  never input schemas); separate `mcp_request_access` grants require
   exact authorization: human approval persists durable grants, while reviewer/YOLO
-  grants are run-local, never human authority or source annotations. Skill activation includes its installed path. Passive restart
+  grants are run-local, never human authority or source annotations. Grants add
+  up; a run-local grant stays valid while its connection, acquisition policy and
+  source are unchanged, so publishing an unrelated change keeps it. Skill activation includes its installed path. Passive restart
   reconnects/downloads/replays nothing; explicit activation rechecks tool schemas.
   Skill loading/installation validates content independently of host readiness.
   Unknown client fields and nested authoring metadata are inert (hooks never run);
@@ -226,8 +229,9 @@ is in [settings design](settings-design.md#skills-and-mcp-store).
   read cannot inspect a nil/new WorkspaceDB during Close/SwitchProject.
 - Local stdio MCP servers inherit the full host environment, like agent shell
   commands; never reintroduce a variable allowlist. Server stderr tails are
-  attached to failures. Slow activation, including first-run installation by
-  the server, uses the owning
-  agent's [background jobs](background-commands.md#activation-jobs) after exact
-  authorization. A returned handle is not a connected server. See
+  attached to failures; when the server exited, the first line names its own
+  reason. Activation that acquires, installs or launches, including first-run
+  installation by the server, is one of the owning
+  agent's [background jobs](background-commands.md#activation-jobs) from the
+  moment it is authorized. A returned handle is not a connected server. See
   [capability workflows](../guides/capability-workflows.md#mcp).

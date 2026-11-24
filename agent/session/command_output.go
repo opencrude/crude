@@ -89,11 +89,7 @@ func cancelledCommandOutcome(mgr *fileio.AsyncCommandManager, uc *fileio.Untrack
 	result, _ := commandOutcome(mgr, uc)
 	if evidence, ok := tools.ParseCommandResult("execute_command", result.Content); ok {
 		evidence.Cancelled = true
-		if evidence.TaskID != "" {
-			evidence.Error = "Activation stopped. Inspect the retained output."
-		} else {
-			evidence.Error = "Command cancelled. The owning turn stopped its exact command tree and preserved the captured evidence."
-		}
+		evidence.Error = "Command cancelled. The owning turn stopped its exact command tree and preserved the captured evidence."
 		result.Content = tools.CommandResultContent(evidence)
 	}
 	return result
@@ -112,37 +108,19 @@ func awaitCommandWithPromotion(
 	agentID string,
 	humanInput <-chan struct{},
 ) (tools.ToolResult, error) {
-	return awaitJobWithPromotion(ctx, mgr, uc, lg, agentID, humanInput, nil, nil, func() (tools.ToolResult, error) { return commandOutcome(mgr, uc) })
-}
-
-func awaitJobWithPromotion(ctx context.Context, mgr *fileio.AsyncCommandManager, uc *fileio.UntrackedCmd, lg *logger.Logger, agentID string, humanInput <-chan struct{}, changes <-chan struct{}, progress func(command.Progress), inline func() (tools.ToolResult, error)) (tools.ToolResult, error) {
 	reason := "threshold"
-	deadline := time.After(asyncPromotionThreshold)
-	var lastPhase string
-	var sent time.Time
-await:
-	for {
-		select {
-		case <-ctx.Done():
-			uc.Kill()
-			<-uc.Done()
-			return cancelledCommandOutcome(mgr, uc), nil
-		case <-uc.Done():
-			return inline()
-		case <-changes:
-			p := uc.Info().Progress
-			if progress != nil && (p.Phase != lastPhase || time.Since(sent) >= 100*time.Millisecond || p.Total > 0 && p.Current >= p.Total) {
-				progress(p)
-				lastPhase, sent = p.Phase, time.Now()
-			}
-		case <-deadline:
-			break await
-		case <-humanInput:
-			// The user is waiting for the agent: hand back a background handle
-			// now instead of holding their message until the threshold.
-			reason = "human_input"
-			break await
-		}
+	select {
+	case <-ctx.Done():
+		uc.Kill()
+		<-uc.Done()
+		return cancelledCommandOutcome(mgr, uc), nil
+	case <-uc.Done():
+		return commandOutcome(mgr, uc)
+	case <-time.After(asyncPromotionThreshold):
+	case <-humanInput:
+		// The user is waiting for the agent: hand back a background handle
+		// now instead of holding their message until the threshold.
+		reason = "human_input"
 	}
 
 	if uc.Status() == fileio.AsyncRunning {
@@ -171,6 +149,6 @@ await:
 		<-uc.Done()
 		return cancelledCommandOutcome(mgr, uc), nil
 	case <-uc.Done():
-		return inline()
+		return commandOutcome(mgr, uc)
 	}
 }

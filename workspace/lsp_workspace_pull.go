@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"errors"
+	"slices"
 	"time"
 
 	"crude/lsp/lspclient"
@@ -65,6 +66,19 @@ func (m *LSPManager) tickWorkspacePullLocked() {
 				m.requestProjectCheckLocked()
 			}
 		case wanted && state.workspacePull.cancel == nil:
+			// Late registration can arrive during fallback for this root. End
+			// that pass without turning borrowed views into failed checks. Its
+			// retained answers still count when the other roots resume.
+			if m.checkRunning && m.checkTarget == key {
+				m.cancelProjectCheckLocked()
+				continue
+			}
+			// Reconcile sends the queued didClose before trying again. If the
+			// first workspace report arrives before then, it can be ignored as
+			// an open-file report and never be sent again on the live request.
+			if slices.ContainsFunc(m.closedDocuments, func(doc lspClosedDocument) bool { return doc.client == state.client }) {
+				continue
+			}
 			ctx, cancel := context.WithCancel(context.Background())
 			state.workspacePull.ctx, state.workspacePull.cancel = ctx, cancel
 			m.workspacePulls.Add(1)

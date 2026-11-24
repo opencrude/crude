@@ -225,7 +225,8 @@ func TestExtractionCommitAtomicityAndLateCorrection(t *testing.T) {
 	if _, err := store.db.Exec(`DROP TRIGGER fail_second`); err != nil {
 		t.Fatal(err)
 	}
-	saved, err := store.CommitExtraction(t.Context(), batch)
+	commit, err := store.CommitExtraction(t.Context(), batch)
+	saved := commit.Saved
 	if err != nil || len(saved) != 2 {
 		t.Fatalf("retry extraction: %+v %v", saved, err)
 	}

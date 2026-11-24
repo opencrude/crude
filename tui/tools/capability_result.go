@@ -36,19 +36,13 @@ func buildCapabilityResult(name, content, input string) StructuredResult {
 }
 
 func buildCapabilitySearch(content string) StructuredResult {
-	var entries []captypes.Entry
-	var warning string
-	if json.Unmarshal([]byte(content), &entries) != nil {
-		var partial captypes.SearchResult
-		if json.Unmarshal([]byte(content), &partial) == nil {
-			entries, warning = partial.Entries, partial.Warning
-		}
-	}
-	if entries == nil {
+	var found captypes.SearchResult
+	if json.Unmarshal([]byte(content), &found) != nil || found.Results == nil {
 		result := BuildReadableResult(content)
 		result.Summary = "Capability search result unavailable"
 		return result
 	}
+	entries, warning := found.Results, found.Warning
 	result := StructuredResult{Summary: resultCount(len(entries), "capability", "capabilities"), Unit: "capabilities"}
 	if len(entries) == 0 {
 		result.Summary = "No capabilities found"
@@ -56,28 +50,20 @@ func buildCapabilitySearch(content string) StructuredResult {
 		return result
 	}
 	for _, entry := range entries {
-		state := "available · not installed"
-		if entry.Installed {
-			state = "installed"
-		}
-		if entry.State != "" {
-			state += " · " + entry.State
-		}
 		title := entry.Name
 		if title == "" {
 			title = entry.ID
 		} else if title != entry.ID && entry.ID != "" {
 			title += " (" + entry.ID + ")"
 		}
-		section := ResultSection{Title: title, Metadata: strings.Join(nonempty(string(entry.Kind), state, entry.Source), " · "), Body: entry.Description}
+		section := ResultSection{Title: title, Metadata: strings.Join(nonempty(string(entry.Kind), entry.State, entry.Source), " · "), Body: entry.Description}
 		if entry.Reason != "" {
 			section.Body += "\n" + entry.Reason
 		}
 		for _, field := range []ResultField{
 			{"ID", entry.ID}, {"Name", entry.Name}, {"Kind", string(entry.Kind)}, {"Installed", fmt.Sprint(entry.Installed)},
-			{"State", entry.State}, {"Reason", entry.Reason}, {"Source", entry.Source}, {"Publisher", entry.Publisher},
-			{"Revision", entry.Version}, {"Digest", entry.Digest}, {"Scope", string(entry.Origin)}, {"Mode", entry.Mode},
-			{"Path", entry.Path}, {"Managed", fmt.Sprint(entry.Managed)}, {"Connection ID", entry.ConnectionID},
+			{"State", entry.State}, {"Reason", entry.Reason}, {"Source", entry.Source}, {"Transport", entry.Transport},
+			{"Package", entry.Package}, {"Revision", entry.Version}, {"Repository", entry.Repository},
 		} {
 			if field.Value != "" {
 				section.Details = append(section.Details, field)
@@ -143,16 +129,18 @@ func buildCapabilityActivation(content, input string) StructuredResult {
 	var activation captypes.ActivationResult
 	if json.Unmarshal([]byte(content), &activation) == nil && activation.ConnectionID != "" &&
 		(id == "" || id == activation.ConnectionID) {
-		result := StructuredResult{Summary: fmt.Sprintf("MCP %s · %d usable tools", activation.State, len(activation.UsableTools)), Unit: "tools"}
+		result := StructuredResult{Summary: fmt.Sprintf("MCP %s · %d usable tools", activation.State, len(activation.Usable)), Unit: "tools"}
 		result.Sections = append(result.Sections, ResultSection{Title: activation.ConnectionID, Body: activation.Next})
-		for _, tool := range activation.Tools {
-			status := tool.Reason
-			if tool.Selected {
-				status = "Granted · agent selection and request budgets still apply"
-			}
+		for _, tool := range activation.Usable {
 			result.Sections = append(result.Sections, ResultSection{
-				Title: tool.OriginalName, Metadata: status, Body: tool.Description,
-				Details: []ResultField{{"Name", tool.Name}, {"Fingerprint", tool.Fingerprint}, {"Effect", string(tool.Effect)}, {"Scope", tool.Scope}},
+				Title: tool.Tool, Metadata: strings.Join(nonempty("Granted", string(tool.Effect), tool.Scope), " · "),
+				Details: []ResultField{{"Name", tool.Name}, {"Effect", string(tool.Effect)}, {"Scope", tool.Scope}},
+			})
+		}
+		for _, tool := range activation.NeedsAccess {
+			result.Sections = append(result.Sections, ResultSection{
+				Title: tool.Tool, Metadata: "Needs access", Body: tool.Description,
+				Details: []ResultField{{"Fingerprint", tool.Fingerprint}},
 			})
 		}
 		for _, notice := range activation.Notices {

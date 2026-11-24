@@ -74,6 +74,8 @@ the pane at first; the right-aligned zoom-out, zoom-in and fit icons and the
 The mouse wheel zooms around the pointer. Arrows and dragging pan a zoomed
 image; Shift+wheel and horizontal wheel pan sideways. The shell header shows pixel dimensions and zoom. The shell footer owns the
 interaction hints. The whole area below the toolbar belongs to the image.
+A font preference change remeasures the toolbar, not the image viewport or zoom.
+A palette-only change keeps the existing button widths and padding.
 Clicking a zoom or Fit action returns keys to the image; it does not select the
 action. Esc or Ctrl+W closes the tab.
 Zoom steps are Fit times powers of √2 and stop where a step would no longer

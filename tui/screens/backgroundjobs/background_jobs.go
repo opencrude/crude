@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -74,6 +76,7 @@ type Screen struct {
 	ruleBleedW int
 	rules      map[string]*ui.ProgressRule
 	rows       []Job
+	statuses   []rowStatus
 	columns    columnLayout
 	controls   map[ui.ComponentID]*rowControl
 	buttonJobs map[ui.ComponentID]Job
@@ -102,8 +105,8 @@ func (s *Screen) Refresh(now time.Time) bool {
 	return true
 }
 
-// NeedsAnimation reports only indeterminate bars with space on a painted row.
-func (s *Screen) NeedsAnimation() bool { return s.animating }
+// NeedsActivityArc reports whether layout gave a running job a visible glyph.
+func (s *Screen) NeedsActivityArc() bool { return s.animating }
 
 func (s *Screen) VisibleCount() int { return s.visible }
 
@@ -143,7 +146,12 @@ func (s *Screen) PreferredHeight(_, maxHeight int) int {
 }
 func (s *Screen) Layout(ctx ui.LayoutContext, rect ui.Rect) {
 	s.SetBounds(rect)
-	s.columns = s.columnWidths(rect.W)
+	jobs := s.rows[:min(len(s.rows), max(0, rect.H-4))]
+	s.statuses = s.statuses[:0]
+	for _, job := range jobs {
+		s.statuses = append(s.statuses, describeStatus(job))
+	}
+	s.columns = s.columnWidths(rect.W, jobs)
 	s.children = s.children[:0]
 	s.buttonJobs = make(map[ui.ComponentID]Job)
 	controls := make(map[ui.ComponentID]*rowControl)
@@ -167,15 +175,10 @@ func (s *Screen) Layout(ctx ui.LayoutContext, rect ui.Rect) {
 	cols := s.columns
 	s.animating = false
 	var rules map[string]*ui.ProgressRule
-	for index, job := range s.rows {
+	for index, job := range jobs {
 		y := 4 + index
-		if y >= rect.H {
-			break
-		}
-		// The command reads as a link to its call in the conversation. The
-		// link's one-cell padding sits in the column gap so the text stays
-		// aligned with the JOB header.
-		if width := progressWidth(cols.statusW, job); width > 0 {
+		s.animating = s.animating || job.Status == "running" && cols.statusW >= cols.glyphW
+		if cols.barW > 0 && hasBar(job) {
 			if rules == nil {
 				rules = make(map[string]*ui.ProgressRule)
 			}
@@ -186,10 +189,11 @@ func (s *Screen) Layout(ctx ui.LayoutContext, rect ui.Rect) {
 			bar.SetTokens(s.tokens)
 			bar.SetActive(true)
 			bar.SetMeasurement(job.Progress.Current, job.Progress.Total)
-			s.animating = s.animating || bar.NeedsFrame()
-			bar.Layout(ctx, ui.Rect{X: cols.statusX + cols.statusW - width, Y: y, W: width, H: 1})
+			bar.Layout(ctx, ui.Rect{X: cols.barX, Y: y, W: cols.barW, H: 1})
 			rules[job.TaskID] = bar
 		}
+		// The link's one-cell padding sits in the column gap so its text
+		// aligns with the JOB header.
 		if text := s.commandText(job); text != "" && cols.commandW > 0 {
 			w := min(rendering.VisibleWidth(text)+2, cols.commandW+2)
 			place(controlReveal, columnCommand, index, job, ui.Rect{X: max(0, cols.commandX-1), Y: y, W: w, H: 1}, text)
@@ -209,12 +213,8 @@ func (s *Screen) Layout(ctx ui.LayoutContext, rect ui.Rect) {
 	s.rules = rules
 }
 
-func progressWidth(width int, job Job) int {
-	if job.TaskID == "" || job.Status != "running" || width < 6 {
-		return 0
-	}
-	return min(18, width/3)
-}
+// hasBar requires measured work. Indeterminate activity has only the arc.
+func hasBar(job Job) bool { return job.Status == "running" && job.Progress.Total > 0 }
 
 // commandText is the single linked label for a shell command or capability.
 func (s *Screen) commandText(job Job) string {
@@ -253,13 +253,14 @@ func (s *Screen) Paint(buf *surface.CellBuffer, originX, originY int, ctx ui.Pai
 		s.paintHeader(buf, x, headerY, r.W, cols, muted, divider, bg, hBorder, r.H > 3)
 	}
 
-	for index, job := range s.rows {
-		if index+4 >= r.H {
-			break
-		}
-		s.paintRow(buf, x, headerY+2+index, cols, job, ctx.Frame)
-		if bar := s.rules[job.TaskID]; bar != nil {
-			bar.Paint(buf, x, y, ctx)
+	arc := ui.ActivityArc(ctx.Frame)
+	for i, status := range s.statuses {
+		job := s.rows[i]
+		s.paintRow(buf, x, headerY+2+i, cols, job, status.text, arc)
+		if hasBar(job) {
+			if bar := s.rules[job.TaskID]; bar != nil {
+				bar.Paint(buf, x, y, ctx)
+			}
 		}
 	}
 }
@@ -267,59 +268,112 @@ func (s *Screen) Paint(buf *surface.CellBuffer, originX, originY int, ctx ui.Pai
 // columnLayout describes the resolved tabular geometry for the current size.
 type columnLayout struct {
 	commandX, commandW, statusX, statusW     int
+	barX, barW, glyphW                       int
 	handleX, handleW, durationX, durationW   int
 	outputX, outputW, terminateX, terminateW int
 }
 
-// Keep the two decisions aligned on the right and the job link on the left.
-// A handle is useful for addressing a job, but is never worth clipping its
-// name or progress. PID and exit evidence belong to the expanded result.
-func (s *Screen) columnWidths(total int) columnLayout {
+const (
+	// barWidth is a progress bar's full length; shorter bars down to
+	// barMinWidth still read as progress.
+	barWidth, barMinWidth = 18, 6
+	// jobFloor keeps a recognizable job name when space is short.
+	jobFloor = 16
+	// detailFloor is the error or phase detail a status earns before the
+	// optional handle column is shown.
+	detailFloor = 32
+)
+
+// columnWidths sizes every column from all visible rows together, so each
+// column has one width and one position for the whole table. Output and Stop
+// stay right-aligned. Space goes, in order, to a recognizable job name and
+// each row's state, the elapsed time, some status detail, the handle, and
+// then to the job name and status up to their full text; spare width trails
+// the status column. PID and exit evidence belong to the expanded result.
+func (s *Screen) columnWidths(total int, jobs []Job) columnLayout {
 	gap := ui.TableMinGap
 	var c columnLayout
-	remaining := total
+	right := total
 	reserve := func(w int) (int, int) {
-		w = min(remaining, w)
-		remaining -= w
-		x := remaining
-		remaining = max(0, remaining-gap)
+		w = min(max(0, right), w)
+		right -= w
+		x := right
+		right -= gap
 		return x, w
 	}
-	var stop bool
-	jobW, statusW, handleW, timeW := 3, 6, 6, 4
-	for _, job := range s.rows {
+	var stop, tasks bool
+	jobNat, leadMax, taskLead, statusNat := len("JOB"), 0, 0, 0
+	handleW, timeW := len("HANDLE"), len("TIME")
+	for i, job := range jobs {
 		stop = stop || job.Status == "running"
-		jobW = max(jobW, rendering.VisibleWidth(job.Command))
-		sw := rendering.VisibleWidth(s.statusText(job, 0))
-		if job.TaskID != "" && job.Status == "running" {
-			sw += 15
+		jobNat = max(jobNat, rendering.VisibleWidth(rendering.SanitizeForTerminal(job.Command)))
+		status := s.statuses[i]
+		leadMax = max(leadMax, status.leadWidth)
+		statusNat = max(statusNat, rendering.VisibleWidth(status.text))
+		if hasBar(job) {
+			tasks = true
+			taskLead = max(taskLead, status.leadWidth)
 		}
-		statusW = max(statusW, min(sw, 34))
+		if job.Status != "running" {
+			glyph, _, _ := s.statusGlyph(job, "")
+			c.glyphW = max(c.glyphW, rendering.VisibleWidth(glyph))
+		}
 		handleW = max(handleW, rendering.VisibleWidth(job.Handle)+2)
 		timeW = max(timeW, rendering.VisibleWidth(s.durationLabel(job)))
 	}
 	if stop {
+		c.glyphW = max(c.glyphW, ui.ActivityArcWidth())
+	}
+	glyphSlot := c.glyphW + 1
+	leadMax = max(len("STATUS"), leadMax+glyphSlot)
+	statusNat = max(leadMax, statusNat+glyphSlot)
+	if tasks {
+		taskLead += glyphSlot
+		statusNat = max(statusNat, taskLead+1+barWidth)
+	}
+	if stop {
 		w := terminateButtonW
-		if remaining < 56 {
+		if total < 72 {
 			w = rendering.VisibleWidth(s.tokens.Glyphs().Close) + 4
 		}
 		c.terminateX, c.terminateW = reserve(w)
 	}
-	if remaining >= outputButtonW || !stop {
+	if right >= outputButtonW || !stop {
 		c.outputX, c.outputW = reserve(outputButtonW)
 	}
-	// Reserve enough for a useful operand and a readable state before offering
-	// optional columns. The spare width belongs to the operand, not empty IDs.
-	required := min(jobW, 25) + 1 + statusW + gap
-	if remaining >= required+timeW+gap {
+	c.commandX = min(1, max(0, right))
+	// right is now the end of the free region. JOB and STATUS share it once
+	// the gap between them is paid.
+	flex := right - c.commandX - gap
+	jobMin := min(jobNat, jobFloor)
+	statusFloor := min(statusNat, leadMax+detailFloor)
+	if flex-(timeW+gap) >= jobMin+leadMax {
 		c.durationX, c.durationW = reserve(timeW)
+		flex -= timeW + gap
 	}
-	if remaining >= required+handleW+gap {
+	if flex-(handleW+gap) >= jobMin+statusFloor {
 		c.handleX, c.handleW = reserve(handleW)
+		flex -= handleW + gap
 	}
-	c.statusX, c.statusW = reserve(min(statusW, max(0, remaining-min(jobW, 14)-gap-1)))
-	c.commandX = min(1, remaining)
-	c.commandW = max(0, remaining-c.commandX)
+	flex = max(0, flex)
+	switch {
+	case flex < jobMin+leadMax:
+		// Too narrow for both: keep a short job name, then the state.
+		c.commandW = min(jobNat, max(min(jobNat, 8), flex-leadMax))
+		c.statusW = max(0, flex-c.commandW)
+	case flex >= jobNat+statusNat:
+		c.commandW, c.statusW = jobNat, flex-jobNat
+	default:
+		// Share the shortfall: the shorter text is shown whole first.
+		c.commandW = min(jobNat, max(jobMin, flex-statusNat, flex/2))
+		c.statusW = flex - c.commandW
+	}
+	c.commandW = min(c.commandW, max(0, flex))
+	c.statusX = c.commandX + c.commandW + gap
+	if tasks && c.statusW >= taskLead+1+barMinWidth {
+		c.barX = c.statusX + taskLead + 1
+		c.barW = min(barWidth, c.statusW-taskLead-1)
+	}
 	return c
 }
 
@@ -335,43 +389,57 @@ func (s *Screen) paintHeader(buf *surface.CellBuffer, x, y, total int, c columnL
 	}
 }
 
-func (s *Screen) statusText(job Job, frame int) string {
-	glyph, _, _ := s.statusGlyph(job)
-	var text string
-	switch job.Status {
-	case "running":
-		glyph = ui.ActivityDot(frame)
-		text = "Running"
-		if job.Progress.Phase != "" {
-			text = job.Progress.Phase
-		}
-		if job.Progress.Total > 0 {
-			text = fmt.Sprintf("%d%% · %s", job.Progress.Percent(), text)
-		}
-	case "completed":
-		text = "Completed"
-	case "killed":
-		text = "Stopped"
-	case "failed":
-		text = "Failed"
-		if job.Error != "" {
-			text += " · " + job.Error
-		}
-	default:
-		text = "Unknown"
-	}
-	return glyph + " " + rendering.SanitizeForTerminal(text)
+type rowStatus struct {
+	text      string
+	leadWidth int // state/phase width, without the glyph or failure detail
 }
 
-func (s *Screen) paintRow(buf *surface.CellBuffer, x, y int, c columnLayout, job Job, frame int) {
+// describeStatus derives stable text when layout processes a new snapshot. The
+// shared clock changes only the glyph. Output retains the full error evidence.
+func describeStatus(job Job) rowStatus {
+	var state, detail string
+	switch job.Status {
+	case "running":
+		state = "Running"
+		if job.Progress.Phase != "" {
+			state = job.Progress.Phase
+		}
+		if job.Progress.Total > 0 {
+			state = fmt.Sprintf("%3d%% · %s", job.Progress.Percent(), state)
+		}
+	case "completed":
+		state = "Completed"
+	case "killed":
+		state = "Stopped"
+	case "failed":
+		state = "Failed"
+		summary, _, _ := strings.Cut(strings.TrimSpace(job.Error), "\n")
+		if summary = strings.TrimSpace(summary); summary != "" {
+			first, size := utf8.DecodeRuneInString(summary)
+			detail = string(unicode.ToUpper(first)) + summary[size:]
+		}
+	default:
+		state = "Unknown"
+	}
+	state = rendering.SanitizeForTerminal(state)
+	status := rowStatus{text: state, leadWidth: rendering.VisibleWidth(state)}
+	if detail != "" {
+		status.text += " · " + rendering.SanitizeForTerminal(detail)
+	}
+	return status
+}
+
+func (s *Screen) paintRow(buf *surface.CellBuffer, x, y int, c columnLayout, job Job, status, arc string) {
 	bg := s.tokens.Color(ui.ColorBg)
 	muted := s.tokens.Color(ui.ColorMuted)
-	_, ink, attr := s.statusGlyph(job)
+	glyph, ink, attr := s.statusGlyph(job, arc)
 	w := c.statusW
-	if bar := progressWidth(w, job); bar > 0 {
-		w -= bar + 1
+	if c.barW > 0 && hasBar(job) {
+		w = c.barX - c.statusX - 1
 	}
-	s.paintCell(buf, x+c.statusX, y, w, s.statusText(job, frame), ink, bg, attr, ui.TableAlignLeft)
+	glyphSlot := c.glyphW + 1
+	s.paintCell(buf, x+c.statusX, y, min(w, c.glyphW), glyph, ink, bg, attr, ui.TableAlignLeft)
+	s.paintCell(buf, x+c.statusX+glyphSlot, y, w-glyphSlot, status, ink, bg, attr, ui.TableAlignLeft)
 	if c.handleW > 0 {
 		s.paintCell(buf, x+c.handleX, y, c.handleW, "["+job.Handle+"]", muted, bg, 0, ui.TableAlignLeft)
 	}
@@ -391,10 +459,10 @@ func (s *Screen) durationLabel(job Job) string {
 	return rendering.FormatThinkingDuration(duration)
 }
 
-func (s *Screen) statusGlyph(job Job) (string, cell.Color, cell.Attrs) {
+func (s *Screen) statusGlyph(job Job, arc string) (string, cell.Color, cell.Attrs) {
 	switch job.Status {
 	case "running":
-		return ui.ActivityDot(0), s.tokens.Color(ui.ColorAccent2), cell.AttrBold
+		return arc, s.tokens.Color(ui.ColorAccent2), cell.AttrBold
 	case "completed":
 		return "✓", s.tokens.Color(ui.ColorSuccess), cell.AttrBold
 	case "failed":

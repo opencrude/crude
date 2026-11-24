@@ -3,35 +3,29 @@ package session
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 
 	"crude/agent/tools"
 	"crude/agent/turnloop"
 	captypes "crude/types/capability"
-	"crude/types/command"
 	"crude/workspace/fileio"
 )
 
+// runActivation starts admitted activation work as a background job at once.
+// Activation downloads, installs or launches, so it never holds the turn:
+// like async_execute_command it returns the job's handle immediately, and the
+// job's command_outcome delivers the activation result to this agent.
 func (s *Session) runActivation(ctx context.Context, live *turnloop.Agent, agentID, id, label string, work captypes.ActivationWork) (tools.ToolResult, error) {
 	manager := live.AsyncMgr
 	if manager == nil {
 		return tools.ToolResult{}, errors.New("activation needs the owning agent's job manager")
 	}
-	captypes.ReportProgress(ctx, label, 0, 0)
 	media := live.MediaReadPolicy
-	changes := make(chan struct{}, 1)
-	var inline tools.ToolResult
-	var resultErr error
-	task, err := manager.StartTask(ctx, id, label, live.WorkDir, func(ctx context.Context, output fileio.TaskOutput) error {
-		result, err := work(captypes.WithProgress(ctx, func(p command.Progress) {
-			output.Report(p)
-			select {
-			case changes <- struct{}{}:
-			default:
-			}
-		}))
-		inline, resultErr = capabilityMediaResult(result, err, media)
-		_, _ = io.WriteString(output, inline.Content)
+	info, err := manager.StartTask(ctx, id, label, live.WorkDir, func(ctx context.Context, output fileio.TaskOutput) error {
+		result, err := work(captypes.WithProgress(ctx, output.Report))
+		settled, resultErr := capabilityMediaResult(result, err, media)
+		_, _ = io.WriteString(output, settled.Content)
 		if resultErr == nil {
 			s.capabilitySharing.share(agentID, "activated", id)
 		}
@@ -40,14 +34,12 @@ func (s *Session) runActivation(ctx context.Context, live *turnloop.Agent, agent
 	if err != nil {
 		return tools.ToolResult{}, err
 	}
-	observe, stop := context.WithCancel(ctx)
-	defer stop()
-	return awaitJobWithPromotion(ctx, manager, task, s.logger, agentID, s.humanInputWake(observe, agentID), changes, captypes.ProgressObserver(ctx), func() (tools.ToolResult, error) {
-		// The job's done channel synchronizes its native result. Promoted
-		// callers never read it; the normal settlement journal owns delivery.
-		if resultErr == nil && task.Status() != fileio.AsyncCompleted {
-			return commandOutcome(manager, task)
-		}
-		return inline, resultErr
-	})
+	return tools.ToolResult{Content: FormatJobStart(info)}, nil
+}
+
+// FormatJobStart reports in-process work that started as a background job.
+func FormatJobStart(info fileio.AsyncCmdInfo) string {
+	result := commandResult(info)
+	result.Retrieval = fmt.Sprintf("%s runs as background job [%s]. Its result arrives automatically as a command_outcome event; continue other work or end the turn meanwhile. read_async_output(handle=%q) shows its phases so far and kill_async_command(handle=%q) stops it. Do not start it again or poll its status.", info.Command, info.Handle, info.Handle, info.Handle)
+	return tools.CommandResultContent(result)
 }

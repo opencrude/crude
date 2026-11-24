@@ -431,7 +431,12 @@ Resumed is not a successful task finish: its durable checkpoint stays open until
 the supervisor commits completion/cancellation, so passive crash recovery still
 keeps the unfinished work. A subsequent failure updates the same incident.
 Needs attention and interrupted incidents remain static and expose Retry now.
-Recovered/cancelled incidents remove the retry target.
+Recovered/cancelled incidents remove the retry target. A permanent failure
+moves the same incident to the end of its turn, after accepted work and before
+queued input. Reopening sorts that row by the failure time, not the first retry
+or the start of the turn. The terminal acknowledgement leaves both the agent
+and its open request operations failed; it does not replace the verdict with
+Completed. A stopped turn instead settles its requests as cancelled.
 
 Stop has one precondition, `AgentState.CanStop`: live work, a pending prompt
 or compaction, or a recovery parked for retry. Every shell Stop entry point and
@@ -557,6 +562,10 @@ See [network transport](network.md) for secure remediation of routing/TLS issues
 - `tui/viewmodel/run_recovery_lifecycle_test.go` submits through the composer and
   checks painted deadlines, manual repair for authentication, automatic HTTP 408
   continuation, retained draft, and removal of stale recovery actions.
+- `tui/viewmodel/remote_provider_failure_test.go` drives a provider limit after
+  recovery and on a fresh request through the connected composer. It checks the
+  visible chat tail, failed status, unchanged draft, no retry and exact order on
+  a cold reopen.
 - `tui/viewmodel/remote_stop_lifecycle_test.go` completes automatic compaction,
   repeats Stop/follow-up across two connected shells, proves steering reaches
   the next provider request, stops an authentication failure and passively

@@ -88,8 +88,8 @@ func ResolveControlState(disabled, focused, selected, pressed, hovered bool) Con
 
 // TokenSet is a versioned, resolved palette of cell colors derived from a Theme.
 // Call Rebuild when the theme pointer changes or its contents are swapped.
-// ColorVersion bumps on every rebuild; MetricVersion bumps only when layout
-// metrics/spacing change so hosts can paint-only for color switches.
+// ColorVersion bumps on every rebuild. MetricVersion changes when spacing,
+// measurements or glyph choices can affect layout, not on color switches.
 type TokenSet struct {
 	Version       uint64
 	ColorVersion  uint64
@@ -99,6 +99,9 @@ type TokenSet struct {
 	selectionInk  map[cell.Color]cell.Color
 	lastMetrics   theme.Metrics
 	lastSpacing   theme.Spacing
+	lastGlyphs    theme.Glyphs
+	lastFontSet   bool
+	lastNerdFont  bool
 }
 
 // NewTokenSet resolves colors from th.
@@ -118,12 +121,17 @@ func (ts *TokenSet) Rebuild(th *theme.Theme) {
 		ts.colors = map[SemanticColor]cell.Color{}
 		ts.lastMetrics = theme.Metrics{}
 		ts.lastSpacing = theme.Spacing{}
+		ts.lastGlyphs = theme.Glyphs{}
+		ts.lastFontSet, ts.lastNerdFont = false, false
 		ts.MetricVersion++
 		return
 	}
-	metricsChanged := th.Metrics != ts.lastMetrics || th.Spacing != ts.lastSpacing
-	ts.lastMetrics = th.Metrics
-	ts.lastSpacing = th.Spacing
+	font := th.Tree.Config.UseNerdFont
+	fontSet, nerdFont := font != nil, font != nil && *font
+	metricsChanged := th.Metrics != ts.lastMetrics || th.Spacing != ts.lastSpacing || th.Glyphs != ts.lastGlyphs ||
+		fontSet != ts.lastFontSet || nerdFont != ts.lastNerdFont
+	ts.lastMetrics, ts.lastSpacing, ts.lastGlyphs = th.Metrics, th.Spacing, th.Glyphs
+	ts.lastFontSet, ts.lastNerdFont = fontSet, nerdFont
 	if metricsChanged || ts.MetricVersion == 0 {
 		ts.MetricVersion++
 	}

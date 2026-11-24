@@ -912,14 +912,8 @@ func (m *App) handleTick(msg TickMsg) (tea.Model, tea.Cmd) {
 		m.launcherCapabilitySequence++
 	}
 
-	// Status bar animations and popup reveals need their own content
-	// re-rendered even when main content hasn't changed.
-	if m.wantsFastTick() {
-		perf.SentinelTick()
-		return m, tea.Batch(diskSyncCmd, gitCmd, headerGitCmd, treeGitCmd, launcherCmd, perfCmd, errandCmd, activityCmd, streamingTickCmd())
-	}
 	perf.SentinelTick()
-	return m, tea.Batch(diskSyncCmd, gitCmd, headerGitCmd, treeGitCmd, launcherCmd, perfCmd, errandCmd, activityCmd, tickCmd())
+	return m, tea.Batch(diskSyncCmd, gitCmd, headerGitCmd, treeGitCmd, launcherCmd, perfCmd, errandCmd, activityCmd, clockTickCmd(m.nextTickDelay(time.Now())))
 }
 
 // wantsFastTick reports whether the 16 ms streaming tick is justified right
@@ -944,23 +938,6 @@ func (m *App) wantsFastTick() bool {
 	}
 	if m.activityListLoading() && m.sidebarHostVisible() {
 		return true
-	}
-	// Only the selected panel in a mounted deck can animate. Background
-	// sessions and determinate transfers never keep the shell at 60 Hz.
-	if m.mainPanes != nil {
-		for _, g := range m.mainPanes.groups {
-			if g.view == nil || g.deck.Empty() || g.view.deck == nil {
-				continue
-			}
-			p := g.view.deck.projection
-			if p != nil {
-				if panel := p.deck.Active(); panel != nil {
-					if a, ok := panel.Content.(ui.Animated); ok && a.NeedsAnimation() {
-						return true
-					}
-				}
-			}
-		}
 	}
 	// Running and stopping agents repaint at frame rate; an idle session
 	// keeps the idle cadence.
@@ -2256,12 +2233,10 @@ func (m *App) workingDir() (string, error) {
 	return os.Getwd()
 }
 
-func tickCmd() tea.Cmd {
-	return tea.Tick(workspace.IdleTickInterval, func(at time.Time) tea.Msg { return TickMsg(at) })
-}
+func tickCmd() tea.Cmd { return clockTickCmd(workspace.IdleTickInterval) }
 
-func streamingTickCmd() tea.Cmd {
-	return tea.Tick(16*time.Millisecond, func(at time.Time) tea.Msg { return TickMsg(at) })
+func clockTickCmd(delay time.Duration) tea.Cmd {
+	return tea.Tick(delay, func(at time.Time) tea.Msg { return TickMsg(at) })
 }
 
 // Model pickers show the core's explanation, not its protocol fault code.

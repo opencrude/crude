@@ -689,7 +689,38 @@ func (manager *Manager) diagnosed(id string, epoch uint64, err error) error {
 	if len(text) > diagnosticTailBytes {
 		text = "…" + strings.ToValidUTF8(text[len(text)-diagnosticTailBytes:], "")
 	}
-	return fmt.Errorf("%w; server stderr (tail): %s", err, redactSecrets(config, secrets, manager.resolveSecret, text))
+	text = redactSecrets(config, secrets, manager.resolveSecret, text)
+	// The first line is the summary people read in a status row. When the
+	// server itself ended, its own last complaint is the cause, not the
+	// protocol's view of a closed pipe.
+	if tail.ended() && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+		return fmt.Errorf("server exited before it answered: %s\nserver stderr (tail):\n%s\n(%w)", exitReason(text), text, err)
+	}
+	return fmt.Errorf("%w\nserver stderr (tail):\n%s", err, text)
+}
+
+// exitReason picks the line that says why a server stopped: the last line
+// that names an error, else its last line.
+func exitReason(text string) string {
+	lines := strings.Split(text, "\n")
+	reason := ""
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		if reason == "" {
+			reason = line
+		}
+		if strings.Contains(strings.ToLower(line), "error") {
+			reason = line
+			break
+		}
+	}
+	if len(reason) > 240 {
+		reason = strings.ToValidUTF8(reason[:240], "") + "…"
+	}
+	return reason
 }
 
 func (manager *Manager) session(id string) (*mcp.ClientSession, captypes.ConnectionConfig, uint64, error) {

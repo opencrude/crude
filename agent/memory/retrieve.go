@@ -19,6 +19,9 @@ const (
 	weightImportance = 0.15
 	weightPath       = 0.15
 	pinnedBoost      = 0.25
+	// weightSalience rewards knowledge the user stated again in later turns.
+	// It grows with each statement, so repetition alone surfaces it.
+	weightSalience = 0.25
 
 	recencyHalfLifeDays = 14.0
 	candidateLimit      = 64
@@ -134,6 +137,13 @@ func (st *Store) gatherCandidates(
 		return nil, err
 	}
 	merge(pinned)
+	// A user who keeps repeating something wants it kept in mind even when
+	// today's words differ from the words it was stored with.
+	repeated, err := st.repeatedCandidates(ctx)
+	if err != nil {
+		return nil, err
+	}
+	merge(repeated)
 
 	out := make([]ScoredRecord, 0, len(byID))
 	for _, record := range byID {
@@ -279,6 +289,54 @@ func (st *Store) pinnedCandidates(ctx context.Context) ([]ScoredRecord, error) {
 	return out, rows.Err()
 }
 
+// repeatedCandidates are active records supported by at least two distinct
+// human statements, most recently restated first.
+func (st *Store) repeatedCandidates(ctx context.Context) ([]ScoredRecord, error) {
+	rows, err := st.db.QueryContext(ctx, `
+		SELECT `+recordSelectColumns+`
+		FROM workspace_memories
+		WHERE status = ? AND (
+			SELECT COUNT(DISTINCT json_extract(value, '$.session_id') || '/' || json_extract(value, '$.message_id'))
+			FROM json_each(workspace_memories.evidence)
+			WHERE json_extract(value, '$.kind') = ?
+		) >= 2
+		ORDER BY updated_at DESC
+		LIMIT 16
+	`, StatusActive, EvidenceUser)
+	if err != nil {
+		return nil, fmt.Errorf("recall repeated memories: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []ScoredRecord
+	for rows.Next() {
+		record, err := scanRecord(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan workspace memory: %w", err)
+		}
+		out = append(out, ScoredRecord{Record: record})
+	}
+	return out, rows.Err()
+}
+
+// Statements counts the distinct human statements that support a record.
+func Statements(record Record) int {
+	seen := make(map[string]bool)
+	for _, item := range record.Evidence {
+		if item.Kind == EvidenceUser {
+			seen[item.SessionID+"/"+item.MessageID] = true
+		}
+	}
+	return len(seen)
+}
+
+// salience is 0 for knowledge said once and approaches 1 as it is restated.
+func salience(record Record) float64 {
+	if statements := Statements(record); statements > 1 {
+		return 1 - 1/float64(statements)
+	}
+	return 0
+}
+
 func prefixedRecordColumns(alias string) string {
 	cols := strings.Split(recordSelectColumns, ",")
 	for i, col := range cols {
@@ -354,7 +412,7 @@ func scoreCandidates(candidates []ScoredRecord, q RecallQuery) {
 		}
 
 		c.Score = weightRelevance*rel + weightRecency*recency +
-			weightImportance*importance + weightPath*pathScore
+			weightImportance*importance + weightPath*pathScore + weightSalience*salience(c.Record)
 		if c.Pinned {
 			c.Score += pinnedBoost
 		}

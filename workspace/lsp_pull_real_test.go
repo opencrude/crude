@@ -19,8 +19,8 @@ func TestPullOnlyServerAgainstRealJSONServer(t *testing.T) {
 	if testing.Short() {
 		t.Skip("starts a real language server")
 	}
-	server, err := exec.LookPath("vscode-json-language-server")
-	if err != nil {
+	const server = "vscode-json-language-server"
+	if _, err := exec.LookPath(server); err != nil {
 		t.Skip("vscode-json-language-server is not installed")
 	}
 	root := t.TempDir()
@@ -35,8 +35,13 @@ func TestPullOnlyServerAgainstRealJSONServer(t *testing.T) {
 	probeSources(t, m, root)
 	m.SetWorkspaceRoot(root)
 	trustAnalysis(t, m, root)
-	settings := editorDisabledSettings()
-	settings.Languages = map[string]setting.LSPLanguage{"json": {Enabled: true, Command: server, Args: []string{"--stdio"}}}
+	// Use the real catalog recipe. LookPath above checks presence only: on
+	// Windows it may name an npm shim, not the runtime the catalog starts.
+	settings := setting.DefaultLSP()
+	if spec, ok := settings.ResolveServer(broken); !ok || spec.Command != server {
+		t.Fatalf("catalog did not select the fixture server: %q", spec.Command)
+	}
+	settings.Enabled = false // Only the probe opens a disk view.
 	m.SetSettings(settings)
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	defer cancel()
