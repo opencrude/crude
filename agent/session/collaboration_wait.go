@@ -93,6 +93,10 @@ func (s *Session) waitForCollaborationDuration(ctx context.Context, store collab
 	}
 	notifications, unsubscribe := store.Subscribe()
 	defer unsubscribe()
+	compaction := s.compactionWake(identity.AgentID)
+	compactionRequested := func() collaborationWaitObservation {
+		return collaborationWaitObservation{Status: "compaction_requested", Reason: "the user asked to compact this context; it is compacted before the next request", Guidance: prompt.HintWaitCompaction, ElapsedMs: time.Since(started).Milliseconds(), Snapshot: snapshot, ObservedAt: time.Now(), Source: "wait_control"}
+	}
 	observe := func(readCtx context.Context) (collaborationWaitObservation, bool, error) {
 		result := collaborationWaitObservation{Status: "ready", ElapsedMs: time.Since(started).Milliseconds(), Snapshot: snapshot, ObservedAt: time.Now(), Source: "collaboration_store"}
 		if nextEvent {
@@ -260,6 +264,8 @@ func (s *Session) waitForCollaborationDuration(ctx context.Context, store collab
 		case <-ctx.Done():
 			result.Status, result.Reason = "caller_interrupted", context.Cause(ctx).Error()
 			return result, nil
+		case <-compaction:
+			return compactionRequested(), nil
 		case <-waitCtx.Done():
 			return collaborationWaitTimeoutSnapshot(ctx, observeAll, last, started), nil
 		case _, open := <-notifications:

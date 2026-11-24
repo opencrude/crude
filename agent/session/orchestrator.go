@@ -34,7 +34,10 @@ type Orchestrator struct {
 	// acceptance at that hand-off, so a later request waits for the gate.
 	compactionRequest string
 	compactionSealed  bool
-	inputCh           chan turnRequest
+	// compactionWake is closed while compactionRequest is pending, so the
+	// turn's blocking waits end and the next step boundary compacts.
+	compactionWake chan struct{}
+	inputCh        chan turnRequest
 }
 
 type turnRequest struct {
@@ -74,7 +77,7 @@ func (o *Orchestrator) reserveTurn(input provider.UserInput, deliveries []collab
 	o.turnGeneration++
 	o.turnCancel, o.turnCancelling = cancel, false
 	o.turnSealed = false
-	o.compactionRequest, o.compactionSealed = "", false
+	o.compactionRequest, o.compactionSealed, o.compactionWake = "", false, nil
 	return turnRequest{input: input, ctx: ctx, generation: o.turnGeneration, deliveries: append([]collaboration.PendingDelivery(nil), deliveries...), recovery: recovery}, true
 }
 
@@ -111,7 +114,7 @@ func (o *Orchestrator) submitRecovery(checkpoint sessiondb.RecoveryCheckpoint) b
 	o.turnCancel = cancel
 	o.turnCancelling = false
 	o.turnSealed = false
-	o.compactionRequest, o.compactionSealed = "", false
+	o.compactionRequest, o.compactionSealed, o.compactionWake = "", false, nil
 	copy := checkpoint
 	request := turnRequest{
 		input: cloneUserInput(checkpoint.PendingInput), ctx: ctx,
@@ -188,7 +191,7 @@ func (o *Orchestrator) endTurn(generation uint64) []string {
 	o.turnCancel = nil
 	o.turnCancelling = false
 	o.turnSealed = false
-	o.compactionRequest, o.compactionSealed = "", false
+	o.compactionRequest, o.compactionSealed, o.compactionWake = "", false, nil
 	o.RunID = ""
 	o.RunVersion = 0
 	o.turnMu.Unlock()
@@ -275,8 +278,27 @@ func (o *Orchestrator) requestCompaction(operationID string) (string, bool) {
 	}
 	if o.compactionRequest == "" {
 		o.compactionRequest = operationID
+		close(o.compactionWakeLocked())
 	}
 	return o.compactionRequest, true
+}
+
+// compactionPending is closed while the current turn holds a human compaction
+// request it has not taken yet.
+func (o *Orchestrator) compactionPending() <-chan struct{} {
+	if o == nil {
+		return nil
+	}
+	o.turnMu.Lock()
+	defer o.turnMu.Unlock()
+	return o.compactionWakeLocked()
+}
+
+func (o *Orchestrator) compactionWakeLocked() chan struct{} {
+	if o.compactionWake == nil {
+		o.compactionWake = make(chan struct{})
+	}
+	return o.compactionWake
 }
 
 // takeCompactionRequest consumes the request at a safe step boundary of the
@@ -288,7 +310,7 @@ func (o *Orchestrator) takeCompactionRequest(generation uint64) string {
 		return ""
 	}
 	id := o.compactionRequest
-	o.compactionRequest = ""
+	o.compactionRequest, o.compactionWake = "", nil
 	return id
 }
 
@@ -302,7 +324,7 @@ func (o *Orchestrator) sealCompactionRequests(generation uint64) string {
 	}
 	o.compactionSealed = true
 	id := o.compactionRequest
-	o.compactionRequest = ""
+	o.compactionRequest, o.compactionWake = "", nil
 	return id
 }
 

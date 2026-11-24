@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"crude/agent/collaboration"
+	"crude/agent/tools"
 	"crude/types/setting"
 	"crude/workspace/fileio"
 )
@@ -102,5 +103,55 @@ func TestPeerNoteDoesNotPromoteBlockingCommand(t *testing.T) {
 	}
 	if time.Since(started) < 350*time.Millisecond {
 		t.Fatal("a peer note promoted the command early")
+	}
+}
+
+// /compact is authoritative at the next step boundary: a wait or a slow
+// command must not hold it for its own timeout. The command keeps running in
+// the background, and the next wait after the turn took the request is not
+// cut short again.
+func TestHumanCompactionEndsWaitsAtOnce(t *testing.T) {
+	setPromotionThreshold(t, time.Minute)
+	s, store, recipient, _ := collaborationContractFixture(t)
+	o := NewOrchestrator(recipient.ID, s)
+	s.orchestrators = map[string]*Orchestrator{recipient.ID: o}
+	_, cancelTurn := context.WithCancel(t.Context())
+	defer cancelTurn()
+	o.turnGeneration, o.turnCancel = 4, cancelTurn
+	ctx := context.WithValue(t.Context(), tools.ExecutionIdentityKey{}, tools.ExecutionIdentity{AgentID: recipient.ID})
+	request := func() {
+		if _, handed := o.requestCompaction("compact-now"); !handed {
+			t.Error("the running turn refused the request")
+		}
+	}
+
+	time.AfterFunc(150*time.Millisecond, request)
+	started := time.Now()
+	got, err := s.waitForCollaborationDuration(ctx, store, nil, time.Minute)
+	if err != nil || got.Status != "compaction_requested" || time.Since(started) > 10*time.Second {
+		t.Fatalf("wait = %+v after %v (%v)", got, time.Since(started), err)
+	}
+	if o.takeCompactionRequest(4) != "compact-now" {
+		t.Fatal("the turn could not take the request")
+	}
+	if got, _ := s.waitForCollaborationDuration(ctx, store, nil, 300*time.Millisecond); got.Status != "timeout_no_match" {
+		t.Fatalf("a taken request still ends waits: %+v", got)
+	}
+
+	mgr, lg := promotionTestManager(t)
+	uc, err := mgr.StartUntracked(promotionHelperCommand("sleep"), t.TempDir(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.AfterFunc(150*time.Millisecond, request)
+	observe, stop := context.WithCancel(t.Context())
+	defer stop()
+	started = time.Now()
+	result, err := awaitCommandWithPromotion(t.Context(), mgr, uc, lg, "", s.humanInputWake(observe, recipient.ID))
+	if err != nil || time.Since(started) > 10*time.Second {
+		t.Fatalf("command held the compaction for %v: %v", time.Since(started), err)
+	}
+	if info, ok := mgr.Check(promotedHandle(t, result.Content)); !ok || info.Status != fileio.AsyncRunning {
+		t.Fatalf("command was not handed back as a running background command: %+v", info)
 	}
 }

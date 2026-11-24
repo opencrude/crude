@@ -529,3 +529,86 @@ func TestFailedAutomaticCompactionWithHeadroomContinuesRun(t *testing.T) {
 		t.Fatalf("run did not continue on the full context: main calls=%d result=%+v", mainCalls.Load(), result)
 	}
 }
+
+// A checkpoint written while a turn is still running must not present the
+// earlier, answered prompts as if they were the current request. They become
+// marked history; the running turn's prompt and steering stay verbatim, in
+// order, so the agent continues the same work instead of restarting it.
+func TestMidRunCheckpointSeparatesAnsweredPromptsFromTheRunningTurn(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeChatSSE(w, "- running: step 3 of the migration; next: rerun the gate", "stop")
+	}))
+	defer server.Close()
+	p := provider.FromPreset("openai-chat", "key", server.URL)
+	p.Model = "mid-run-checkpoint"
+	p.SetContextWindow(128_000)
+	steering := provider.NewTextMessage("user", "[USER INTERRUPTION] also update the docs")
+	steering.Origin = provider.OriginHumanSteering
+	call := provider.ChatMessage{Role: "assistant", ToolCalls: []provider.ToolCall{{ID: "call-1", Type: "function", Function: provider.FunctionCall{Name: "execute_command", Arguments: `{"command":"make test"}`}}}}
+	result := provider.ChatMessage{Role: "tool", ToolCallID: "call-1", Content: provider.TextContent(strings.Repeat("test output ", 3000))}
+	history := []provider.ChatMessage{
+		provider.NewTextMessage("user", "First request: fix the crash"),
+		provider.NewTextMessage("assistant", "Fixed the crash."),
+		provider.NewTextMessage("user", "Second request: migrate the schema"),
+		call, result, steering,
+	}
+	for _, state := range []string{"unknown", "running"} {
+		t.Run(state, func(t *testing.T) {
+			a := newTestAgent(t, p, p.Model)
+			if state == "running" {
+				a.LatestHumanTurnState = func(context.Context) (string, bool, error) { return "running", true, nil }
+			}
+			compacted, err := a.Compact(context.Background(), history, "system", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var answered, pending []string
+			for _, message := range compacted.Messages {
+				text := message.ContentString()
+				switch {
+				case strings.HasPrefix(text, "<answered_human_requests>"):
+					answered = append(answered, text)
+				case message.IsGenuineUserInput():
+					pending = append(pending, text)
+				case message.Role == "tool" || len(message.ToolCalls) > 0:
+					t.Fatal("raw tool history survived the checkpoint")
+				}
+			}
+			if len(answered) != 1 || !strings.Contains(answered[0], "First request: fix the crash") || strings.Contains(answered[0], "Second request") {
+				t.Fatalf("answered history = %q", answered)
+			}
+			if len(pending) != 2 || pending[0] != "Second request: migrate the schema" || !strings.Contains(pending[1], "also update the docs") {
+				t.Fatalf("running turn input = %q", pending)
+			}
+		})
+	}
+	// The durable state wins over an interim answer of the running turn.
+	interim := append(append([]provider.ChatMessage(nil), history...), provider.NewTextMessage("assistant", "Schema migrated; checking the plan."))
+	if got := pendingHumanStart(interim, true, true); got != 5 {
+		t.Fatalf("running turn lost its latest input: start=%d", got)
+	}
+	if got := pendingHumanStart(interim, false, true); got != len(interim) {
+		t.Fatalf("completed turn kept pending input: start=%d", got)
+	}
+}
+
+// A human compaction supersedes background work: discarding it cancels the
+// job, settles its announced lifecycle and leaves nothing to adopt later.
+func TestDiscardCancelsBackgroundPreparation(t *testing.T) {
+	var events []string
+	slot := NewPrecompactionSlot(t.Context(), func(e AgentEvent) {
+		if data, ok := e.Data.(map[string]any); ok {
+			events = append(events, fmt.Sprint(data["phase"]))
+		}
+	})
+	defer slot.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	slot.job = &precompactionJob{requestID: "stale", cancel: cancel, done: make(chan struct{})}
+	slot.Discard()
+	if slot.current() != nil || ctx.Err() == nil || len(events) != 1 || events[0] != "discarded" {
+		t.Fatalf("job=%v cancelled=%v events=%v", slot.current(), ctx.Err(), events)
+	}
+	slot.Discard()
+	var nilSlot *PrecompactionSlot
+	nilSlot.Discard()
+}

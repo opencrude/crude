@@ -200,8 +200,19 @@ func TestSessionAdaptiveCompactionInstallsCheckpointAndResumesPassively(t *testi
 					t.Errorf("%s stage not installed: %q", name, section)
 				}
 			}
-			if !bytes.Equal(adaptiveMessageBytes(t, session.activeContext[1:3]), adaptiveMessageBytes(t, []provider.ChatMessage{history[0], history[len(history)-1]})) || session.activeContext[3].EffectiveOrigin() != provider.OriginRuntimeContext {
+			// The assistant fixture answered the first request before the
+			// correction arrived: it is binding history, not a pending turn.
+			retained := session.activeContext[1:3]
+			if fixture.role == "assistant" {
+				if !strings.HasPrefix(retained[0].ContentString(), "<answered_human_requests>") || !strings.Contains(retained[0].ContentString(), history[0].ContentString()) ||
+					!bytes.Equal(adaptiveMessageBytes(t, retained[1:]), adaptiveMessageBytes(t, history[len(history)-1:])) {
+					t.Fatal("answered request and pending correction were not retained verbatim")
+				}
+			} else if !bytes.Equal(adaptiveMessageBytes(t, retained), adaptiveMessageBytes(t, []provider.ChatMessage{history[0], history[len(history)-1]})) {
 				t.Fatal("genuine human request and final correction were not retained verbatim")
+			}
+			if session.activeContext[3].EffectiveOrigin() != provider.OriginRuntimeContext {
+				t.Fatal("runtime handoff is not last")
 			}
 			var archived []byte
 			if err := session.db.QueryRow(`SELECT messages_json FROM agent_context_generations WHERE session_id = ? AND agent_id = ? AND generation = ?`, session.sessionID, session.sessionID, 7).Scan(&archived); err != nil {

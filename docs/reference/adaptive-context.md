@@ -242,7 +242,10 @@ admission and reported usage always use full inherited context, not delta bytes.
 
 `ContextCompactionPercent: 0` still disables automatic pressure and overflow
 recovery; manual `/compact` uses the same extractor, and a `/compact` accepted
-by a running turn compacts at its next step regardless of that setting. Checkpoints keep four
+by a running turn compacts at its next step regardless of that setting. That
+request ends the turn's waits at once and always summarizes the complete
+current source; extraction treats an earlier checkpoint in the source as older
+state that later messages supersede. Checkpoints keep four
 sections whether they were extracted together or one at a time; chunk progress is additional truthful detail within a stage.
 The chat boundary and the agent activity strip report the same operation:
 while manual compaction is active, its progress replaces the paused turn's
@@ -575,11 +578,15 @@ particular request paths; they are not a total billing guarantee.
   may describe those facts but never owns them. Refresh the handoff after all
   extraction stages because commands and children may settle during compaction.
 - Retain a verbatim human tail as input only for a request that is still
-  pending. If a later terminal assistant answer already completed the latest
-  human request, never append it as a pending user turn (the next invocation
-  would answer it again); carry those requests verbatim in one code-authored,
-  context-only `<answered_human_requests>` history block so their requirements
-  stay binding without being re-answered. A child's latest assignment may use
+  pending. Human input after the last terminal assistant answer belongs to the
+  turn in progress: its prompt and steering stay verbatim, in order, first
+  within the retention budget. Every earlier request was already answered:
+  never append it as a pending user turn (the next invocation would answer it
+  again, or mistake it for the current task); carry those requests verbatim in
+  one code-authored, context-only `<answered_human_requests>` history block so
+  their requirements stay binding without being re-answered. Durable turn
+  state wins when known: a completed turn has nothing pending, and a running
+  turn keeps at least its latest human input pending after an interim answer. A child's latest assignment may use
   all available continuation space, not only the recent-input cap; only an
   assignment that cannot fit at all is left to extraction.
 - In-run automatic compaction rebuilds the continuation system message from the

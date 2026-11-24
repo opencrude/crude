@@ -16,6 +16,7 @@ const (
 	HintForwardedQuestion = "Continue with available information unless the missing answer is required."
 	HintWaitNoSnapshot    = "No fresh snapshot was available; retry only if another observation is still required."
 	HintWaitDirected      = "The runtime delivers this event at its normal safe boundary; waiting does not consume it. Inspect the exact event and lifecycle state before continuing."
+	HintWaitCompaction    = "The user asked to compact the context. It is compacted before your next request. Then continue the same work; wait again only if the condition still matters."
 	HintWaitRecovery      = "Address the cause, then agent_control operation continue (or cancel) with the returned recovery_id and recovery_generation."
 	HintWaitAvailability  = "Inspect or explicitly resume/reopen the exact agent before waiting again."
 	HintWaitTerminal      = "Inspect the terminal outcome and unmet conditions; report publication is separate from run completion."

@@ -372,6 +372,12 @@ func (s *Session) runPreparedCompaction(
 	beforeMessages int,
 ) conversation.CompactResultMsg {
 	s.logger.Info("COMPACT", "manual_request", "operation_id", operationID)
+	// The checkpoint covers the complete current source; an older background
+	// preparation can never be adopted after it.
+	s.precompactionMu.Lock()
+	slot := s.precompaction[agentID]
+	s.precompactionMu.Unlock()
+	slot.Discard()
 	usageModel := ""
 	emit := s.compactionEmitter(agentID, &usageModel)
 

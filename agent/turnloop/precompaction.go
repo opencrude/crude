@@ -368,6 +368,17 @@ func (slot *PrecompactionSlot) Close() {
 	slot.tasks.Wait()
 }
 
+// Discard cancels prepared or running background work. A human compaction
+// of the complete current source supersedes it, so finishing it only costs.
+func (slot *PrecompactionSlot) Discard() {
+	if slot == nil {
+		return
+	}
+	if job := slot.current(); job != nil {
+		slot.discard(job)
+	}
+}
+
 func (slot *PrecompactionSlot) current() *precompactionJob {
 	slot.mu.Lock()
 	defer slot.mu.Unlock()
