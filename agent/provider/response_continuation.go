@@ -57,21 +57,12 @@ func (p *Provider) ResponseContinuationScope(model string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func ResponseInputHash(messages []ChatMessage, tools []ToolDef) string {
-	h := newPrefixHasher(tools)
-	for _, message := range messages {
-		// Include complete attachment bytes, not their display labels.
-		h.addContent(message, string(message.Content))
-	}
-	return h.value()
-}
-
 func BindResponseReference(message *ChatMessage, reference *ResponseReference) {
 	if reference == nil {
 		return
 	}
 	copy := *reference
-	copy.OutputHash = ResponseInputHash([]ChatMessage{*message}, nil)
+	copy.OutputHash = MessagePrefixHash([]ChatMessage{*message})
 	message.ResponseReference = &copy
 }
 
@@ -101,10 +92,10 @@ func planResponseContinuation(req *ChatRequest, applyLearnedLimitations bool) Re
 	if ref.Scope != req.ResponseContinuationScope {
 		return ResponseContinuationPlan{Reason: "connection_changed"}
 	}
-	if ref.InputHash != ResponseInputHash(req.Messages[:last], req.Tools) {
+	if ref.InputHash != MessagePrefixHash(req.Messages[:last]) {
 		return ResponseContinuationPlan{Reason: "input_prefix_changed"}
 	}
-	if ref.OutputHash != ResponseInputHash([]ChatMessage{message}, nil) {
+	if ref.OutputHash != MessagePrefixHash([]ChatMessage{message}) {
 		return ResponseContinuationPlan{Reason: "accepted_output_changed"}
 	}
 	if applyLearnedLimitations &&

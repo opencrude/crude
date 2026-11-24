@@ -4,6 +4,12 @@
 
 The canonical conversation is the audit log. The chat renderer projects it into a compact, reversible activity view; it never deletes, rewrites, or persists presentation-only groups. Both live events and resumed session snapshots enter the same renderer. A group is a run of adjacent eligible calls (or completed thoughts) between visible boundaries; it may contain active calls until they finish. Its stable identity comes from its first message, not from a transient render index. Click any visible line of its compact summary to inspect its original calls in chronological order, and click an individual eligible call to inspect its existing full output. Dragging still selects text; leading spacing is not a disclosure target. The original result, command, input, permission tag, duration, and child identity remain available.
 
+External MCP calls, including consecutive desktop actions and screenshots, use
+the same live branches, disclosure and recent-round window as other tools.
+Failures, partial calls, explicit permission decisions and pending activation
+jobs stay visible. A group summary describes calls, not successful effects on
+the external application.
+
 ## Nested scroll ownership
 
 Disclosure actions carry their owning agent ID so a background pane or window
@@ -108,11 +114,11 @@ inspect private caches or proxy that download to guess.
 
 
 `capability_search`, `capability_activate`, `agent_send`, `board_read`,
-`mcp_request_access`, `mcp_read_resource`, `mcp_get_prompt` and `mcp__<connection>__<tool>` calls retain
+`mcp_read_resource`, `mcp_get_prompt` and `mcp__<connection>__<tool>` calls retain
 their exact identity/arguments/results in disclosure. Semantic titles use the
 query, capability ID, recipient/type, thread, URI, prompt or adapted tool name;
-they never expose a raw JSON argument envelope. Dynamic operations stay visible
-unless explicitly classified. A remote mutation interrupted after dispatch is
+they never expose a raw JSON argument envelope. Enabled MCP calls use the same activity group as other tools. Partial, failed
+and unknown outcomes stay separate. A remote mutation interrupted after dispatch is
 Outcome unknown, not success, and is never blindly replayed.
 
 Activated skill instructions and MCP resource/prompt attachments retain their
@@ -1079,8 +1085,9 @@ link. A no-drag release follows the same **Open attachments in** preference as
 composer clicks, Space/Enter and prompt-history attachments (Settings → Interface
 → Attachments). **System app** is the default and opens the OS-associated image
 viewer/editor; **File manager** reveals the attachment; **Crude** opens the native
-reference window, read-only for sent/history content. The composer's context menu
-also exposes explicit **Preview in Crude**, **Open with default app**, and **Show
+editor tab for an editable pasted-text chip and the read-only viewer for
+sent/history content. The composer menu has **Open in editor** for pasted text,
+**Preview in Crude** for other attachments, **Open with default app**, and **Show
 in file manager** actions independent of the preference.
 
 Crude's optional image preview uses native pixel graphics after the output

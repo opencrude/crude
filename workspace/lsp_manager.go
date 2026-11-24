@@ -622,7 +622,7 @@ func (m *LSPManager) RequestSignatureHelp(ctx context.Context, path string, line
 			boundary = doc.boundary
 			boundary.Context.UnknownInputs = append([]string(nil), boundary.Context.UnknownInputs...)
 		}
-		generation := m.contextGeneration
+		generation := m.producerContextLocked(boundary.Context.ID)
 		m.mu.Unlock()
 		if boundary.Source.DocumentID == "" || boundary.Context.Generation != generation {
 			return fmt.Errorf("parameter information unavailable: source context is not synchronized")
@@ -640,7 +640,7 @@ func (m *LSPManager) RequestSignatureHelp(ctx context.Context, path string, line
 			return err
 		}
 		m.mu.Lock()
-		sameContext := generation == m.contextGeneration
+		sameContext := generation == m.producerContextLocked(boundary.Context.ID)
 		m.mu.Unlock()
 		if !valid() || !sameContext {
 			out = insight.LSPSignatureHelp{}
@@ -654,11 +654,14 @@ func (m *LSPManager) RequestSignatureHelp(ctx context.Context, path string, line
 
 // ContextCursor is the retained semantic-context clock, separate from status,
 // progress and diagnostic publication versions. Reads perform no I/O.
-func (m *LSPManager) ContextCursor() (string, uint64) {
+func (m *LSPManager) ContextCursor(path string) (string, uint64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.sources == nil || m.sources.Insight == nil {
 		return "", m.contextGeneration
+	}
+	if doc := m.documents[filepath.Clean(path)]; doc != nil {
+		return m.sources.Insight.generation, m.producerContextLocked(doc.key)
 	}
 	return m.sources.Insight.generation, m.contextGeneration
 }
@@ -683,7 +686,7 @@ func (m *LSPManager) RequestRename(ctx context.Context, filePath string, line, c
 			boundary, wireVersion = doc.boundary, doc.wireVersion
 			boundary.Context.UnknownInputs = append([]string(nil), boundary.Context.UnknownInputs...)
 		}
-		generation := m.contextGeneration
+		generation := m.producerContextLocked(boundary.Context.ID)
 		m.mu.Unlock()
 		if boundary.Source.DocumentID == "" || boundary.Context.Generation != generation || wireVersion <= 0 {
 			return fmt.Errorf("rename unavailable: canonical source context is not synchronized")
@@ -691,7 +694,7 @@ func (m *LSPManager) RequestRename(ctx context.Context, filePath string, line, c
 		var requestErr error
 		out, requestErr = client.RequestRename(requestCtx, filePath, line, col, newName)
 		m.mu.Lock()
-		sameContext := generation == m.contextGeneration
+		sameContext := generation == m.producerContextLocked(boundary.Context.ID)
 		m.mu.Unlock()
 		if !valid() || !sameContext || requestCtx.Err() != nil {
 			out = insight.LSPRenameEdit{}
@@ -713,7 +716,10 @@ func (m *LSPManager) InvalidateFile(filePath string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	fp := filepath.Clean(filePath)
-	m.invalidateDiagnosticsLocked("Source path invalidated.")
+	if m.sources != nil && m.sources.Insight != nil {
+		m.sources.Insight.diagnostics.InvalidateMatching(func(b insight.Boundary) bool { return b.Source.Path == fp }, "Source path invalidated.")
+	}
+	m.bumpVersionLocked()
 	m.symbolCount -= len(m.docSymbols[fp])
 	delete(m.docSymbols, fp)
 }

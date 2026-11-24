@@ -135,7 +135,7 @@ func (a *actor) publishStatusIfChanged() {
 func (a *actor) announceSettings(method string) {
 	switch method {
 	case coreprotocol.SessionSettingsSave, coreprotocol.SessionSettingsReset, coreprotocol.SessionMultiAgentToggle, coreprotocol.SessionCapabilityToggle,
-		coreprotocol.ReferenceCreate, coreprotocol.ReferenceImport, coreprotocol.ReferenceSaveContent, coreprotocol.ReferenceRename,
+		coreprotocol.ReferenceCreate, coreprotocol.ReferencePrepareTextFile, coreprotocol.ReferenceImport, coreprotocol.ReferenceSaveContent, coreprotocol.ReferenceRename,
 		coreprotocol.ReferenceDelete, coreprotocol.ReferenceUploadCommit, coreprotocol.HistoryRestore, coreprotocol.HistoryImportAttachment:
 		a.broadcast(coreprotocol.Change{Sessions: true})
 	case coreprotocol.AccountChange, coreprotocol.ApplicationPreferencesSave, coreprotocol.CapabilityAction, coreprotocol.WorkspaceOverridesSet:

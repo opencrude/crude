@@ -47,7 +47,7 @@ func TestMCPDetailRefreshesLiveFingerprintAndGrantWithoutLosingFilterFocus(t *te
 	if !strings.Contains(painted, "lookup-schema-v2") || strings.Contains(painted, "lookup-schema\n") {
 		t.Fatalf("open MCP tool detail did not replace the observed fingerprint in place:\n%s", painted)
 	}
-	if !strings.Contains(painted, "Granted; agent role and selection still apply") {
+	if !strings.Contains(painted, "On. Calls follow the current permission mode.") {
 		t.Fatalf("open MCP tool detail did not paint the new grant state:\n%s", painted)
 	}
 }

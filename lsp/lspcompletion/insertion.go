@@ -95,28 +95,9 @@ func Insertion(item Item) (insight.CompletionItem, error) {
 		out.InsertText = out.Label
 	}
 	if raw, exists := fields["additionalTextEdits"]; exists {
-		raw = bytes.TrimSpace(raw)
-		if len(raw) == 0 || raw[0] != '[' {
-			return insight.CompletionItem{}, invalid("additionalTextEdits requires an array")
-		}
-		var edits []json.RawMessage
-		if json.Unmarshal(raw, &edits) != nil || len(edits) > MaxAdditionalEdits {
-			return insight.CompletionItem{}, invalid("additionalTextEdits count or container")
-		}
-		out.AdditionalTextEdits = make([]insight.LSPTextEdit, len(edits))
-		for i, rawEdit := range edits {
-			var fields map[string]json.RawMessage
-			if json.Unmarshal(rawEdit, &fields) != nil || len(fields) != 2 {
-				return insight.CompletionItem{}, invalid("additional edit requires range and newText")
-			}
-			edit, err := insertionRange(fields["range"])
-			if err != nil {
-				return insight.CompletionItem{}, err
-			}
-			if !readString(fields["newText"], &edit.NewText) {
-				return insight.CompletionItem{}, invalid("additional newText requires a bounded string")
-			}
-			out.AdditionalTextEdits[i] = edit
+		out.AdditionalTextEdits, err = additionalEdits(raw)
+		if err != nil {
+			return insight.CompletionItem{}, err
 		}
 	}
 	if format == 2 {
@@ -300,3 +281,30 @@ func primaryEdit(text string, line, col int, item insight.CompletionItem, offset
 }
 
 func insertionCoordinate(n int) bool { return n >= 0 && n <= maxPosition }
+
+func additionalEdits(raw json.RawMessage) ([]insight.LSPTextEdit, error) {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || raw[0] != '[' {
+		return nil, invalid("additionalTextEdits requires an array")
+	}
+	var edits []json.RawMessage
+	if json.Unmarshal(raw, &edits) != nil || len(edits) > MaxAdditionalEdits {
+		return nil, invalid("additionalTextEdits count or container")
+	}
+	out := make([]insight.LSPTextEdit, len(edits))
+	for i, rawEdit := range edits {
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(rawEdit, &fields) != nil || len(fields) != 2 {
+			return nil, invalid("additional edit requires range and newText")
+		}
+		edit, err := insertionRange(fields["range"])
+		if err != nil {
+			return nil, err
+		}
+		if !readString(fields["newText"], &edit.NewText) {
+			return nil, invalid("additional newText requires a bounded string")
+		}
+		out[i] = edit
+	}
+	return out, nil
+}

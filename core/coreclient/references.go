@@ -154,6 +154,27 @@ func (r *References) CreateReference(req sessiondb.CreateRequest) (sessiondb.Ref
 	return r.adopt(result), nil
 }
 
+// PreparePastedTextFile materializes inline text on its owning core, never in a shell cache.
+func (r *References) PreparePastedTextFile(ctx context.Context, expected sessiondb.Reference) (sessiondb.Reference, error) {
+	v, session, err := r.call()
+	if err != nil {
+		return sessiondb.Reference{}, err
+	}
+	current, err := r.current(ctx, expected.ID)
+	if err != nil {
+		return sessiondb.Reference{}, err
+	}
+	if current.Reference != expected || expected.SessionID != session {
+		return sessiondb.Reference{}, errors.New("attachment changed; open it again")
+	}
+	var out coreprotocol.ReferenceView
+	err = v.Client.Call(ctx, v.ID, coreprotocol.ReferencePrepareTextFile, &coreprotocol.ReferenceCommand{SessionID: session, ID: expected.ID, Revision: current.Revision}, &out)
+	if err != nil {
+		return sessiondb.Reference{}, err
+	}
+	return r.adopt(out), nil
+}
+
 func (r *References) ReadReferenceContent(id string) (string, bool, error) {
 	view, session, err := r.call()
 	if err != nil {

@@ -438,8 +438,6 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyReferenceContent(msg)
 	case desktopPathOpenedMsg:
 		m.applyDesktopPathOpened(msg)
-	case referenceContentSavedMsg:
-		m.applyReferenceSave(msg)
 	case statusHydrateErrMsg:
 		m.notifyStatus(statuscenter.SeverityWarning, "status", "Notification history unavailable", msg.Err.Error(), statuscenter.ResourceRef{Kind: statuscenter.ResourceWorkspace, ID: m.ws.RootPath()})
 		return m, nil
@@ -1120,7 +1118,10 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		if m.findInFiles == nil || !m.findInFiles.AcceptsSearch(msg.Screen, msg.Generation) {
 			break
 		}
-		if cmd := m.openFindInFilesResult(msg.Match); cmd != nil {
+		if msg.Position != nil && msg.Screen.SelectedFilePath() != msg.Match.Path {
+			break
+		}
+		if cmd := m.openSearchLocation(msg.Match, msg.Position); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 	case findinfiles.CloseMsg:
@@ -1169,10 +1170,6 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	case composer.CancelMsg:
 		if composerScreen := m.sessionComposer(); composerScreen != nil && msg.Target == composerScreen {
 			m.overlayHost.Close(ui.OverlayComposer)
-		}
-	case textoverlay.SaveMsg:
-		if overlay := m.sessionTextOverlay(); overlay != nil && msg.Target == overlay && msg.RefID == overlay.RefID() && msg.Epoch == overlay.OpenEpoch() {
-			cmds = append(cmds, m.saveReferenceFromOverlay(msg))
 		}
 	case textoverlay.CancelMsg:
 		if overlay := m.sessionTextOverlay(); overlay != nil && msg.Target == overlay && msg.Epoch == overlay.OpenEpoch() {

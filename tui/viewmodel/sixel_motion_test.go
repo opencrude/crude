@@ -237,7 +237,7 @@ func openSixelMotionAttachment(t *testing.T, data []byte, mime string) (*App, *w
 	if err != nil {
 		t.Fatal(err)
 	}
-	runAppCommand(t, app, app.beginReferencePreview(ref, true))
+	runAppCommand(t, app, app.beginReferencePreview(ref))
 	fw := app.overlayHost.Window(ui.OverlayTextOverlay)
 	fw.SetPosition(9, 6)
 	fw.SetSize(112, 34)

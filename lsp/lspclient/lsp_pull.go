@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"math"
 	"path/filepath"
 	"slices"
@@ -132,85 +133,149 @@ func installStaticProviderLocked(launch *lspLaunch, client *lsp.Client) {
 	}
 }
 
-// registerCapabilities keeps diagnostic registrations. Crude announces
-// dynamic registration only for diagnostics, so any other registration is
-// refused, as it was before this handler existed.
+// Registrations are keyed by registration ID, but requests, result IDs and
+// displayed parts are keyed by diagnostic identifier. Several registrations
+// (or the static provider) may select the same document and identifier.
 func (l *LSPIntegration) registerCapabilities(launch *lspLaunch, params json.RawMessage) error {
 	var request struct {
 		Registrations []struct {
-			ID              string          `json:"id"`
-			Method          string          `json:"method"`
+			ID, Method      string
 			RegisterOptions json.RawMessage `json:"registerOptions"`
 		} `json:"registrations"`
 	}
-	if json.Unmarshal(params, &request) != nil || len(request.Registrations) > 64 {
-		return lsp.ErrDiagnosticInvalid
+	if err := json.Unmarshal(params, &request); err != nil {
+		return err
+	}
+	diagnostics := map[string]*pullProvider{}
+	completions := map[string]registeredCompletion{}
+	for _, r := range request.Registrations {
+		if r.ID == "" {
+			return errors.New("missing language server registration ID")
+		}
+		switch r.Method {
+		case "textDocument/diagnostic":
+			support, err := lsp.ParseDiagnosticSupport(r.RegisterOptions)
+			if err != nil {
+				return err
+			}
+			diagnostics[r.ID] = &pullProvider{DiagnosticSupport: support}
+		case "textDocument/completion":
+			var options struct {
+				protocol.CompletionOptions
+				DocumentSelector []json.RawMessage `json:"documentSelector"`
+			}
+			if err := json.Unmarshal(r.RegisterOptions, &options); err != nil {
+				return err
+			}
+			selector, err := lsp.ParseDocumentSelector(options.DocumentSelector)
+			if err != nil {
+				return err
+			}
+			completions[r.ID] = registeredCompletion{selector, options.CompletionOptions}
+		default:
+			return errors.New("unsupported dynamic registration: " + r.Method)
+		}
 	}
 	l.mu.Lock()
-	defer l.mu.Unlock()
 	if l.launch != launch {
+		l.mu.Unlock()
 		return errors.New("language server launch ended")
 	}
-	var unsupported []string
-	for _, registration := range request.Registrations {
-		if registration.Method != "textDocument/diagnostic" {
-			unsupported = append(unsupported, registration.Method)
-			continue
+	maps.Copy(launch.pull.providers, diagnostics)
+	if len(completions) > 0 {
+		if launch.completions == nil {
+			launch.completions = make(map[string]registeredCompletion)
 		}
-		support, err := lsp.ParseDiagnosticSupport(registration.RegisterOptions)
-		if err != nil || registration.ID == "" || len(registration.ID) > 4096 {
-			return lsp.ErrDiagnosticInvalid
-		}
-		launch.pull.providers[registration.ID] = &pullProvider{DiagnosticSupport: support}
-		if l.client != nil {
-			for path, state := range l.openFiles {
-				l.pullDocumentLocked(launch, path, state, support.Identifier)
-			}
-		}
+		maps.Copy(launch.completions, completions)
 	}
-	l.signalLocked()
-	if len(unsupported) > 0 {
-		return errors.New("unsupported dynamic registration: " + unsupported[0])
-	}
+	l.finishRegistrationLocked(launch, len(diagnostics) > 0, len(completions) > 0)
 	return nil
 }
 
 func (l *LSPIntegration) unregisterCapabilities(launch *lspLaunch, params json.RawMessage) error {
-	var request struct {
-		// The specification keeps this historical spelling.
-		Unregisterations []struct {
-			ID string `json:"id"`
-		} `json:"unregisterations"`
+	var request struct { // Historical spelling in LSP 3.17.
+		Unregisterations []struct{ ID, Method string } `json:"unregisterations"`
 	}
-	if json.Unmarshal(params, &request) != nil {
-		return lsp.ErrDiagnosticInvalid
+	if err := json.Unmarshal(params, &request); err != nil {
+		return err
 	}
-	var deliveries []func()
 	l.mu.Lock()
-	if l.launch == launch {
-		for _, unregistration := range request.Unregisterations {
-			provider := launch.pull.providers[unregistration.ID]
-			if provider == nil || unregistration.ID == "" {
-				continue
+	if l.launch != launch {
+		l.mu.Unlock()
+		return nil
+	}
+	var diagnostics, completions bool
+	for _, r := range request.Unregisterations {
+		if r.ID == "" {
+			continue
+		}
+		switch r.Method {
+		case "textDocument/diagnostic":
+			if _, ok := launch.pull.providers[r.ID]; ok {
+				delete(launch.pull.providers, r.ID)
+				diagnostics = true
 			}
-			delete(launch.pull.providers, unregistration.ID)
-			for path, state := range l.openFiles {
-				if pull := state.pulls[provider.Identifier]; pull != nil && pull.inFlight {
-					pull.cancel()
-				}
-				delete(state.pulls, provider.Identifier)
-				if _, ok := state.parts[pullPart+provider.Identifier]; ok {
-					delete(state.parts, pullPart+provider.Identifier)
-					deliveries = append(deliveries, l.publishPartsLocked(launch, path, state))
-				}
+		case "textDocument/completion":
+			if _, ok := launch.completions[r.ID]; ok {
+				delete(launch.completions, r.ID)
+				completions = true
 			}
 		}
 	}
+	l.finishRegistrationLocked(launch, diagnostics, completions)
+	return nil
+}
+
+// finishRegistrationLocked reconciles one batch and unlocks before delivery.
+func (l *LSPIntegration) finishRegistrationLocked(launch *lspLaunch, diagnostics, completions bool) {
+	var deliveries []func()
+	if diagnostics && l.client != nil {
+		for path, state := range l.openFiles {
+			ids := launch.pull.documentIdentifiers(path, state.languageID)
+			for _, id := range ids {
+				if state.pulls[id] == nil {
+					l.pullIdentifierLocked(launch, path, state, id)
+				}
+			}
+			removed := false
+			for id, pull := range state.pulls {
+				if slices.Contains(ids, id) {
+					continue
+				}
+				if pull.inFlight {
+					pull.cancel()
+				}
+				delete(state.pulls, id)
+				if _, ok := state.parts[pullPart+id]; ok {
+					delete(state.parts, pullPart+id)
+					removed = true
+				}
+			}
+			if removed {
+				deliveries = append(deliveries, l.publishPartsLocked(launch, path, state))
+			}
+		}
+	}
+	notify := l.onAssistanceChanged
+	l.signalLocked()
 	l.mu.Unlock()
 	for _, deliver := range deliveries {
 		deliver()
 	}
-	return nil
+	if completions && notify != nil {
+		notify()
+	}
+}
+
+// A missing identifier is itself a valid wire identifier, not a wildcard.
+func (p *pullState) documentIdentifiers(path, language string) []string {
+	var ids []string
+	for _, provider := range p.providers {
+		if providerMatches(provider, path, language) && !slices.Contains(ids, provider.Identifier) {
+			ids = append(ids, provider.Identifier)
+		}
+	}
+	return ids
 }
 
 // refreshDiagnostics answers workspace/diagnostic/refresh: pull every open
@@ -222,7 +287,7 @@ func (l *LSPIntegration) refreshDiagnostics(launch *lspLaunch) {
 		return
 	}
 	for path, state := range l.openFiles {
-		l.pullDocumentLocked(launch, path, state, "")
+		l.pullDocumentLocked(launch, path, state)
 	}
 	if launch.pull.workspaceCancel != nil {
 		launch.pull.workspaceCancel(ErrWorkspacePullRefresh)
@@ -235,10 +300,13 @@ func providerMatches(provider *pullProvider, path, languageID string) bool {
 	if provider.disabled {
 		return false
 	}
-	if provider.Selector == nil {
+	return selectorMatches(provider.Selector, path, languageID)
+}
+func selectorMatches(selector []lsp.DiagnosticFilter, path, languageID string) bool {
+	if selector == nil {
 		return true
 	}
-	for _, filter := range provider.Selector {
+	for _, filter := range selector {
 		if filter.Notebook || filter.Language != "" && filter.Language != languageID || filter.Scheme != "" && filter.Scheme != "file" {
 			continue
 		}
@@ -253,44 +321,40 @@ func providerMatches(provider *pullProvider, path, languageID string) bool {
 	return false
 }
 
-// pullDocumentLocked starts a pull of one open document for the providers
-// with the given identifier ("" means every provider) and returns channels
-// that close when those pulls end. A pull in flight is cancelled and started
-// again for the current version when it ends.
-func (l *LSPIntegration) pullDocumentLocked(launch *lspLaunch, path string, state *openFileState, identifier string) []chan struct{} {
+// pullDocumentLocked asks once per wire identity, regardless of how many
+// selectors match. Only an edit, save or explicit refresh supersedes a pull.
+func (l *LSPIntegration) pullDocumentLocked(launch *lspLaunch, path string, state *openFileState) {
 	if launch == nil || launch.pull == nil || l.client == nil {
-		return nil
+		return
 	}
-	var started []chan struct{}
-	for _, provider := range launch.pull.providers {
-		if identifier != "" && provider.Identifier != identifier || !providerMatches(provider, path, state.languageID) {
-			continue
-		}
-		if state.pulls == nil {
-			state.pulls = map[string]*documentPull{}
-		}
-		pull := state.pulls[provider.Identifier]
-		if pull == nil {
-			pull = &documentPull{}
-			state.pulls[provider.Identifier] = pull
-		}
-		if pull.inFlight {
-			// As in VS Code, a new reason to pull cancels the request in
-			// flight and pulls again when it ends: its answer may predate
-			// the edit, save or refresh that asked.
-			pull.again = true
-			pull.cancel()
-			started = append(started, pull.done)
-			continue
-		}
-		ctx, cancel := context.WithTimeout(launch.pull.work, pullTimeout)
-		pull.inFlight, pull.again, pull.version, pull.cancel, pull.done = true, false, state.version, cancel, make(chan struct{})
-		started = append(started, pull.done)
-		launch.pull.wg.Add(1)
-		go l.runDocumentPull(ctx, documentPullRequest{launch: launch, client: l.client, path: path, state: state,
-			identifier: provider.Identifier, pull: pull, done: pull.done, cancel: cancel, uri: state.uri, previous: pull.resultID})
+	for _, id := range launch.pull.documentIdentifiers(path, state.languageID) {
+		l.pullIdentifierLocked(launch, path, state, id)
 	}
-	return started
+}
+
+func (l *LSPIntegration) pullIdentifierLocked(launch *lspLaunch, path string, state *openFileState, identifier string) chan struct{} {
+	if state.pulls == nil {
+		state.pulls = map[string]*documentPull{}
+	}
+	pull := state.pulls[identifier]
+	if pull == nil {
+		pull = &documentPull{}
+		state.pulls[identifier] = pull
+	}
+	if pull.inFlight {
+		// As in VS Code, a new reason to pull cancels the request in
+		// flight and pulls again when it ends: its answer may predate
+		// the edit, save or refresh that asked.
+		pull.again = true
+		pull.cancel()
+		return pull.done
+	}
+	ctx, cancel := context.WithTimeout(launch.pull.work, pullTimeout)
+	pull.inFlight, pull.again, pull.version, pull.cancel, pull.done = true, false, state.version, cancel, make(chan struct{})
+	launch.pull.wg.Add(1)
+	go l.runDocumentPull(ctx, documentPullRequest{launch: launch, client: l.client, path: path, state: state,
+		identifier: identifier, pull: pull, done: pull.done, cancel: cancel, uri: state.uri, previous: pull.resultID})
+	return pull.done
 }
 
 type documentPullRequest struct {
@@ -309,17 +373,22 @@ func (l *LSPIntegration) runDocumentPull(ctx context.Context, r documentPullRequ
 	defer r.launch.pull.wg.Done()
 	defer close(r.done)
 	defer r.cancel()
+	documentPulls.Inc()
 	raw, err := r.client.RequestDocumentDiagnostics(ctx, protocol.DocumentURI(r.uri), r.identifier, r.previous)
+	cancelled, retrigger := lsp.DiagnosticRetrigger(err)
+	if cancelled || errors.Is(ctx.Err(), context.Canceled) {
+		cancelledPulls.Inc()
+	}
 	timedOut := errors.Is(ctx.Err(), context.DeadlineExceeded)
 	l.mu.Lock()
 	r.pull.inFlight = false
 	state := r.state
-	if l.launch != r.launch || l.client != r.client || l.openFiles[r.path] != state {
+	if l.launch != r.launch || l.client != r.client || l.openFiles[r.path] != state || state.pulls[r.identifier] != r.pull {
 		l.mu.Unlock()
 		return
 	}
 	for _, provider := range r.launch.pull.providers {
-		if provider.Identifier != r.identifier {
+		if provider.Identifier != r.identifier || !providerMatches(provider, r.path, state.languageID) {
 			continue
 		}
 		if timedOut {
@@ -332,7 +401,7 @@ func (l *LSPIntegration) runDocumentPull(ctx context.Context, r documentPullRequ
 	current := r.pull.version == state.version
 	var deliver func()
 	answered := false
-	switch cancelled, retrigger := lsp.DiagnosticRetrigger(err); {
+	switch {
 	case err == nil:
 		if part, resultID, ok := documentReportPart(raw, r.pull); ok {
 			answered = current
@@ -348,8 +417,8 @@ func (l *LSPIntegration) runDocumentPull(ctx context.Context, r documentPullRequ
 	case cancelled && retrigger:
 		r.pull.again = true
 	}
-	if r.pull.again && !timedOut {
-		l.pullDocumentLocked(r.launch, r.path, state, r.identifier)
+	if r.pull.again && !timedOut && slices.Contains(r.launch.pull.documentIdentifiers(r.path, state.languageID), r.identifier) {
+		l.pullIdentifierLocked(r.launch, r.path, state, r.identifier)
 	} else if answered && state.changed {
 		state.changed = false
 		l.queueInterFileLocked(r.launch, r.path, r.identifier)
@@ -551,12 +620,12 @@ func (l *LSPIntegration) runInterFile(launch *lspLaunch, identifier string) {
 		}
 		path := queue[0]
 		launch.pull.background[identifier] = queue[1:]
-		var wait []chan struct{}
-		if state := l.openFiles[path]; state != nil {
-			wait = l.pullDocumentLocked(launch, path, state, identifier)
+		var done chan struct{}
+		if state := l.openFiles[path]; state != nil && slices.Contains(launch.pull.documentIdentifiers(path, state.languageID), identifier) {
+			done = l.pullIdentifierLocked(launch, path, state, identifier)
 		}
 		l.mu.Unlock()
-		for _, done := range wait {
+		if done != nil {
 			select {
 			case <-done:
 			case <-launch.pull.work.Done():
@@ -707,9 +776,6 @@ func (l *LSPIntegration) receiveWorkspaceReport(launch *lspLaunch, identifier st
 			l.mu.Unlock()
 			return
 		}
-		if results := launch.pull.workspaceResults[identifier]; results != nil && item.ResultID != "" {
-			results[item.URI] = item.ResultID
-		}
 		// A document the client holds is pulled for its own version.
 		_, open := l.openFiles[path]
 		cb := l.onUnopened
@@ -719,6 +785,16 @@ func (l *LSPIntegration) receiveWorkspaceReport(launch *lspLaunch, identifier st
 				l.sequence++
 				publication = insight.DiagnosticPublication{Sequence: l.sequence, WireVersion: 1}
 				publication.Diagnostics, publication.Limited, publication.Detail = transportDiagnostics(part.diags)
+			}
+		}
+		// Only a full report actually consumed by the closed-file collection
+		// can be the base of a later unchanged response. Releasing an open file
+		// must not leave a token for a result the workspace never received.
+		if results := launch.pull.workspaceResults[identifier]; results != nil && item.Kind == "full" {
+			if publication.Sequence != 0 && item.ResultID != "" {
+				results[item.URI] = item.ResultID
+			} else {
+				delete(results, item.URI)
 			}
 		}
 		l.mu.Unlock()

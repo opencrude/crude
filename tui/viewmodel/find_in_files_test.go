@@ -27,7 +27,7 @@ func TestFindInFilesResultLandingBeforeFirstPaint(t *testing.T) {
 	if err := os.WriteFile(path, []byte("first\n\t界 target\nlast"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	command := app.openFindInFilesResult(fileio.ProjectSearchMatch{Path: path, RelativePath: "small.txt", Line: 2, Column: 3, EndColumn: 9, LineText: "\t界 target"})
+	command := app.openSearchLocation(fileio.ProjectSearchMatch{Path: path, RelativePath: "small.txt", Line: 2, Column: 3, EndColumn: 9, LineText: "\t界 target"}, nil)
 	if command == nil || len(app.EditorState.Tabs) != 0 {
 		t.Fatal("result open read/published a file before the command")
 	}
@@ -198,8 +198,6 @@ func TestFindInFilesSearchRoutesThroughWorkspaceEvent(t *testing.T) {
 			RelativePath: "target.go",
 			Line:         2,
 			LineText:     "func SearchTarget() {}",
-			ContextStart: 1,
-			Context:      "package sample\nfunc SearchTarget() {}",
 		}},
 	}})
 	if got := app.findInFiles.Results(); len(got) != 1 || got[0].RelativePath != "target.go" {
@@ -287,9 +285,9 @@ func TestFindInFilesActivationOpensAndPositionsEditor(t *testing.T) {
 	app.overlayHost = ui.NewOverlayHost(app.windowManager)
 	app.findInFiles = nil
 
-	cmd := app.openFindInFilesResult(fileio.ProjectSearchMatch{
+	cmd := app.openSearchLocation(fileio.ProjectSearchMatch{
 		Path: path, RelativePath: "main.go", Line: 3, Column: 5, LineText: "func target() {}",
-	})
+	}, nil)
 	if cmd == nil || app.EditorState.ActiveView != "" {
 		t.Fatal("search activation must prepare file off Update")
 	}
@@ -322,7 +320,7 @@ func TestFindInFilesRejectsOldQueryActivationAndChangedEditorTarget(t *testing.T
 	}
 	ed.ReplaceDocument("newer editor text\n")
 	ed.SetCursorPosition(0, 3)
-	command := app.openFindInFilesResult(fileio.ProjectSearchMatch{Path: paths[0], Line: 1, LineText: line, Column: 0, EndColumn: 4})
+	command := app.openSearchLocation(fileio.ProjectSearchMatch{Path: paths[0], Line: 1, LineText: line, Column: 0, EndColumn: 4}, nil)
 	app.applyPaneFilesOpened(command().(paneFilesOpenedMsg))
 	if ed.Value() != "newer editor text\n" || ed.CursorCol() != 3 || !ed.Modified() {
 		t.Fatal("stale search relocated or replaced newer live editor content")
@@ -337,7 +335,7 @@ func TestFindInFilesLandsOnSurvivingUnsavedMatchWithoutReordering(t *testing.T) 
 	ed := app.EditorState.Tabs[paths[0]].Editor
 	ed.ReplaceDocument("prefix target refined\n")
 	before := app.Win.Tabs()
-	command := app.openFindInFilesResult(fileio.ProjectSearchMatch{Path: paths[0], Line: 1, Column: 7, EndColumn: 13, LineText: "prefix target"})
+	command := app.openSearchLocation(fileio.ProjectSearchMatch{Path: paths[0], Line: 1, Column: 7, EndColumn: 13, LineText: "prefix target"}, nil)
 	app.applyPaneFilesOpened(command().(paneFilesOpenedMsg))
 	if ed.CursorCol() != 7 || ed.HasSelection() || !ed.Modified() || ed.Value() != "prefix target refined\n" {
 		t.Fatal("surviving unsaved target was not safely highlighted")
@@ -347,4 +345,107 @@ func TestFindInFilesLandsOnSurvivingUnsavedMatchWithoutReordering(t *testing.T) 
 			t.Fatal("search activation reordered the existing tab")
 		}
 	}
+}
+
+// A result is a location, not a substitute for the selected document.
+func TestSearchViewsOpenWholeFileAtRequestedLocation(t *testing.T) {
+	for _, mode := range []findinfiles.Mode{findinfiles.ModeFind, findinfiles.ModeReplace, findinfiles.ModeFiles} {
+		t.Run(mode.Title(), func(t *testing.T) {
+			app := newFullTestApp(t)
+			root := t.TempDir()
+			wsOf(app).RootPath = root
+			app.BufferMgr = editor.NewBufferManager()
+			app.width, app.height = 120, 36
+			path := filepath.Join(root, "example.txt")
+			text := "FIRST\n" + strings.Repeat("one full source line\n", 80) + "\t界 needle\n" + strings.Repeat("another line\n", 80) + strings.Repeat("x", 5000) + "LAST"
+			if err := os.WriteFile(path, []byte(text), 0600); err != nil {
+				t.Fatal(err)
+			}
+			app.toggleProjectSearch(mode)
+			screen := app.findInFiles
+			query := "needle"
+			if mode == findinfiles.ModeFiles {
+				query = "example.txt"
+				app.goToFileLanding.line, app.goToFileLanding.column = 82, 4
+			}
+			screen.SetQuery(query)
+			screen.ScheduleSearch()
+			rows, err := fileio.SearchProject(t.Context(), root, query, screen.Options())
+			if err != nil || len(rows) == 0 {
+				t.Fatal(err)
+			}
+			screen.ApplySearchResults(screen.Generation(), rows, nil, 0)
+			runAppCommand(t, app, app.syncFileSearchPreview())
+			view := screen.SyntaxEditor()
+			if view == nil || view.Value() != text || view.CursorLine() != 81 || view.CursorCol() != editor.RuneIndexToVisualColumn(view.TabWidth(), "\t界 needle", 3) {
+				t.Fatal("preview is not the complete source at the requested line and column")
+			}
+			if len(app.EditorState.Tabs) != 0 {
+				t.Fatal("selection opened a document before activation")
+			}
+			app.paintShellFrame()
+			fw := app.overlayHost.Window(overlayForProjectSearch(mode))
+			host := fw.Content.(*ui.WindowFrameWidget).Host()
+			host.Layout()
+			frame := surface.NewCellBuffer(120, 36)
+			host.Paint(frame)
+			rect, ok := host.ScreenRect(findinfiles.PreviewID)
+			if !ok || rect.H < 4 {
+				t.Fatal("preview not mounted", rect)
+			}
+			before := view.ScrollY()
+			x, y := rect.X+11, rect.Y+2
+			for range 8 {
+				host.Handle(tea.MouseWheelMsg{X: x, Y: y, Button: tea.MouseWheelDown})
+			}
+			host.Paint(frame)
+			if view.ScrollY() <= before+6 {
+				t.Fatal("could not scroll beyond original result context")
+			}
+			wantLine := view.ScrollY() + 2
+			if wantLine == 81 || view.LineText(wantLine) != "another line" {
+				t.Fatal(wantLine)
+			}
+			host.Handle(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
+			host.Handle(tea.MouseReleaseMsg{X: x, Y: y, Button: tea.MouseLeft})
+			clicked := host.Handle(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
+			if clicked.Cmd == nil {
+				t.Fatal("double-click did not open the clicked source line")
+			}
+			runAppCommand(t, app, clicked.Cmd)
+			if app.findInFiles != nil || app.EditorState.Editor == nil || app.EditorState.Editor.FilePath() != path || app.EditorState.Editor.CursorLine() != wantLine {
+				t.Fatal("double-click opened the original match instead of the visible source line", wantLine)
+			}
+
+		})
+	}
+}
+
+func TestPreviewUsesDirtyBufferAndRetiresLateReads(t *testing.T) {
+	app, ws := newRealShellApp(t)
+	defer ws.Close()
+	paths := openEditorTabs(t, app, "saved.txt")
+	ed := app.EditorState.Editor
+	ed.ReplaceDocument("\tunsaved needle\nsecond")
+	app.toggleFindInFiles()
+	s := app.findInFiles
+	s.SetQuery("needle")
+	s.ScheduleSearch()
+	hit := fileio.ProjectSearchMatch{Path: paths[0], Line: 1, Column: 0, EndColumn: 6, LineText: "needle"}
+	s.ApplySearchResults(s.Generation(), []fileio.ProjectSearchMatch{hit}, nil, 0)
+	older := app.syncFileSearchPreview()
+	ed.ReplaceDocument("replacement needle\nnew tail")
+	newer := app.syncFileSearchPreview()
+	runAppCommand(t, app, newer)
+	runAppCommand(t, app, older)
+	view := s.SyntaxEditor()
+	if view == nil || view.Value() != ed.Value() || view.CursorCol() != len("replacement ") || !ed.Modified() {
+		t.Fatal("outdated file read replaced a newer buffer or the preview landed on the wrong text")
+	}
+	old := view
+	s.FocusQuery()
+	if app.syncFileSearchPreview() != nil || old != s.SyntaxEditor() {
+		t.Fatal("unchanged preview rebuilt")
+	}
+	app.closeFindInFiles()
 }

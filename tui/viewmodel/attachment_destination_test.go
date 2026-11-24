@@ -76,12 +76,19 @@ func TestPastedAttachmentChipAndPreviewUseTheSameName(t *testing.T) {
 			_, command := app.Update(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
 			runAppCommand(t, app, command)
 			window := app.overlayHost.Window(ui.OverlayTextOverlay)
-			if window == nil {
-				t.Fatal("click did not open the attachment")
-			}
-			frame := window.Content.(*ui.WindowFrameWidget).Frame()
-			if got := frame.Title(); got != chips[0].Label || got != ref.Label {
-				t.Fatalf("header = %q, chip = %q; both must use %q", got, chips[0].Label, ref.Label)
+			if kind == sessiondb.KindPastedImage {
+				if window == nil || window.Content.(*ui.WindowFrameWidget).Frame().Title() != ref.Label {
+					t.Fatal("image preview lost its label")
+				}
+			} else {
+				ed := app.EditorState.Editor
+				if window != nil || ed == nil || !ed.IsOpen() || ed.ReadOnly() || ed.BaseTitle() != chips[0].Label || ed.Value() != "original" {
+					t.Fatal("pasted text did not open in a named editor tab")
+				}
+				current, _ := app.RefStore().Reference(ref.ID)
+				if current.FilePath != ed.FilePath() || current.ID != ref.ID {
+					t.Fatal("editor did not open the attached file")
+				}
 			}
 			if app.Input.Value() != draft {
 				t.Fatal("preview changed the composer draft")
@@ -256,7 +263,7 @@ func TestAttachmentPreparationRejectsStaleOwnersAndReference(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "replace":
-				app.beginReferenceOverlay(ref.ID)
+				app.openAttachmentIn(ref.ID, "crude")
 			case "shutdown":
 				app.StopAsyncIO()
 			}
@@ -366,7 +373,7 @@ func TestAttachmentLaunchRechecksCancellationAndReference(t *testing.T) {
 			case "switch":
 				app.beginWorkspaceSwitch()
 			case "replace":
-				app.beginReferenceOverlay(ref.ID)
+				app.openAttachmentIn(ref.ID, "crude")
 			}
 			runAppCommand(t, app, launch)
 			requireNoDesktopLaunch(t, calls)

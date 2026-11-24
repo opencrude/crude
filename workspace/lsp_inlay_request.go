@@ -113,7 +113,7 @@ func (m *LSPManager) inlayFence(boundary insight.Boundary, wire int) (func() err
 	client, settings, inlays := state.client, m.settingsGeneration, m.inlayGeneration
 	current := func() bool {
 		return !m.closed && !m.paused && m.analysisErrorLocked() == nil && m.settings.Enabled && m.settings.InlayHints &&
-			m.settingsGeneration == settings && m.contextGeneration == boundary.Context.Generation &&
+			m.settingsGeneration == settings && m.producerContextLocked(doc.key) == boundary.Context.Generation &&
 			m.inlayGeneration == inlays &&
 			m.documents[filepath.Clean(boundary.Source.Path)] == doc && doc.opened && !doc.syncPending &&
 			doc.wireVersion == wire && sameInsightBoundary(doc.boundary, boundary) &&

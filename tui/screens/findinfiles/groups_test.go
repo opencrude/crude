@@ -14,17 +14,13 @@ import (
 )
 
 func groupedFixtureResults() []fileio.ProjectSearchMatch {
-	aContext := "needle first\nmid one\nmid two\nmid three\nmid four\n  needle second"
 	return []fileio.ProjectSearchMatch{
 		{Path: "/root/a.go", RelativePath: "a.go", Line: 4, Column: 0, EndColumn: 6,
-			LineText: "needle first", TextMatches: []int{0, 1, 2, 3, 4, 5},
-			Context: aContext, ContextStart: 4},
+			LineText: "needle first", TextMatches: []int{0, 1, 2, 3, 4, 5}},
 		{Path: "/root/a.go", RelativePath: "a.go", Line: 9, Column: 2, EndColumn: 8,
-			LineText: "  needle second", TextMatches: []int{2, 3, 4, 5, 6, 7},
-			Context: aContext, ContextStart: 4},
+			LineText: "  needle second", TextMatches: []int{2, 3, 4, 5, 6, 7}},
 		{Path: "/root/b.go", RelativePath: "b.go", Line: 2, Column: 0, EndColumn: 6,
-			LineText: "needle beta", TextMatches: []int{0, 1, 2, 3, 4, 5},
-			Context: "needle beta", ContextStart: 2},
+			LineText: "needle beta", TextMatches: []int{0, 1, 2, 3, 4, 5}},
 	}
 }
 
@@ -34,6 +30,7 @@ func groupedHost(t *testing.T) (*Screen, *ui.Host) {
 	screen.SetQuery("needle")
 	screen.ScheduleSearch()
 	screen.ApplySearchResults(screen.generation, groupedFixtureResults(), nil, time.Millisecond)
+	mountPreview(t, screen, "head\nhead\nhead\nneedle first\nmid one\nmid two\nmid three\nmid four\n  needle second")
 	return screen, host
 }
 
@@ -181,16 +178,14 @@ func TestPreviewHighlightsAllMatchesOnPreviewedLines(t *testing.T) {
 	context := "needle one\nplain line\nneedle two"
 	results := []fileio.ProjectSearchMatch{
 		{Path: "/root/a.go", RelativePath: "a.go", Line: 1, Column: 0, EndColumn: 6,
-			LineText: "needle one", TextMatches: []int{0, 1, 2, 3, 4, 5},
-			Context: context, ContextStart: 1},
+			LineText: "needle one", TextMatches: []int{0, 1, 2, 3, 4, 5}},
 		{Path: "/root/a.go", RelativePath: "a.go", Line: 3, Column: 0, EndColumn: 6,
-			LineText: "needle two", TextMatches: []int{0, 1, 2, 3, 4, 5},
-			Context: context, ContextStart: 1},
+			LineText: "needle two", TextMatches: []int{0, 1, 2, 3, 4, 5}},
 		{Path: "/root/other.go", RelativePath: "other.go", Line: 7, Column: 0, EndColumn: 6,
-			LineText: "needle far", TextMatches: []int{0, 1, 2, 3, 4, 5},
-			Context: "needle far", ContextStart: 7},
+			LineText: "needle far", TextMatches: []int{0, 1, 2, 3, 4, 5}},
 	}
 	screen.ApplySearchResults(screen.generation, results, nil, time.Millisecond)
+	mountPreview(t, screen, context)
 
 	if screen.previewSrc == nil {
 		t.Fatal("preview should exist for the selected match")
@@ -359,14 +354,12 @@ func TestGroupListsExactMatchesBeforeFuzzySuggestions(t *testing.T) {
 	screen, host := searchHost(t)
 	screen.SetQuery("direction is")
 	screen.ScheduleSearch()
-	context := "// apply direction\nconst direction = isRTL\n// console.log(\"direction is\")"
+
 	screen.ApplySearchResults(screen.generation, []fileio.ProjectSearchMatch{
 		{Path: "/root/d.tsx", RelativePath: "d.tsx", Line: 3, Column: 16, EndColumn: 28, EndLine: 3,
-			LineText: "// console.log(\"direction is\")", TextMatches: []int{16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27},
-			Context: context, ContextStart: 1},
+			LineText: "// console.log(\"direction is\")", TextMatches: []int{16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27}},
 		{Path: "/root/d.tsx", RelativePath: "d.tsx", Line: 2, Column: 6, EndColumn: 20, EndLine: 2, FuzzyOnly: true,
-			LineText: "const direction = isRTL", TextMatches: []int{6, 7, 8, 9, 10, 11, 12, 13, 14, 18, 19},
-			Context: context, ContextStart: 1},
+			LineText: "const direction = isRTL", TextMatches: []int{6, 7, 8, 9, 10, 11, 12, 13, 14, 18, 19}},
 	}, nil, time.Millisecond)
 	if screen.Selected() != 0 {
 		t.Fatalf("the first selection must be the exact match, got result %d", screen.Selected())

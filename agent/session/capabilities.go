@@ -107,7 +107,7 @@ func (s *Session) bindAgentRuntime(ctx context.Context, live *turnloop.Agent, ac
 				snapshot = prepared
 				mu.Unlock()
 				for _, tool := range prepared.Tools {
-					if !actorToolSelected(actor, tool.Name) || !turnloop.PolicyAllowsMetadata(live.Policy, tools.ToolMetadata{Name: tool.Name, Effect: tool.Effect, Scope: tool.Scope, Fingerprint: tool.Fingerprint, Dynamic: true}) {
+					if !actorToolSelected(actor, tool.Name) || !turnloop.PolicyAllowsMetadata(live.Policy, tools.ToolMetadata{Name: tool.Name, Effect: tool.Effect, Scope: tool.Scope, Fingerprint: tool.Fingerprint, ServerRevision: tool.ServerRevision, Dynamic: true}) {
 						continue
 					}
 					definitions = appendUniqueDefinition(definitions, tools.ToolDef{Type: "function", Function: tools.ToolFuncDef{Name: tool.Name, Description: tool.Description, Parameters: tool.InputSchema}})
@@ -144,7 +144,7 @@ func (s *Session) bindAgentRuntime(ctx context.Context, live *turnloop.Agent, ac
 		defer mu.RUnlock()
 		for _, tool := range snapshot.Tools {
 			if tool.Name == name {
-				return tools.ToolMetadata{Name: name, Effect: tool.Effect, Scope: tool.Scope, Fingerprint: tool.Fingerprint, Dynamic: true}, true
+				return tools.ToolMetadata{Name: name, Effect: tool.Effect, Scope: tool.Scope, Fingerprint: tool.Fingerprint, ServerRevision: tool.ServerRevision, Dynamic: true}, true
 			}
 		}
 		return tools.ToolMetadata{}, false
@@ -192,7 +192,7 @@ func (s *Session) bindAgentRuntime(ctx context.Context, live *turnloop.Agent, ac
 			dynamic = dynamic || prepared.Name == tool
 		}
 		mu.RUnlock()
-		if runtime != nil && (dynamic || strings.HasPrefix(tool, "mcp__") || strings.HasPrefix(tool, "capability_") || tool == "mcp_read_resource" || tool == "mcp_get_prompt" || tool == "mcp_request_access") {
+		if runtime != nil && (dynamic || strings.HasPrefix(tool, "mcp__") || strings.HasPrefix(tool, "capability_") || tool == "mcp_read_resource" || tool == "mcp_get_prompt") {
 			if !dynamic && !strings.HasPrefix(tool, "mcp__") && !runtimeToolSelected(actor, tool) {
 				return tools.ToolResult{}, fmt.Errorf("capability operation %q is excluded by this agent", tool)
 			}

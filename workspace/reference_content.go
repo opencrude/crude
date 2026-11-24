@@ -88,10 +88,55 @@ func (s *ReferenceStore) ReadReferenceContent(id string) (content string, readOn
 	}
 }
 
+// PreparePastedTextFile returns the session-owned path for an editable paste.
+// A file-backed paste is reused. An inline paste gets a backing file only on
+// this explicit open; its ID, label and all references in the draft survive.
+func (s *ReferenceStore) PreparePastedTextFile(ctx context.Context, expected sessiondb.Reference) (sessiondb.Reference, error) {
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return sessiondb.Reference{}, err
+	}
+	ref, ok := s.Reference(expected.ID)
+	if !ok || !ref.Active() || ref != expected || ref.SessionID != s.sessionID {
+		return sessiondb.Reference{}, errors.New("attachment changed; open it again")
+	}
+	if ref.Kind == sessiondb.KindPastedTextFile && ref.FilePath != "" {
+		return ref, nil
+	}
+	if ref.Kind != sessiondb.KindPastedText || !utf8.ValidString(ref.Content) {
+		return sessiondb.Reference{}, errors.New("this attachment is not editable text")
+	}
+	path, err := s.writeReferenceFile("Pasted-Text", []byte(ref.Content), ".txt")
+	if err != nil {
+		return sessiondb.Reference{}, err
+	}
+	next := ref
+	next.Kind, next.FilePath, next.Content = sessiondb.KindPastedTextFile, path, ""
+	err = ctx.Err()
+	if err == nil && s.db != nil {
+		var ok bool
+		ok, err = updateReferencePrecondition(s.db, ref, next)
+		if err == nil && !ok {
+			err = errors.New("attachment changed; open it again")
+		}
+	}
+	if err != nil {
+		_ = os.Remove(path)
+		return sessiondb.Reference{}, err
+	}
+	s.mu.Lock()
+	s.refs[ref.ID] = next
+	s.mu.Unlock()
+	return next, nil
+}
+
 // SaveReferenceContent replaces editable pasted text only when the caller's
 // complete reference preimage and original bytes still match. Callers must run
 // this filesystem and database work off the UI thread.
 func (s *ReferenceStore) SaveReferenceContent(expected sessiondb.Reference, original, content string) error {
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
 	if !utf8.ValidString(original) || !utf8.ValidString(content) {
 		return fmt.Errorf("reference content must be valid UTF-8")
 	}
@@ -112,7 +157,9 @@ func (s *ReferenceStore) SaveReferenceContent(expected sessiondb.Reference, orig
 			return fmt.Errorf("reference %q content changed since it was opened", current.ID)
 		}
 		if s.db != nil {
-			updated, err := updateReferenceContentPrecondition(s.db, expected, content)
+			next := expected
+			next.Content = content
+			updated, err := updateReferencePrecondition(s.db, expected, next)
 			if err != nil {
 				return err
 			}
@@ -168,7 +215,7 @@ func (s *ReferenceStore) SaveReferenceContent(expected sessiondb.Reference, orig
 		}
 
 		if s.db != nil {
-			updated, err := updateReferenceContentPrecondition(s.db, expected, "")
+			updated, err := updateReferencePrecondition(s.db, expected, expected)
 			if err == nil && !updated {
 				err = fmt.Errorf("reference %q changed or was deleted", current.ID)
 			}
@@ -186,14 +233,14 @@ func (s *ReferenceStore) SaveReferenceContent(expected sessiondb.Reference, orig
 	}
 }
 
-func updateReferenceContentPrecondition(db *sql.DB, expected sessiondb.Reference, content string) (bool, error) {
+func updateReferencePrecondition(db *sql.DB, expected, next sessiondb.Reference) (bool, error) {
 	inline := 0
 	if expected.Inline {
 		inline = 1
 	}
 	result, err := db.Exec(`
 		UPDATE prompt_references
-		SET content = ?
+		SET content = ?, kind = ?, file_path = ?
 		WHERE id = ?
 		  AND session_id = ?
 		  AND kind = ?
@@ -205,7 +252,7 @@ func updateReferenceContentPrecondition(db *sql.DB, expected sessiondb.Reference
 		  AND inline = ?
 		  AND created_at = ?
 		  AND COALESCE(deleted_at, 0) = ?
-	`, content, expected.ID, expected.SessionID, string(expected.Kind), expected.Label,
+	`, next.Content, string(next.Kind), next.FilePath, expected.ID, expected.SessionID, string(expected.Kind), expected.Label,
 		expected.Title, expected.Mime, expected.Content, expected.FilePath, inline,
 		expected.CreatedAt, expected.DeletedAt)
 	if err != nil {

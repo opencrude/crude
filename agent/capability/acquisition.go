@@ -69,16 +69,24 @@ func (job *acquisition) report(p command.Progress) {
 }
 
 func boundedFetch(ctx context.Context, endpoint string, limit int64) ([]byte, error) {
+	var data bytes.Buffer
+	err := fetchSource(ctx, endpoint, "application/json", 45*time.Second, limit, &data)
+	return data.Bytes(), err
+}
+
+// fetchSource streams bytes into the caller's destination. Discovery bounds its
+// in-memory documents. Artifact size and total time are user choices instead.
+func fetchSource(ctx context.Context, endpoint, accept string, timeout time.Duration, limit int64, dst io.Writer) error {
 	parsed, err := url.Parse(endpoint)
 	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.Scheme != "https" && (parsed.Scheme != "http" || parsed.Hostname() != "127.0.0.1" && parsed.Hostname() != "localhost") {
-		return nil, errors.New("capability source needs HTTPS or a loopback test endpoint")
+		return errors.New("capability source needs HTTPS or a loopback test endpoint")
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	request.Header.Set("Accept", "application/json")
-	client := network.NewClient(45 * time.Second)
+	request.Header.Set("Accept", accept)
+	client := network.NewClient(timeout)
 	defer client.CloseIdleConnections()
 	client.CheckRedirect = func(request *http.Request, previous []*http.Request) error {
 		if len(previous) >= 5 || request.URL.Scheme != "https" && request.URL.Host != parsed.Host {
@@ -88,24 +96,27 @@ func boundedFetch(ctx context.Context, endpoint string, limit int64) ([]byte, er
 	}
 	response, err := client.Do(request)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("capability source returned HTTP %d", response.StatusCode)
+		return fmt.Errorf("capability source returned HTTP %d", response.StatusCode)
 	}
 	var body io.Reader = response.Body
 	if sink := captypes.ProgressObserver(ctx); sink != nil && response.ContentLength > 0 {
 		body = &transferReader{Reader: body, ctx: ctx, total: response.ContentLength}
 	}
-	data, err := io.ReadAll(io.LimitReader(body, limit+1))
-	if err != nil {
-		return nil, err
+	if limit > 0 && response.ContentLength > limit {
+		return fmt.Errorf("download exceeds the %d-byte limit", limit)
 	}
-	if int64(len(data)) > limit {
-		return nil, errors.New("source response exceeded its download budget")
+	if limit > 0 {
+		body = io.LimitReader(body, limit+1)
 	}
-	return data, nil
+	n, err := io.Copy(dst, body)
+	if err == nil && limit > 0 && n > limit {
+		return fmt.Errorf("download exceeds the %d-byte limit", limit)
+	}
+	return err
 }
 
 func repositoryIdentity(source captypes.SourceConfig) (string, string, string, error) {
@@ -257,7 +268,13 @@ func (s *Service) acquireArtifact(ctx context.Context, candidate Candidate, sett
 	acquisitions.Lock()
 	job := acquisitions.jobs[key]
 	if job == nil {
-		bounded, cancel := context.WithTimeout(context.Background(), time.Duration(settings.TimeoutSeconds)*time.Second)
+		var bounded context.Context
+		var cancel context.CancelFunc
+		if settings.TimeoutSeconds > 0 {
+			bounded, cancel = context.WithTimeout(context.Background(), time.Duration(settings.TimeoutSeconds)*time.Second)
+		} else {
+			bounded, cancel = context.WithCancel(context.Background())
+		}
 		job = &acquisition{done: make(chan struct{}), cancel: cancel, waiters: make(map[*acquisitionWaiter]struct{})}
 		acquisitions.jobs[key] = job
 		go func() {
@@ -337,25 +354,42 @@ func (s *Service) installArtifact(ctx context.Context, key string, candidate Can
 		}
 		return destination, copied.Digest, nil
 	}
-	captypes.ReportProgress(ctx, "Downloading skill", 0, 0)
-	data, err := boundedFetch(ctx, candidate.ArchiveURL, limit)
-	if err != nil {
-		return "", "", err
-	}
-	captypes.ReportProgress(ctx, "Verifying skill files", 0, 0)
-	if candidate.Entry.Digest != "" {
-		digest := sha256.Sum256(data)
-		if hex.EncodeToString(digest[:]) != candidate.Entry.Digest {
-			return "", "", errors.New("download integrity differs from the inspected digest")
-		}
-	}
 	staging, err := os.MkdirTemp(s.cache, ".acquire-")
 	if err != nil {
 		return "", "", err
 	}
 	defer func() { _ = os.RemoveAll(staging) }()
+	// Keep untrusted archive bytes off the heap. Verify the complete transfer,
+	// then extract the selected subtree. Nothing is published on any failure.
+	archive, err := os.CreateTemp(staging, ".download-")
+	if err != nil {
+		return "", "", err
+	}
+	defer func() { _ = archive.Close() }()
+	captypes.ReportProgress(ctx, "Downloading skill", 0, 0)
+	var sink io.Writer = archive
+	hasher := sha256.New()
+	if candidate.Entry.Digest != "" {
+		sink = io.MultiWriter(archive, hasher)
+	}
+	if err = fetchSource(ctx, candidate.ArchiveURL, "application/octet-stream", 0, limit, sink); err != nil {
+		return "", "", err
+	}
+	captypes.ReportProgress(ctx, "Verifying skill files", 0, 0)
+	if candidate.Entry.Digest != "" && hex.EncodeToString(hasher.Sum(nil)) != candidate.Entry.Digest {
+		return "", "", errors.New("download integrity differs from the inspected digest")
+	}
+	if _, err = archive.Seek(0, io.SeekStart); err != nil {
+		return "", "", err
+	}
 	root := filepath.Join(staging, directoryName)
-	if err := extractSkill(ctx, data, candidate.Subpath, root, limit); err != nil {
+	if err := extractSkill(ctx, archive, candidate.Subpath, root, limit); err != nil {
+		return "", "", err
+	}
+	if err = archive.Close(); err != nil {
+		return "", "", err
+	}
+	if err = os.Remove(archive.Name()); err != nil {
 		return "", "", err
 	}
 	skill, err := skills.LoadContext(ctx, root)
@@ -372,11 +406,11 @@ func (s *Service) installArtifact(ctx context.Context, key string, candidate Can
 	return destination, skill.Digest, nil
 }
 
-func extractSkill(ctx context.Context, data []byte, subpath, root string, limit int64) error {
+func extractSkill(ctx context.Context, data io.Reader, subpath, root string, limit int64) error {
 	if subpath != "" && (!filepath.IsLocal(subpath) || strings.Contains(subpath, "\\") || path.Clean(subpath) != subpath) {
 		return errors.New("artifact subtree is not a contained path")
 	}
-	gzipReader, err := gzip.NewReader(bytes.NewReader(data))
+	gzipReader, err := gzip.NewReader(data)
 	if err != nil {
 		return err
 	}
@@ -415,7 +449,7 @@ func extractSkill(ctx context.Context, data []byte, subpath, root string, limit 
 		}
 		bytesWritten += header.Size
 		files++
-		if header.Size < 0 || bytesWritten > limit || files > 4096 {
+		if header.Size < 0 || limit > 0 && bytesWritten > limit || files > 4096 {
 			return errors.New("expanded artifact exceeded its file or byte budget")
 		}
 		target := filepath.Join(root, filepath.FromSlash(relative))

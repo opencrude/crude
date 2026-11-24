@@ -39,6 +39,7 @@ const MaxResultBytes = 1 << 20
 var identityPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
 
 type connection struct {
+	serverRevision  string
 	config          captypes.ConnectionConfig
 	state           captypes.ConnectionState
 	session         *mcp.ClientSession
@@ -139,6 +140,7 @@ func Validate(config captypes.ConnectionConfig) error {
 }
 
 func (manager *Manager) Configure(configs map[string]captypes.ConnectionConfig) {
+	configs = captypes.Clone(captypes.Settings{Connections: configs}).Connections
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
 	if manager.closed {
@@ -147,9 +149,7 @@ func (manager *Manager) Configure(configs map[string]captypes.ConnectionConfig) 
 	for id, existing := range manager.connections {
 		next, exists := configs[id]
 		next.ID = id
-		before, _ := json.Marshal(existing.config)
-		after, _ := json.Marshal(next)
-		if !exists || string(before) != string(after) {
+		if !exists || !sameServer(existing.config, next) {
 			existing.epoch++
 			if existing.cancel != nil {
 				existing.cancel()
@@ -169,38 +169,100 @@ func (manager *Manager) Configure(configs map[string]captypes.ConnectionConfig) 
 			}
 		}
 	}
-	for id, config := range configs {
-		config.ID = id
-		cloned := captypes.Clone(captypes.Settings{Connections: map[string]captypes.ConnectionConfig{id: config}}).Connections[id]
+	for id, cloned := range configs {
+		cloned.ID = id
 		entry := manager.connections[id]
 		if entry == nil {
 			entry = &connection{state: captypes.ConnectionState{ID: id, State: "not started"}}
 			manager.connections[id] = entry
 		}
+		if entry.serverRevision == "" || !sameServer(entry.config, cloned) {
+			// Hash only the registration that determines which server receives a call.
+			target := cloned
+			target.Grants = nil
+			data, _ := json.Marshal(target)
+			entry.serverRevision = digest(data)
+		}
+		if !reflect.DeepEqual(entry.config.Grants, cloned.Grants) {
+			entry.applyToolSettings(cloned)
+		}
 		entry.config = cloned
-		if config.Disabled {
+		if cloned.Disabled {
 			entry.state.State = "disabled"
 		}
 	}
 }
 
-func (manager *Manager) States() []captypes.ConnectionState {
+// Tool switches and effect classifications do not change a running server.
+func sameServer(a, b captypes.ConnectionConfig) bool {
+	a.Grants = nil
+	b.Grants = nil
+	return reflect.DeepEqual(a, b)
+}
+
+// applyToolSettings projects the user's switches on observed definitions. A
+// missing classification delegates the actual call to normal permission review.
+// A changed classified tool cannot inherit its former read or write boundary.
+func (c *connection) applyToolSettings(config captypes.ConnectionConfig) {
+	for i := range c.state.Tools {
+		t := &c.state.Tools[i]
+		rule := config.Grants[t.OriginalName]
+		t.Scope, t.Effect, t.Selected, t.Reason = config.ID, captypes.EffectUnknown, true, ""
+		switch {
+		case config.IsBuiltin():
+			t.Name = t.OriginalName
+			t.Effect, t.Selected = c.builtinEffects[t.Name]
+			t.Scope = "workspace"
+			if !t.Selected {
+				t.Reason = "Not available"
+			}
+		case rule.Fingerprint != "" || rule.Effect != "":
+			if rule.Fingerprint == t.Fingerprint && rule.Scope != "" && validEffect(rule.Effect) {
+				t.Scope, t.Effect = rule.Scope, rule.Effect
+			} else {
+				t.Selected, t.Reason = false, "Tool changed. Review it in MCP settings."
+			}
+		}
+		if rule.Disabled {
+			t.Selected, t.Reason = false, "Turned off for this connection"
+		}
+	}
+}
+
+// States returns detached discovery and status details for inspection.
+func (manager *Manager) States() []captypes.ConnectionState { return manager.states(true) }
+
+// Catalog returns only request-facing discovery. Preparing a provider request
+// never needs process logs, secret names, or another JSON round trip.
+func (manager *Manager) Catalog() []captypes.ConnectionState { return manager.states(false) }
+
+func (manager *Manager) states(details bool) []captypes.ConnectionState {
 	manager.mu.RLock()
 	defer manager.mu.RUnlock()
 	states := make([]captypes.ConnectionState, 0, len(manager.connections))
 	for _, entry := range manager.connections {
 		state := entry.state
+		if !details {
+			states = append(states, state.ToolCatalog())
+			continue
+		}
 		if entry.stderr != nil {
 			state.Stderr = redactSecrets(entry.config, entry.secrets, manager.resolveSecret, entry.stderr.Text(0))
 		}
-		encoded, _ := json.Marshal(state)
-		var detached captypes.ConnectionState
-		if json.Unmarshal(encoded, &detached) == nil {
-			states = append(states, detached)
-		}
+		states = append(states, state.Clone())
 	}
-	sort.Slice(states, func(first, second int) bool { return states[first].ID < states[second].ID })
+	sort.Slice(states, func(i, j int) bool { return states[i].ID < states[j].ID })
 	return states
+}
+
+// ConnectionStatus reads one lifecycle state without copying the catalog.
+func (manager *Manager) ConnectionStatus(id string) string {
+	manager.mu.RLock()
+	defer manager.mu.RUnlock()
+	if c := manager.connections[id]; c != nil {
+		return c.state.State
+	}
+	return ""
 }
 
 func (manager *Manager) Connect(ctx context.Context, id string) error {
@@ -694,7 +756,11 @@ func (manager *Manager) diagnosed(id string, epoch uint64, err error) error {
 	// server itself ended, its own last complaint is the cause, not the
 	// protocol's view of a closed pipe.
 	if tail.ended() && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
-		return fmt.Errorf("server exited before it answered: %s\nserver stderr (tail):\n%s\n(%w)", exitReason(text), text, err)
+		hint := "Check the publisher’s launch command and arguments. Test the corrected connection before saving."
+		if config.RepositoryURL != "" {
+			hint += " Publisher: " + config.RepositoryURL
+		}
+		return fmt.Errorf("server exited before it answered: %s\n%s\nserver stderr (tail):\n%s\n(%w)", exitReason(text), hint, text, err)
 	}
 	return fmt.Errorf("%w\nserver stderr (tail):\n%s", err, text)
 }
@@ -746,12 +812,6 @@ func (manager *Manager) Refresh(ctx context.Context, id string) error {
 	defer cancel()
 	state := captypes.ConnectionState{ID: id, State: "connected"}
 	outputSchemas := make(map[string]*jsonschema.Resolved)
-	manager.mu.RLock()
-	var builtinEffects map[string]captypes.Effect
-	if entry := manager.connections[id]; entry != nil && entry.epoch == epoch {
-		builtinEffects = entry.builtinEffects
-	}
-	manager.mu.RUnlock()
 	cursor := ""
 	seen := make(map[string]bool)
 	pages := 0
@@ -771,15 +831,15 @@ func (manager *Manager) Refresh(ctx context.Context, id string) error {
 					return errors.New("MCP tool discovery exceeded the bounded catalog")
 				}
 				schema, err := json.Marshal(tool.InputSchema)
-				if err != nil || len(schema) > 64<<10 {
-					return fmt.Errorf("tool %q has an invalid or oversized input schema", tool.Name)
+				if err != nil {
+					return fmt.Errorf("tool %q has an invalid input schema", tool.Name)
 				}
 				var output json.RawMessage
 				var resolved *jsonschema.Resolved
 				if tool.OutputSchema != nil {
 					output, err = json.Marshal(tool.OutputSchema)
-					if err != nil || len(schema)+len(output) > 64<<10 {
-						return fmt.Errorf("tool %q has an invalid or oversized output schema", tool.Name)
+					if err != nil {
+						return fmt.Errorf("tool %q has an invalid output schema", tool.Name)
 					}
 					resolved, err = resolveOutputSchema(output)
 					if err != nil {
@@ -792,22 +852,7 @@ func (manager *Manager) Refresh(ctx context.Context, id string) error {
 				}{tool.Name, tool.Description, schema, output})
 				fingerprint := digest(identity)
 				outputSchemas[fingerprint] = resolved
-				projected := captypes.Tool{Name: ToolName(id, tool.Name), OriginalName: tool.Name, ConnectionID: id, Description: tool.Description, InputSchema: schema, OutputSchema: output, Fingerprint: fingerprint, Reason: "Needs explicit effect and scope grant"}
-				if grant, found := config.Grants[tool.Name]; found && !grant.Disabled && grant.Fingerprint == fingerprint && grant.Scope != "" && validEffect(grant.Effect) {
-					projected.Effect, projected.Scope, projected.Selected, projected.Reason = grant.Effect, grant.Scope, true, ""
-				}
-				if config.IsBuiltin() {
-					// Crude's own server: tools keep their plain names and are
-					// usable with their declared effect unless the user turned
-					// that tool off.
-					projected.Name = tool.Name
-					if effect, declared := builtinEffects[tool.Name]; declared && !config.Grants[tool.Name].Disabled {
-						projected.Effect, projected.Scope, projected.Selected, projected.Reason = effect, "workspace", true, ""
-					} else {
-						projected.Selected, projected.Reason = false, "Turned off for this connection"
-					}
-				}
-				state.Tools = append(state.Tools, projected)
+				state.Tools = append(state.Tools, captypes.Tool{Name: ToolName(id, tool.Name), OriginalName: tool.Name, ConnectionID: id, Description: tool.Description, InputSchema: schema, OutputSchema: output, Fingerprint: fingerprint})
 			}
 			if page.NextCursor == "" {
 				break
@@ -876,6 +921,7 @@ func (manager *Manager) Refresh(ctx context.Context, id string) error {
 			}
 		}
 	}
+	sort.Slice(state.Tools, func(i, j int) bool { return state.Tools[i].OriginalName < state.Tools[j].OriginalName })
 	encoded, _ := json.Marshal(state.Tools)
 	state.Fingerprint = digest(encoded)
 	manager.mu.Lock()
@@ -887,6 +933,10 @@ func (manager *Manager) Refresh(ctx context.Context, id string) error {
 	state.State = entry.state.State
 	state.Logs = entry.state.Logs
 	entry.state, entry.discovered = state, true
+	for i := range entry.state.Tools {
+		entry.state.Tools[i].ServerRevision = entry.serverRevision
+	}
+	entry.applyToolSettings(entry.config)
 	entry.outputSchemas = outputSchemas
 	return nil
 }
@@ -912,22 +962,6 @@ func validEffect(effect captypes.Effect) bool {
 }
 
 func (manager *Manager) Call(ctx context.Context, tool captypes.Tool, arguments map[string]any) (captypes.Result, error) {
-	return manager.call(ctx, tool, arguments, nil)
-}
-
-// CallAuthorized uses a task-local grant that the capability owner has already
-// checked. Live discovery and the entire connection preimage are still required.
-// It never modifies the saved connection or its durable grants.
-func (manager *Manager) CallAuthorized(ctx context.Context, tool captypes.Tool, arguments map[string]any, expected captypes.ConnectionConfig, grant captypes.ToolGrant) (captypes.Result, error) {
-	return manager.call(ctx, tool, arguments, &taskCallAuthorization{expected: expected, grant: grant})
-}
-
-type taskCallAuthorization struct {
-	expected captypes.ConnectionConfig
-	grant    captypes.ToolGrant
-}
-
-func (manager *Manager) call(ctx context.Context, tool captypes.Tool, arguments map[string]any, task *taskCallAuthorization) (captypes.Result, error) {
 	session, config, epoch, err := manager.session(tool.ConnectionID)
 	if err != nil {
 		return captypes.Result{}, err
@@ -936,9 +970,9 @@ func (manager *Manager) call(ctx context.Context, tool captypes.Tool, arguments 
 	entry := manager.connections[tool.ConnectionID]
 	currentGrant := false
 	var outputSchema *jsonschema.Resolved
-	if entry != nil && entry.discovered {
+	if entry != nil && entry.session == session && entry.epoch == epoch && entry.discovered && !entry.state.Cached && entry.serverRevision == tool.ServerRevision {
 		for _, current := range entry.state.Tools {
-			if current.Name == tool.Name && current.Fingerprint == tool.Fingerprint && (task != nil || current.Effect == tool.Effect && current.Scope == tool.Scope && current.Selected) {
+			if current.Name == tool.Name && current.Fingerprint == tool.Fingerprint && current.OriginalName == tool.OriginalName && current.Effect == tool.Effect && current.Scope == tool.Scope && current.Selected {
 				currentGrant = true
 				outputSchema = entry.outputSchemas[current.Fingerprint]
 				break
@@ -948,22 +982,6 @@ func (manager *Manager) call(ctx context.Context, tool captypes.Tool, arguments 
 	manager.mu.RUnlock()
 	if !currentGrant {
 		return captypes.Result{}, errors.New("MCP operation changed or discovery is unverified; refresh and review access before execution")
-	}
-	grant, exists := config.Grants[tool.OriginalName]
-	if config.IsBuiltin() && task == nil {
-		manager.mu.RLock()
-		effect, declared := entry.builtinEffects[tool.OriginalName]
-		manager.mu.RUnlock()
-		grant, exists = captypes.ToolGrant{Effect: effect, Scope: "workspace", Fingerprint: tool.Fingerprint, Disabled: grant.Disabled}, declared
-	}
-	if task != nil {
-		if !reflect.DeepEqual(task.expected, config) {
-			return captypes.Result{}, errors.New("MCP connection changed after task authorization")
-		}
-		grant, exists = task.grant, true
-	}
-	if !exists || grant.Disabled || grant.Fingerprint != tool.Fingerprint || grant.Scope != tool.Scope || grant.Effect != tool.Effect || !validEffect(tool.Effect) {
-		return captypes.Result{}, errors.New("MCP tool grant is missing, revoked, or changed")
 	}
 	seconds := config.TimeoutSeconds
 	if seconds <= 0 {
@@ -997,7 +1015,7 @@ func (manager *Manager) call(ctx context.Context, tool captypes.Tool, arguments 
 	}
 	// Validate the received JSON, before credential redaction can change its types.
 	// This is local evidence failure after an ACK, never an unknown remote effect.
-	if outputSchema != nil {
+	if outputSchema != nil && !result.IsError {
 		if err := validateStructuredOutput(outputSchema, result.StructuredContent); err != nil && evidenceError == nil {
 			evidenceError = err
 		}
@@ -1117,6 +1135,9 @@ func (manager *Manager) disconnect(id string, park bool) error {
 func (manager *Manager) Test(ctx context.Context, config captypes.ConnectionConfig) (captypes.ConnectionState, error) {
 	detached := New(manager.root)
 	defer detached.Close()
+	detached.SetCredentialDirectory(manager.credentialDir)
+	// The explicit Test authorizes the draft only in this disposable manager.
+	config.LaunchApproved = true
 	detached.Configure(map[string]captypes.ConnectionConfig{config.ID: config})
 	if err := detached.Connect(ctx, config.ID); err != nil {
 		return captypes.ConnectionState{}, err

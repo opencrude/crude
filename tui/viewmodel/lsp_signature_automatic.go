@@ -176,7 +176,7 @@ func (m *App) drainAutomaticSignatureHelp() tea.Cmd {
 	if !current {
 		return nil
 	}
-	contextOwner, contextGeneration := m.ws.LSPMgr().ContextCursor()
+	contextOwner, contextGeneration := m.ws.LSPMgr().ContextCursor(source.Path)
 	if contextOwner != source.WorkspaceGeneration || contextGeneration == 0 {
 		// The server-ready and source topics can precede initial context
 		// publication. This is still only input intent, not an invocation or

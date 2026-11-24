@@ -289,7 +289,7 @@ func TestCompletionSameLabelsKeepExactIndicesRawIdentityAndDocumentationForms(t 
 		{},
 	}
 	for i := range want {
-		if got := f.inspect(t, set, i, false).Documentation; got != want[i] {
+		if got := set.Entries[i].Documentation; got != want[i] {
 			t.Fatalf("row %d lost string/markup/absence evidence: %+v want %+v", i, got, want[i])
 		}
 	}
@@ -366,7 +366,7 @@ func TestCompletionMalformedResponsesAreAtomicAndRetainNoRawObjects(t *testing.T
 		`[{"label":"ok","data":{"n":1,"n":2}}]`,
 		`[{"label":"ok","documentation":null}]`,
 		`[{"label":"ok","data":"\ud800"}]`,
-		`{"isIncomplete":false,"items":[{"label":"ok"}],"itemDefaults":{}}`,
+		`{"isIncomplete":false,"items":[{"label":"ok"}],"itemDefaults":{"unsupportedProperty":true}}`,
 		`{"items":[{"label":"ok"}]}`,
 		`[{"label":"ok","insertTextFormat":2.0}]`,
 		`[{"label":"ok","textEdit":{"range":{"start":{"line":0,"character":2},"end":{"line":0,"character":3}},"newText":"bad"}}]`,
@@ -1010,4 +1010,32 @@ func TestCompletionAdjustedMultilineSurvivesCanonicalInspection(t *testing.T) {
 	}
 	f.inspect(t, set, 0, false)
 	f.unchanged(t, before, history)
+}
+
+func TestCompletionSurvivesOnlyUnrelatedWatchedInput(t *testing.T) {
+	f := newCompletionAcceptanceFixture(t, "pr")
+	m := f.w.LSPMgr
+	set := f.request(t, `[{"label":"print"}]`, "view", 1, 0, 2)
+	other := filepath.Join(t.TempDir(), "go.mod")
+	m.NotifyWatchedFilesChanged(t.Context(), other, 2)
+	f.inspect(t, set, 0, false)
+	m.NotifyWatchedFilesChanged(t.Context(), filepath.Join(filepath.Dir(f.path), "go.mod"), 2)
+	if _, err := f.w.InspectLSPCompletion(t.Context(), f.owner, set.ID, set.Digest, set.Entries[0].ID, false); err == nil {
+		t.Fatal("a changed dependency retained insertion authority")
+	}
+}
+
+func TestAcceptCompletionObtainsAndChecksDeferredImport(t *testing.T) {
+	f := newCompletionAcceptanceFixture(t, "package demo\npr")
+	const item = `{"label":"print","data":{"id":7}}`
+	f.client.resolveSupported = true
+	f.client.resolved = `{"label":"print","data":{"id":7},"additionalTextEdits":[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":0}},"newText":"import x\n"}]}`
+	set := f.request(t, "["+item+"]", "view", 1, 1, 2)
+	result := f.inspect(t, set, 0, false)
+	if len(result.AdditionalEdits) != 1 || result.AdditionalEdits[0].NewText != "import x\n" {
+		t.Fatal("Tab lost the deferred import", result)
+	}
+	if len(set.Entries[0].Insertion.AdditionalTextEdits) != 0 {
+		t.Fatal("resolve mutated the original set")
+	}
 }

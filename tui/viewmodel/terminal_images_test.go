@@ -28,7 +28,7 @@ func TestTerminalImageOwnerSwitchRemovesResourcesAndRejectsDecode(t *testing.T) 
 		if err != nil {
 			t.Fatal(err)
 		}
-		command := app.beginReferencePreview(ref, true)
+		command := app.beginReferencePreview(ref)
 		owner := app.referenceOverlay
 		if !loading {
 			runAppCommand(t, app, command)
@@ -167,7 +167,7 @@ func TestTerminalImageRenderedAttachmentJourney(t *testing.T) {
 		t.Fatal("closing image left image cells/resources or consumed the composer")
 	}
 	// A late async decode may not resurrect the preview after close.
-	command := app.beginReferencePreview(ref, true)
+	command := app.beginReferencePreview(ref)
 	state := app.referenceOverlay
 	app.overlayHost.Close(ui.OverlayTextOverlay)
 	runAppCommand(t, app, command)
@@ -209,7 +209,7 @@ func TestSixelTerminalAttachmentUsesNativeImages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runAppCommand(t, app, app.beginReferencePreview(ref, true))
+	runAppCommand(t, app, app.beginReferencePreview(ref))
 	app.probeTerminalImages()
 	app.Update(uv.PrimaryDeviceAttributesEvent{65, 4, 6, 18, 22})
 	if len(app.View().Images) != 0 {

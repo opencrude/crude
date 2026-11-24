@@ -175,14 +175,7 @@ func (w *Workspace) CapabilityAction(ctx context.Context, action captypes.Action
 			}
 		}
 	case "test":
-		if action.Connection == nil {
-			err = errors.New("test needs a detached connection draft")
-		} else {
-			var state captypes.ConnectionState
-			state, err = service.Test(ctx, *action.Connection)
-			encoded, _ := json.Marshal(state)
-			content = "Detached draft test (Save is still required):\n" + string(encoded)
-		}
+		content, err = testConnectionDraft(ctx, service, action.Connection)
 	case "save-connection":
 		if action.Connection == nil {
 			err = errors.New("connection draft is missing")
@@ -491,4 +484,17 @@ func builtinIdentity(settings captypes.Settings, value captypes.ConnectionConfig
 		value.URL, value.Args, value.Directory, value.Source = "", nil, "", ""
 	}
 	return value
+}
+
+// A detached test returns only protocol facts. Raw discovery may contain
+// private headers or server diagnostics and must not enter a control receipt.
+func testConnectionDraft(ctx context.Context, s *capability.Service, config *captypes.ConnectionConfig) (string, error) {
+	if config == nil {
+		return "", errors.New("choose a connection to test")
+	}
+	state, err := s.Test(ctx, *config)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("Connection tested. The server listed %d tools.", len(state.Tools)), nil
 }

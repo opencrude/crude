@@ -29,7 +29,7 @@ func TestCompletionOriginalIdentityAndDocumentation(t *testing.T) {
 		t.Fatal("caller response mutation changed original item")
 	}
 	resolved := []byte(`{"documentation":{"kind":"plaintext","value":"selected first docs"},"data":{"n":1.00,"id":9007199254740993},"label":"same","detail":"selected detail"}`)
-	doc, err := ResolveDocumentation(original, resolved)
+	doc, err := resolvedDocs(original, resolved)
 	if err != nil || doc.Value != "selected first docs" || doc.Detail != "selected detail" ||
 		!doc.HasDetail || !doc.HasDocumentation {
 		t.Fatal("exact original item did not resolve its docs", doc, err)
@@ -61,19 +61,19 @@ func TestCompletionDocumentationResolveCannotChangeInsertionOrOpaqueIdentity(t *
 		"different row": `{"label":"same","data":{"id":9007199254740995},"insertText":"${1:safe}$0","insertTextFormat":2}`,
 		"insertion":     `{"label":"same","data":{"id":9007199254740993},"insertText":"unsafe","insertTextFormat":2}`,
 		"missing":       `{"label":"same","data":{"id":9007199254740993},"insertTextFormat":2}`,
-		"import":        `{"label":"same","data":{"id":9007199254740993},"insertText":"${1:safe}$0","insertTextFormat":2,"additionalTextEdits":[]}`,
+		"import":        `{"label":"same","data":{"id":9007199254740993},"insertText":"${1:safe}$0","insertTextFormat":2,"additionalTextEdits":null}`,
 		"command":       `{"label":"same","data":{"id":9007199254740993},"insertText":"${1:safe}$0","insertTextFormat":2,"command":{"title":"run","command":"run"}}`,
 		"null docs":     `{"label":"same","data":{"id":9007199254740993},"insertText":"${1:safe}$0","insertTextFormat":2,"documentation":null}`,
 		"partial":       `{"documentation":"no original label or insertion identity"}`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			if doc, err := ResolveDocumentation(original, []byte(resolved)); !errors.Is(err, ErrInvalid) || doc != (Documentation{}) {
+			if doc, err := resolvedDocs(original, []byte(resolved)); !errors.Is(err, ErrInvalid) || doc != (Documentation{}) {
 				t.Fatal("unsupported resolve changed original completion authority", name, doc, err)
 			}
 		})
 	}
 	numeric := []byte(`{"label":"n","data":1.00}`)
-	if _, err := ResolveDocumentation(numeric, []byte(`{"label":"n","data":1,"documentation":"same math is not same opaque token"}`)); !errors.Is(err, ErrInvalid) {
+	if _, err := resolvedDocs(numeric, []byte(`{"label":"n","data":1,"documentation":"same math is not same opaque token"}`)); !errors.Is(err, ErrInvalid) {
 		t.Fatal("numeric-token identity was normalized away", err)
 	}
 }
@@ -86,7 +86,7 @@ func TestCompletionOriginalJSONRefusesLossAndUnsupportedListDefaults(t *testing.
 		`[{"label":"x","documentation":{"kind":"markdown","value":"\udc00"}}]`,
 		`[{"label":1}]`, `[{"label":""}]`, `[null]`, `true`, `{"items":[]}`,
 		`{"isIncomplete":null,"items":[]}`, `{"isIncomplete":false,"items":null}`,
-		`{"isIncomplete":false,"items":[],"itemDefaults":{"editRange":{}}}`,
+		`{"isIncomplete":false,"items":[{"label":"x"}],"itemDefaults":{"unsupportedProperty":{}}}`,
 		`[{"label":"x","documentation":{"kind":"html","value":"no"}}]`,
 		`[{"label":"x","detail":null}]`, `[] null`,
 		`[{"label":"x","filterText":null}]`, `[{"label":"x","sortText":{}}]`,
@@ -129,7 +129,7 @@ func TestCompletionOpaqueStringEscapesAndSurrogatesStayExact(t *testing.T) {
 		if err != nil || len(result.Items) != 1 {
 			t.Fatal("valid escaped opaque identity was refused", raw, result, err)
 		}
-		doc, err := ResolveDocumentation(result.Items[0].Original, result.Items[0].Original)
+		doc, err := resolvedDocs(result.Items[0].Original, result.Items[0].Original)
 		if err != nil || doc != result.Items[0].Documentation {
 			t.Fatal("unchanged original documentation could not be observed", doc, err)
 		}
@@ -155,11 +155,11 @@ func FuzzCompletionOriginalAndDocumentationOnlyResolve(f *testing.F) {
 		}
 		for _, item := range result.Items {
 			before := bytes.Clone(item.Original)
-			same, err := ResolveDocumentation(item.Original, item.Original)
+			same, err := resolvedDocs(item.Original, item.Original)
 			if err != nil || same != item.Documentation {
 				t.Fatal("accepted original does not satisfy its own resolve identity", err)
 			}
-			doc, err := ResolveDocumentation(item.Original, resolved)
+			doc, err := resolvedDocs(item.Original, resolved)
 			if err != nil && doc != (Documentation{}) {
 				t.Fatal("refused resolve retained apparently usable documentation")
 			}
@@ -186,7 +186,7 @@ func BenchmarkCompletionOriginalAndDocumentationOnlyResolve(b *testing.B) {
 		b.ReportAllocs()
 		b.SetBytes(int64(len(original)))
 		for b.Loop() {
-			if _, err := ResolveDocumentation(original, original); err != nil {
+			if _, err := resolvedDocs(original, original); err != nil {
 				b.Fatal(err)
 			}
 		}
@@ -218,4 +218,26 @@ func TestCompletionCommitCharactersKeepItemPresenceAndRefuseMalformedLists(t *te
 	if _, err := CommitCharacters(strings.Split(strings.Repeat("a", MaxCommitCharacters+1), "")); !errors.Is(err, ErrInvalid) {
 		t.Fatal("an unbounded provider default was accepted")
 	}
+}
+
+func TestSharedCompletionDefaultsReachInsertionAndRetainData(t *testing.T) {
+	raw := []byte(`{"items":[{"label":"print","textEditText":"print()"},{"label":"plain","insertTextFormat":1,"commitCharacters":[]}],"isIncomplete":false,"itemDefaults":{"editRange":{"start":{"line":0,"character":1},"end":{"line":0,"character":3}},"insertTextFormat":2,"commitCharacters":["."],"data":{"id":9007199254740993}}}`)
+	list, err := Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, it := range list.Items {
+		v, err := Insertion(it)
+		if err != nil || v.TextEdit == nil || v.TextEdit.Col != 1 || v.TextEdit.EndCol != 3 || !bytes.Contains(it.Original, []byte("9007199254740993")) {
+			t.Fatal(i, v, err)
+		}
+		if i == 0 && v.TextEdit.NewText != "print()" || i == 1 && (len(it.CommitCharacters) != 0 || v.TextEdit.NewText != "plain") {
+			t.Fatal("default replaced explicit item value", it)
+		}
+	}
+}
+
+func resolvedDocs(original, resolved []byte) (Documentation, error) {
+	r, err := Resolve(original, resolved)
+	return r.Documentation, err
 }

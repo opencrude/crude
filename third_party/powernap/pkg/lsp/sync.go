@@ -26,12 +26,23 @@ type Document struct {
 
 // NewTextDocumentSyncManager creates a new text document sync manager.
 func NewTextDocumentSyncManager(client *Client) *TextDocumentSyncManager {
-	syncKind := protocol.Full // Default to full sync
+	return &TextDocumentSyncManager{
+		client:    client,
+		documents: make(map[string]*Document),
+		syncKind:  client.DocumentChangeKind(),
+	}
+}
+
+// DocumentChangeKind reads the server's numeric or options-object change mode.
+func (c *Client) DocumentChangeKind() protocol.TextDocumentSyncKind {
+	syncKind := protocol.None
 
 	// Extract sync kind from capabilities
-	switch v := client.capabilities.TextDocumentSync.(type) {
+	switch v := c.capabilities.TextDocumentSync.(type) {
 	case float64:
 		syncKind = protocol.TextDocumentSyncKind(int(v)) //nolint:gosec
+	case protocol.TextDocumentSyncKind:
+		syncKind = v
 	case int:
 		syncKind = protocol.TextDocumentSyncKind(v) //nolint:gosec
 	case map[string]any:
@@ -43,11 +54,7 @@ func NewTextDocumentSyncManager(client *Client) *TextDocumentSyncManager {
 		syncKind = v.Change
 	}
 
-	return &TextDocumentSyncManager{
-		client:    client,
-		documents: make(map[string]*Document),
-		syncKind:  syncKind,
-	}
+	return syncKind
 }
 
 // Open opens a new text document.

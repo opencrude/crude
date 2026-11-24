@@ -135,7 +135,7 @@ func (m *LSPManager) semanticFence(boundary insight.Boundary, wire int, gate fun
 	client, generation := state.client, m.settingsGeneration
 	current := func() bool {
 		return !m.closed && !m.paused && m.analysisErrorLocked() == nil && gate(m.settings) &&
-			m.settingsGeneration == generation && m.contextGeneration == boundary.Context.Generation &&
+			m.settingsGeneration == generation && m.producerContextLocked(doc.key) == boundary.Context.Generation &&
 			m.documents[filepath.Clean(boundary.Source.Path)] == doc && doc.opened && !doc.syncPending &&
 			doc.wireVersion == wire && sameInsightBoundary(doc.boundary, boundary) &&
 			m.states[doc.key] == state && state.client == client && state.status == LSPConnected &&

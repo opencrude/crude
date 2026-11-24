@@ -33,7 +33,7 @@ func TestReferenceOverlayRunningReadCannotCrossCloseOrReplacement(t *testing.T) 
 			}
 			held := &heldReferenceRead{SessionReferences: app.RefStore(), started: make(chan struct{}), release: make(chan struct{})}
 			app.ActiveSession.RefStore = held
-			command := app.beginReferenceOverlay(ref.ID)
+			command := app.beginReferencePreview(ref)
 			result := make(chan tea.Msg, 1)
 			go func() { result <- command() }()
 			select {
@@ -46,7 +46,7 @@ func TestReferenceOverlayRunningReadCannotCrossCloseOrReplacement(t *testing.T) 
 			case "close":
 				app.overlayHost.Close(ui.OverlayTextOverlay)
 			case "reopen":
-				app.beginReferenceOverlay(ref.ID)
+				app.beginReferencePreview(ref)
 			case "workspace":
 				app.workspaceSwitchGen.Add(1)
 			case "session":
@@ -73,7 +73,7 @@ func TestReferenceOverlayForeignComposerReferenceCannotOpen(t *testing.T) {
 	app := newTranscriptAttachmentApp(t)
 	ref := sessiondb.Reference{ID: "foreign", SessionID: "other", Kind: sessiondb.KindPastedText, Content: "foreign content"}
 	app.RefStore().AddExisting(ref)
-	if app.beginReferenceOverlay(ref.ID) != nil || app.overlayHost.IsOpen(ui.OverlayTextOverlay) {
+	if app.beginReferencePreview(ref) != nil || app.overlayHost.IsOpen(ui.OverlayTextOverlay) {
 		t.Fatal("foreign composer reference opened")
 	}
 }

@@ -35,9 +35,9 @@ func (m *LSPManager) fileSynchronizationLocked(path string) insight.LSPAssistanc
 	if state == nil {
 		return insight.LSPAssistanceCapabilities{}
 	}
-	out := insight.LSPAssistanceCapabilities{Producer: producer}
+	out := insight.LSPAssistanceCapabilities{Producer: producer, ContextGeneration: m.producerContextLocked(m.documents[path].key)}
 	doc := m.documents[path]
-	if !doc.syncPending && doc.syncedRevision == doc.revision && doc.syncedContext == m.contextGeneration {
+	if !doc.syncPending && doc.syncedRevision == doc.revision && doc.syncedContext == m.producerContextLocked(doc.key) {
 		out.SynchronizedSource = doc.boundary.Source
 		out.SynchronizedContext = doc.syncedContext
 	}
@@ -64,9 +64,10 @@ func (m *LSPManager) assistanceCapabilitiesLocked(path string) insight.LSPAssist
 	if state == nil {
 		return insight.LSPAssistanceCapabilities{}
 	}
-	out := insight.CloneLSPAssistance(state.assistance)
+	out := state.client.AssistanceCapabilities(path)
 	synchronized := m.fileSynchronizationLocked(path)
 	out.Producer = producer
+	out.ContextGeneration = synchronized.ContextGeneration
 	out.SynchronizedSource, out.SynchronizedContext = synchronized.SynchronizedSource, synchronized.SynchronizedContext
 	return out
 }

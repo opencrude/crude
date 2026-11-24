@@ -217,7 +217,7 @@ func (s *Screen) paintMessageRow(buf *surface.CellBuffer, x, y, width int, item 
 	// still belongs to today's viewport: clip content/gutters to its real cells.
 	compose := s.paintState.compose
 	compose.InnerW = min(compose.InnerW, max(0, s.width-2*compose.PadLR))
-	layout := LayoutRow(compose, pl.VisibleWidth(), paneInfo)
+	layout := buildComposeCtx(compose).row(paneInfo.PaneID != "")
 	lineX := x + layout.PadLeft
 	if row.ContextBoundary && localRow >= row.ContextBoundaryStart {
 		bg := tokens.Color(ui.ColorBg)
@@ -248,13 +248,6 @@ func (s *Screen) paintMessageRow(buf *surface.CellBuffer, x, y, width int, item 
 	if s.find.querying() {
 		s.paintFindMatches(buf, lineX, y, layout.ContentMax, index, row, localRow, selection, tokens)
 	}
-	drawn := pl.VisibleWidth()
-	if drawn > layout.ContentMax {
-		drawn = layout.ContentMax
-	}
-	col := drawn
-	padX := lineX + drawn
-	paintNativeSpaces(buf, padX, y, layout.PadRight, tokens, selStart, selEnd, pl.PaneBackground, col)
 	// The row, its padding, selection and find marks were painted at logical
 	// columns; arranging right-to-left text moves them with their characters
 	// and puts a right-to-left paragraph's padding on the left.
@@ -280,7 +273,9 @@ func (s *Screen) paintMessageRow(buf *surface.CellBuffer, x, y, width int, item 
 	if gx >= 0 && layout.GutterCols > ui.ScrollbarWidth {
 		// The separator remains blank and routes input to the outer chat, but
 		// shares the row's background so the pane band is full width.
-		paintNativeSpaces(buf, x+gx+ui.ScrollbarWidth, y, layout.GutterCols-ui.ScrollbarWidth, tokens, 0, 0, pl.PaneBackground, 0)
+		for col := ui.ScrollbarWidth; col < layout.GutterCols; col++ {
+			buf.WriteLogical(x+gx+col, y, " ", cell.NoColor, bg, 0)
+		}
 	}
 }
 
@@ -296,30 +291,6 @@ func selectionCols(st messagePaintState, globalLine int) (start, end int) {
 		end = st.selEC
 	}
 	return start, end
-}
-
-func paintNativeSpaces(buf *surface.CellBuffer, x, y, count int, tokens *ui.TokenSet, selStart, selEnd int, subPaneBg bool, colOffset int) {
-	if count <= 0 {
-		return
-	}
-	bg := cell.NoColor
-	fg := cell.NoColor
-	if subPaneBg && tokens != nil {
-		bg = tokens.Color(ui.ColorSubPaneBg)
-		fg = tokens.Color(ui.ColorFg)
-	}
-	col := colOffset
-	for i := 0; i < count; i++ {
-		cf, cb := fg, bg
-		if selStart < selEnd && col >= selStart && col < selEnd && tokens != nil {
-			// Padding belongs to the same semantic text range.
-			cf, cb = tokens.TextSelectionColors(cf)
-		}
-		// Default background inherits this window's already-painted fill,
-		// never the transcript underneath it at composition time.
-		buf.WriteString(x+i, y, " ", cf, cb, 0)
-		col++
-	}
 }
 
 // logicalColumn maps a selection column on a painted row (LocalX - padLR)
@@ -351,7 +322,7 @@ func (s *Screen) logicalColumn(globalLine, col int) int {
 	}
 	compose := s.paintState.compose
 	compose.InnerW = min(compose.InnerW, max(0, s.width-2*compose.PadLR))
-	layout := LayoutRow(compose, pl.VisibleWidth(), paneInfo)
+	layout := buildComposeCtx(compose).row(paneInfo.PaneID != "")
 	ln := chatprojection.ArrangedLine(pl, layout.ContentMax)
 	if ln == nil || ln.Span() == 0 {
 		return col

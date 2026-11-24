@@ -85,7 +85,7 @@ func (s *Session) loadPlanMode() error {
 // through the separate investigation admission path, never ordinary dispatch.
 func planModeAllows(tool string, metadata func(string) (tools.ToolMetadata, bool)) bool {
 	switch tool {
-	case "update_plan", "crude_control", "create_goal", "update_goal", "capability_activate", "mcp_request_access", "mcp_read_resource", "mcp_get_prompt":
+	case "update_plan", "crude_control", "create_goal", "update_goal", "capability_activate", "mcp_read_resource", "mcp_get_prompt":
 		return false
 	case "open_plan_investigation", "write_stdin":
 		return true

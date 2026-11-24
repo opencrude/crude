@@ -607,6 +607,15 @@ func (e *Editor) Title() string {
 // contexts where the dirty state is already communicated (confirm dialogs)
 // or where the marker glyph would leak as stray punctuation.
 func (e *Editor) BaseTitle() string { return e.title }
+
+// SetDisplayTitle names a document's views without changing its file or buffer identity.
+func (e *Editor) SetDisplayTitle(title string) {
+	e.eachView(func(v *Editor) { v.title = title })
+	if e.buffer != nil {
+		e.buffer.Title = title
+	}
+}
+
 func (e *Editor) Modified() bool {
 	if e.buffer != nil {
 		return e.buffer.IsDirty()

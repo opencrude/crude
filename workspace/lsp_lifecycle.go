@@ -26,18 +26,19 @@ import (
 )
 
 type lspClientState struct {
-	ticket      *governor.Ticket
-	lease       *governor.Lease
-	epoch       uint64
-	instance    string
-	rootURI     string
-	cmd         string
-	args        []string
-	spec        setting.LSPServerSpec
-	status      insight.LSPStatus
-	err         string
-	client      LSPClient
-	assistance  insight.LSPAssistanceCapabilities
+	contextGeneration uint64
+	ticket            *governor.Ticket
+	lease             *governor.Lease
+	epoch             uint64
+	instance          string
+	rootURI           string
+	cmd               string
+	args              []string
+	spec              setting.LSPServerSpec
+	status            insight.LSPStatus
+	err               string
+	client            LSPClient
+
 	teardownErr error
 	cancel      context.CancelFunc
 	closing     bool
@@ -70,6 +71,7 @@ type lspDocument struct {
 	language           string
 	opened             bool
 	revision           uint64
+	unsentRevision     uint64 // The server declined changes for this open revision.
 	syncedRevision     uint64
 	// editor is the DocumentService view; probes counts agent requests that
 	// borrowed this document. Either keeps the server view alive.
@@ -519,7 +521,7 @@ func (m *LSPManager) reconcile() bool {
 		if state == nil || state.stopped || !m.wantedLocked(doc) || len(doc.text) > m.settings.MaxDocumentBytes {
 			continue
 		}
-		if doc.opened && (doc.syncedRevision == doc.revision && doc.syncedContext == m.contextGeneration || m.updateTimers[path] != nil) {
+		if doc.opened && (doc.unsentRevision == doc.revision || doc.syncedRevision == doc.revision && doc.syncedContext == m.producerContextLocked(doc.key) || m.updateTimers[path] != nil) {
 			continue
 		}
 		if state.status == LSPConnected && state.client != nil {
@@ -655,6 +657,16 @@ func (m *LSPManager) startStateLocked(key string, state *lspClientState, stillWa
 	m.mu.Lock()
 	state.client = client
 	m.mu.Unlock()
+	if c, ok := client.(interface{ OnAssistanceChanged(func()) }); ok {
+		c.OnAssistanceChanged(func() {
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			if m.states[key] == state && state.client == client && !state.closing && !m.closed {
+				m.advanceProducerContextsLocked("Language server capabilities changed.", func(k string, _ *lspClientState) bool { return k == key })
+				m.signalLocked()
+			}
+		})
+	}
 	client.OnDiagnostics(func(p insight.DiagnosticPublication) { m.receiveDiagnostics(key, state, p) })
 	if unopened, ok := client.(lspUnopenedDiagnostics); ok {
 		unopened.OnUnopenedDiagnostics(func(path string, p insight.DiagnosticPublication) {
@@ -690,6 +702,12 @@ func (c *leasedLSPClient) Stop() error {
 	}
 	c.once.Do(c.release)
 	return nil
+}
+
+func (c *leasedLSPClient) OnAssistanceChanged(f func()) {
+	if impl, ok := c.LSPClient.(interface{ OnAssistanceChanged(func()) }); ok {
+		impl.OnAssistanceChanged(f)
+	}
 }
 
 func (c *leasedLSPClient) WorkspaceDiagnostics() bool {
@@ -747,10 +765,6 @@ func (m *LSPManager) captureServerEvidenceLocked(state *lspClientState) {
 }
 
 func (m *LSPManager) finishStart(key string, state *lspClientState, client LSPClient, err error) {
-	var assistance insight.LSPAssistanceCapabilities
-	if err == nil && client != nil {
-		assistance = client.AssistanceCapabilities()
-	}
 	m.mu.Lock()
 	stale := m.states[key] != state || state.closing || m.closed || m.paused ||
 		m.analysisErrorLocked() != nil || state.epoch != m.settingsGeneration || !m.keyWantedLocked(key)
@@ -774,7 +788,6 @@ func (m *LSPManager) finishStart(key string, state *lspClientState, client LSPCl
 			m.retireLocked(state)
 		}
 	} else {
-		state.assistance = insight.CloneLSPAssistance(assistance)
 		state.status, state.err, state.lastUsed = LSPConnected, "", time.Now()
 		state.restarting = false
 		state.workspacePull.failed = false
@@ -898,7 +911,7 @@ func (m *LSPManager) OpenFile(_ context.Context, source insight.Source, text str
 	if doc := m.documents[path]; doc != nil {
 		if doc.text != text || doc.source != source {
 			doc.source = source
-			m.advanceContextLocked("Canonical source changed; dependent units need reanalysis.")
+			m.advancePathContextLocked(path, "Canonical source changed; dependent units need reanalysis.")
 			doc.text = text
 			doc.revision++
 		}
@@ -909,7 +922,7 @@ func (m *LSPManager) OpenFile(_ context.Context, source insight.Source, text str
 		// The open document now owns this file's facts. The project view of
 		// the file on disk gives way until the document closes again.
 		m.removeProjectFactsLocked(func(b insight.Boundary) bool { return b.Source.Path == path })
-		m.advanceContextLocked("Canonical source view opened; dependent units need reanalysis.")
+		m.advancePathContextLocked(path, "Canonical source view opened; dependent units need reanalysis.")
 	}
 	m.activeFilePath, m.lastEdit = path, time.Now()
 	m.recomputeActiveStatusLocked()
@@ -945,7 +958,7 @@ func (m *LSPManager) syncDocument(path string, doc *lspDocument) {
 		m.mu.Unlock()
 		return
 	}
-	if doc.opened && doc.syncedRevision == doc.revision && doc.syncedContext == m.contextGeneration {
+	if doc.opened && (doc.unsentRevision == doc.revision || doc.syncedRevision == doc.revision && doc.syncedContext == m.producerContextLocked(doc.key)) {
 		m.mu.Unlock()
 		return
 	}
@@ -992,11 +1005,15 @@ func (m *LSPManager) syncDocument(path string, doc *lspDocument) {
 		!state.closing && !state.stopped && !m.closed && !m.paused && m.wantedLocked(doc) && len(doc.text) <= m.settings.MaxDocumentBytes {
 		doc.syncPending = false
 		if sendErr == nil {
+			doc.unsentRevision = 0
 			doc.opened, doc.syncedRevision, doc.syncedContext, doc.wireVersion, doc.boundary = true, revision, boundary.Context.Generation, wireVersion, boundary
+		} else if errors.Is(sendErr, lspclient.ErrNoDocumentChanges) {
+			doc.unsentRevision = revision
+			m.bumpVersionLocked()
 		} else {
 			state.err = sendErr.Error()
 			state.status = LSPFailed
-			m.invalidateDiagnosticsLocked("Document synchronization failed: " + sendErr.Error())
+			m.clearServerDiagnosticsLocked(key)
 		}
 	} else if !opened && m.states[key] == state && state.client == client && !state.closing {
 		// The last holder may have left while didOpen was in flight. It could
@@ -1071,7 +1088,7 @@ func (m *LSPManager) dropDocumentLocked(path string, doc *lspDocument) {
 		// nothing else. Its result stays as the file's project result.
 		m.retainDiskViewLocked(path, doc)
 	} else {
-		m.advanceContextLocked("Producer document view closed or exceeded its limit.")
+		m.advancePathContextLocked(path, "Producer document view closed or exceeded its limit.")
 	}
 	if m.workerRunning {
 		m.signalLocked()
@@ -1091,7 +1108,7 @@ func (m *LSPManager) QueueFileUpdate(source insight.Source, text string) {
 		return
 	}
 	doc.source, doc.diskView = source, false
-	m.advanceContextLocked("Canonical source changed; dependent units need reanalysis.")
+	m.advancePathContextLocked(path, "Canonical source changed; dependent units need reanalysis.")
 	doc.text = text
 	doc.revision++
 	m.lastEdit = time.Now()
@@ -1106,7 +1123,7 @@ func (m *LSPManager) QueueFileUpdate(source insight.Source, text string) {
 		}
 		doc.opened = false
 		doc.syncedRevision = 0
-		m.invalidateDiagnosticsLocked("Producer document view closed or exceeded its limit.")
+		m.advancePathContextLocked(path, "Producer document view closed or exceeded its limit.")
 		m.signalLocked()
 	}
 	if timer := m.updateTimers[path]; timer != nil {
@@ -1159,7 +1176,7 @@ func (m *LSPManager) clientForFile(path string) LSPClient {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	doc := m.documents[filepath.Clean(path)]
-	if m.paused || doc == nil || !doc.opened || !m.wantedLocked(doc) {
+	if m.paused || doc == nil || !doc.opened || doc.unsentRevision == doc.revision || !m.wantedLocked(doc) {
 		return nil
 	}
 	state := m.states[doc.key]
@@ -1220,7 +1237,7 @@ func (m *LSPManager) invalidateWatchedContext(ctx context.Context, path string) 
 
 func (m *LSPManager) watchedClientsLocked(path string, invalidate bool) []LSPClient {
 	if invalidate {
-		m.advanceContextLocked("Observed project input changed; dependent context is unverified.")
+		m.advancePathContextLocked(path, "Observed project input changed; dependent context is unverified.")
 		m.invalidateCheckedFactsLocked(path)
 	}
 	var clients []LSPClient
@@ -1405,7 +1422,7 @@ func (m *LSPManager) clearServerDiagnosticsLocked(key string) {
 			return isProjectFact(b) && !isCheckedFact(b) && b.Context.ID == key
 		}, "Language server stopped; retained results are out of date.")
 	}
-	m.advanceContextLocked("Language server state changed; retained facts are stale.")
+	m.advanceProducerContextsLocked("Language server state changed; retained facts are stale.", func(k string, _ *lspClientState) bool { return k == key })
 }
 
 const (

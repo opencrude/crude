@@ -2,6 +2,7 @@ package lspclient
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -316,5 +317,22 @@ func TestUnopenedFilePublicationsUseTheirOwnCallback(t *testing.T) {
 	}
 	if openCalls != 0 {
 		t.Fatal("an unopened file reached the open-file callback")
+	}
+}
+
+func TestNegotiatedDocumentChangeUsesUTF16Range(t *testing.T) {
+	for _, tc := range []struct {
+		before, after              string
+		line, col, endLine, endCol uint32
+		insert                     string
+	}{{"a😀x\r\n", "a😀xy\r\n", 0, 4, 0, 4, "y"}, {"a😀x", "a😁x", 0, 1, 0, 3, "😁"}, {"a\r\nb", "a\nb", 0, 1, 1, 0, "\n"}} {
+		change, err := documentChange(protocol.Incremental, tc.before, tc.after)
+		v, ok := change.Value.(protocol.TextDocumentContentChangePartial)
+		if err != nil || !ok || v.Range.Start.Line != tc.line || v.Range.Start.Character != tc.col || v.Range.End.Line != tc.endLine || v.Range.End.Character != tc.endCol || v.Text != tc.insert {
+			t.Fatal(tc, v, err)
+		}
+	}
+	if _, err := documentChange(protocol.None, "a", "ab"); !errors.Is(err, ErrNoDocumentChanges) {
+		t.Fatal(err)
 	}
 }

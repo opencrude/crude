@@ -3,6 +3,7 @@ package capability
 import (
 	"context"
 	"crypto/sha256"
+	_ "embed"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -32,6 +33,24 @@ type registryTransport struct {
 	Headers   []registryInput          `json:"headers"`
 	Variables map[string]registryInput `json:"variables"`
 }
+
+//go:embed registry_launch.json
+var registryLaunchData []byte
+
+// Version-specific publisher instructions fill missing registry metadata only.
+// A corrected upstream record always wins. These are data, never CLI guesses.
+type launchSupplement struct {
+	Source, Server, RegistryType, Package, Version, Reference string
+	PackageArguments                                          []registryInput
+}
+
+var launchSupplements = func() []launchSupplement {
+	var rows []launchSupplement
+	if err := json.Unmarshal(registryLaunchData, &rows); err != nil {
+		panic(err)
+	}
+	return rows
+}()
 
 type registryPackage struct {
 	RegistryType         string            `json:"registryType"`
@@ -352,11 +371,24 @@ func registryPackageConnection(source captypes.SourceConfig, server registryServ
 	if err != nil {
 		return captypes.ConnectionConfig{}, nil, err
 	}
+	if packageSpec.RuntimeHint != "" && packageSpec.RuntimeHint != command {
+		return captypes.ConnectionConfig{}, nil, fmt.Errorf("package requests %s; use its published launch command to add the connection", packageSpec.RuntimeHint)
+	}
 	args = append(args, runtimeArgs...)
 	if packageSpec.RegistryType == "npm" {
 		args = append(args, packageSpec.Identifier+"@"+version)
 	} else {
 		args = append(args, packageSpec.Identifier+"=="+version)
+	}
+	reference := ""
+	if packageSpec.PackageArguments == nil {
+		for _, row := range launchSupplements {
+			if row.Source == source.Location && row.Server == server.Name && row.RegistryType == packageSpec.RegistryType && row.Package == packageSpec.Identifier && row.Version == packageSpec.Version {
+				packageSpec.PackageArguments = row.PackageArguments
+				reference = row.Reference
+				break
+			}
+		}
 	}
 	packageArgs, err := fixedRegistryArguments(packageSpec.PackageArguments)
 	if err != nil {
@@ -368,6 +400,9 @@ func registryPackageConnection(source captypes.SourceConfig, server registryServ
 	requirements := []string{
 		"Package: " + packageSpec.RegistryType + ":" + packageSpec.Identifier + "@" + version,
 		"Runtime: " + command,
+	}
+	if reference != "" {
+		requirements = append(requirements, "Launch arguments from publisher: "+reference)
 	}
 	for _, input := range packageSpec.EnvironmentVariables {
 		if input.Name == "" {

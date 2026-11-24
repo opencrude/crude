@@ -21,7 +21,7 @@ func CategoryToolDefaults(category string) CategoryToolConfig {
 				"publish_report", "question",
 				"update_plan", "get_plan",
 				"wait", "reply",
-				"capability_search", "capability_activate", "mcp_request_access", "mcp_read_resource", "mcp_get_prompt",
+				"capability_search", "capability_activate", "mcp_read_resource", "mcp_get_prompt",
 				"agent_list", "agent_inspect", "agent_send", "agent_respond",
 				"artifact_read", "agent_wait", "board_read",
 			},

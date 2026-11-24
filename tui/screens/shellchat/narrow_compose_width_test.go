@@ -11,7 +11,6 @@ import (
 func TestComposeGeometryStaysWithinNarrowRows(t *testing.T) {
 	const padLR = 2
 	raw := "界🧑‍💻abcdefghijklmnopqrstuvwxyz"
-	rawW := rendering.VisibleWidth(raw)
 
 	for _, innerW := range []int{-3, 0, 1, 2, 3, 5, 9, 10, 19} {
 		for _, mainScrollbar := range []bool{false, true} {
@@ -40,16 +39,15 @@ func TestComposeGeometryStaysWithinNarrowRows(t *testing.T) {
 					)
 				}
 
-				layout := LayoutRow(p, rawW, pane)
+				layout := buildComposeCtx(p).row(pane.PaneID != "")
 				if layout.RowInnerW != rowInnerW {
 					t.Fatalf("inner=%d main=%v RowInnerW=%d want %d", innerW, mainScrollbar, layout.RowInnerW, rowInnerW)
 				}
 				if layout.ContentMax < 0 || layout.ContentMax > layout.RowInnerW {
 					t.Fatalf("inner=%d nesting=%d invalid content max %+v", innerW, nesting, layout)
 				}
-				drawn := min(rawW, layout.ContentMax)
-				if used := drawn + layout.PadRight + layout.GutterCols; used > layout.RowInnerW {
-					t.Fatalf("inner=%d nesting=%d row geometry uses %d of %d columns: %+v", innerW, nesting, used, layout.RowInnerW, layout)
+				if used := layout.ContentMax + layout.GutterCols; used != rowInnerW {
+					t.Fatalf("inner=%d nesting=%d row geometry occupies %d of %d columns: %+v", innerW, nesting, used, rowInnerW, layout)
 				}
 
 				listW := max(0, innerW) + 2*padLR

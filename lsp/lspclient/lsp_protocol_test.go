@@ -93,7 +93,10 @@ func TestProtocolServerHelper(t *testing.T) {
 				_ = os.WriteFile(os.Getenv("CRUDE_PROTOCOL_READY"), []byte("ready"), 0600)
 				continue
 			}
-			capabilities := map[string]any{"definitionProvider": true}
+			capabilities := map[string]any{"definitionProvider": true, "textDocumentSync": 1}
+			if mode == "sync-incremental" {
+				capabilities["textDocumentSync"] = map[string]any{"change": 2, "openClose": true}
+			}
 			if mode != "completion-unsupported" {
 				capabilities["completionProvider"] = map[string]any{
 					"resolveProvider": strings.HasPrefix(mode, "completion-") && mode != "completion-no-resolve",
@@ -467,7 +470,7 @@ func TestLSPProtocolConfigurationAndDuplicateOpen(t *testing.T) {
 			// Dynamic registration is announced only where Crude keeps the
 			// registrations: pull diagnostics.
 			for name, feature := range caps["textDocument"].(map[string]any) {
-				if feature.(map[string]any)["dynamicRegistration"] == true && name != "diagnostic" {
+				if feature.(map[string]any)["dynamicRegistration"] == true && name != "diagnostic" && name != "completion" {
 					t.Fatalf("unsupported dynamic registration: %s", name)
 				}
 			}

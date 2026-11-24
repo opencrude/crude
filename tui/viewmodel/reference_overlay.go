@@ -19,53 +19,30 @@ import (
 )
 
 type referenceOverlayState struct {
-	session    *workspace.Session
-	store      workspace.SessionReferences
-	screen     *textoverlay.Screen
-	ref        sessiondb.Reference
-	original   string
+	session *workspace.Session
+	store   workspace.SessionReferences
+	screen  *textoverlay.Screen
+	ref     sessiondb.Reference
+
 	generation uint64
-	loaded     bool
-	saving     bool
-	readOnly   bool
-	graphics   tea.ImageProtocol
-	agentID    string
-	epoch      uint64
-	ctx        context.Context
-	cancel     context.CancelFunc
+
+	graphics tea.ImageProtocol
+	agentID  string
+	epoch    uint64
+	ctx      context.Context
+	cancel   context.CancelFunc
 }
 
 type referenceContentLoadedMsg struct {
-	owner    *referenceOverlayState
-	content  string
-	readOnly bool
+	owner   *referenceOverlayState
+	content string
+
 	err      error
 	image    image.Image
 	resource *tea.TerminalImage
 }
 
-type referenceContentSavedMsg struct {
-	owner *referenceOverlayState
-	err   error
-}
-
-func (m *App) openReferenceOverlay(id string) {
-	m.runDetachedAsyncCmd(m.beginReferenceOverlay(id))
-}
-
-func (m *App) beginReferenceOverlay(id string) tea.Cmd {
-	store, screen := m.RefStore(), m.sessionTextOverlay()
-	if store == nil || screen == nil {
-		return nil
-	}
-	ref, ok := store.Reference(id)
-	if !ok || !ref.Active() {
-		return nil
-	}
-	return m.beginReferencePreview(ref, false)
-}
-
-func (m *App) beginReferencePreview(ref sessiondb.Reference, readOnly bool) tea.Cmd {
+func (m *App) beginReferencePreview(ref sessiondb.Reference) tea.Cmd {
 	store, screen := m.RefStore(), m.sessionTextOverlay()
 	if store == nil || screen == nil || m.ActiveSession == nil || !ref.Active() || ref.SessionID != m.ActiveSession.SessionID {
 		return nil
@@ -76,7 +53,7 @@ func (m *App) beginReferencePreview(ref sessiondb.Reference, readOnly bool) tea.
 	m.overlayHost.Close(ui.OverlayTextOverlay)
 	screen.OpenReadOnly(ref.ID, ref.Caption(), "Loading attachment…")
 	m.setMode(ModeTextOverlay)
-	state := &referenceOverlayState{session: m.ActiveSession, store: store, screen: screen, ref: ref, generation: m.workspaceSwitchGen.Load(), readOnly: readOnly, graphics: m.terminalImages.protocol(), agentID: m.activeAgentTabID(), epoch: screen.OpenEpoch()}
+	state := &referenceOverlayState{session: m.ActiveSession, store: store, screen: screen, ref: ref, generation: m.workspaceSwitchGen.Load(), graphics: m.terminalImages.protocol(), agentID: m.activeAgentTabID(), epoch: screen.OpenEpoch()}
 	state.ctx, state.cancel = context.WithTimeout(context.Background(), 2*time.Minute)
 	m.referenceOverlay = state
 	return m.clientIOCommand(state.ctx, func(ctx context.Context) tea.Msg {
@@ -108,14 +85,14 @@ func loadReferencePreview(state *referenceOverlayState) referenceContentLoadedMs
 			return referenceContentLoadedMsg{owner: state, err: err}
 		}
 		img, resource, err := imagepreview.Decode(ctx, data, state.graphics)
-		return referenceContentLoadedMsg{owner: state, image: img, resource: resource, readOnly: true, err: err}
+		return referenceContentLoadedMsg{owner: state, image: img, resource: resource, err: err}
 	}
-	content, readOnly, err := state.store.ReadReferenceContent(state.ref.ID)
+	content, _, err := state.store.ReadReferenceContent(state.ref.ID)
 	if ctx.Err() != nil {
 		err = ctx.Err()
 		content = ""
 	}
-	return referenceContentLoadedMsg{owner: state, content: content, readOnly: readOnly || state.readOnly, err: err}
+	return referenceContentLoadedMsg{owner: state, content: content, err: err}
 }
 
 func (m *App) openChatAttachment(payload chatprojection.ChatAttachmentOpenPayload) tea.Cmd {
@@ -201,48 +178,15 @@ func (m *App) applyReferenceContent(msg referenceContentLoadedMsg) {
 			m.Feedback.NotifyError("The attachment changed while it was loading; open it again")
 			return
 		}
-		state.original, state.loaded = msg.content, true
 		if msg.image != nil {
 			state.screen.OpenImage(state.ref.ID, state.ref.Caption(), msg.image)
 			state.screen.SetImageResource(msg.resource)
 			m.configureReferenceGraphics(state.screen)
-		} else if msg.readOnly || state.readOnly {
-			state.screen.OpenReadOnly(state.ref.ID, state.ref.Caption(), msg.content)
 		} else {
-			state.screen.Open(state.ref.ID, state.ref.Caption(), msg.content)
+			state.screen.OpenReadOnly(state.ref.ID, state.ref.Caption(), msg.content)
 		}
 	}
 	state.epoch = state.screen.OpenEpoch()
 	m.markReferenceOverlay()
 	state.screen.FocusInput()
-}
-
-func (m *App) saveReferenceFromOverlay(msg textoverlay.SaveMsg) tea.Cmd {
-	state := m.referenceOverlay
-	if !m.ownsReferenceOverlay(state) || !state.loaded || state.saving || state.screen.ReadOnly() {
-		return nil
-	}
-	state.saving = true
-	state.screen.SetBusy(true)
-	m.markReferenceOverlay()
-	return m.clientIOCommand(context.Background(), func(context.Context) tea.Msg {
-		err := state.store.SaveReferenceContent(state.ref, state.original, msg.Text)
-		return referenceContentSavedMsg{owner: state, err: err}
-	})
-}
-
-func (m *App) applyReferenceSave(msg referenceContentSavedMsg) {
-	if !m.ownsReferenceOverlay(msg.owner) {
-		return
-	}
-	if msg.err != nil {
-		msg.owner.saving = false
-		msg.owner.screen.SetBusy(false)
-		m.markReferenceOverlay()
-		m.Feedback.NotifyError("Could not save attachment: " + msg.err.Error() + ". Your edits are kept.")
-		return
-	}
-	m.setMode(ModeChat)
-	m.persistComposerDraftIfChanged()
-	m.Feedback.NotifyInfo("Pasted text saved")
 }

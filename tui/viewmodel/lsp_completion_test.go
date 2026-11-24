@@ -40,9 +40,9 @@ type completionTestService struct {
 	assistance        *insight.LSPAssistanceCapabilities
 }
 
-func (s *completionTestService) ServerReady() bool                { return !s.aggregateNotReady }
-func (s *completionTestService) ContextCursor() (string, uint64)  { return s.owner, s.context }
-func (s *completionTestService) CompletionsState() (bool, uint64) { return s.enabled, s.feature }
+func (s *completionTestService) ServerReady() bool                     { return !s.aggregateNotReady }
+func (s *completionTestService) ContextCursor(string) (string, uint64) { return s.owner, s.context }
+func (s *completionTestService) CompletionsState() (bool, uint64)      { return s.enabled, s.feature }
 func (s *completionTestService) Settings() setting.LSP {
 	if s.settings != nil {
 		return setting.CloneLSP(*s.settings)

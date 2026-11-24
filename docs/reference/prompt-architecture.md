@@ -118,7 +118,7 @@ Ordinary work must not be cluttered with automatic diagnostic sampling or result
 Capability guidance asks for concise name/keyword discovery and exact returned
 identity activation; reading catalog files is not a durable installation. The
 tool descriptions own installed-path resolution, workspace persistence, explicit
-post-restart MCP activation and the separate exact-access review workflow. The
+post-restart MCP activation and call permissions. The
 goal-only live acceptance is documented in
 [capability workflows](../guides/capability-workflows.md).
 
@@ -573,12 +573,28 @@ With Responses server storage requested and accepted by the endpoint, a complete
 assistant message retains a typed server response reference in the session's
 durable active context. The next
 request uses `previous_response_id` and uploads only subsequent input when the
-model, account, endpoint, request configuration, tool definitions, complete input
+model, account, endpoint, storage configuration, complete input
 prefix and accepted output still match. Multipart hashes include actual media
 bytes, not attachment labels. Inline images remain eligible for the documented
 delta path. Ordinary and native custom-tool results retain their exact call IDs
 and output kinds even when their calls are omitted from the upload. The full
 local conversation remains authoritative and is never replaced with a server ID.
+
+Each request still declares its **current tools**. These describe what the model
+can call next, not what happened earlier. A tool definition change must not
+strip accepted provider items or force a stored history upload. Across all seven
+adapters, replay uses the producer scope and a digest of the actual messages,
+including media. The offered tools never grant execution of a historical call.
+Stable built-in definitions precede sorted external tools. The normal request
+log records the encoded body size separately from provider cache-token usage.
+
+| Wire | What must travel |
+|---|---|
+| [Responses](https://developers.openai.com/api/docs/guides/conversation-state) | Accepted storage and an exact response anchor allow a message delta with the current tools. |
+| [Chat Completions](https://developers.openai.com/api/docs/guides/function-calling) and [Ollama chat](https://docs.ollama.com/capabilities/tool-calling) | The client supplies history and functions on each request. |
+| [Anthropic Messages](https://platform.claude.com/docs/en/build-with-claude/prompt-caching) | Cache breakpoints save processing, not upload bytes. Tools precede system and messages; a real catalog change can still cost a cache hit. |
+| [Gemini generateContent](https://ai.google.dev/gemini-api/docs/caching) | Implicit caching does not replace the request. Crude does not create billable explicit caches. |
+| [Gemini Interactions](https://ai.google.dev/gemini-api/docs/interactions) and Codex HTTP | These adapters deliberately send `store:false`. No stored conversation ID is assumed. Codex WebSocket continuation is not an HTTP storage contract. |
 
 The first request, a changed prefix/configuration, compaction, or a partial or
 unreferenced assistant response requires a complete upload. A model/account/

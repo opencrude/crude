@@ -109,6 +109,8 @@ detail: read the sections that the current checkpoint names.
 
 | 2026-11-23 | Let each server analyze its own project. Otherwise schedule every eligible file for that server and root, keep editing responsive, and show per-server counts of current answers. Provide an explicit forced fallback for isolated load tests, not a new user preference. | User |
 
+| 2026-11-24 | Diagnose stale Problems, tree and footer counts and repair completion and inline workflows against their source owners. Check observed performance warnings without requiring manual Refresh. | User |
+
 ### Open decisions
 
 None. The 2026-11-03 setup questions are answered in
@@ -139,9 +141,10 @@ them; they are not a template for language-specific modules.
 
 ## Current checkpoint
 
-**Immediate action: unreliable completion (2026-11-23), open.** Ctrl+Space
-can lose the invocation while an edit awaits acknowledgement.
-See the [reproduction, protocol findings and exit test](../issues/2026-11-23-lsp-completion-immediate-action.md).
+**Immediate action: diagnostic agreement and unreliable completion (2026-11-23).**
+The working tree retains an early shortcut, scopes source fences to its producer
+and coalesces overlapping diagnostic registrations before sending a request.
+See the [reproduction, protocol findings and repair evidence](../issues/2026-11-23-lsp-completion-immediate-action.md).
 
 **Validation repair: installed-server startup (2026-11-24): verified.** The
 JSON pull fixture uses the catalog launch recipe, which resolves npm's Windows

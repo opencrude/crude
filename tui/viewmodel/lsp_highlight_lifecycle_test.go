@@ -22,7 +22,7 @@ type occurrenceCursorService struct {
 	settingsReads  int
 }
 
-func (s *occurrenceCursorService) ContextCursor() (string, uint64) {
+func (s *occurrenceCursorService) ContextCursor(string) (string, uint64) {
 	return "occurrence-owner", s.cursor
 }
 func (s *occurrenceCursorService) FileProducer(string) insight.Producer { return s.producer }

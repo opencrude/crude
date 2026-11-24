@@ -52,6 +52,9 @@ func (m *App) applyLSPDiagnostics(path string, facts insight.Diagnostics) {
 	if m.lspFacts == nil {
 		m.lspFacts = make(map[string]insight.Diagnostics)
 	}
+	old, next := listedDiagnostics(m.lspFacts[path]), listedDiagnostics(facts)
+	m.listedErrors += next.Errors - old.Errors
+	m.listedWarnings += next.Warnings - old.Warnings
 	if facts.ID == "" {
 		delete(m.lspFacts, path)
 	} else {
@@ -77,6 +80,7 @@ func (m *App) applyLSPDiagnostics(path string, facts insight.Diagnostics) {
 func (m *App) wireLSPDiagnostics() {
 	m.lspDiagnostics = shellport.LSPDiagnosticConsumer{}
 	m.lspFacts = nil
+	m.listedErrors, m.listedWarnings = 0, 0
 	m.lspTreeProjection = nil
 }
 
@@ -115,10 +119,13 @@ func (m *App) syncFileTreeDiagnosticsFromLSP() {
 	if m == nil || m.ws.LSPMgr() == nil || m.Tree == nil || m.Tree.Model == nil {
 		return
 	}
-	m.lspTreeProjection = nil
-	for fp, facts := range m.ws.LSPMgr().AllDiagnostics() {
-		m.applyLSPDiagnostics(fp, facts)
+	// A replacement tree starts from a complete snapshot, including clears.
+	for path := range m.lspFacts {
+		m.applyLSPDiagnostics(path, insight.Diagnostics{})
 	}
+	m.wireLSPDiagnostics()
+	m.Tree.Model.ClearDiagnostics()
+	m.drainLSPDiagnostics()
 }
 
 // handleFileWatcherEvent processes a file system change that arrived through

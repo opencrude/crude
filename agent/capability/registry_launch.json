@@ -1,0 +1,16 @@
+[
+  {
+    "Source": "https://registry.modelcontextprotocol.io/v0/servers",
+    "Server": "io.github.CursorTouch/Windows-MCP",
+    "RegistryType": "pypi",
+    "Package": "windows-mcp",
+    "Version": "0.8.1",
+    "PackageArguments": [
+      {
+        "type": "positional",
+        "value": "serve"
+      }
+    ],
+    "Reference": "https://pypi.org/project/windows-mcp/0.8.1/"
+  }
+]

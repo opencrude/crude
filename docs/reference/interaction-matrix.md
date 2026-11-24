@@ -273,7 +273,8 @@ window derive from current bytes, not replayed change guesses.
 | Go to / search result landing | Go to line, LSP navigation, Find in Files Open | A target already visible does not shift the viewport. Pre-render jumps wait for actual geometry; short files stay at the top. An off-screen target lands with surrounding lines above and below. A visible, non-editing landing range clears on input/edit; typing never replaces the destination as a selection. |
 
 Find in Files retains query Home/End, routes Tab through result/preview/actions,
-and supports preview scroll, selection and copy. File preparation runs off Update
+and supports full-file preview scrolling, selection and copy. Double-click a
+preview source cell in Find, Replace or Go to File to open that source location. File preparation runs off Update
 and preserves the selected pane/resource and newer buffers. Old-query activations
 are rejected; an edited target is used only if the exact range survives or has
 one unambiguous occurrence on the same line. File-only matches preserve an

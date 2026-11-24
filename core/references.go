@@ -23,7 +23,7 @@ var referenceCommandMu sync.Mutex
 
 func referenceMutation(method string) bool {
 	switch method {
-	case coreprotocol.ReferenceCreate, coreprotocol.ReferenceImport, coreprotocol.ReferenceSaveContent, coreprotocol.ReferenceRename, coreprotocol.ReferenceDelete, coreprotocol.HistoryRecord, coreprotocol.HistoryRestore, coreprotocol.HistoryImportAttachment:
+	case coreprotocol.ReferenceCreate, coreprotocol.ReferencePrepareTextFile, coreprotocol.ReferenceImport, coreprotocol.ReferenceSaveContent, coreprotocol.ReferenceRename, coreprotocol.ReferenceDelete, coreprotocol.HistoryRecord, coreprotocol.HistoryRestore, coreprotocol.HistoryImportAttachment:
 		return true
 	}
 	return false
@@ -40,7 +40,7 @@ func (a *actor) prepareReferences(request coreprotocol.Request) (func(context.Co
 	switch request.Method {
 	case coreprotocol.HistoryList, coreprotocol.HistoryRecord, coreprotocol.HistoryRestore, coreprotocol.HistoryReadMedia, coreprotocol.HistoryImportAttachment:
 		return a.prepareHistory(request), true
-	case coreprotocol.ReferenceCreate, coreprotocol.ReferenceImport, coreprotocol.ReferenceReadContent, coreprotocol.ReferenceReadMedia, coreprotocol.ReferenceSaveContent, coreprotocol.ReferenceRename, coreprotocol.ReferenceDelete, coreprotocol.ReferenceList:
+	case coreprotocol.ReferenceCreate, coreprotocol.ReferencePrepareTextFile, coreprotocol.ReferenceImport, coreprotocol.ReferenceReadContent, coreprotocol.ReferenceReadMedia, coreprotocol.ReferenceSaveContent, coreprotocol.ReferenceRename, coreprotocol.ReferenceDelete, coreprotocol.ReferenceList:
 	default:
 		return nil, false
 	}
@@ -68,7 +68,7 @@ func (a *actor) prepareReferences(request coreprotocol.Request) (func(context.Co
 		if err := ctx.Err(); err != nil {
 			return fault(request, "cancelled", err.Error())
 		}
-		value, err := runReferenceCommand(store, request.Method, input)
+		value, err := runReferenceCommand(ctx, store, request.Method, input)
 		if err != nil {
 			return fault(request, "reference_failed", err.Error())
 		}
@@ -110,7 +110,7 @@ func (a *actor) prepareCrossSessionImport(request coreprotocol.Request, input co
 	}
 }
 
-func runReferenceCommand(store workspace.SessionReferences, method string, in coreprotocol.ReferenceCommand) (coreprotocol.Value, error) {
+func runReferenceCommand(ctx context.Context, store workspace.SessionReferences, method string, in coreprotocol.ReferenceCommand) (coreprotocol.Value, error) {
 	referenceCommandMu.Lock()
 	defer referenceCommandMu.Unlock()
 	if method == coreprotocol.ReferenceList {
@@ -182,6 +182,9 @@ func runReferenceCommand(store workspace.SessionReferences, method string, in co
 		return nil, errors.New("exact reference revision is required")
 	}
 	switch method {
+	case coreprotocol.ReferencePrepareTextFile:
+		updated, err := store.PreparePastedTextFile(ctx, ref)
+		return wire(referenceView(updated)), err
 	case coreprotocol.ReferenceImport:
 		created, err := store.ImportReference(ref)
 		return wire(referenceView(created)), err

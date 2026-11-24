@@ -1,274 +1,44 @@
 package capability
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
+	captypes "crude/types/capability"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
-	"reflect"
-	"slices"
-	"strings"
-	"unicode/utf8"
-
-	captypes "crude/types/capability"
 )
 
-func (s *Service) activationResult(ctx context.Context, actor captypes.RuntimeActor, id string) (captypes.Result, error) {
-	return s.observedActivation(ctx, actor, id, s.actorClients(actor))
-}
-
-// Settlement is passive. Prepare starts recovery and publishes a run generation;
-// calling it here could resurrect a finished run after an independent launch.
+// Settlement uses the same passive projection as the next model request. It
+// never admits a new run or starts a connection from a background completion.
 func (s *Service) observedActivation(ctx context.Context, actor captypes.RuntimeActor, id string, clients actorClient) (captypes.Result, error) {
 	if err := ctx.Err(); err != nil {
 		return captypes.Result{}, err
 	}
 	s.mu.RLock()
-	settings := s.settings // Configure replaces the normalized snapshot.
-	budgets := settings.Acquisition
+	settings := s.settings
 	s.mu.RUnlock()
-	result := captypes.ActivationResult{ConnectionID: id}
-	states := clients.States()
+	states := clients.Catalog()
 	var prepared captypes.RuntimeSnapshot
 	s.selectTools(actor, settings, states, &prepared)
-	result.Notices = prepared.Notices
-	usable := make(map[string]bool)
-	for _, tool := range prepared.Tools {
-		if tool.ConnectionID == id {
-			usable[tool.OriginalName] = true
-			result.Usable = append(result.Usable, captypes.UsableTool{Name: tool.Name, Tool: tool.OriginalName, Effect: tool.Effect, Scope: tool.Scope})
-		}
-	}
+	result := captypes.ActivationResult{ConnectionID: id, Notices: prepared.Notices}
 	for _, state := range states {
-		if state.ID != id {
-			continue
-		}
-		result.State = state.State
-		descriptionBytes := 0
-		for _, tool := range state.Tools {
-			if usable[tool.OriginalName] {
-				continue
-			}
-			description := boundedText(tool.Description, accessDescriptionBytes)
-			if len(result.NeedsAccess) >= budgets.MaxTools || descriptionBytes+len(description) > min(budgets.MaxSchemaBytes, 256<<10) {
-				result.Notices = append(result.Notices, "More tools exist than this result lists; the full catalog is in Settings › MCP.")
-				break
-			}
-			result.NeedsAccess = append(result.NeedsAccess, captypes.AccessCandidate{Tool: tool.OriginalName, Fingerprint: tool.Fingerprint, Description: description})
-			descriptionBytes += len(description)
+		if state.ID == id {
+			result.State = state.State
+			break
 		}
 	}
 	if result.State != "connected" {
 		return captypes.Result{}, errors.New("MCP connection changed before discovery completed")
 	}
-	switch {
-	case len(result.NeedsAccess) == 0:
-		result.Next = "Call usable_tools by name from the next request."
-	case len(result.Usable) > 0:
-		result.Next = "Call usable_tools by name from the next request. Grants add up: to use more, request only tools from tools_needing_access with mcp_request_access."
-	default:
-		result.Next = "Connected is not access. Call mcp_request_access once with every tool the task needs from tools_needing_access: its tool and fingerprint, the strongest effect it can have, and the resources it may touch as scope. Grants add up and follow the session's Manual/Auto Review/YOLO policy."
+	for _, tool := range prepared.Tools {
+		if tool.ConnectionID == id {
+			result.Usable = append(result.Usable, captypes.UsableTool{Name: tool.Name, Tool: tool.OriginalName, Effect: tool.Effect, Scope: tool.Scope})
+		}
+	}
+	if len(result.Usable) > 0 {
+		result.Next = "Call the tools by name in the next request."
+	} else {
+		result.Next = "No tools are available to this agent. Check the connection and tool settings."
 	}
 	encoded, err := json.Marshal(result)
 	return textResult(string(encoded)), err
-}
-
-// accessDescriptionBytes bounds one listed description. It is enough to choose
-// an effect and scope; the full text arrives with the granted tool.
-const accessDescriptionBytes = 512
-
-func boundedText(text string, limit int) string {
-	text = strings.TrimSpace(text)
-	if len(text) <= limit {
-		return text
-	}
-	cut := limit
-	for cut > 0 && !utf8.RuneStart(text[cut]) {
-		cut--
-	}
-	return strings.TrimSpace(text[:cut]) + "…"
-}
-
-func decodeAccessRequests(raw any) ([]captypes.AccessRequest, error) {
-	encoded, err := json.Marshal(raw)
-	if err != nil {
-		return nil, err
-	}
-	decoder := json.NewDecoder(bytes.NewReader(encoded))
-	decoder.DisallowUnknownFields()
-	var grants []captypes.AccessRequest
-	if err := decoder.Decode(&grants); err != nil {
-		return nil, fmt.Errorf("invalid MCP access request: %w", err)
-	}
-	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
-		return nil, errors.New("invalid trailing MCP access data")
-	}
-	if len(grants) == 0 || len(grants) > 32 {
-		return nil, errors.New("select between one and 32 exact observed MCP tools")
-	}
-	return grants, nil
-}
-
-func (s *Service) accessPreview(actor captypes.RuntimeActor, id string, requests []captypes.AccessRequest) (captypes.AccessPreview, captypes.Settings, bool, error) {
-	snapshot := s.actorSnapshot(actor)
-	connection, exists := snapshot.Settings.Connections[id]
-	if !exists || connection.Disabled {
-		return captypes.AccessPreview{}, snapshot.Settings, false, errors.New("installed MCP connection is unavailable")
-	}
-	var state captypes.ConnectionState
-	for _, candidate := range snapshot.Connections {
-		if candidate.ID == id {
-			state = candidate
-		}
-	}
-	if state.State != "connected" || state.Cached {
-		return captypes.AccessPreview{}, snapshot.Settings, false, errors.New("refresh live MCP tool discovery before requesting access")
-	}
-	preview := captypes.AccessPreview{Connection: connection, Grants: slices.Clone(requests)}
-	seen := make(map[string]bool)
-	changed := false
-	schemaBytes := 0
-	for _, request := range requests {
-		switch {
-		case request.Tool == "":
-			return preview, snapshot.Settings, false, errors.New("each grant needs the tool's original name from tools_needing_access")
-		case seen[request.Tool]:
-			return preview, snapshot.Settings, false, fmt.Errorf("%s appears twice; grant each tool once with the strongest effect it can have (a tool that reads and writes is write)", request.Tool)
-		case request.Scope == "" || len(request.Scope) > 1024:
-			return preview, snapshot.Settings, false, fmt.Errorf("the grant for %s needs a scope of at most 1024 bytes that names the resources it may touch", request.Tool)
-		}
-		seen[request.Tool] = true
-		var observed captypes.Tool
-		found := false
-		for _, tool := range state.Tools {
-			if tool.OriginalName == request.Tool {
-				observed, found = tool, true
-				break
-			}
-		}
-		if !found || request.Fingerprint == "" || request.Fingerprint != observed.Fingerprint {
-			return preview, snapshot.Settings, false, errors.New("MCP access request does not match an exact observed tool fingerprint")
-		}
-		schemaBytes += len(observed.InputSchema) + len(observed.Description)
-		if schemaBytes > snapshot.Settings.Acquisition.MaxSchemaBytes {
-			return preview, snapshot.Settings, false, errors.New("selected MCP access schemas exceed the configured review budget; request a smaller exact tool set")
-		}
-		if !slices.Contains([]captypes.Effect{captypes.EffectRead, captypes.EffectWrite, captypes.EffectDelete, captypes.EffectExecute, captypes.EffectCommunication}, request.Effect) ||
-			!actorAllows(actor, observed.Name, request.Effect) {
-			return preview, snapshot.Settings, false, errors.New("MCP access would exceed this agent's tool or effect ceiling")
-		}
-		preview.Tools = append(preview.Tools, observed)
-		expected := captypes.ToolGrant{Fingerprint: request.Fingerprint, Effect: request.Effect, Scope: request.Scope}
-		if connection.Grants[request.Tool] != expected {
-			if task, ok := s.taskAccess(actor, connection, request.Tool); !ok || task != expected {
-				changed = true
-			}
-		}
-		if connection.Grants[request.Tool].Disabled {
-			return preview, snapshot.Settings, false, errors.New("MCP tool access is explicitly disabled")
-		}
-	}
-	// Bind approval to the producing endpoint/configuration, live schemas, exact
-	// requested grants and current acquisition policy, never only a boolean.
-	encoded, err := json.Marshal(struct {
-		Preview captypes.AccessPreview
-		Policy  captypes.AcquisitionSettings
-		Source  captypes.SourceConfig
-		Actor   captypes.RuntimeActor
-	}{preview, snapshot.Settings.Acquisition, snapshot.Settings.Sources[connection.Source], actor})
-	if err != nil {
-		return preview, snapshot.Settings, false, err
-	}
-	digest := sha256.Sum256(encoded)
-	preview.Token = hex.EncodeToString(digest[:])
-	return preview, snapshot.Settings, changed, nil
-}
-
-func (s *Service) activateAccess(ctx context.Context, actor captypes.RuntimeActor, id string, raw any) (captypes.Result, error) {
-	requests, err := decodeAccessRequests(raw)
-	if err != nil {
-		return captypes.Result{}, err
-	}
-	s.mu.RLock()
-	_, installed := s.settings.Connections[id]
-	s.mu.RUnlock()
-	if !installed {
-		return captypes.Result{}, errors.New("install and activate the MCP connection first to observe its exact tool fingerprints")
-	}
-	s.mu.RLock()
-	boundScope := s.settings.Connections[id].Scope
-	s.mu.RUnlock()
-	if _, err := s.ActivateScoped(ctx, actor, id, false, boundScope); err != nil {
-		return captypes.Result{}, err
-	}
-	preview, before, changed, err := s.accessPreview(actor, id, requests)
-	if err != nil {
-		return captypes.Result{}, err
-	}
-	if !changed {
-		return s.activationResult(ctx, actor, id)
-	}
-	approved, exists := ctx.Value(captypes.AccessApprovedKey{}).(captypes.AccessPreview)
-	if !exists {
-		return captypes.Result{}, &captypes.AccessApprovalRequired{Preview: preview, Actor: actor}
-	}
-	if approved.Token == "" || approved.Token != preview.Token {
-		return captypes.Result{}, errors.New("MCP connection, schema or requested access changed; request a fresh exact approval")
-	}
-	origin := "human"
-	if authorization, ok := captypes.AuthorizationFrom(ctx); ok {
-		if authorization.Token != preview.Token || !reflect.DeepEqual(authorization.Actor, actor) {
-			return captypes.Result{}, errors.New("MCP authorization owner or run changed")
-		}
-		origin = authorization.Origin
-	}
-	if origin != "human" && actor.RunID == "" {
-		return captypes.Result{}, errors.New("automatic MCP access requires an active run identity")
-	}
-	if err := s.recordAuthorization(ctx, actor, origin, "access", preview.Token, (&captypes.AccessApprovalRequired{Preview: preview}).Evidence()); err != nil {
-		return captypes.Result{}, err
-	}
-	if origin != "human" {
-		s.mu.Lock()
-		if s.runs[actorKey(actor)] != taskKey(actor) {
-			s.mu.Unlock()
-			return captypes.Result{}, errors.New("MCP access run was revoked or replaced")
-		}
-		if s.taskGrants[taskKey(actor)] == nil {
-			s.taskGrants[taskKey(actor)] = make(map[string]taskGrant)
-		}
-		for _, request := range requests {
-			s.taskGrants[taskKey(actor)][id+"\x00"+request.Tool] = taskGrant{Connection: preview.Connection,
-				Policy: before.Acquisition, Source: before.Sources[preview.Connection.Source],
-				Grant: captypes.ToolGrant{Effect: request.Effect, Scope: request.Scope, Fingerprint: request.Fingerprint}}
-		}
-		s.mu.Unlock()
-		return s.activationResult(ctx, actor, id)
-	}
-	after := captypes.Clone(before)
-	connection := after.Connections[id]
-	// Grants belong to the connection's own binding. Rewriting the scope here
-	// used to silently move an application-bound connection into the workspace,
-	// so a first tool grant made it disappear from Application Settings and
-	// destroyed it with the project.
-	if connection.Scope != captypes.ScopeWorkspace {
-		connection.Scope = captypes.ScopeApplication
-	}
-	if connection.Grants == nil {
-		connection.Grants = make(map[string]captypes.ToolGrant)
-	}
-	for _, request := range requests {
-		connection.Grants[request.Tool] = captypes.ToolGrant{Effect: request.Effect, Scope: request.Scope, Fingerprint: request.Fingerprint}
-	}
-	after.Connections[id] = connection
-	if err := s.publishRegistration(ctx, id, before, after); err != nil {
-		return captypes.Result{}, err
-	}
-	// Publication changes transport configuration. Reconnect explicitly as part
-	// of this activation, never during passive restart or a presentation read.
-	return s.Activate(ctx, actor, id, false)
 }

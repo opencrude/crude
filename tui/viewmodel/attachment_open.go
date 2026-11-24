@@ -15,6 +15,7 @@ import (
 	"crude/agent/sessiondb"
 	"crude/core/shellport"
 	"crude/tui/ui"
+	"crude/tui/window"
 	"crude/types/setting"
 	"crude/workspace"
 )
@@ -28,6 +29,7 @@ type attachmentOpenState struct {
 	generation  uint64
 	agentID     string
 	destination string
+	group       window.GroupID
 	ctx         context.Context
 	cancel      context.CancelFunc
 }
@@ -62,7 +64,7 @@ func (m *App) newAttachmentOpen(ref sessiondb.Reference, destination string) *at
 	m.cancelAttachmentOpen()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	state := &attachmentOpenState{session: m.ActiveSession, store: m.RefStore(), ref: ref,
-		generation: m.workspaceSwitchGen.Load(), agentID: m.activeAgentTabID(), destination: destination, ctx: ctx, cancel: cancel}
+		generation: m.workspaceSwitchGen.Load(), agentID: m.activeAgentTabID(), destination: destination, group: m.Win.ActiveGroup(), ctx: ctx, cancel: cancel}
 	m.attachmentOpen = state
 	return state
 }
@@ -139,8 +141,18 @@ func (m *App) openAttachmentIn(id, destination string) tea.Cmd {
 
 func (m *App) openReferenceIn(ref sessiondb.Reference, readOnly bool, destination string) tea.Cmd {
 	if destination == setting.AttachmentOpenCrude {
+		if !readOnly && (ref.Kind == sessiondb.KindPastedText || ref.Kind == sessiondb.KindPastedTextFile) {
+			state := m.newAttachmentOpen(ref, destination)
+			if ref.Kind == sessiondb.KindPastedTextFile && ref.FilePath != "" {
+				return m.openPasteDocument(state, ref)
+			}
+			return m.clientIOCommand(state.ctx, func(ctx context.Context) tea.Msg {
+				file, err := state.store.PreparePastedTextFile(ctx, ref)
+				return attachmentPreparedMsg{owner: state, ref: file, err: err}
+			})
+		}
 		m.cancelAttachmentOpen()
-		return m.beginReferencePreview(ref, readOnly)
+		return m.beginReferencePreview(ref)
 	}
 	state := m.newAttachmentOpen(ref, destination)
 	local := true
@@ -159,6 +171,18 @@ func (m *App) openReferenceIn(ref sessiondb.Reference, readOnly bool, destinatio
 		path, err := prepareAttachmentCopy(ctx, async, state.store, ref)
 		return attachmentPreparedMsg{owner: state, ref: ref, path: path, copied: true, err: err}
 	})
+}
+
+func (m *App) openPasteDocument(state *attachmentOpenState, ref sessiondb.Reference) tea.Cmd {
+	if !m.ownsAttachmentOpen(state) || ref.FilePath == "" || !m.Win.HasGroup(state.group) {
+		return nil
+	}
+	state.ref = ref
+	cmd := m.openPaneFilesChecked(state.ctx, []string{ref.FilePath}, state.group, true)
+	if cmd == nil {
+		return nil
+	}
+	return func() tea.Msg { msg := cmd().(paneFilesOpenedMsg); msg.attachment = state; return msg }
 }
 
 func prepareAttachmentCopy(ctx context.Context, async *appAsyncIOState, store workspace.SessionReferences, ref sessiondb.Reference) (string, error) {
@@ -215,7 +239,9 @@ func (m *App) applyAttachmentPrepared(msg attachmentPreparedMsg) tea.Cmd {
 		return nil
 	}
 	if msg.imported && msg.ref.Active() && msg.ref.SessionID == state.session.SessionID {
-		state.store.AddExisting(msg.ref)
+		if _, exists := state.store.Reference(msg.ref.ID); !exists {
+			state.store.AddExisting(msg.ref)
+		}
 	}
 	current, ok := state.store.Reference(msg.ref.ID)
 	if !ok || !current.Active() || current != msg.ref || current.SessionID != state.session.SessionID {
@@ -224,6 +250,9 @@ func (m *App) applyAttachmentPrepared(msg attachmentPreparedMsg) tea.Cmd {
 	}
 	if msg.imported {
 		return m.openReferenceIn(msg.ref, true, state.destination)
+	}
+	if state.destination == setting.AttachmentOpenCrude {
+		return m.openPasteDocument(state, msg.ref)
 	}
 	async := asyncIOStateFor(m)
 	async.mu.Lock()

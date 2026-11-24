@@ -9,24 +9,33 @@ import (
 	captypes "crude/types/capability"
 )
 
+// IsMCPTool reports a complete external MCP tool identity, not a streamed prefix.
+func IsMCPTool(name string) bool { _, _, ok := mcpToolParts(name); return ok }
+
+func mcpToolParts(name string) (string, string, bool) {
+	rest, ok := strings.CutPrefix(name, "mcp__")
+	server, tool, split := strings.Cut(rest, "__")
+	return server, tool, ok && split && server != "" && tool != ""
+}
+
 // CapabilityToolLabel presents a dynamic MCP identity without pretending that
 // its generated suffix is the server's original name.
 func CapabilityToolLabel(name string) string {
 	if !strings.HasPrefix(name, "mcp__") {
 		return name
 	}
-	parts := strings.SplitN(strings.TrimPrefix(name, "mcp__"), "__", 2)
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+	server, tool, ok := mcpToolParts(name)
+	if !ok {
 		return "MCP operation"
 	}
-	return "MCP " + strings.ReplaceAll(parts[1], "_", " ") + " · " + parts[0]
+	return "MCP " + strings.ReplaceAll(tool, "_", " ") + " · " + server
 }
 
 func buildCapabilityResult(name, content, input string) StructuredResult {
 	switch name {
 	case "capability_search":
 		return buildCapabilitySearch(content)
-	case "capability_activate", "mcp_request_access":
+	case "capability_activate":
 		return buildCapabilityActivation(content, input)
 	case "mcp_read_resource", "mcp_get_prompt":
 		return buildMCPContent(name, content, input)
@@ -133,14 +142,8 @@ func buildCapabilityActivation(content, input string) StructuredResult {
 		result.Sections = append(result.Sections, ResultSection{Title: activation.ConnectionID, Body: activation.Next})
 		for _, tool := range activation.Usable {
 			result.Sections = append(result.Sections, ResultSection{
-				Title: tool.Tool, Metadata: strings.Join(nonempty("Granted", string(tool.Effect), tool.Scope), " · "),
+				Title: tool.Tool, Metadata: strings.Join(nonempty("Available", string(tool.Effect), tool.Scope), " · "),
 				Details: []ResultField{{"Name", tool.Name}, {"Effect", string(tool.Effect)}, {"Scope", tool.Scope}},
-			})
-		}
-		for _, tool := range activation.NeedsAccess {
-			result.Sections = append(result.Sections, ResultSection{
-				Title: tool.Tool, Metadata: "Needs access", Body: tool.Description,
-				Details: []ResultField{{"Fingerprint", tool.Fingerprint}},
 			})
 		}
 		for _, notice := range activation.Notices {

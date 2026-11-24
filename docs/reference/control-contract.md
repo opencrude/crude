@@ -41,7 +41,7 @@ commands are ranked by how many they contain. Simple plurals match.
 MCP connections and their secrets are agent-manageable for the user through
 `capabilities.inspect` (read), `capabilities.set_secret` (write),
 `capabilities.remove_secret` (delete), `capabilities.set_enabled` and
-`capabilities.set_tool_enabled` (write), `capabilities.save_connection`
+`capabilities.set_tool_enabled` (write), `capabilities.test_connection` and `capabilities.save_connection`
 (execute, since it can define a local launch) and
 `capabilities.remove_connection` (delete). The built-in web search's account
 search methods use `capabilities.save_search_method` (write),
@@ -50,8 +50,9 @@ search methods use `capabilities.save_search_method` (write),
 account); `capabilities.inspect` lists them with their last result. They run through the same owner as
 Settings, follow the session's Manual/Auto Review/YOLO policy, never return
 secret values, and mask secret, authorization, header and environment values
-in approval prompts. Enabling an external server's tool for the first time
-still uses `mcp_request_access`.
+in approval prompts. Testing opens a detached client without calling a tool or saving the draft. An
+exact connection inspection includes its original tool names and stored rules.
+The session permission mode governs actual tool calls, not the connection editor.
 
 Session settings are session-owned fields of the same settings catalog. Besides
 model, thinking and permission fields they include `multi_agent`,

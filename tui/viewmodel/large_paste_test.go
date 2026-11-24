@@ -18,7 +18,6 @@ import (
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
 	"crude/internal/clipboard"
-	"crude/tui/screens/textoverlay"
 	"crude/tui/ui"
 	"crude/workspace"
 )
@@ -245,7 +244,7 @@ func TestPastedTextReferencesStayOrderedAndRestoreTheSavedDraft(t *testing.T) {
 	}
 }
 
-func TestPastedTextFileChipOpensCompleteEditableOverlayAndSaves(t *testing.T) {
+func TestPastedTextFileChipOpensCompleteEditorTabAndSaves(t *testing.T) {
 	app := newFullTestApp(t)
 	setAttachmentDestination(t, app, setting.AttachmentOpenCrude)
 	wsOf(app).Logger = stubLogger{}
@@ -272,32 +271,22 @@ func TestPastedTextFileChipOpensCompleteEditableOverlayAndSaves(t *testing.T) {
 	x, y := app.inputRect.X+chips[0].Body.X+1, app.inputRect.Y+chips[0].Body.Y
 	_, open := app.Update(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
 	runAppCommand(t, app, open)
-	screen := app.sessionTextOverlay()
-	if screen == nil || screen.ReadOnly() || screen.Value() != content {
-		t.Fatal("file-backed pasted text did not open completely in the native editor")
+	ed := app.EditorState.Editor
+	if ed == nil || !ed.IsOpen() || ed.ReadOnly() || ed.Value() != content || ed.FilePath() != refs[0].FilePath || app.overlayHost.IsOpen(ui.OverlayTextOverlay) {
+		t.Fatal("native open did not use the complete file in a normal editor tab")
 	}
-	window := app.overlayHost.Window(ui.OverlayTextOverlay)
-	w, h := window.Size()
-	if w > app.width || h > app.height || !app.computeContentLayout().ShowMainInput || app.Input.Value() != draft {
-		t.Fatal("attachment viewer broke terminal bounds or hid/replaced the composer")
+	_, cmd := app.Update(tea.PasteMsg{Content: "EDITED "})
+	runAppCommand(t, app, cmd)
+	if ed.Value() != "EDITED "+content {
+		t.Fatal("typing did not reach the editor")
 	}
-	_, _ = app.Update(tea.PasteMsg{Content: "EDITED "})
-	if screen.Value() != "EDITED "+content {
-		t.Fatal("native pasted-text editor did not edit complete content")
+	_, cmd = app.Update(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
+	runAppCommand(t, app, cmd)
+	saved, _, err := app.RefStore().ReadReferenceContent(refs[0].ID)
+	if err != nil || saved != "EDITED "+content || ed.Modified() || app.Input.Value() != draft {
+		t.Fatalf("attachment save did not preserve the edited text and composer: err=%v dirty=%t", err, ed.Modified())
 	}
-	_, save := app.Update(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
-	if save == nil {
-		t.Fatal("Ctrl+S did not request save")
-	}
-	_, write := app.Update(save())
-	if write == nil || !app.overlayHost.IsOpen(ui.OverlayTextOverlay) {
-		t.Fatal("save did not retain the editor while storage runs")
-	}
-	_, _ = app.Update(write())
-	saved, readOnly, err := app.RefStore().ReadReferenceContent(refs[0].ID)
-	if err != nil || readOnly || saved != "EDITED "+content || app.overlayHost.IsOpen(ui.OverlayTextOverlay) || app.Input.Value() != draft {
-		t.Fatalf("save did not keep exact text and draft: readonly=%v err=%v", readOnly, err)
-	}
+
 }
 
 func TestPastedTextPendingOwnershipAndFailureDoNotFloodDraft(t *testing.T) {
@@ -347,36 +336,19 @@ func TestPastedTextPendingOwnershipAndFailureDoNotFloodDraft(t *testing.T) {
 	}
 }
 
-func TestReferenceOverlayRejectsReopenedLoadAndSaveKeepsErrors(t *testing.T) {
-	app := newFullTestApp(t)
-	app.ActiveSession = workspace.NewSession("viewer", t.TempDir(), nil, stubLogger{})
-	ref, err := app.RefStore().CreateReference(sessiondb.CreateRequest{Content: "original", Kind: sessiondb.KindPastedText})
+// A completed read cannot open its editor after the initiating draft changes.
+func TestPasteEditorRejectsSupersededOpen(t *testing.T) {
+	app := newTranscriptAttachmentApp(t)
+	ref, err := app.RefStore().CreateReference(sessiondb.CreateRequest{Kind: sessiondb.KindPastedTextFile, Content: "original"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	oldLoad := app.beginReferenceOverlay(ref.ID)
-	newLoad := app.beginReferenceOverlay(ref.ID)
-	_, _ = app.Update(oldLoad())
-	if got := app.sessionTextOverlay().Value(); got != "Loading attachment…" {
-		t.Fatalf("stale reopened load changed the current editor: %q", got)
-	}
-	_, _ = app.Update(newLoad())
-	screen := app.sessionTextOverlay()
-	_, _ = app.Update(tea.PasteMsg{Content: "edited "})
-	command := app.saveReferenceFromOverlay(textoverlay.SaveMsg{Target: screen, RefID: ref.ID, Text: screen.Value(), Epoch: screen.OpenEpoch()})
-	if command == nil {
-		t.Fatal("save did not start")
-	}
-	if err := app.RefStore().SaveReferenceContent(ref, "original", "external edit"); err != nil {
-		t.Fatal(err)
-	}
-	result := command().(referenceContentSavedMsg)
-	if result.err == nil {
-		t.Fatal("stale attachment save unexpectedly succeeded")
-	}
-	_, _ = app.Update(result)
-	if !app.overlayHost.IsOpen(ui.OverlayTextOverlay) || screen.Value() != "edited original" {
-		t.Fatal("failed save closed or cleared the editor")
+	cmd := app.openAttachment(ref.ID, false)
+	prepared := cmd()
+	app.cancelAttachmentOpen()
+	app.Update(prepared)
+	if len(app.EditorState.Tabs) != 0 || app.overlayHost.IsOpen(ui.OverlayTextOverlay) {
+		t.Fatal("superseded paste opened on the replacement tab")
 	}
 }
 

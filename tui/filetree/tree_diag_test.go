@@ -187,19 +187,12 @@ func TestSetDiagnostics_NodeNotLoaded(t *testing.T) {
 		t.Fatal("sub children should be nil before SetDiagnostics")
 	}
 
-	// Set diagnostics for the deep file: should auto-load the parent
-	// without expanding it.
+	// Status is not a browse request. Collapsed paths update their nearest
+	// loaded ancestor without reading a directory on the UI thread.
 	tree.SetDiagnostics(subFile, 1, 0, 0)
-
-	// Node should now exist (parent was loaded).
-	node := tree.NodeByPath(subFile)
-	if node == nil {
-		t.Fatal("deep.go node should exist after SetDiagnostics (auto-loaded)")
+	if subNode.Children != nil || tree.NodeByPath(subFile) != nil {
+		t.Fatal("diagnostic publication loaded a directory")
 	}
-	if node.DiagErrors != 1 {
-		t.Errorf("expected 1 error, got %d", node.DiagErrors)
-	}
-
 	// Sub dir should remain collapsed.
 	subNode = tree.NodeByPath(subDir)
 	if subNode == nil {

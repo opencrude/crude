@@ -213,7 +213,7 @@ func (m *App) navigationCurrent(s *navigationState) bool {
 		if s.result == nil || s.result.Boundary.Producer.InstanceID == "" {
 			return false
 		}
-		owner, _ := m.ws.LSPMgr().ContextCursor()
+		owner, _ := m.ws.LSPMgr().ContextCursor(s.source.Path)
 		if owner != s.source.WorkspaceGeneration {
 			return false
 		}
@@ -306,7 +306,7 @@ func (m *App) syncNavigation() {
 	if s.result == nil || s.landing {
 		return
 	}
-	owner, generation := m.ws.LSPMgr().ContextCursor()
+	owner, generation := m.ws.LSPMgr().ContextCursor(s.source.Path)
 	boundary := s.result.Boundary
 	if owner == "" || owner != boundary.Source.WorkspaceGeneration ||
 		generation > boundary.Context.Generation || boundary.Source != s.source {

@@ -68,12 +68,12 @@ func TestNavigationAdapterServerHelper(t *testing.T) {
 		result := "null"
 		switch request.Method {
 		case "initialize":
-			result = `{"capabilities":{"definitionProvider":true,"typeDefinitionProvider":{},"implementationProvider":{"id":"static","documentSelector":null},"referencesProvider":true}}`
+			result = `{"capabilities":{"textDocumentSync":1,"definitionProvider":true,"typeDefinitionProvider":{},"implementationProvider":{"id":"static","documentSelector":null},"referencesProvider":true}}`
 			if mode == "unsupported" {
-				result = `{"capabilities":{}}`
+				result = `{"capabilities":{"textDocumentSync":1}}`
 			}
 			if mode == "false" {
-				result = `{"capabilities":{"definitionProvider":false,"typeDefinitionProvider":false,"implementationProvider":false,"referencesProvider":false}}`
+				result = `{"capabilities":{"textDocumentSync":1,"definitionProvider":false,"typeDefinitionProvider":false,"implementationProvider":false,"referencesProvider":false}}`
 			}
 		case "textDocument/definition", "textDocument/typeDefinition", "textDocument/implementation", "textDocument/references":
 			if err := os.WriteFile(filepath.Join(root, "requested.json"), raw, 0600); err != nil {

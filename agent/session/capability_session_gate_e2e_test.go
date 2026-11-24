@@ -59,9 +59,6 @@ func TestSessionCapabilityGateAppliesToRunningAgent(test *testing.T) {
 		test.Fatal(err)
 	}
 	tool := runtime.Snapshot().Connections[0].Tools[0]
-	if err := runtime.Disconnect("task"); err != nil {
-		test.Fatal(err)
-	}
 
 	var owner *Session
 	gate := func(enabled bool) {
@@ -75,8 +72,6 @@ func TestSessionCapabilityGateAppliesToRunningAgent(test *testing.T) {
 		arguments map[string]any
 	}
 	steps := []step{
-		{name: "capability_activate", arguments: map[string]any{"id": "task"}},
-		{name: "mcp_request_access", arguments: map[string]any{"connection_id": "task", "grants": []captypes.AccessRequest{{Tool: "lookup", Effect: captypes.EffectRead, Scope: "workspace", Fingerprint: tool.Fingerprint}}}},
 		// Offered in this request; switched off before the call executes.
 		{before: func() { gate(false) }, name: tool.Name},
 		{name: "capability_activate", arguments: map[string]any{"id": "task"}},
@@ -152,11 +147,11 @@ func TestSessionCapabilityGateAppliesToRunningAgent(test *testing.T) {
 		encoded, _ := json.Marshal(body)
 		wire = append(wire, string(encoded))
 		switch index {
-		case 2:
+		case 0:
 			if !offered(body) {
-				test.Fatalf("granted tool was not offered before the switch:\n%s", encoded)
+				test.Fatalf("connected tool was not offered before the switch:\n%s", encoded)
 			}
-		case 3, 4:
+		case 1, 2:
 			if offered(body) {
 				test.Fatalf("request %d still offered a tool the session turned off", index+1)
 			}
@@ -166,7 +161,7 @@ func TestSessionCapabilityGateAppliesToRunningAgent(test *testing.T) {
 			if calls.Load() != 0 {
 				test.Fatal("a session-disabled MCP tool executed")
 			}
-		case 5:
+		case 3:
 			if !offered(body) {
 				test.Fatal("switching the server back on did not restore its tool")
 			}
@@ -178,6 +173,18 @@ func TestSessionCapabilityGateAppliesToRunningAgent(test *testing.T) {
 	}
 	if runtime.Snapshot().Settings.Connections["task"].Disabled {
 		test.Fatal("session switch changed the registration")
+	}
+
+	// The next user turn gets the live catalog without another authorization step.
+	if !orchestrator.SubmitInput(provider.PlainInput("Which tools remain available?")) {
+		test.Fatal("second turn not admitted")
+	}
+	if body := waitCapturedRequest(test, requests); !offered(body) {
+		test.Fatal("new user turn discarded the enabled MCP tool")
+	}
+	waitTurnDone(test, sender, orchestrator.ID)
+	if calls.Load() != 1 {
+		test.Fatal("inspecting the next request replayed a call")
 	}
 
 	// The gate is session state: it persists, survives resume and is

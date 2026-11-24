@@ -3,10 +3,12 @@ package settingspages
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -173,11 +175,11 @@ func (m *Model) buildAcquisitionForm() *ui.FormModel {
 	return formModel(
 		ui.SeparatorFieldState("capability-selection", "Selection and approval"), selection, mode,
 		&ui.FieldState{ID: "capability-sources", Label: "Sources and trust", Type: ui.FieldNav, Target: "settings.capability.sources", Columns: []string{"Registries and repositories"}, Description: "Where Skills and MCP search, and which sources are trusted."},
-		ui.SeparatorFieldState("capability-budgets", "Operation and request budgets"),
-		capabilityIntField("capability-timeout", "Install timeout", "seconds", int64(settings.TimeoutSeconds), 1, 3600, "A bounded acquisition deadline, not permission to retry a remote change."),
-		capabilityIntField("capability-download-bytes", "Largest download", "MB", max(1, settings.MaxDownloadBytes/mebibyte), 1, 1024, "Maximum download size; artifacts are verified before use."),
-		capabilityIntField("capability-max-tools", "Tools per request", "max", int64(settings.MaxTools), 1, 1024, "Maximum dynamic tools offered per request; selections are retained."),
-		capabilityIntField("capability-schema-bytes", "Schema budget", "KB", int64(settings.MaxSchemaBytes)/1024, 1, 16<<10, "Total size of dynamic tool schemas in one request."),
+		ui.SeparatorFieldState("capability-budgets", "Optional limits"),
+		capabilityIntField("capability-timeout", "Install timeout", "seconds", int64(settings.TimeoutSeconds), 0, math.MaxInt64/int64(time.Second), "Time allowed for a skill download. Use 0 for no limit."),
+		capabilityIntField("capability-download-bytes", "Skill download", "MiB", settings.MaxDownloadBytes/mebibyte, 0, math.MaxInt64/mebibyte, "Limit skill downloads and extracted files. Use 0 for no limit."),
+		capabilityIntField("capability-max-tools", "Tools per request", "max", int64(settings.MaxTools), 0, math.MaxInt, "Limit the MCP tools in each request. Use 0 for no limit."),
+		capabilityIntField("capability-schema-bytes", "Tool schema size", "KiB", int64(settings.MaxSchemaBytes)/1024, 0, math.MaxInt/1024, "Limit the MCP input schemas in each request. Use 0 for no limit."),
 	)
 }
 
@@ -205,7 +207,7 @@ func (m *Model) acquisitionFromForm() capability.AcquisitionSettings {
 		settings.TimeoutSeconds = value
 	}
 	// Displayed sizes are rounded; an untouched value keeps its exact bytes.
-	if value, err := strconv.ParseInt(m.value(catAcquisition, "capability-download-bytes"), 10, 64); err == nil && value != max(1, settings.MaxDownloadBytes/mebibyte) {
+	if value, err := strconv.ParseInt(m.value(catAcquisition, "capability-download-bytes"), 10, 64); err == nil && value != settings.MaxDownloadBytes/mebibyte {
 		settings.MaxDownloadBytes = value * mebibyte
 	}
 	if value, err := strconv.Atoi(m.value(catAcquisition, "capability-max-tools")); err == nil {

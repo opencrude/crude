@@ -2,30 +2,32 @@ package viewmodel
 
 import (
 	"context"
-	"fmt"
+	"errors"
+	"math"
 	"strings"
-	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 
 	"crude/core/shellport"
 	"crude/text/textencoding"
+	"crude/tui/editor"
 	"crude/tui/screens/findinfiles"
 	"crude/workspace/fileio"
 )
 
-// fileSearchPreview owns one selected-row read, never a document or editor tab.
+// A single selected file owns the read, independently of the match within it.
 type fileSearchPreview struct {
-	screen       *findinfiles.Screen
-	generation   int
-	path         string
-	line, column int
-	cancel       context.CancelFunc
+	screen     *findinfiles.Screen
+	generation int
+	path       string
+	buffer     *editor.Buffer
+	revision   uint64
+	cancel     context.CancelFunc
 }
 type fileSearchPreviewResult struct {
-	owner        *fileSearchPreview
-	first        int
-	text, notice string
+	owner  *fileSearchPreview
+	file   *findinfiles.FilePreview
+	notice string
 }
 
 func (m *App) retireFileSearchPreview() {
@@ -34,122 +36,86 @@ func (m *App) retireFileSearchPreview() {
 		m.filePreview = nil
 	}
 }
-
 func (m *App) syncFileSearchPreview() tea.Cmd {
 	s := m.findInFiles
-	if s == nil || s.Mode() != findinfiles.ModeFiles {
+	if s == nil || s.SelectedFilePath() == "" {
 		m.retireFileSearchPreview()
 		return nil
 	}
 	path := s.SelectedFilePath()
-	if path == "" {
-		m.retireFileSearchPreview()
-		return nil
+	full := m.chatFilePath(path)
+	var buf *editor.Buffer
+	var revision uint64
+	if m.BufferMgr != nil {
+		buf = m.BufferMgr.Get(full)
+		if buf == nil {
+			buf = m.BufferMgr.Get(strings.ReplaceAll(full, "/", `\`))
+		}
+		if buf != nil {
+			revision = buf.Revision()
+		}
 	}
-	line, column := max(1, m.goToFileLanding.line), max(1, m.goToFileLanding.column)
-	if p := m.filePreview; p != nil && p.screen == s && p.path == path && p.generation == s.Generation() && p.line == line && p.column == column {
+	if p := m.filePreview; p != nil && p.screen == s && p.generation == s.Generation() && p.path == path && p.buffer == buf && p.revision == revision {
 		return nil
 	}
 	m.retireFileSearchPreview()
 	ctx, cancel := context.WithCancel(context.Background())
-	p := &fileSearchPreview{s, s.Generation(), path, line, column, cancel}
+	p := &fileSearchPreview{s, s.Generation(), path, buf, revision, cancel}
 	m.filePreview = p
-	full := m.chatFilePath(path)
-	if m.BufferMgr != nil {
-		buf := m.BufferMgr.Get(full)
-		if buf == nil { // A Windows core publishes native document IDs even to a Unix shell.
-			for ed := range m.liveEditors {
-				if ed != nil && ed.FilePath() != "" && m.chatFilePath(ed.FilePath()) == full {
-					buf = m.BufferMgr.Get(ed.FilePath())
-					break
-				}
-			}
-		}
-		if buf != nil {
-			result := p.excerpt(buf.LineCount(), buf.Line)
-			m.applyFileSearchPreview(result)
-			return nil
-		}
-	}
+	s.ClearFilePreview()
 	files, remote := m.ws.(shellport.ClientFiles)
-	external := m.goToFileLanding.external
+	external := m.goToFileLanding.external || s.LiteralFilePath() != ""
+	var prepare func(context.Context) (*editor.PreviewDocument, error)
+	if buf != nil {
+		prepare = buf.CapturePreview(path)
+	}
+	results := s.Results()
 	return m.clientIOCommand(ctx, func(ctx context.Context) tea.Msg {
-		var text string
+		var document *editor.PreviewDocument
+		out := fileSearchPreviewResult{owner: p}
 		var err error
-		if remote {
-			var raw, data []byte
-			if limited, ok := files.(interface {
-				ReadClientFileLimit(context.Context, string, bool, int) ([]byte, error)
-			}); ok {
-				raw, err = limited.ReadClientFileLimit(ctx, full, external, fileio.MaxProjectSearchFileSize)
-			} else if external {
-				raw, err = files.ReadExternalClientFile(ctx, full)
+		if prepare != nil {
+			document, err = prepare(ctx)
+		} else {
+			var raw []byte
+			if remote {
+				if external {
+					raw, err = files.ReadExternalClientFile(ctx, full)
+				} else {
+					raw, err = files.ReadClientFile(ctx, full)
+				}
 			} else {
-				raw, err = files.ReadClientFile(ctx, full)
+				raw, err = fileio.ReadRegularNoFollow(ctx, full, math.MaxInt64-1)
 			}
 			if err == nil {
 				if fileio.IsBinary(raw) {
-					return fileSearchPreviewResult{owner: p, notice: "This is a binary file."}
+					out.notice = "This is a binary file."
+					return out
 				}
+				var data []byte
 				data, _, err = textencoding.DecodeText(raw)
-				text = string(data)
-			}
-		} else {
-			var preview *fileio.FilePreview
-			preview, err = fileio.InspectFile(full, fileio.DefaultPreviewBytes, 0)
-			if err == nil {
-				if preview.Binary {
-					return fileSearchPreviewResult{owner: p, notice: "This is a binary file."}
+				if err == nil {
+					document, err = editor.PreparePreview(ctx, path, data, editor.DefaultTabWidth)
 				}
-				if preview.Truncated && strings.Count(preview.Text, "\n") < line {
-					return fileSearchPreviewResult{owner: p, notice: "The cited line is beyond the preview limit."}
-				}
-				text = preview.Text
 			}
+		}
+		if err == nil {
+			out.file, err = findinfiles.PrepareFilePreview(ctx, document, path, results)
 		}
 		if err != nil {
-			return fileSearchPreviewResult{owner: p, notice: "Cannot read this file. Choose another file."}
+			if errors.Is(err, context.Canceled) {
+				return nil
+			}
+			out.notice = "Cannot read this file: " + err.Error()
 		}
-		if ctx.Err() != nil {
-			return nil
-		}
-		lines := strings.Split(text, "\n")
-		return p.excerpt(len(lines), func(i int) string { return strings.TrimSuffix(lines[i], "\r") })
+		return out
 	})
 }
-
-func (p *fileSearchPreview) excerpt(count int, at func(int) string) fileSearchPreviewResult {
-	r := fileSearchPreviewResult{owner: p}
-	if count == 0 || count == 1 && at(0) == "" {
-		r.notice = "This file is empty."
-		return r
-	}
-	if p.line > count {
-		r.notice = fmt.Sprintf("The file ends at line %d.", count)
-		return r
-	}
-	r.first = max(1, p.line-3)
-	var lines []string
-	for i := r.first - 1; i < min(count, p.line+3); i++ {
-		s := at(i)
-		if len(s) > 4096 {
-			end := 4096
-			for !utf8.RuneStart(s[end]) {
-				end--
-			}
-			s = s[:end] + "…"
-		}
-		lines = append(lines, s)
-	}
-	r.text = strings.Join(lines, "\n")
-	return r
-}
-
 func (m *App) applyFileSearchPreview(r fileSearchPreviewResult) {
 	p := r.owner
-	if p == nil || p != m.filePreview || p.screen != m.findInFiles || p.generation != p.screen.Generation() || p.path != p.screen.SelectedFilePath() {
+	if p == nil || p != m.filePreview || p.screen != m.findInFiles || p.generation != p.screen.Generation() || p.path != p.screen.SelectedFilePath() || p.buffer != nil && p.buffer.Revision() != p.revision {
 		return
 	}
-	p.screen.SetFilePreview(r.text, r.first, p.line, p.column, r.notice)
+	p.screen.SetFilePreview(r.file, m.goToFileLanding.line, m.goToFileLanding.column, r.notice)
 	m.markProjectSearchDirty()
 }

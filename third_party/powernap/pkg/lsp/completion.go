@@ -31,8 +31,9 @@ var (
 // allCommitCharacters supplies the default.
 func CompletionClientCapabilities(enableSnippets bool) map[string]any {
 	return map[string]any{
-		"dynamicRegistration": false,
+		"dynamicRegistration": true,
 		"contextSupport":      true,
+		"completionList":      map[string]any{"itemDefaults": []string{"commitCharacters", "editRange", "insertTextFormat", "insertTextMode", "data"}},
 		"insertTextMode":      1, // Unspecified item mode remains literal as-is.
 		"completionItem": map[string]any{
 			"insertTextModeSupport":   map[string]any{"valueSet": []int{1, 2}},
@@ -41,7 +42,7 @@ func CompletionClientCapabilities(enableSnippets bool) map[string]any {
 			"commitCharactersSupport": true,
 			"documentationFormat":     []string{"plaintext", "markdown"},
 			"resolveSupport": map[string]any{
-				"properties": []string{"documentation", "detail"},
+				"properties": []string{"documentation", "detail", "additionalTextEdits"},
 			},
 		},
 	}
@@ -54,7 +55,7 @@ func CompletionClientCapabilities(enableSnippets bool) map[string]any {
 // Validation covers encoded bounds, UTF-8 bytes, JSON syntax and the outer
 // response container only. The consumer owns strict schema, duplicate keys,
 // Unicode escapes, source-relative UTF-16 boundaries, edits and provenance.
-func (c *Client) RequestCompletionsRaw(ctx context.Context, uri string, line, col int, trigger protocol.CompletionContext) (result json.RawMessage, err error) {
+func (c *Client) RequestCompletionsRaw(ctx context.Context, options *protocol.CompletionOptions, uri string, line, col int, trigger protocol.CompletionContext) (result json.RawMessage, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -66,7 +67,7 @@ func (c *Client) RequestCompletionsRaw(ctx context.Context, uri string, line, co
 		line < 0 || col < 0 || uint64(line) > math.MaxInt32 || uint64(col) > math.MaxInt32 {
 		return nil, ErrCompletionInvalid
 	}
-	if c.capabilities.CompletionProvider == nil {
+	if options == nil {
 		return nil, ErrCompletionUnsupported
 	}
 	if trigger.TriggerKind == 0 {
@@ -78,7 +79,7 @@ func (c *Client) RequestCompletionsRaw(ctx context.Context, uri string, line, co
 			return nil, ErrCompletionInvalid
 		}
 	case protocol.TriggerCharacter:
-		if !utf8.ValidString(trigger.TriggerCharacter) || utf8.RuneCountInString(trigger.TriggerCharacter) != 1 || !slices.Contains(c.capabilities.CompletionProvider.TriggerCharacters, trigger.TriggerCharacter) {
+		if !utf8.ValidString(trigger.TriggerCharacter) || utf8.RuneCountInString(trigger.TriggerCharacter) != 1 || !slices.Contains(options.TriggerCharacters, trigger.TriggerCharacter) {
 			return nil, ErrCompletionInvalid
 		}
 	default:
@@ -113,7 +114,7 @@ func (c *Client) RequestCompletionsRaw(ctx context.Context, uri string, line, co
 // opaque numbers, duplicate evidence and unknown fields are not reconstructed.
 // This method never executes commands or edits. Consumers must admit only
 // allowed documentation/detail changes before using a resolved item.
-func (c *Client) ResolveCompletionRaw(ctx context.Context, original json.RawMessage) (result json.RawMessage, err error) {
+func (c *Client) ResolveCompletionRaw(ctx context.Context, options *protocol.CompletionOptions, original json.RawMessage) (result json.RawMessage, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -121,7 +122,7 @@ func (c *Client) ResolveCompletionRaw(ctx context.Context, original json.RawMess
 	if !c.initialized.Load() {
 		return nil, errors.New("client not initialized")
 	}
-	if !c.CompletionResolveSupported() {
+	if options == nil || !options.ResolveProvider {
 		return nil, ErrCompletionUnsupported
 	}
 	if !validCompletionRaw(original, true) {

@@ -92,7 +92,7 @@ func TestPlanModeTurnsOfferScopedInvestigationAndEndExplicitly(t *testing.T) {
 			t.Fatalf("Plan mode turn lacks %s", tool)
 		}
 	}
-	for _, tool := range []string{"delete_file", "update_plan", "agent_start", "crude_control", "capability_activate", "mcp_request_access"} {
+	for _, tool := range []string{"delete_file", "update_plan", "agent_start", "crude_control", "capability_activate"} {
 		if planned.offers(tool) {
 			t.Fatalf("Plan mode turn offers %s", tool)
 		}

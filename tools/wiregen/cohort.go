@@ -311,7 +311,7 @@ func writeCohort(root string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(root, filepath.FromSlash(cohortOutput)), cohortSourceFile(digest), 0o644)
+	return publishGenerated(filepath.Join(root, filepath.FromSlash(cohortOutput)), cohortSourceFile(digest))
 }
 
 func checkCohort(root string) error {

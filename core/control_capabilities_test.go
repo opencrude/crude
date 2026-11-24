@@ -3,6 +3,9 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -97,6 +100,16 @@ func TestControlCapabilitiesManageSecretsAndConnectionsWithoutRevealingValues(t 
 	got := ws.AppDefaults().Capabilities.Connections["docs"]
 	if saved.State != control.Committed || got.URL != "https://mcp.example.com/mcp" || got.SecretRefs["Authorization"] != "secret:DOCS_TOKEN" {
 		t.Fatalf("save=%+v connection=%+v", saved, got)
+	}
+	server := mcp.NewServer(&mcp.Implementation{Name: "draft", Version: "1"}, nil)
+	endpoint := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil))
+	defer endpoint.Close()
+	tested := runCapabilityControl(t, a, "dry-run", "capabilities.test_connection", map[string]any{"connection": map[string]any{"id": "new-draft", "url": endpoint.URL}})
+	if tested.State != control.Committed || !strings.Contains(string(tested.Output), "Connection tested") {
+		t.Fatal(tested)
+	}
+	if _, exists := ws.AppDefaults().Capabilities.Connections["new-draft"]; exists {
+		t.Fatal("testing saved a draft")
 	}
 	renamed := runCapabilityControl(t, a, "rename", "capabilities.save_connection", map[string]any{"connection": map[string]any{"id": "docs", "name": "Team docs"}})
 	got = ws.AppDefaults().Capabilities.Connections["docs"]

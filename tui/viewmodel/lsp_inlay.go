@@ -153,10 +153,10 @@ func (m *App) syncInlayHints() tea.Cmd {
 	if m.EditorState != nil && m.EditorState.ActiveView != "" {
 		mark(m.EditorState.Editor)
 	}
-	contextOwner, contextGeneration := service.ContextCursor()
 	for _, view := range m.inlayViews {
 		source, acknowledged := view.editor.CurrentInsightSource()
 		first, last, painted := view.editor.VisibleSourceLines()
+		contextOwner, contextGeneration := service.ContextCursor(view.editor.FilePath())
 		producer := service.FileProducer(view.editor.FilePath())
 		if !enabled || !connected || producer.InstanceID == "" || !view.visible || view.hidden || !acknowledged || !painted ||
 			contextOwner == "" || contextOwner != source.WorkspaceGeneration {
@@ -231,7 +231,7 @@ func (m *App) inlayRequestCurrent(r *inlayRequest) bool {
 		return false
 	}
 	enabled, epoch := m.ws.LSPMgr().InlayHintsState()
-	owner, generation := m.ws.LSPMgr().ContextCursor()
+	owner, generation := m.ws.LSPMgr().ContextCursor(r.source.Path)
 	return enabled && epoch == r.settingEpoch && owner == r.contextOwner && generation <= r.contextGeneration
 }
 

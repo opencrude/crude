@@ -24,6 +24,9 @@ func (m *App) manualLSPAvailable() bool {
 	if service == nil {
 		return false
 	}
+	if ed := m.EditorState.Editor; ed != nil && ed.IsOpen() && service.FileProducer(ed.FilePath()).InstanceID != "" {
+		return true
+	}
 	if service.ServerReady() {
 		return true
 	}

@@ -107,7 +107,7 @@ func (m *App) inlayInspectorCurrent(s *inlayInspectorState) bool {
 		return false
 	}
 	enabled, epoch := m.ws.LSPMgr().InlayHintsState()
-	owner, generation := m.ws.LSPMgr().ContextCursor()
+	owner, generation := m.ws.LSPMgr().ContextCursor(r.source.Path)
 	if !enabled || epoch != r.settingEpoch || owner != r.contextOwner || generation > r.contextGeneration ||
 		m.FocusStack != nil && m.FocusStack.Top() != s.focus {
 		return false

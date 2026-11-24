@@ -34,7 +34,7 @@ func TestAuthorizedLocalProcessLaunchDiscoveryAccessAndUse(t *testing.T) {
 	if err := service.Configure(t.Context(), settings); err != nil {
 		t.Fatal(err)
 	}
-	actor := captypes.RuntimeActor{ID: "root", RunID: "run", Effects: []captypes.Effect{captypes.EffectRead, captypes.EffectExecute}}
+	actor := captypes.RuntimeActor{ID: "root", RunID: "run", Effects: []captypes.Effect{captypes.EffectRead, captypes.EffectExecute, captypes.EffectDelete, captypes.EffectWrite, captypes.EffectCommunication}}
 	_, err = service.Activate(t.Context(), actor, "helper", false)
 	var launch *captypes.LaunchApprovalRequired
 	if !errors.As(err, &launch) {
@@ -49,15 +49,6 @@ func TestAuthorizedLocalProcessLaunchDiscoveryAccessAndUse(t *testing.T) {
 	if len(tools) != 1 {
 		t.Fatalf("missing live stdio discovery: %+v", tools)
 	}
-	params := map[string]any{"connection_id": "helper", "grants": []captypes.AccessRequest{{Tool: "lookup", Fingerprint: tools[0].Fingerprint, Effect: captypes.EffectRead, Scope: "fixture"}}}
-	_, err = service.Execute(t.Context(), actor, captypes.RuntimeSnapshot{}, "mcp_request_access", params)
-	var access *captypes.AccessApprovalRequired
-	if !errors.As(err, &access) {
-		t.Fatal(err)
-	}
-	if _, err := service.Execute(access.CapabilityApprovalContextFor(t.Context(), "yolo"), actor, captypes.RuntimeSnapshot{}, "mcp_request_access", params); err != nil {
-		t.Fatal(err)
-	}
 	prepared, err := service.Prepare(t.Context(), actor)
 	if err != nil || len(prepared.Tools) != 1 {
 		t.Fatalf("missing prepared stdio tool: %+v %v", prepared, err)
@@ -69,54 +60,6 @@ func TestAuthorizedLocalProcessLaunchDiscoveryAccessAndUse(t *testing.T) {
 	config := service.Snapshot().Settings.Connections["helper"]
 	if config.LaunchApproved || len(config.Grants) != 0 {
 		t.Fatal("task launch/use authority became durable")
-	}
-}
-
-func TestAutomaticAccessIsExactRunLocalAndRevocable(t *testing.T) {
-	for _, origin := range []string{"yolo", "reviewer"} {
-		t.Run(origin, func(t *testing.T) {
-			service, actor, calls, _ := accessFixture(t)
-			actor.SessionID, actor.RunID = "session", "run-1"
-			params := observedAccess(t, service, actor)
-			_, err := service.Execute(t.Context(), actor, captypes.RuntimeSnapshot{}, "mcp_request_access", params)
-			var approval *captypes.AccessApprovalRequired
-			if !errors.As(err, &approval) {
-				t.Fatal(err)
-			}
-			if _, err := service.Execute(approval.CapabilityApprovalContextFor(t.Context(), origin), actor, captypes.RuntimeSnapshot{}, "mcp_request_access", params); err != nil {
-				t.Fatal(err)
-			}
-			if len(service.Snapshot().Settings.Connections["docs"].Grants) != 0 {
-				t.Fatal("automatic access persisted trust")
-			}
-			prepared, err := service.Prepare(t.Context(), actor)
-			if err != nil || len(prepared.Tools) != 1 {
-				t.Fatalf("task tool unavailable: %+v %v", prepared, err)
-			}
-			if _, err := service.Execute(t.Context(), actor, prepared, prepared.Tools[0].Name, nil); err != nil {
-				t.Fatal(err)
-			}
-			other := actor
-			other.ID = "other"
-			if snapshot, err := service.Prepare(t.Context(), other); err != nil || len(snapshot.Tools) != 0 {
-				t.Fatal("grant escaped owner")
-			}
-			next := actor
-			next.RunID = "run-2"
-			if snapshot, err := service.Prepare(t.Context(), next); err != nil || len(snapshot.Tools) != 0 {
-				t.Fatal("grant escaped run")
-			}
-			if _, err := service.Execute(t.Context(), actor, prepared, prepared.Tools[0].Name, nil); err == nil {
-				t.Fatal("expired request executed")
-			}
-			if calls.Load() != 1 {
-				t.Fatal("expired call reached server")
-			}
-			var recordedOrigin, run string
-			if err := service.db.QueryRow(`SELECT origin,run_id FROM capability_authorizations WHERE phase='access'`).Scan(&recordedOrigin, &run); err != nil || recordedOrigin != origin || run != "run-1" {
-				t.Fatalf("audit: %s %s %v", recordedOrigin, run, err)
-			}
-		})
 	}
 }
 

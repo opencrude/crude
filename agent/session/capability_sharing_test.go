@@ -64,14 +64,6 @@ func TestActivatedCapabilityIsSharedWithParentAndChildren(t *testing.T) {
 		t.Fatalf("a delivered notice was repeated: %q", got)
 	}
 
-	// The parent granting access reaches the child as its parent's change;
-	// reactivating an announced capability announces nothing.
-	if _, err := root.ToolFn(t.Context(), "mcp_request_access", map[string]any{"connection_id": "screenshots", "grants": []any{}}); err != nil {
-		t.Fatal(err)
-	}
-	if got := sharedNotices(child); !strings.Contains(got, `agent="Ada" relation="parent" operation="granted access to" id="screenshots"`) {
-		t.Fatalf("child notice = %q", got)
-	}
 	if _, err := root.ToolFn(t.Context(), "capability_activate", map[string]any{"id": "registry:screenshots"}); err != nil {
 		t.Fatal(err)
 	}

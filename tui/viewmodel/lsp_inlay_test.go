@@ -34,7 +34,7 @@ func (s *inlayCursorService) FileSynchronized(insight.Source, uint64) bool {
 func (s *inlayCursorService) InlayHintsState() (bool, uint64) {
 	return true, 1
 }
-func (s *inlayCursorService) ContextCursor() (string, uint64) {
+func (s *inlayCursorService) ContextCursor(string) (string, uint64) {
 	return "inlay-replica-owner", s.cursor
 }
 

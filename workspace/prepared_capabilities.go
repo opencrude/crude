@@ -131,14 +131,7 @@ func (p *PreparedCapabilities) action(ctx context.Context, action captypes.Actio
 			}
 		}
 	case "test":
-		if action.Connection == nil {
-			err = errors.New("test needs a detached connection draft")
-		} else {
-			var state captypes.ConnectionState
-			state, err = service.Test(ctx, *action.Connection)
-			encoded, _ := json.Marshal(state)
-			content = "Detached draft test (Save is still required):\n" + string(encoded)
-		}
+		content, err = testConnectionDraft(ctx, service, action.Connection)
 	case "save-connection":
 		if action.Connection == nil {
 			err = errors.New("connection draft is missing")

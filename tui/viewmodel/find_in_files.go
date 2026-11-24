@@ -196,7 +196,7 @@ func (m *App) markProjectSearchDirty() {
 	}
 }
 
-func (m *App) openFindInFilesResult(match fileio.ProjectSearchMatch) tea.Cmd {
+func (m *App) openSearchLocation(match fileio.ProjectSearchMatch, position *editor.Position) tea.Cmd {
 	// Closing the window ends its landing; a chat reference's cited place
 	// applies to the file name results it offered.
 	landing := m.goToFileLanding
@@ -222,7 +222,10 @@ func (m *App) openFindInFilesResult(match fileio.ProjectSearchMatch) tea.Cmd {
 			match.Path = message.files[0].path
 		}
 		message.landing = &match
-		if match.NameOnly && landing.line > 0 {
+		if position != nil {
+			message.clickedSource = true
+			message.filePosition = position
+		} else if match.NameOnly && landing.line > 0 {
 			message.filePosition = &editor.Position{Line: landing.line - 1, Col: max(0, landing.column-1)}
 		}
 		return message

@@ -94,8 +94,12 @@ func PaintLineAtBackground(buf *surface.CellBuffer, x, y, maxW int, pl PaintLine
 // A painter that adds decorations at logical columns (find matches) paints
 // with it, adds them, and then arranges the row with ArrangedLine.
 func PaintLineLogical(buf *surface.CellBuffer, x, y, maxW int, pl PaintLine, tokens *ui.TokenSet, selStart, selEnd int, rowBg cell.Color) {
-	selection := [...]bidi.ColumnRange{{Start: selStart, End: selEnd}}
-	PaintLineLogicalRanges(buf, x, y, maxW, pl, tokens, selection[:], rowBg)
+	var selection [1]bidi.ColumnRange
+	ranges := selection[:0]
+	if selStart < selEnd {
+		ranges = append(ranges, bidi.ColumnRange{Start: selStart, End: selEnd})
+	}
+	PaintLineLogicalRanges(buf, x, y, maxW, pl, tokens, ranges, rowBg)
 }
 
 // PaintLineLogicalRanges allows source selection to skip gaps between cells.
@@ -106,10 +110,10 @@ func PaintLineLogicalRanges(buf *surface.CellBuffer, x, y, maxW int, pl PaintLin
 	if maxW < 0 {
 		maxW = 0
 	}
-	pl = TruncatePaintLine(pl, maxW)
 
 	col := 0
 	curX := x
+spans:
 	for _, span := range pl.Spans {
 		fg := cell.NoColor
 		if span.FGSet {
@@ -123,6 +127,15 @@ func PaintLineLogicalRanges(buf *surface.CellBuffer, x, y, maxW int, pl PaintLin
 		} else if span.BgSet && tokens != nil {
 			spanBG = tokens.Color(span.BgRole)
 		}
+		if len(selection) == 0 && !pl.TextTide {
+			end, complete := buf.WriteLogicalUntil(curX, y, x+maxW, span.Text, fg, spanBG, span.Attr, span.Link)
+			col += end - curX
+			curX = end
+			if !complete {
+				break
+			}
+			continue
+		}
 		rest := span.Text
 		for len(rest) > 0 {
 			cluster, w := ansi.FirstGraphemeCluster(rest, ansi.GraphemeWidth)
@@ -134,11 +147,11 @@ func PaintLineLogicalRanges(buf *surface.CellBuffer, x, y, maxW int, pl PaintLin
 				continue
 			}
 			if col >= maxW {
-				break
+				break spans
 			}
 			nextCol := col + w
 			if nextCol > maxW {
-				break
+				break spans
 			}
 
 			cellFG := fg

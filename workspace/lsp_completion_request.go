@@ -114,7 +114,7 @@ func (m *LSPManager) completionFence(boundary insight.Boundary, wire int, featur
 	current := func() bool {
 		return !m.closed && !m.paused && m.analysisErrorLocked() == nil && m.settings.Enabled && m.settings.Completions &&
 			m.completionGeneration == feature &&
-			m.settingsGeneration == settings && m.contextGeneration == boundary.Context.Generation &&
+			m.settingsGeneration == settings && m.producerContextLocked(doc.key) == boundary.Context.Generation &&
 			m.documents[filepath.Clean(boundary.Source.Path)] == doc && doc.opened && !doc.syncPending &&
 			doc.wireVersion == wire && sameInsightBoundary(doc.boundary, boundary) &&
 			m.states[doc.key] == state && state.client == client && state.status == LSPConnected &&

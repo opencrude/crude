@@ -84,16 +84,21 @@ func TestTaskAcquiresSkillActivatesMCPUsesToolAndResumesPassively(test *testing.
 			name, arguments = "capability_activate", map[string]any{"id": "local:" + skill.Name}
 		case 3:
 			name, arguments = "capability_activate", map[string]any{"id": "task"}
-		case 4:
-			name, arguments = "mcp_request_access", map[string]any{"connection_id": "task", "grants": []captypes.AccessRequest{
-				{Tool: "lookup", Effect: captypes.EffectRead, Scope: "workspace", Fingerprint: tool.Fingerprint},
-			}}
-		case 5:
-			name = tool.Name
 		default:
-			_, _ = fmt.Fprint(writer, "data: {\"choices\":[{\"delta\":{\"content\":\"Task used source instructions and exact SDK evidence.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-			return
+			// Independent activation jobs can settle in either order. Use the offered
+			// definition and both results, not a predetermined request count.
+			loaded, offered, used := taskEvidence(body, tool.Name)
+			switch {
+			case offered && !used:
+				name = tool.Name
+			case loaded && used:
+				_, _ = fmt.Fprint(writer, "data: {\"choices\":[{\"delta\":{\"content\":\"Task used source instructions and exact SDK evidence.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+				return
+			default:
+				name, arguments = "wait", map[string]any{"seconds": 15}
+			}
 		}
+
 		encoded, _ := json.Marshal(arguments)
 		_, _ = fmt.Fprintf(writer, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":%q,\"type\":\"function\",\"function\":{\"name\":%q,\"arguments\":%q}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", fmt.Sprintf("task-%d", requestCount.Load()), name, string(encoded))
 	}))
@@ -124,26 +129,21 @@ func TestTaskAcquiresSkillActivatesMCPUsesToolAndResumesPassively(test *testing.
 	if !orchestrator.SubmitInput(provider.PlainInput("Use review-task to inspect exact fixture evidence")) {
 		test.Fatal("task was not admitted")
 	}
-	var activationContext, dynamicDefinition, actualResult bool
-	var capturedWire []string
-	for requestIndex := 0; requestIndex < 6; requestIndex++ {
+	for {
 		body := waitCapturedRequest(test, requests)
-		encoded, _ := json.Marshal(body)
-		capturedWire = append(capturedWire, string(encoded))
-		activationContext = activationContext || strings.Contains(string(encoded), "source instructions, subordinate")
-		actualResult = actualResult || strings.Contains(string(encoded), "real SDK tool evidence")
-		if requestIndex >= 4 {
-			for _, raw := range body["tools"].([]any) {
-				definition, _ := raw.(map[string]any)
-				function, _ := definition["function"].(map[string]any)
-				dynamicDefinition = dynamicDefinition || function["name"] == tool.Name
+		loaded, offered, used := taskEvidence(body, tool.Name)
+		if loaded && used {
+			if !offered {
+				test.Fatal("tool disappeared after use")
 			}
+			break
 		}
 	}
 	waitTurnDone(test, sender, orchestrator.ID)
 	waitAssistantCount(test, owner, 1)
-	if !activationContext || !dynamicDefinition || !actualResult || mutations.Load() != 1 {
-		test.Fatalf("task workflow: skill=%t definition=%t result=%t SDK calls=%d\n%s", activationContext, dynamicDefinition, actualResult, mutations.Load(), strings.Join(capturedWire, "\n"))
+	beforeResume := requestCount.Load()
+	if mutations.Load() != 1 {
+		test.Fatalf("SDK calls = %d, want one", mutations.Load())
 	}
 	if len(runtime.Snapshot().Settings.Connections["task"].Grants) != 0 {
 		test.Fatal("YOLO synthesized durable tool trust")
@@ -158,7 +158,7 @@ func TestTaskAcquiresSkillActivatesMCPUsesToolAndResumesPassively(test *testing.
 		test.Fatal(err)
 	}
 	defer resumed.Close()
-	if requestCount.Load() != 6 || mutations.Load() != 1 {
+	if requestCount.Load() != beforeResume || mutations.Load() != 1 {
 		test.Fatal("resume started a provider request or replayed a tool")
 	}
 }
@@ -170,4 +170,21 @@ type capabilityTaskRegistration struct{ settings *captypes.Settings }
 func (store *capabilityTaskRegistration) CommitRegistration(_ context.Context, _ string, _, after captypes.Settings) (captypes.Settings, error) {
 	*store.settings = captypes.Clone(after)
 	return captypes.Clone(after), nil
+}
+
+func taskEvidence(body map[string]any, name string) (loaded, offered, used bool) {
+	for _, raw := range body["tools"].([]any) {
+		def := raw.(map[string]any)
+		fn, _ := def["function"].(map[string]any)
+		offered = offered || fn["name"] == name
+	}
+	for _, raw := range body["messages"].([]any) {
+		m := raw.(map[string]any)
+		if m["role"] == "user" || m["role"] == "tool" {
+			str, _ := m["content"].(string)
+			loaded = loaded || strings.Contains(str, "source instructions, subordinate")
+			used = used || strings.Contains(str, "real SDK tool evidence")
+		}
+	}
+	return
 }

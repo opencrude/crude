@@ -114,14 +114,14 @@ func (m *LSPManager) acquireProbe(ctx context.Context, path string, gate func(se
 		// A view of the file as it is on disk shows the server nothing new, so
 		// the other views keep their results and need not be sent again.
 		if !onDisk {
-			m.advanceContextLocked("Analysis source view opened; dependent context needs reanalysis.")
+			m.advancePathContextLocked(path, "Analysis source view opened; dependent context needs reanalysis.")
 		}
 	} else if doc.text != string(source.snapshot.Text) || doc.source != source.ref {
 		doc.text = string(source.snapshot.Text)
 		doc.source = source.ref
 		doc.revision++
 		doc.diskView = false
-		m.advanceContextLocked("Requested analysis source changed.")
+		m.advancePathContextLocked(path, "Requested analysis source changed.")
 	}
 	view := insight.LSPProbeView{BufferDiffers: source.snapshot.Dirty || source.snapshot.Conflict || !source.snapshot.DiskExists,
 		Server: spec.Command, Source: source.ref, SourceText: string(source.snapshot.Text)}
@@ -173,7 +173,7 @@ func (m *LSPManager) runProbe(ctx context.Context, probe *lspProbe, fn func(cont
 	current := generation == m.settingsGeneration && m.analysisErrorLocked() == nil &&
 		(gate == nil || gate(m.settings)) &&
 		m.documents[path] == doc && doc.source == source.ref && !m.paused && !m.closed &&
-		doc.opened && doc.syncedContext == m.contextGeneration && sameInsightBoundary(boundary, doc.boundary) &&
+		doc.opened && doc.syncedContext == m.producerContextLocked(doc.key) && sameInsightBoundary(boundary, doc.boundary) &&
 		m.states[doc.key] != nil && m.states[doc.key].client == client && !m.states[doc.key].closing &&
 		!m.states[doc.key].stopped && m.states[doc.key].status == LSPConnected
 	m.mu.Unlock()
@@ -220,11 +220,14 @@ func (m *LSPManager) awaitProbeClient(ctx context.Context, path string, doc *lsp
 			err := errors.New(state.err)
 			m.mu.Unlock()
 			return nil, err
+		case doc.opened && doc.unsentRevision == doc.revision:
+			m.mu.Unlock()
+			return nil, errors.New("the language server does not accept changed document text")
 		case state.waiting:
 			err := errors.New(state.err)
 			m.mu.Unlock()
 			return nil, err
-		case state.status == LSPConnected && state.client != nil && !state.closing && doc.opened && doc.syncedRevision == doc.revision && doc.syncedContext == m.contextGeneration:
+		case state.status == LSPConnected && state.client != nil && !state.closing && doc.opened && doc.syncedRevision == doc.revision && doc.syncedContext == m.producerContextLocked(doc.key):
 			client := state.client
 			m.mu.Unlock()
 			return client, nil
@@ -262,7 +265,7 @@ func (m *LSPManager) releaseProbeLocked(path string, doc *lspDocument) {
 		m.closedDocuments = append(m.closedDocuments, lspClosedDocument{path, state.client})
 	}
 	doc.key, doc.opened, doc.syncedRevision = "", false, 0
-	m.advanceContextLocked("Borrowed producer view released; retained facts are stale.")
+	m.advancePathContextLocked(path, "Borrowed producer view released; retained facts are stale.")
 	m.recomputeActiveStatusLocked()
 	m.signalLocked()
 }

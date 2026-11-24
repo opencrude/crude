@@ -170,7 +170,7 @@ func (m *App) offerCompletionGhost(s *completionState, rows []insight.LSPComplet
 	if !exact || start != end || ed.SetGhostTextFor(completionGhostOwner, ed.Revision(), start, suffix) != nil {
 		return false
 	}
-	s.inlineID, s.inlineLiteral = row.ID, literal
+	s.inlineID, s.inlineLiteral = row.ID, literal && (!s.set.ResolveSupported || row.Insertion.AdditionalTextEdits != nil)
 	return true
 }
 

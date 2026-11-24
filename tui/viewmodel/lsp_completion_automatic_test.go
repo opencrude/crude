@@ -103,3 +103,39 @@ func TestCompletionAcceptancePreferenceLeavesOtherKeyAsEditing(t *testing.T) {
 		})
 	}
 }
+
+func TestManualCompletionSurvivesPendingEditWithoutAutomaticSuggestions(t *testing.T) {
+	for _, cancel := range []bool{false, true} {
+		app, port := completionTestApp(t, 100, 32, "pr")
+		settings := setting.DefaultLSP()
+		settings.AutoComplete = false
+		port.service.settings = &settings
+		ed := app.EditorState.Editor
+		completionTestKey(t, app, tea.KeyPressMsg{Code: 'i', Text: "i"})
+		completionTestKey(t, app, tea.KeyPressMsg{Code: ' ', Mod: tea.ModCtrl})
+		if len(port.requests) != 0 {
+			t.Fatal("sent speculative source")
+		}
+		if cancel {
+			app.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+		}
+		change, err := ed.CaptureDocumentEdits(document.Owner{ClientID: "manual", Epoch: 1}, "typed", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = ed.AcceptDocumentReceipt(document.Receipt{DocumentID: change.DocumentID, RequestID: change.RequestID, Before: 41, Revision: 42, Accepted: true}); err != nil {
+			t.Fatal(err)
+		}
+		src, _ := ed.CurrentInsightSource()
+		port.set.Boundary.Source, port.set.Col = src, 3
+		_, cmd := app.Update(struct{}{})
+		runAppCommand(t, app, cmd)
+		if cancel {
+			if len(port.requests) != 0 {
+				t.Fatal("cancelled shortcut revived")
+			}
+		} else if len(port.requests) != 1 || app.completion == nil || app.completion.automatic || app.completion.screen == nil {
+			t.Fatal("acknowledgement did not show the manual list")
+		}
+	}
+}

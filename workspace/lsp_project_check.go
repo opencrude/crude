@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -160,12 +161,18 @@ func (m *LSPManager) runProjectCheck(ctx context.Context, cancel context.CancelF
 		}
 		m.mu.Lock()
 		native := m.nativeGroupLocked(group)
-		m.mu.Unlock()
-		if native {
-			continue
+		var paths []string
+		if native && m.sources != nil && m.sources.Insight != nil {
+			paths = m.sources.Insight.diagnostics.StaleProblemPaths(group.key)
+			paths = slices.DeleteFunc(paths, func(p string) bool { return inventory.owners[p] != group.key })
 		}
-		paths := orderedFiles(group, anchors)
-		m.runAnalysisGroup(ctx, generation, group, paths)
+		m.mu.Unlock()
+		if !native {
+			paths = orderedFiles(group, anchors)
+		}
+		if len(paths) > 0 {
+			m.runAnalysisGroup(ctx, generation, group, paths, native)
+		}
 	}
 }
 
@@ -220,7 +227,7 @@ func (m *LSPManager) checkNeededLocked(path, key string) bool {
 	return !store.CurrentDocument(checkedFactPrefix+path, key) && !store.CurrentDocument(projectFactPrefix+path, key)
 }
 
-func (m *LSPManager) runAnalysisGroup(ctx context.Context, generation uint64, g *analysisGroup, paths []string) {
+func (m *LSPManager) runAnalysisGroup(ctx context.Context, generation uint64, g *analysisGroup, paths []string, recheckNative bool) {
 	m.mu.Lock()
 	m.checkTarget = g.key
 	m.checkLaunch = false
@@ -237,7 +244,7 @@ func (m *LSPManager) runAnalysisGroup(ctx context.Context, generation uint64, g 
 	var serverErr error
 	for len(paths) > 0 && ctx.Err() == nil {
 		m.mu.Lock()
-		if m.nativeGroupLocked(g) || !m.projectCheckAllowedLocked() {
+		if m.nativeGroupLocked(g) != recheckNative || !m.projectCheckAllowedLocked() {
 			m.mu.Unlock()
 			return
 		}
@@ -281,14 +288,14 @@ func (m *LSPManager) runAnalysisGroup(ctx context.Context, generation uint64, g 
 		m.mu.Lock()
 		native := m.nativeGroupLocked(g)
 		m.mu.Unlock()
-		if native {
+		if native != recheckNative {
 			return
 		}
 		start := time.Now()
 		var wg sync.WaitGroup
 		errs := make([]error, len(batch))
 		for i, path := range batch {
-			wg.Go(func() { errs[i] = m.checkClosedFile(ctx, path, g) })
+			wg.Go(func() { errs[i] = m.checkClosedFile(ctx, path, g, recheckNative) })
 		}
 		wg.Wait()
 		if ctx.Err() != nil {
@@ -430,10 +437,10 @@ func (m *LSPManager) serverBusyLocked(key string) bool {
 
 // checkClosedFile checks one file through a view of it as it is on disk.
 // Release and freshness checks share the manager lock.
-func (m *LSPManager) checkClosedFile(ctx context.Context, path string, g *analysisGroup) (err error) {
+func (m *LSPManager) checkClosedFile(ctx context.Context, path string, g *analysisGroup, recheckNative bool) (err error) {
 	m.mu.Lock()
 	command := g.spec.Command
-	if ctx.Err() != nil || !m.projectCheckAllowedLocked() || m.nativeGroupLocked(g) || !m.checkNeededLocked(path, g.key) {
+	if ctx.Err() != nil || !m.projectCheckAllowedLocked() || m.nativeGroupLocked(g) != recheckNative || !m.checkNeededLocked(path, g.key) {
 		m.mu.Unlock()
 		return nil
 	}
@@ -486,11 +493,11 @@ func (m *LSPManager) checkClosedFile(ctx context.Context, path string, g *analys
 	// says that the server did not answer.
 	for {
 		m.mu.Lock()
-		seen := m.contextGeneration
+		seen := m.producerContextLocked(g.key)
 		m.mu.Unlock()
 		err = m.runProbe(fileCtx, probe, check)
 		m.mu.Lock()
-		interrupted := errors.Is(err, errProbeStateChanged) || (err == nil || errors.Is(err, errProjectCheckUnsettled)) && m.contextGeneration != seen
+		interrupted := errors.Is(err, errProbeStateChanged) || (err == nil || errors.Is(err, errProjectCheckUnsettled)) && m.producerContextLocked(g.key) != seen
 		if !interrupted || fileCtx.Err() != nil {
 			// Releasing the last disk view converts its answer to project coverage.
 			// Do that in the same critical section as the freshness check: a sibling
@@ -543,7 +550,7 @@ func (m *LSPManager) forgetCheckedFactsLocked(path string) {
 	changed := false
 	if m.sources != nil && m.sources.Insight != nil {
 		changed = m.sources.Insight.diagnostics.RemoveMatching(func(b insight.Boundary) bool {
-			return isCheckedFact(b) && pathWithin(path, b.Source.Path)
+			return isProjectFact(b) && pathWithin(path, b.Source.Path)
 		}) > 0
 	}
 	for candidate := range m.checkResults {
@@ -561,11 +568,12 @@ func (m *LSPManager) invalidateCheckedFactsLocked(path string) {
 	// A native reporter may not observe an external edit. Never keep its old
 	// result current while waiting for a fresh report (or explicit refresh).
 	if m.sources != nil && m.sources.Insight != nil && m.sources.Insight.diagnostics.InvalidateMatching(func(b insight.Boundary) bool {
-		return strings.HasPrefix(b.Source.DocumentID, projectFactPrefix) && pathWithin(path, b.Source.Path)
+		return strings.HasPrefix(b.Source.DocumentID, projectFactPrefix) && path == b.Source.Path
 	}, "The file changed after the server checked it.") {
+		m.requestProjectCheckLocked()
 		m.bumpVersionLocked()
 	}
-	m.invalidateCheckedResultsLocked(func(candidate, _, _ string) bool { return pathWithin(path, candidate) },
+	m.invalidateCheckedResultsLocked(func(candidate, _, _ string) bool { return path == candidate },
 		"The file changed after Crude checked it.")
 }
 

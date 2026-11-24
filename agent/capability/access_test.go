@@ -3,7 +3,7 @@ package capability
 import (
 	"context"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -40,191 +40,97 @@ func accessFixture(t *testing.T) (*Service, captypes.RuntimeActor, *atomic.Int32
 	return service, captypes.RuntimeActor{ID: "root", Effects: []captypes.Effect{captypes.EffectRead}}, calls, requests
 }
 
-func observedAccess(t *testing.T, service *Service, actor captypes.RuntimeActor) map[string]any {
-	t.Helper()
-	result, err := service.Execute(t.Context(), actor, captypes.RuntimeSnapshot{}, "capability_activate", map[string]any{"id": "docs"})
-	if err != nil {
+// A person may classify a tool for a restricted agent. The live switch,
+// not a reconnect or an old request snapshot, governs its next call.
+func TestToolSwitchAndClassificationApplyToLiveRequests(t *testing.T) {
+	s, a, calls, requests := accessFixture(t)
+	a.RunID = "live"
+	if _, err := s.Activate(t.Context(), a, "docs", false); err != nil {
 		t.Fatal(err)
 	}
-	var activation captypes.ActivationResult
-	if err := json.Unmarshal([]byte(result.Content[0].Text), &activation); err != nil {
-		t.Fatal(err)
+	snapshot := s.Snapshot()
+	tool := snapshot.Connections[0].Tools[0]
+	cfg := snapshot.Settings.Connections["docs"]
+	rule := captypes.ToolGrant{Effect: captypes.EffectRead, Scope: "docs", Fingerprint: tool.Fingerprint}
+	set := func(rule captypes.ToolGrant) {
+		cfg.Grants = map[string]captypes.ToolGrant{"lookup": rule}
+		snapshot.Settings.Connections["docs"] = cfg
+		before := requests.Load()
+		if err := s.Configure(t.Context(), snapshot.Settings); err != nil {
+			t.Fatal(err)
+		}
+		if state := s.Snapshot().Connections[0]; state.State != "connected" || state.Cached || before != requests.Load() {
+			t.Fatal("rule edit restarted a live server")
+		}
 	}
-	if activation.State != "connected" || len(activation.Usable) != 0 || len(activation.NeedsAccess) != 1 || !strings.Contains(activation.Next, "mcp_request_access") {
-		t.Fatalf("activation claimed access without a grant: %+v", activation)
-	}
-	if strings.Contains(result.Content[0].Text, "InputSchema") || strings.Contains(result.Content[0].Text, `"properties"`) {
-		t.Fatalf("activation repeated input schemas the granted tool brings itself: %s", result.Content[0].Text)
-	}
-	return map[string]any{"connection_id": "docs", "grants": []captypes.AccessRequest{
-		{Tool: "lookup", Fingerprint: activation.NeedsAccess[0].Fingerprint, Effect: captypes.EffectRead, Scope: "public test evidence"},
-	}}
-}
-
-func TestMCPAgentAccessApprovalUseAndPassiveDurability(t *testing.T) {
-	service, actor, calls, requests := accessFixture(t)
-	params := observedAccess(t, service, actor)
-	_, err := service.Execute(t.Context(), actor, captypes.RuntimeSnapshot{}, "mcp_request_access", params)
-	var approval *captypes.AccessApprovalRequired
-	if !errors.As(err, &approval) || calls.Load() != 0 {
-		t.Fatalf("access self-authorized or executed early: %v calls=%d", err, calls.Load())
-	}
-	if len(service.Snapshot().Settings.Connections["docs"].Grants) != 0 {
-		t.Fatal("unapproved grant became durable")
-	}
-	result, err := service.Execute(approval.CapabilityApprovalContext(t.Context()), actor, captypes.RuntimeSnapshot{}, "mcp_request_access", params)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var activation captypes.ActivationResult
-	if err := json.Unmarshal([]byte(result.Content[0].Text), &activation); err != nil || len(activation.Usable) != 1 || len(activation.NeedsAccess) != 0 {
-		t.Fatalf("approved activation has no usable tool: %+v %v", activation, err)
-	}
-	prepared, err := service.Prepare(t.Context(), actor)
+	set(rule)
+	prepared, err := s.Prepare(t.Context(), a)
 	if err != nil || len(prepared.Tools) != 1 {
-		t.Fatalf("next request lacks exact dynamic definition: %+v %v", prepared, err)
+		t.Fatal("human classification was not offered", err)
 	}
-	evidence, err := service.Execute(t.Context(), actor, prepared, prepared.Tools[0].Name, map[string]any{})
-	if err != nil || evidence.Content[0].Text != "SDK access evidence" || calls.Load() != 1 {
-		t.Fatalf("real SDK use: %+v %v calls=%d", evidence, err, calls.Load())
-	}
-	settings := service.store.(*testRegistrationStore).load(t)
-	service.Close()
-	beforeRestart := requests.Load()
-	reopened, err := New(service.root, service.cache, service.db)
-	if err != nil {
+	if _, err = s.Execute(t.Context(), a, prepared, tool.Name, nil); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(reopened.Close)
-	reopened.SetRegistrationStore(service.store)
-	if err := reopened.Configure(t.Context(), settings); err != nil {
-		t.Fatal(err)
+	denied := a
+	denied.DeniedTools = []string{tool.Name}
+	if _, err = s.Execute(t.Context(), denied, prepared, tool.Name, nil); err == nil {
+		t.Fatal("explicit tool denial ignored")
 	}
-	// Opening the service is passive: nothing connects until an agent run
-	// prepares a request.
-	if requests.Load() != beforeRestart || calls.Load() != 1 {
-		t.Fatalf("passive reopen connected or replayed a tool: requests=%d before=%d calls=%d", requests.Load(), beforeRestart, calls.Load())
+	rule.Disabled = true
+	set(rule)
+	if _, err = s.Execute(t.Context(), a, prepared, tool.Name, nil); err == nil {
+		t.Fatal("disabled tool reached the server")
 	}
-	if len(reopened.Snapshot().Settings.Connections["docs"].Grants) != 1 {
-		t.Fatal("grant vanished after reopen")
+	rule.Disabled = false
+	rule.Fingerprint = "old schema"
+	set(rule)
+	if p, err := s.Prepare(t.Context(), a); err != nil || len(p.Tools) != 0 {
+		t.Fatal("changed schema inherited old classification")
 	}
-	// A run reconnects the durably granted connection off the request path;
-	// an explicit activation meanwhile joins that attempt instead of failing.
-	if _, err := reopened.Prepare(t.Context(), actor); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := reopened.Activate(t.Context(), actor, "docs", false); err != nil {
-		t.Fatalf("activation during automatic reconnect: %v", err)
-	}
-	prepared, err = reopened.Prepare(t.Context(), actor)
-	if err != nil || len(prepared.Tools) != 1 || calls.Load() != 1 {
-		t.Fatalf("durable grant unusable after reconnect: %+v %v calls=%d", prepared, err, calls.Load())
+	if calls.Load() != 1 {
+		t.Fatal("stale call executed")
 	}
 }
 
-func TestDurablyGrantedConnectionReturnsInALaterRunWithoutReactivation(t *testing.T) {
-	service, actor, _, _ := accessFixture(t)
-	params := observedAccess(t, service, actor)
-	_, err := service.Execute(t.Context(), actor, captypes.RuntimeSnapshot{}, "mcp_request_access", params)
-	var approval *captypes.AccessApprovalRequired
-	if !errors.As(err, &approval) {
+func TestClassifiedConnectionReopensPassivelyAndReconnectsOnUse(t *testing.T) {
+	s, a, calls, requests := accessFixture(t)
+	if err := s.Connect(t.Context(), "docs"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.Execute(approval.CapabilityApprovalContext(t.Context()), actor, captypes.RuntimeSnapshot{}, "mcp_request_access", params); err != nil {
-		t.Fatal(err)
-	}
-	settings := service.store.(*testRegistrationStore).load(t)
-	service.Close()
-	reopened, err := New(service.root, service.cache, service.db)
+	snap := s.Snapshot()
+	settings := snap.Settings
+	cfg := settings.Connections["docs"]
+	cfg.Grants = map[string]captypes.ToolGrant{"lookup": {Effect: captypes.EffectRead, Scope: "docs", Fingerprint: snap.Connections[0].Tools[0].Fingerprint}}
+	settings.Connections["docs"] = cfg
+	s.Close()
+	before := requests.Load()
+	reopened, err := New(s.root, s.cache, s.db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(reopened.Close)
-	reopened.SetRegistrationStore(service.store)
-	if err := reopened.Configure(t.Context(), settings); err != nil {
+	defer reopened.Close()
+	if err = reopened.Configure(t.Context(), settings); err != nil {
 		t.Fatal(err)
+	}
+	if requests.Load() != before {
+		t.Fatal("passive reopen contacted server")
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		prepared, err := reopened.Prepare(t.Context(), actor)
+		p, err := reopened.Prepare(t.Context(), a)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(prepared.Tools) == 1 {
-			return
+		if len(p.Tools) == 1 {
+			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("granted connection never returned to a later step")
+			t.Fatal("configured tool never returned")
 		}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(time.Millisecond * 10)
 	}
-}
-
-func TestMCPAccessRejectsChangedFingerprintScopeAndCeilings(t *testing.T) {
-	service, actor, calls, _ := accessFixture(t)
-	params := observedAccess(t, service, actor)
-	_, err := service.Execute(t.Context(), actor, captypes.RuntimeSnapshot{}, "mcp_request_access", params)
-	var approval *captypes.AccessApprovalRequired
-	if !errors.As(err, &approval) {
-		t.Fatal(err)
-	}
-	grants := params["grants"].([]captypes.AccessRequest)
-	changed := grants[0]
-	changed.Scope = "different scope"
-	altered := map[string]any{"connection_id": "docs", "grants": []captypes.AccessRequest{changed}}
-	if _, err := service.Execute(approval.CapabilityApprovalContext(t.Context()), actor, captypes.RuntimeSnapshot{}, "mcp_request_access", altered); err == nil {
-		t.Fatal("approval widened to a different scope")
-	}
-	changed = grants[0]
-	changed.Fingerprint = "guessed"
-	altered["grants"] = []captypes.AccessRequest{changed}
-	if _, err := service.Execute(t.Context(), actor, captypes.RuntimeSnapshot{}, "mcp_request_access", altered); err == nil {
-		t.Fatal("unobserved fingerprint accepted")
-	}
-	denied := actor
-	denied.DeniedTools = []string{"mcp__docs__lookup"}
-	if _, err := service.Execute(approval.CapabilityApprovalContext(t.Context()), denied, captypes.RuntimeSnapshot{}, "mcp_request_access", params); err == nil {
-		t.Fatal("grant widened agent tool selection")
-	}
-	changed = grants[0]
-	changed.Effect = captypes.EffectWrite
-	altered["grants"] = []captypes.AccessRequest{changed}
-	if _, err := service.Execute(t.Context(), actor, captypes.RuntimeSnapshot{}, "mcp_request_access", altered); err == nil {
-		t.Fatal("read-only agent granted write access")
-	}
-	if calls.Load() != 0 || len(service.Snapshot().Settings.Connections["docs"].Grants) != 0 {
-		t.Fatal("rejected access executed or persisted")
-	}
-}
-
-// TestMCPAccessGrantPreservesConnectionBinding is the regression for the grant
-// scope rewrite: approving tool access must not silently move an
-// application-bound connection into the workspace, which used to make it
-// disappear from Application Settings and die with the project.
-func TestMCPAccessGrantPreservesConnectionBinding(t *testing.T) {
-	service, actor, _, _ := accessFixture(t)
-	settings := service.Snapshot().Settings
-	connection := settings.Connections["docs"]
-	connection.Scope = captypes.ScopeApplication
-	settings.Connections["docs"] = connection
-	if err := service.Configure(t.Context(), settings); err != nil {
-		t.Fatal(err)
-	}
-	params := observedAccess(t, service, actor)
-	_, err := service.Execute(t.Context(), actor, captypes.RuntimeSnapshot{}, "mcp_request_access", params)
-	var approval *captypes.AccessApprovalRequired
-	if !errors.As(err, &approval) {
-		t.Fatalf("access was not gated by exact approval: %v", err)
-	}
-	if _, err := service.Execute(approval.CapabilityApprovalContext(t.Context()), actor, captypes.RuntimeSnapshot{}, "mcp_request_access", params); err != nil {
-		t.Fatal(err)
-	}
-	granted := service.Snapshot().Settings.Connections["docs"]
-	if granted.Scope != captypes.ScopeApplication {
-		t.Fatalf("grant rewrote the connection binding to %q", granted.Scope)
-	}
-	if len(granted.Grants) != 1 {
-		t.Fatalf("grant was not persisted: %+v", granted.Grants)
+	if calls.Load() != 0 {
+		t.Fatal("reopen replayed a call")
 	}
 }
 
@@ -275,5 +181,70 @@ func TestEmptyCapabilitySearchReturnsAnEmptyCollection(t *testing.T) {
 		captypes.RuntimeSnapshot{}, "capability_search", map[string]any{"kind": "mcp", "query": "missing"})
 	if err != nil || len(result.Content) != 1 || result.Content[0].Text != `{"results":[]}` {
 		t.Fatalf("empty discovery was ambiguous null data: %+v %v", result, err)
+	}
+}
+
+func TestConnectedToolsFollowAgentPolicyAcrossOrdinaryTurns(t *testing.T) {
+	s, a, calls, _ := accessFixture(t)
+	a.SessionID, a.RunID = "same-session", "first"
+	a.Effects = []captypes.Effect{captypes.EffectRead, captypes.EffectWrite, captypes.EffectDelete, captypes.EffectExecute, captypes.EffectCommunication}
+	if _, err := s.Activate(t.Context(), a, "docs", false); err != nil {
+		t.Fatal(err)
+	}
+	for _, run := range []string{"first", "next"} {
+		a.RunID = run
+		prepared, err := s.Prepare(t.Context(), a)
+		if err != nil || len(prepared.Tools) != 1 {
+			t.Fatalf("turn %s needs a separate access request: tools=%v error=%v", run, prepared.Tools, err)
+		}
+		// A consumer may change its own wire copy, never the next turn's schema.
+		if !json.Valid(prepared.Tools[0].InputSchema) {
+			t.Fatal("the last request corrupted the live schema")
+		}
+		prepared.Tools[0].InputSchema[0] = '!'
+		if _, err = s.Execute(t.Context(), a, prepared, prepared.Tools[0].Name, nil); err != nil {
+			t.Fatal(err)
+		}
+		s.RevokeRun(a)
+	}
+	a.Effects = []captypes.Effect{captypes.EffectRead}
+	a.RunID = "restricted"
+	prepared, err := s.Prepare(t.Context(), a)
+	if err != nil || len(prepared.Tools) != 0 || calls.Load() != 2 {
+		t.Fatalf("unknown effects leaked to restricted agent: tools=%v calls=%d err=%v", prepared.Tools, calls.Load(), err)
+	}
+}
+
+// BenchmarkPrepareConnectedToolCatalog measures the request path, not rediscovery
+// or network time. Tool descriptions and schemas are already installed.
+func BenchmarkPrepareConnectedToolCatalog(b *testing.B) {
+	server := mcp.NewServer(&mcp.Implementation{Name: "catalog", Version: "1"}, nil)
+	for i := range 48 {
+		server.AddTool(&mcp.Tool{Name: fmt.Sprintf("lookup_%02d", i), Description: strings.Repeat("Look up an item. ", 60), InputSchema: map[string]any{"type": "object", "properties": map[string]any{"query": map[string]any{"type": "string", "description": strings.Repeat("Search text. ", 64)}}}}, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			b.Fatal("building a request called the server tool")
+			return nil, nil
+		})
+	}
+	endpoint := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil))
+	b.Cleanup(endpoint.Close)
+	svc, err := New(b.TempDir(), b.TempDir(), nil)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Cleanup(svc.Close)
+	cfg := captypes.ConnectionConfig{ID: "catalog", Name: "Catalog", Transport: "http", URL: endpoint.URL}
+	if err = svc.Configure(b.Context(), captypes.Settings{Connections: map[string]captypes.ConnectionConfig{cfg.ID: cfg}}); err != nil {
+		b.Fatal(err)
+	}
+	if err = svc.Connect(b.Context(), cfg.ID); err != nil {
+		b.Fatal(err)
+	}
+	actor := captypes.RuntimeActor{ID: "root", RunID: "run", TurnGeneration: 1, Effects: []captypes.Effect{captypes.EffectRead, captypes.EffectWrite, captypes.EffectDelete, captypes.EffectExecute, captypes.EffectCommunication}}
+	b.ReportAllocs()
+	for b.Loop() {
+		p, err := svc.Prepare(b.Context(), actor)
+		if err != nil || len(p.Tools) != 48 {
+			b.Fatal(len(p.Tools), err)
+		}
 	}
 }

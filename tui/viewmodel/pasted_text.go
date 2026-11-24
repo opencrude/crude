@@ -109,5 +109,5 @@ func (m *App) attachPastedText(msg pastedTextStoredMsg) {
 	}
 	m.Input.InsertReference(msg.ref)
 	m.persistComposerDraftIfChanged()
-	m.Feedback.NotifyInfo("Attached pasted text · click the attachment to view or edit")
+	m.Feedback.NotifyInfo("Pasted text attached. Open the attachment to read it.")
 }

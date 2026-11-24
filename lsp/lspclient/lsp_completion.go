@@ -6,6 +6,7 @@ import (
 	"errors"
 	"math"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"crude/lsp/lspedit"
@@ -31,6 +32,7 @@ func (l *LSPIntegration) RequestCompletions(ctx context.Context, path string, li
 		l.mu.Unlock()
 		return insight.LSPCompletionResponse{}, errors.New("file not open in LSP")
 	}
+	options := l.completionOptionsLocked(fp)
 	version, text, uri := state.version, state.text, state.uri
 	l.mu.Unlock()
 	if line < 0 || col < 0 || line > math.MaxInt32 || col > math.MaxInt32 || len(text) > 2<<20 {
@@ -48,7 +50,7 @@ func (l *LSPIntegration) RequestCompletions(ctx context.Context, path string, li
 	if trigger.TriggerKind < 0 || trigger.TriggerKind > insight.LSPCompletionTriggerIncomplete {
 		return insight.LSPCompletionResponse{}, lsp.ErrCompletionInvalid
 	}
-	raw, callErr := client.RequestCompletionsRaw(ctx, uri, line, col, protocol.CompletionContext{TriggerKind: protocol.CompletionTriggerKind(trigger.TriggerKind), TriggerCharacter: trigger.TriggerCharacter})
+	raw, callErr := client.RequestCompletionsRaw(ctx, options, uri, line, col, protocol.CompletionContext{TriggerKind: protocol.CompletionTriggerKind(trigger.TriggerKind), TriggerCharacter: trigger.TriggerCharacter})
 	if !l.currentDocument(fp, client, state, version) {
 		return insight.LSPCompletionResponse{}, context.Canceled
 	}
@@ -62,8 +64,8 @@ func (l *LSPIntegration) RequestCompletions(ctx context.Context, path string, li
 		return insight.LSPCompletionResponse{}, callErr
 	}
 	return insight.LSPCompletionResponse{
-		WireVersion: version, JSON: bytes.Clone(raw), ResolveSupported: client.CompletionResolveSupported(),
-		CommitCharacters: client.CompletionCommitCharacters(),
+		WireVersion: version, JSON: bytes.Clone(raw), ResolveSupported: options.ResolveProvider,
+		CommitCharacters: slices.Clone(options.AllCommitCharacters),
 	}, nil
 }
 
@@ -82,6 +84,7 @@ func (l *LSPIntegration) ResolveCompletion(ctx context.Context, path string, wir
 		l.mu.Unlock()
 		return insight.LSPCompletionResponse{}, errors.New("the original completion source is no longer synchronized")
 	}
+	options := l.completionOptionsLocked(fp)
 	version := state.version
 	l.mu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -90,7 +93,7 @@ func (l *LSPIntegration) ResolveCompletion(ctx context.Context, path string, wir
 	if !l.currentDocument(fp, client, state, version) {
 		return insight.LSPCompletionResponse{}, context.Canceled
 	}
-	raw, callErr := client.ResolveCompletionRaw(ctx, original)
+	raw, callErr := client.ResolveCompletionRaw(ctx, options, original)
 	if !l.currentDocument(fp, client, state, version) {
 		return insight.LSPCompletionResponse{}, context.Canceled
 	}

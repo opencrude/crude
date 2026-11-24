@@ -184,7 +184,7 @@ func (m *App) syncSignatureHelp() {
 	if state.result == nil {
 		return
 	}
-	owner, contextGeneration := m.ws.LSPMgr().ContextCursor()
+	owner, contextGeneration := m.ws.LSPMgr().ContextCursor(state.source.Path)
 	boundary := state.result.help.Boundary
 	if owner == "" || owner != boundary.Source.WorkspaceGeneration ||
 		contextGeneration > boundary.Context.Generation || boundary.Source != state.source {

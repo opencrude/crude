@@ -180,8 +180,8 @@ func TestMCPGrantRequiresExplicitEffectScopeAndCurrentFingerprint(t *testing.T) 
 	capabilityAction(catalog, "review-grant")
 	form := model.capabilityDraft
 	form.SetValue("grant-enabled", ui.BoolValue(true))
-	if _, err := catalog.draftAction(); err == nil {
-		t.Fatal("grant inferred a missing effect/scope")
+	if action, err := catalog.draftAction(); err != nil || action.Connection.Grants["lookup"] != (captypes.ToolGrant{}) {
+		t.Fatalf("default tool use fabricated a permanent effect rule: %+v %v", action, err)
 	}
 	form.SetValue("grant-effect", ui.StringValue("read"))
 	form.SetValue("grant-scope", ui.StringValue("workspace/docs"))

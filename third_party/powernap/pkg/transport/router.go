@@ -64,8 +64,8 @@ func (r *Router) Route(ctx context.Context, req *jsonrpc2.Request) (any, error) 
 		params = *req.Params
 	}
 
-	// Check if it's a notification (no ID)
-	if req.ID == (jsonrpc2.ID{}) {
+	// The decoder distinguishes a missing ID from the valid numeric ID zero.
+	if req.Notif {
 		if handler, ok := r.notificationHandlers[req.Method]; ok {
 			handler(ctx, req.Method, params)
 		}

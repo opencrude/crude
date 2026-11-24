@@ -24,23 +24,22 @@ is in [settings design](settings-design.md#skills-and-mcp-store).
 - **Skills and MCP are application-bound by default; workspace binding is an
   explicit choice.** `capability_activate` publishes user-owned registrations into
   config.json unless the task or user asks for `scope: "workspace"`, so deleting a
-  workspace never destroys an install. `mcp_request_access` grants inherit the
-  connection's own binding and must never rewrite it. Downloaded/verified artifacts
+  workspace never destroys an install. Tool settings belong to that same binding. Downloaded artifacts
   and MCP credentials live under the app data directory, outside the workspace
   store; a workspace registration is only an overlay row pointing at that
   app-global path. `types/capability.ApplyRegistration` is the single publication
   owner shared by the workspace overlay store and the app config owner.
-- Agent acquisitions and human-approved durable MCP access changes publish through the normal
+- Agent acquisitions and user changes to MCP tool settings publish through the normal
   settings registration maps (config.json for application scope, the sparse
   workspace overlay for workspace scope), never a second shadow install table.
   Preserve neighboring installs/preferences and fence the exact source, policy,
-  selected preimage and workspace lifetime. MCP activation lists usable tools
-  separately from tools that need access (name, fingerprint, bounded description;
-  never input schemas); separate `mcp_request_access` grants require
-  exact authorization: human approval persists durable grants, while reviewer/YOLO
-  grants are run-local, never human authority or source annotations. Grants add
-  up; a run-local grant stays valid while its connection, acquisition policy and
-  source are unchanged, so publishing an unrelated change keeps it. Skill activation includes its installed path. Passive restart
+  selected preimage and workspace lifetime. MCP activation lists the tools this agent can use without duplicating their schemas.
+  A connected external tool is offered across turns. Its actual call uses the ordinary
+  Manual, Auto Review or YOLO decision. A model cannot grant itself a read effect.
+  Without a user classification an external operation can have any effect, so a
+  restricted role cannot call it. Disabling a tool affects pending calls without
+  restarting the server. Changed classifications, schemas or launch targets fence
+  earlier requests. Skill activation includes its installed path. Passive restart
   reconnects/downloads/replays nothing; explicit activation rechecks tool schemas.
   Skill loading/installation validates content independently of host readiness.
   Unknown client fields and nested authoring metadata are inert (hooks never run);
@@ -75,7 +74,7 @@ is in [settings design](settings-design.md#skills-and-mcp-store).
 
 - Sub-agents may search for and acquire capabilities like their parent, but
   the session's agents are told about each other's work: a successful
-  `capability_activate` or `mcp_request_access` queues one
+  `capability_activate` queues one
   `prompt.RuntimeCapabilityShared` notice for every other agent of the session
   (parent, children, siblings), delivered at its next request
   (`agent/session/capability_sharing.go`). Each operation and ID is announced once,
@@ -85,10 +84,20 @@ is in [settings design](settings-design.md#skills-and-mcp-store).
 
 ## Acquisition and approval
 
+The old 32 MiB default for skill archives and the 60-second install deadline
+came from `530b56a5` (2026-10-03). They were implementation defaults, not a
+recorded user choice. **Acquisition → Optional limits** now leaves both off
+unless configured. The archive and extracted files are checked against an
+explicit size limit if one is set. A package runner's first download is not a
+skill archive. A local MCP launch has no implicit startup deadline; the user
+can stop the job or set a connection timeout. Separate limits for model input,
+protocol responses and bounded evidence still apply.
+
 - Managed install/update and agent acquisition approval carry an immutable
   source/revision/binding preimage. A boolean approval must never widen into
   changed bytes or another source. Dynamic MCP definitions and execution both
-  enforce current effect/scope/fingerprint grants and root/child ceilings.
+  enforce the current tool switch, effect classification and agent role. Call
+  permission follows the session mode.
 - Application settings contain three disableable built-ins:
   `anthropic-skills`, pinned to the complete commit recorded in
   `types/capability`, `skills-directory` community search, and
@@ -98,7 +107,7 @@ is in [settings design](settings-design.md#skills-and-mcp-store).
   choice lists, not administration tables.
   All-source search interleaves ranked results; unsupported variants and partial
   source failures stay visible. Built-ins can be edited or disabled but not deleted; source
-  trust never bypasses exact acquisition preview or MCP grants.
+  trust never bypasses exact acquisition preview or call permissions.
 
 ## Built-in web connection
 
@@ -193,8 +202,8 @@ is in [settings design](settings-design.md#skills-and-mcp-store).
   legacy HTTP+SSE transport automatically, and `sse` can be configured
   explicitly. Protocol versions are negotiated by the SDK.
 - An active agent run reconnects, off the request path and with exponential
-  backoff, connections that dropped after working and connections the user
-  durably granted tools on (local servers only with approved launch). A user
+  backoff, connections that dropped after working and connections with a saved
+  user classification (local servers only with approved launch). A user
   Disconnect is respected; passive app start still connects nothing. An
   explicit connect while one is in flight joins it. Each outage is reported to
   an agent once.

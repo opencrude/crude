@@ -12,20 +12,18 @@ import (
 
 type prefixHasher struct{ state [32]byte }
 
-func newPrefixHasher(tools []ToolDef) prefixHasher {
-	encoded, _ := json.Marshal(tools)
-	return prefixHasher{state: sha256.Sum256(append([]byte("crude-provider-prefix-v1\x00"), encoded...))}
+func newPrefixHasher() prefixHasher {
+	// Keep the original empty-tool seed. A tool catalog belongs to the next
+	// generation request, not to the message history the endpoint already has.
+	return prefixHasher{state: sha256.Sum256([]byte("crude-provider-prefix-v1\x00null"))}
 }
 
 func (h *prefixHasher) add(message ChatMessage) {
-	h.addContent(message, message.Content.String())
-}
 
-func (h *prefixHasher) addContent(message ChatMessage, content string) {
 	digest := sha256.New()
 	_, _ = digest.Write(h.state[:])
 	writeHashString(digest, message.Role)
-	writeHashString(digest, content)
+	writeHashString(digest, string(message.Content))
 	writeHashString(digest, message.ReasoningContent)
 	writeHashString(digest, message.Reasoning)
 	writeHashString(digest, message.Refusal)
@@ -91,8 +89,9 @@ func (p *Provider) ReplayScope() string {
 	return hex.EncodeToString(sum[:])
 }
 
-func RequestPrefixHash(messages []ChatMessage, tools []ToolDef) string {
-	hasher := newPrefixHasher(tools)
+// MessagePrefixHash covers accepted message bytes, including attachments and provider replay.
+func MessagePrefixHash(messages []ChatMessage) string {
+	hasher := newPrefixHasher()
 	for _, message := range messages {
 		hasher.add(message)
 	}
@@ -102,10 +101,17 @@ func RequestPrefixHash(messages []ChatMessage, tools []ToolDef) string {
 // FilterReplayMessages returns a request-owned copy. Opaque replay metadata is
 // retained only when both its provider scope and immutable request prefix match.
 // The canonical transcript is never modified.
-func FilterReplayMessages(messages []ChatMessage, tools []ToolDef, current *Provider) []ChatMessage {
+func FilterReplayMessages(messages []ChatMessage, current *Provider) []ChatMessage {
+	result, _ := ProjectReplayMessages(messages, current)
+	return result
+}
+
+// ProjectReplayMessages returns request-owned history and its exact digest in
+// one pass. The same proof stamps completed output and stored response IDs.
+func ProjectReplayMessages(messages []ChatMessage, current *Provider) ([]ChatMessage, string) {
 	result := make([]ChatMessage, 0, len(messages))
 	scope := current.ReplayScope()
-	hasher := newPrefixHasher(tools)
+	hasher := newPrefixHasher()
 	for _, message := range messages {
 		copy := message
 		copy.ProviderItems = nil
@@ -128,7 +134,7 @@ func FilterReplayMessages(messages []ChatMessage, tools []ToolDef, current *Prov
 		result = append(result, copy)
 		hasher.add(copy)
 	}
-	return result
+	return result, hasher.value()
 }
 
 // StampProviderItems copies items and stamps the current replay scope, model and prefix hash.

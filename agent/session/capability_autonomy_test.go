@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
-	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -25,7 +24,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-func TestAutoReviewAcquiresLaunchesGrantsAndUsesMCPWithoutHumanResponse(test *testing.T) {
+func TestAutoReviewAcquiresLaunchesAndUsesMCPWithoutHumanResponse(test *testing.T) {
 	root := test.TempDir()
 	skill, err := skills.Create(filepath.Join(root, "review-task"), "review-task", "Inspect the task evidence before completion.")
 	if err != nil {
@@ -95,16 +94,21 @@ func TestAutoReviewAcquiresLaunchesGrantsAndUsesMCPWithoutHumanResponse(test *te
 			name, arguments = "capability_activate", map[string]any{"id": "local:" + skill.Name}
 		case 3:
 			name, arguments = "capability_activate", map[string]any{"id": "task"}
-		case 4:
-			name, arguments = "mcp_request_access", map[string]any{"connection_id": "task", "grants": []captypes.AccessRequest{
-				{Tool: "lookup", Effect: captypes.EffectRead, Scope: "workspace", Fingerprint: tool.Fingerprint},
-			}}
-		case 5:
-			name = tool.Name
 		default:
-			_, _ = fmt.Fprint(writer, "data: {\"choices\":[{\"delta\":{\"content\":\"Task used source instructions and exact SDK evidence.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-			return
+			// Independent activation jobs can settle in either order. Use the offered
+			// definition and both results, not a predetermined request count.
+			loaded, offered, used := taskEvidence(body, tool.Name)
+			switch {
+			case offered && !used:
+				name = tool.Name
+			case loaded && used:
+				_, _ = fmt.Fprint(writer, "data: {\"choices\":[{\"delta\":{\"content\":\"Task used source instructions and exact SDK evidence.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+				return
+			default:
+				name, arguments = "wait", map[string]any{"seconds": 15}
+			}
 		}
+
 		encoded, _ := json.Marshal(arguments)
 		_, _ = fmt.Fprintf(writer, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":%q,\"type\":\"function\",\"function\":{\"name\":%q,\"arguments\":%q}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", fmt.Sprintf("task-%d", requestCount.Load()), name, string(encoded))
 	}))
@@ -135,25 +139,19 @@ func TestAutoReviewAcquiresLaunchesGrantsAndUsesMCPWithoutHumanResponse(test *te
 	if !orchestrator.SubmitInput(provider.PlainInput("Use review-task to inspect exact fixture evidence")) {
 		test.Fatal("task was not admitted")
 	}
-	var activationContext, dynamicDefinition, actualResult bool
-	for requestIndex := 0; requestIndex < 6; requestIndex++ {
+	for {
 		body := waitCapturedRequest(test, requests)
-		encoded, _ := json.Marshal(body)
-		activationContext = activationContext || strings.Contains(string(encoded), "source instructions, subordinate")
-		actualResult = actualResult || strings.Contains(string(encoded), "real SDK tool evidence")
-		if requestIndex >= 4 {
-			for _, raw := range body["tools"].([]any) {
-				definition, _ := raw.(map[string]any)
-				function, _ := definition["function"].(map[string]any)
-				dynamicDefinition = dynamicDefinition || function["name"] == tool.Name
+		loaded, offered, used := taskEvidence(body, tool.Name)
+		if loaded && used {
+			if !offered {
+				test.Fatal("tool disappeared after use")
 			}
+			break
 		}
 	}
 	waitTurnDone(test, sender, orchestrator.ID)
 	waitAssistantCount(test, owner, 1)
-	if !activationContext || !dynamicDefinition || !actualResult {
-		test.Fatalf("task workflow: skill=%t definition=%t result=%t ", activationContext, dynamicDefinition, actualResult)
-	}
+	beforeResume := requestCount.Load()
 	if len(runtime.Snapshot().Settings.Connections["task"].Grants) != 0 {
 		test.Fatal("Auto Review synthesized durable tool trust")
 	}
@@ -161,8 +159,8 @@ func TestAutoReviewAcquiresLaunchesGrantsAndUsesMCPWithoutHumanResponse(test *te
 		test.Fatal("task acquisition did not publish an immutable managed artifact")
 	}
 	var phases int
-	if err := database.QueryRow(`SELECT COUNT(DISTINCT phase) FROM capability_authorizations WHERE origin='reviewer' AND run_id != ''`).Scan(&phases); err != nil || phases != 3 {
-		test.Fatalf("reviewer acquisition/launch/access audit: phases=%d err=%v", phases, err)
+	if err := database.QueryRow(`SELECT COUNT(DISTINCT phase) FROM capability_authorizations WHERE origin='reviewer' AND run_id != ''`).Scan(&phases); err != nil || phases != 2 {
+		test.Fatalf("reviewer acquisition/launch audit: phases=%d err=%v", phases, err)
 	}
 	path := filepath.Join(directory, owner.SessionID()+".db")
 	owner.Close()
@@ -171,7 +169,7 @@ func TestAutoReviewAcquiresLaunchesGrantsAndUsesMCPWithoutHumanResponse(test *te
 		test.Fatal(err)
 	}
 	defer resumed.Close()
-	if requestCount.Load() != 6 {
+	if requestCount.Load() != beforeResume {
 		test.Fatal("resume started a provider request or replayed a tool")
 	}
 }

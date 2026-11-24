@@ -78,15 +78,15 @@ var toolVerbs = map[string][3]string{
 	"search_history":          {"Preparing history search", "Searching history", "Searched history"},
 	"capability_search":       {"Preparing capability search", "Finding capabilities", "Found capabilities"},
 	"capability_activate":     {"Preparing activation", "Activating capability", "Activated capability"},
-	"mcp_request_access":      {"Preparing MCP access", "Requesting MCP access", "Reviewed MCP access"},
-	"mcp_read_resource":       {"Preparing resource read", "Reading MCP resource", "Read MCP resource"},
-	"mcp_get_prompt":          {"Preparing prompt fetch", "Fetching MCP prompt", "Fetched MCP prompt"},
-	"agent_update_claims":     {"Preparing scope repair", "Repairing agent file scope", "Repaired agent file scope"},
-	"agent_narrow_claims":     {"Preparing scope change", "Narrowing file scope", "Narrowed file scope"},
-	"agent_configure":         {"Preparing model change", "Changing agent model", "Changed agent model"},
-	"crude_commands":          {"Preparing command discovery", "Finding Crude commands", "Found Crude commands"},
-	"lsp":                     {"Preparing code query", "Asking language server", "Language server"},
-	"crude_control":           {"Preparing Crude operation", "Running Crude operation", "Ran Crude operation"},
+
+	"mcp_read_resource":   {"Preparing resource read", "Reading MCP resource", "Read MCP resource"},
+	"mcp_get_prompt":      {"Preparing prompt fetch", "Fetching MCP prompt", "Fetched MCP prompt"},
+	"agent_update_claims": {"Preparing scope repair", "Repairing agent file scope", "Repaired agent file scope"},
+	"agent_narrow_claims": {"Preparing scope change", "Narrowing file scope", "Narrowed file scope"},
+	"agent_configure":     {"Preparing model change", "Changing agent model", "Changed agent model"},
+	"crude_commands":      {"Preparing command discovery", "Finding Crude commands", "Found Crude commands"},
+	"lsp":                 {"Preparing code query", "Asking language server", "Language server"},
+	"crude_control":       {"Preparing Crude operation", "Running Crude operation", "Ran Crude operation"},
 }
 
 // BuildToolTitle returns the title, target and state of a tool row.

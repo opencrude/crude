@@ -125,3 +125,43 @@ func TestAsyncCommandsUseHumanPermissionWhenReviewAsks(t *testing.T) {
 		t.Fatal("async command skipped human confirmation")
 	}
 }
+
+func TestMCPActualArgumentsFollowNormalPermissionMode(t *testing.T) {
+	for _, mode := range []string{"manual", "auto", "yolo"} {
+		t.Run(mode, func(t *testing.T) {
+			a := newPermissionLifecycleAgent(t)
+			a.Yolo = mode == "yolo"
+			const name = "mcp__desktop__Clipboard"
+			a.ToolMetadata = func(string) (tools.ToolMetadata, bool) {
+				return tools.ToolMetadata{Name: name, Scope: "desktop", Dynamic: true, Fingerprint: "observed", Effect: "unknown"}, true
+			}
+			a.FilteredTools = []tools.ToolDef{{Type: "function", Function: tools.ToolFuncDef{Name: name}}}
+			reviewed, blocked, called := 0, 0, 0
+			if mode != "manual" {
+				a.PermissionReviewer = func(_ context.Context, _ provider.ToolCall, params map[string]any, _ safety.CommandRisk, _ func(AgentEvent)) PermissionReview {
+					reviewed++
+					if params["action"] != "write" {
+						t.Fatal("review was not for the actual call")
+					}
+					return PermissionReview{Decision: "deny", Reason: "not requested"}
+				}
+			}
+			a.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
+				called++
+				return tools.ToolResult{Content: "ok"}, nil
+			}
+			ch := make(chan conversation.BlockResponse, 1)
+			call := editPermissionCall()
+			call.Function.Name, call.Function.Arguments = name, `{"action":"write","text":"example"}`
+			r := a.executeOneToolCall(t.Context(), call, func(e AgentEvent) {
+				if e.Type == "blocking" {
+					blocked++
+					ch <- conversation.BlockResponse{RequestID: call.InternalID, Outcome: conversation.BlockAnswered, Value: "deny"}
+				}
+			}, ch, new(string))
+			if mode == "yolo" && (called != 1 || blocked+reviewed != 0 || r.toolError) || mode == "auto" && (called+blocked != 0 || reviewed != 1 || !r.toolError) || mode == "manual" && (called+reviewed != 0 || blocked != 1 || !r.toolError) {
+				t.Fatal(mode, reviewed, blocked, called, r.toolError)
+			}
+		})
+	}
+}

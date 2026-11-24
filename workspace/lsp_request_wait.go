@@ -40,6 +40,8 @@ func (m *LSPManager) awaitSynchronized(ctx context.Context, path string) error {
 			err = ErrLSPStopped
 		case original == nil || doc != original || doc.revision != revision || m.settingsGeneration != generation:
 			err = errors.New("the file or language server changed; request again")
+		case doc.opened && doc.unsentRevision != 0 && doc.unsentRevision == revision:
+			err = errors.New("the language server does not accept changed document text")
 		case !m.wantedLocked(doc):
 			err = errors.New("language intelligence is off or blocked for this file")
 		case len(doc.text) > m.settings.MaxDocumentBytes:
@@ -62,7 +64,7 @@ func (m *LSPManager) awaitSynchronized(ctx context.Context, path string) error {
 			case state.status == LSPFailed || state.teardownErr != nil || state.waiting:
 				err = errors.New(state.err)
 			case state.status == LSPConnected && state.client != nil && doc.opened && !doc.syncPending &&
-				doc.syncedRevision == revision && doc.syncedContext == m.contextGeneration:
+				doc.syncedRevision == revision && doc.syncedContext == m.producerContextLocked(doc.key):
 				m.mu.Unlock()
 				return nil
 			}

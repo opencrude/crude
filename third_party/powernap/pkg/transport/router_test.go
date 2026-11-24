@@ -26,3 +26,17 @@ func TestRouteRequestWithoutParams(t *testing.T) {
 		t.Fatalf("notification without params: called=%v err=%v", notified, err)
 	}
 }
+
+// A first request often has id:0. Only the absence of an ID makes a notification.
+func TestFirstServerRequestKeepsItsReply(t *testing.T) {
+	router := NewRouter()
+	router.Handle("workspace/configuration", func(context.Context, string, json.RawMessage) (any, error) { return "settings", nil })
+	var request jsonrpc2.Request
+	if err := json.Unmarshal([]byte(`{"jsonrpc":"2.0","id":0,"method":"workspace/configuration","params":{"items":[]}}`), &request); err != nil {
+		t.Fatal(err)
+	}
+	got, err := router.Route(t.Context(), &request)
+	if err != nil || got != "settings" {
+		t.Fatalf("first configuration request returned %v (%v)", got, err)
+	}
+}

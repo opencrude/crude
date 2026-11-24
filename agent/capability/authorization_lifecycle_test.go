@@ -42,7 +42,7 @@ func TestDurableAuthorityRejectsTerminalReprepareAndStaleReplacement(t *testing.
 	if _, err := service.Prepare(t.Context(), actor); err == nil {
 		t.Fatal("settled run resurrected through Prepare")
 	}
-	for _, operation := range []string{"capability_search", "capability_activate", "mcp_request_access", "mcp_read_resource", "mcp_get_prompt", "mcp__fixture__lookup"} {
+	for _, operation := range []string{"capability_search", "capability_activate", "mcp_read_resource", "mcp_get_prompt", "mcp__fixture__lookup"} {
 		if _, err := service.Execute(t.Context(), actor, captypes.RuntimeSnapshot{}, operation, nil); err == nil {
 			t.Fatalf("terminal owner executed %s", operation)
 		}
@@ -67,7 +67,7 @@ func TestDurableAuthorityRejectsTerminalReprepareAndStaleReplacement(t *testing.
 	service.RevokeRun(next)
 	service.mu.RLock()
 	defer service.mu.RUnlock()
-	if len(service.taskGrants)+len(service.launches)+len(service.executionClients)+len(service.runs) != 0 {
+	if len(service.launches)+len(service.executionClients)+len(service.runs) != 0 {
 		t.Fatal("settlement retained ephemeral authorization or transports")
 	}
 }
@@ -109,7 +109,7 @@ func TestExecutionClientsRemainIsolatedAndPolicyPublicationRevokesTaskTrust(t *t
 	if service.actorClients(first) == service.actorClients(second) {
 		t.Fatal("distinct execution roots shared a transport owner")
 	}
-	if len(service.actorClients(first).States()) != 0 || len(service.actorClients(second).States()) != 0 {
+	if len(service.actorClients(first).Catalog()) != 0 || len(service.actorClients(second).Catalog()) != 0 {
 		t.Fatal("passive actor preparation connected a transport")
 	}
 	settings.Connections["fixture"] = captypes.ConnectionConfig{ID: "fixture", Name: "Fixture", Transport: "http", URL: "https://example.org/mcp"}
@@ -120,32 +120,19 @@ func TestExecutionClientsRemainIsolatedAndPolicyPublicationRevokesTaskTrust(t *t
 		t.Fatal(err)
 	}
 	authorized := service.Snapshot().Settings
-	service.mu.Lock()
-	service.taskGrants[taskKey(first)] = map[string]taskGrant{"fixture\x00lookup": {Connection: authorized.Connections["fixture"],
-		Policy: authorized.Acquisition, Source: authorized.Sources[""], Grant: captypes.ToolGrant{Effect: captypes.EffectRead, Scope: "fixture"}}}
-	service.mu.Unlock()
-	granted := func() bool {
-		_, ok := service.taskAccess(first, service.Snapshot().Settings.Connections["fixture"], "lookup")
-		return ok
-	}
 	launch := launchToken(authorized.Connections["fixture"], authorized, first)
-	if !granted() {
-		t.Fatal("run grant was not usable under the settings that authorized it")
-	}
-	// Removing or adding another connection publishes settings too; it must
-	// not take tools away from a run that was granted them.
 	settings.Connections["other"] = captypes.ConnectionConfig{ID: "other", Name: "Other", Transport: "http", URL: "https://example.org/other"}
 	if err := service.Configure(t.Context(), settings); err != nil {
 		t.Fatal(err)
 	}
-	if !granted() {
-		t.Fatal("an unrelated connection change revoked the run's grant")
+	if launchToken(authorized.Connections["fixture"], service.Snapshot().Settings, first) != launch {
+		t.Fatal("an unrelated connection change revoked the launch")
 	}
 	settings.Acquisition.AutomaticSelection = "off"
 	if err := service.Configure(t.Context(), settings); err != nil {
 		t.Fatal(err)
 	}
-	if granted() || launchToken(authorized.Connections["fixture"], service.Snapshot().Settings, first) == launch {
+	if launchToken(authorized.Connections["fixture"], service.Snapshot().Settings, first) == launch {
 		t.Fatal("policy revocation retained task authorization")
 	}
 	service.RevokeRun(first)

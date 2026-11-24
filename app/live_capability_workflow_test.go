@@ -207,7 +207,7 @@ verification codes; never invent a record identifier or reuse an old remote code
 	disableLiveMultiAgent(cfg)
 	profile := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
 	rootCategory := profile.Categories[session.CategoryDefault]
-	rootCategory.AllowedTools = []string{"capability_search", "capability_activate", "mcp_request_access", "read_file", "reply",
+	rootCategory.AllowedTools = []string{"capability_search", "capability_activate", "read_file", "reply",
 		"mcp__" + liveRegistryConnectionID(registrySourceID, registryServerName, "remote", mcpEndpoint.URL) + "__lookup"}
 	profile.Categories[session.CategoryDefault] = rootCategory
 	cfg.Agents.Profiles[cfg.Agents.ActiveProfile] = profile
@@ -234,9 +234,9 @@ verification codes; never invent a record identifier or reuse an old remote code
 		ws.AgentMgr.AddOrchestrator(firstOrchestrator.ID,
 			workspace.NewAgentState(firstOrchestrator.ID, workspace.NewConversation(), &appLogger{}))
 	}
-	if !ws.SetYoloForAgent(firstOrchestrator.ID, true) {
+	if !ws.SetYoloForAgent(firstOrchestrator.ID, false) {
 		ws.Close()
-		t.Fatal("failed to enable isolated read-only YOLO policy")
+		t.Fatal("failed to select manual permissions")
 	}
 
 	expectedSkillID := "live-skill:live-evidence"
@@ -305,11 +305,9 @@ verification codes; never invent a record identifier or reuse an old remote code
 	}
 	skillRegistration, skillOK := snapshot.Settings.Skills[expectedSkillID]
 	connectionRegistration, mcpOK := snapshot.Settings.Connections[expectedMCPID]
-	grant, grantOK := connectionRegistration.Grants["lookup"]
-	if !skillOK || !skillRegistration.Managed || !mcpOK || !grantOK ||
-		grant.Effect != captypes.EffectRead || grant.Scope != firstObserved.accessScope || grant.Fingerprint == "" {
+	if !skillOK || !skillRegistration.Managed || !mcpOK || len(connectionRegistration.Grants) != 0 {
 		reopened.Close()
-		t.Fatalf("passive reopen lost durable registrations/grant: skill=%+v connection=%+v", skillRegistration, connectionRegistration)
+		t.Fatalf("passive reopen lost registration or fabricated a permanent grant: skill=%+v connection=%+v", skillRegistration, connectionRegistration)
 	}
 	if sdkCalls.Load() != passiveSDK || mcpRequests.Load() != passiveHTTP {
 		reopened.Close()
@@ -387,7 +385,7 @@ verification codes; never invent a record identifier or reuse an old remote code
 		"first_session_id":        firstSessionID, "second_session_id": secondSessionID,
 		"skill_id": expectedSkillID, "mcp_connection_id": expectedMCPID,
 		"skill_marker_observed": true, "mcp_marker_observed": true,
-		"durable_skill": true, "durable_read_grant": true,
+		"durable_skill": true, "per_call_permission": true,
 		"sdk_lookup_calls":     sdkCalls.Load(),
 		"same_agent_follow_up": true, "passive_resume": true, "resumed_follow_up": true,
 		"first_turn": firstObserved, "same_agent_turn": repeatObserved, "resumed_turn": resumedObserved, "new_agent_turn": secondObserved,
@@ -435,7 +433,6 @@ type liveCapabilityObserved struct {
 	skillSearch            bool
 	mcpSearch              bool
 	nativeSkillRead        bool
-	accessScope            string
 	Tools                  []string
 	ToolErrors             []string
 	Duration               time.Duration
@@ -447,7 +444,6 @@ func waitLiveCapabilityTurn(t *testing.T, ws *workspace.Workspace, agentID strin
 	defer cancel()
 	var observed liveCapabilityObserved
 	started := time.Now()
-	var requestedGrants []captypes.AccessRequest
 	for {
 		select {
 		case <-ctx.Done():
@@ -460,18 +456,8 @@ func waitLiveCapabilityTurn(t *testing.T, ws *workspace.Workspace, agentID strin
 			case "tool_call":
 				data, _ := event.data.(map[string]any)
 				name, _ := data["name"].(string)
-				args, _ := data["args"].(string)
 				t.Logf("live capability tool: %s", name)
 				observed.Tools = append(observed.Tools, name)
-				if name == "mcp_request_access" {
-					var parameters struct {
-						ConnectionID string                   `json:"connection_id"`
-						Grants       []captypes.AccessRequest `json:"grants"`
-					}
-					if json.Unmarshal([]byte(args), &parameters) == nil && parameters.ConnectionID == mcpID {
-						requestedGrants = parameters.Grants
-					}
-				}
 			case "tool_result":
 				data, _ := event.data.(map[string]any)
 				name, _ := data["name"].(string)
@@ -504,16 +490,11 @@ func waitLiveCapabilityTurn(t *testing.T, ws *workspace.Workspace, agentID strin
 					observed.skillApproval, allowed = true, true
 				case target == mcpID && strings.Contains(reason, "Source Live local MCP registry fixture"):
 					observed.mcpAcquisitionApproval, allowed = true, true
-				case target == mcpID && data["tool"] == "mcp_request_access" &&
-					len(requestedGrants) == 1 && requestedGrants[0].Tool == "lookup" &&
-					requestedGrants[0].Effect == captypes.EffectRead &&
-					requestedGrants[0].Fingerprint != "" && requestedGrants[0].Scope != "":
-					// This fixture exposes exactly one read-only record. Review
-					// the exact immutable operation, not a coached scope label.
+				case data["tool"] == "mcp__"+mcpID+"__lookup" && data["operation"] == "MCP call":
 					observed.mcpAccessApproval, allowed = true, true
-					observed.accessScope = requestedGrants[0].Scope
+
 				}
-				if !approve || !allowed {
+				if !allowed || !approve && data["operation"] != "MCP call" {
 					_ = ws.ResolveConfirmation(agentID, blockID, "deny")
 					t.Fatalf("refused unexpected capability approval: target=%q reason=%q", target, reason)
 				}

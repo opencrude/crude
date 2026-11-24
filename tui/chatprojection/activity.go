@@ -72,7 +72,7 @@ func activityEligible(msg *conversation.ChatMessage) bool {
 	if msg.Role == conversation.RoleThinking {
 		return !msg.ThinkingActive && !msg.ThinkingInterrupted && msg.Content != ""
 	}
-	if msg.Role != conversation.RoleTool {
+	if msg.Role != conversation.RoleTool || msg.Incomplete || msg.ToolOutcome.Unsuccessful() {
 		return false
 	}
 	if msg.PermTag != "" && msg.PermTag != "auto" {
@@ -105,6 +105,8 @@ func activityEligible(msg *conversation.ChatMessage) bool {
 		}
 	}
 	switch msg.ToolName {
+	case "capability_search", "mcp_read_resource", "mcp_get_prompt":
+		return true
 	case "crude_control":
 		// Discovery-only commands and fully specified reads belong to the
 		// ordinary activity tree. A mutation receipt can describe unresolved
@@ -122,7 +124,7 @@ func activityEligible(msg *conversation.ChatMessage) bool {
 		"agent_list", "agent_inspect", "agent_wait", "board_read", "artifact_read":
 		return true
 	}
-	return false
+	return tools.IsMCPTool(msg.ToolName)
 }
 
 // eligibilityMemo records every input activityEligible reads. String fields
@@ -130,13 +132,13 @@ func activityEligible(msg *conversation.ChatMessage) bool {
 // word comparisons instead of a JSON parse of its complete tool result.
 type eligibilityMemo struct {
 	role, toolName, toolStatus, permTag, subPaneID, content, controlInput string
-	thinkingActive, thinkingInterrupted                                   bool
+	thinkingActive, thinkingInterrupted, incomplete, unsuccessful         bool
 	eligible                                                              bool
 }
 
 func (m *eligibilityMemo) matches(msg *conversation.ChatMessage) bool {
 	return m.role == msg.Role && m.toolName == msg.ToolName && m.toolStatus == msg.ToolStatus &&
-		m.permTag == msg.PermTag && m.subPaneID == msg.SubPaneID && m.content == msg.Content &&
+		m.incomplete == msg.Incomplete && m.unsuccessful == msg.ToolOutcome.Unsuccessful() && m.permTag == msg.PermTag && m.subPaneID == msg.SubPaneID && m.content == msg.Content &&
 		(m.toolName != "crude_control" || m.controlInput == msg.ToolInput) &&
 		m.thinkingActive == msg.ThinkingActive && m.thinkingInterrupted == msg.ThinkingInterrupted
 }
@@ -158,7 +160,7 @@ func (r *Renderer) activityEligibleCached(msg *conversation.ChatMessage) bool {
 		controlInput = msg.ToolInput
 	}
 	r.eligibility[msg] = eligibilityMemo{role: msg.Role, toolName: msg.ToolName, toolStatus: msg.ToolStatus,
-		permTag: msg.PermTag, subPaneID: msg.SubPaneID, content: msg.Content, controlInput: controlInput,
+		incomplete: msg.Incomplete, unsuccessful: msg.ToolOutcome.Unsuccessful(), permTag: msg.PermTag, subPaneID: msg.SubPaneID, content: msg.Content, controlInput: controlInput,
 		thinkingActive: msg.ThinkingActive, thinkingInterrupted: msg.ThinkingInterrupted, eligible: eligible}
 	return eligible
 }
@@ -218,6 +220,12 @@ func activityLabel(name string, count int) string {
 		return fmt.Sprintf("%d %s", count, multiple)
 	}
 	switch name {
+	case "mcp":
+		return "Used " + plural("MCP tool", "MCP tools")
+	case "capability_search":
+		return "Searched capabilities " + plural("time", "times")
+	case "mcp_get_prompt", "mcp_read_resource":
+		return "Read MCP context " + plural("time", "times")
 	case "exec_command", "execute_command":
 		return "Ran " + plural("command", "commands")
 	case "async_execute_command":
@@ -287,6 +295,9 @@ func (g *activityGroup) title() string {
 			continue
 		}
 		name := msg.ToolName
+		if tools.IsMCPTool(name) {
+			name = "mcp"
+		}
 		if msg.Role == conversation.RoleThinking {
 			name = "thinking"
 			thoughtDuration += msg.ThinkingDuration

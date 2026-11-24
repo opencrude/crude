@@ -82,7 +82,7 @@ func TestResponsesContinuationDiagnosticsRespectRequestPolicy(t *testing.T) {
 					previous := provider.NewTextMessage("assistant", "earlier answer")
 					provider.BindResponseReference(&previous, &provider.ResponseReference{
 						ID: "response-1", Scope: p.ResponseContinuationScope(p.Model),
-						InputHash: provider.ResponseInputHash(messages, nil),
+						InputHash: provider.MessagePrefixHash(messages),
 					})
 					messages = append(messages, previous, provider.NewTextMessage("user", "next prompt"))
 					p.SetProtocolSettings(policy.settings)

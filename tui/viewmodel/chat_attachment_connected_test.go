@@ -193,3 +193,41 @@ func TestConnectedPostedAttachmentsSurviveViewerReattach(t *testing.T) {
 		t.Fatalf("connected history did not open just the exact immutable image without changing the draft: refs=%+v err=%v", imported, err)
 	}
 }
+
+// Both storage forms open on the core as ordinary editable documents. Saving
+// changes what this same chip will send, not a client-side snapshot or draft.
+func TestConnectedComposerPastesOpenAndSaveAsDocuments(t *testing.T) {
+	for _, kind := range []sessiondb.Kind{sessiondb.KindPastedText, sessiondb.KindPastedTextFile} {
+		t.Run(string(kind), func(t *testing.T) {
+			r := remoteJourneyRuntime(t, "http://unused.invalid", func(w *workspace.Workspace) {
+				cfg := w.AppDefaults()
+				cfg.UI.AttachmentOpen = setting.AttachmentOpenCrude
+				cfg.LSP.Enabled = false
+				w.SetAppDefaults(cfg)
+			})
+			shell := newRemoteJourneyShell(t, r, t.TempDir())
+			remoteJourneyCreate(t, shell)
+			app := shell.app
+			store := app.RefStore()
+			ref, err := store.CreateReference(sessiondb.CreateRequest{Kind: kind, Content: "original\r\n😀tail", Inline: kind == sessiondb.KindPastedText})
+			if err != nil {
+				t.Fatal(err)
+			}
+			draft := "review " + ref.Label
+			app.Input.SetInput(draft)
+			runAppCommand(t, app, app.openAttachment(ref.ID, false))
+			ed := app.EditorState.Editor
+			current, _ := store.Reference(ref.ID)
+			if ed == nil || !ed.IsOpen() || ed.ReadOnly() || ed.FilePath() != current.FilePath || ed.DocumentState().DocumentID == "" || ed.Value() != "original\r\n😀tail" || app.overlayHost.IsOpen(ui.OverlayTextOverlay) {
+				t.Fatal("paste did not open as a shared document", current.FilePath)
+			}
+			renameConnectedKey(t, shell, tea.KeyPressMsg{Code: '!', Text: "!"})
+			renameConnectedKey(t, shell, tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
+			remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool { return !ed.Modified() && ed.DocumentState().PendingEdits == 0 })
+			got, _, err := store.ReadReferenceContent(ref.ID)
+			if err != nil || got != "!original\r\n😀tail" || app.Input.Value() != draft {
+				t.Fatalf("saved attachment=%q, draft=%q err=%v", got, app.Input.Value(), err)
+			}
+		})
+	}
+}

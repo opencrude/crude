@@ -132,7 +132,7 @@ func TestCapabilityHostFramedTwoShellModelJourney(t *testing.T) {
 				called[call.Function.Name] = true
 			}
 		}
-		activated, observed := journeyActivation(body.Messages, connection.ID)
+		_, observed := journeyActivation(body.Messages, connection.ID)
 		var dynamic string
 		for _, tool := range body.Tools {
 			if strings.HasPrefix(tool.Function.Name, "mcp_") && strings.Contains(tool.Function.Name, "picture") {
@@ -143,18 +143,12 @@ func TestCapabilityHostFramedTwoShellModelJourney(t *testing.T) {
 		args := map[string]any{"id": connection.ID}
 		switch {
 		case !called["capability_activate"]:
-		case !observed && !called["mcp_request_access"]:
+		case !observed:
 			if step > 6 {
 				t.Errorf("activation outcome never reached the model: %+v", body.Messages)
 				return
 			}
 			name, args = "wait", map[string]any{"seconds": 20}
-		case !called["mcp_request_access"]:
-			if len(activated.NeedsAccess) != 1 {
-				t.Errorf("real shell activation inventory missing: %+v", activated)
-				return
-			}
-			name, args = "mcp_request_access", map[string]any{"connection_id": connection.ID, "grants": []captypes.AccessRequest{{Tool: "picture", Fingerprint: activated.NeedsAccess[0].Fingerprint, Effect: captypes.EffectRead, Scope: directory}}}
 		case dynamic != "" && !called[dynamic]:
 			name, args = dynamic, map[string]any{}
 		case dynamic == "":
@@ -222,7 +216,7 @@ func TestCapabilityHostFramedTwoShellModelJourney(t *testing.T) {
 		t.Fatal(created, err)
 	}
 	ws.BackendSession(created.SessionID).SetYolo(true)
-	if err := target.Call(ctx, attached.WorkspaceID, coreprotocol.SubmitInput, &coreprotocol.InputRequest{AgentID: created.OrchID, Text: "Activate shell-picture, grant its exact picture tool and inspect the image.", DraftRevision: 1}, nil); err != nil {
+	if err := target.Call(ctx, attached.WorkspaceID, coreprotocol.SubmitInput, &coreprotocol.InputRequest{AgentID: created.OrchID, Text: "Activate shell-picture, inspect the image.", DraftRevision: 1}, nil); err != nil {
 		t.Fatal(err)
 	}
 	select {

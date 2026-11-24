@@ -436,6 +436,22 @@ func (s *Store) CountCurrent(owners map[string]string) (uint64, map[string]int) 
 	return s.version, counts
 }
 
+// StaleProblemPaths lists reported problems that no longer describe current
+// input for this producer. It does not copy diagnostic payloads or clean files.
+func (s *Store) StaleProblemPaths(key string) []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var paths []string
+	for _, e := range s.documents {
+		a := &e.answer
+		if a.State == insight.Stale && a.Boundary.Context.ID == key && len(a.Diagnostics) > 0 {
+			paths = append(paths, a.Boundary.Source.Path)
+		}
+	}
+	slices.Sort(paths)
+	return slices.Compact(paths)
+}
+
 // SnapshotPath reads one retained answer without exporting every document.
 // Paths are presentation keys; document identity remains the primary key.
 func (s *Store) SnapshotPath(path string) (insight.Diagnostics, bool) {

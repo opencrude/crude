@@ -16,16 +16,17 @@ import (
 // cancellable debounce survives its exact edit's acknowledgement. A later edit,
 // input owner or source lifetime replaces it; there is no retry queue.
 type completionIntent struct {
-	editor               *editor.Editor
-	source               insight.Source
-	revision, generation uint64
-	feature              uint64
-	trigger              insight.LSPCompletionContext
-	character            string
-	requiresTrigger      bool
-	line, col            int
-	due, deadline        time.Time
-	cancel               context.CancelFunc
+	editor                  *editor.Editor
+	source                  insight.Source
+	revision, generation    uint64
+	feature                 uint64
+	trigger                 insight.LSPCompletionContext
+	character               string
+	requiresTrigger, manual bool
+	selection               codeActionSelection
+	line, col               int
+	due, deadline           time.Time
+	cancel                  context.CancelFunc
 }
 
 type completionWakeMsg struct{}
@@ -80,13 +81,8 @@ func (m *App) onEditorTyping(ed *editor.Editor, key tea.KeyPressMsg) {
 	if source.DocumentID == "" || source.Lifetime == "" || source.WorkspaceGeneration == "" {
 		return
 	}
-	base, generation := m.lspRequestContext()
-	ctx, cancel := context.WithCancel(base)
-	line, col := ed.LSPCursorPosition()
 	due := time.Now().Add(time.Duration(settings.CompletionDelay()) * time.Millisecond)
-	m.completionIntent = &completionIntent{editor: ed, source: source, revision: ed.Revision(),
-		generation: generation, feature: feature, trigger: trigger, character: key.Text, requiresTrigger: !word, line: line, col: col, due: due,
-		deadline: due.Add(10 * time.Second), cancel: cancel}
+	ctx := m.retainCompletionIntent(ed, source, feature, trigger, key.Text, !word, false, due)
 	m.editorCommands = append(m.editorCommands, func() tea.Msg {
 		timer := time.NewTimer(time.Until(due))
 		defer timer.Stop()
@@ -99,6 +95,15 @@ func (m *App) onEditorTyping(ed *editor.Editor, key tea.KeyPressMsg) {
 	})
 }
 
+func (m *App) retainCompletionIntent(ed *editor.Editor, source insight.Source, feature uint64, trigger insight.LSPCompletionContext, character string, requiresTrigger, manual bool, due time.Time) context.Context {
+	m.cancelCompletionIntent()
+	base, generation := m.lspRequestContext()
+	ctx, cancel := context.WithCancel(base)
+	line, col := ed.LSPCursorPosition()
+	m.completionIntent = &completionIntent{editor: ed, source: source, revision: ed.Revision(), generation: generation, feature: feature, trigger: trigger, character: character, requiresTrigger: requiresTrigger, manual: manual, selection: currentCodeActionSelection(ed), line: line, col: col, due: due, deadline: due.Add(10 * time.Second), cancel: cancel}
+	return ctx
+}
+
 // Drain on ordinary Update messages, including the debounce wake and canonical
 // publication. Reaching the timer before the edit receipt must not lose intent.
 func (m *App) autoCompletionCmd(now time.Time) tea.Cmd {
@@ -109,7 +114,7 @@ func (m *App) autoCompletionCmd(now time.Time) tea.Cmd {
 	ed := intent.editor
 	source, current := ed.CurrentInsightSource()
 	line, col := ed.LSPCursorPosition()
-	if !m.signatureEditorOwnsInput(ed) || editorRetainsCompletionKeys(ed) ||
+	if !m.signatureEditorOwnsInput(ed) || !intent.manual && editorRetainsCompletionKeys(ed) || currentCodeActionSelection(ed) != intent.selection ||
 		!m.acceptsLSPDocument(intent.generation, intent.source.Path, ed, intent.revision) ||
 		line != intent.line || col != intent.col || now.After(intent.deadline) ||
 		source.WorkspaceGeneration != intent.source.WorkspaceGeneration ||
@@ -121,16 +126,16 @@ func (m *App) autoCompletionCmd(now time.Time) tea.Cmd {
 	service := m.ws.LSPMgr()
 	enabled, feature := service.CompletionsState()
 	caps := service.AssistanceCapabilities(ed.FilePath())
-	if !enabled || feature != intent.feature || !service.Settings().AutoComplete ||
-		!caps.Completion && caps.Producer.InstanceID != "" ||
+	if !enabled || feature != intent.feature || !intent.manual && !service.Settings().AutoComplete ||
+		!intent.manual && !caps.Completion && caps.Producer.InstanceID != "" ||
 		intent.trigger.Producer.InstanceID != "" && caps.Producer != intent.trigger.Producer {
 		m.cancelCompletionIntent()
 		return nil
 	}
-	if !caps.Completion || now.Before(intent.due) || !current {
+	if !intent.manual && !caps.Completion || now.Before(intent.due) || !current {
 		return nil
 	}
-	owner, generation := service.ContextCursor()
+	owner, generation := service.ContextCursor(source.Path)
 	if owner != source.WorkspaceGeneration || generation == 0 {
 		return nil
 	}
@@ -145,5 +150,5 @@ func (m *App) autoCompletionCmd(now time.Time) tea.Cmd {
 		return nil
 	}
 	m.cancelCompletionIntent()
-	return m.requestCompletion(true, trigger)
+	return m.requestCompletion(!intent.manual, trigger)
 }

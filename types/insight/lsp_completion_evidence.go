@@ -71,8 +71,9 @@ type LSPCompletionSet struct {
 }
 
 // LSPCompletionInspection contains documentation for one exact original row.
-// Neither original opaque data nor any newly resolved edit is sent to the shell.
+// AdditionalEdits is present only for acceptance after source and overlap checks.
 type LSPCompletionInspection struct {
+	AdditionalEdits       []LSPTextEdit
 	SetID, Digest, ItemID string
 	Boundary              Boundary
 	WireVersion           int

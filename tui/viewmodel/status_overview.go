@@ -355,17 +355,17 @@ func (m *App) terminalHeaderContext(id string) (context, metrics, target string)
 func (m *App) footerStatusSegments() []shellfooter.Segment {
 	insights := m.ws.LSPMgr().ProjectInsights()
 	problemText := "Problems"
-	if insights.Errors > 0 || insights.Warnings > 0 {
+	if m.listedErrors > 0 || m.listedWarnings > 0 {
 		parts := make([]string, 0, 2)
-		if insights.Errors > 0 {
-			parts = append(parts, fmt.Sprintf("%d✕", insights.Errors))
+		if m.listedErrors > 0 {
+			parts = append(parts, fmt.Sprintf("%d✕", m.listedErrors))
 		}
-		if insights.Warnings > 0 {
-			parts = append(parts, fmt.Sprintf("%d⚠", insights.Warnings))
+		if m.listedWarnings > 0 {
+			parts = append(parts, fmt.Sprintf("%d⚠", m.listedWarnings))
 		}
 		problemText = strings.Join(parts, "") + " Problems"
 	}
-	problemRole := diagnosticRole(insights.Errors, insights.Warnings)
+	problemRole := diagnosticRole(m.listedErrors, m.listedWarnings)
 	switch insights.Language.State {
 	case insight.LanguageRestricted, insight.LanguageOff:
 		problemText += ": off"

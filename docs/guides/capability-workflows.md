@@ -121,16 +121,14 @@ is not an answer. The official registry matches one substring of a server name,
 so each keyword is asked separately, together with adjacent keywords joined as
 names join them (`computer use` also asks `computer-use`); only the latest
 version of each server is requested and the union is ranked by all query words.
-Agents receive compact results without entries they cannot install. An
-activation or access result lists `usable_tools` and `tools_needing_access`
-(name, fingerprint and a bounded description) without input schemas: a granted
-tool brings its schema as a native tool at the next request. Grants add up for
-the run. A run-local grant binds the exact connection, acquisition policy and
-source it was approved under, so editing or removing another connection keeps
-it. A tool is granted once with the strongest effect it can have.
+Agents receive compact results without entries they cannot install. An activation lists usable tools. Their schemas arrive once as ordinary
+function definitions in the next request. There is no separate model grant step.
+An external tool without a saved effect classification uses the normal permission
+mode on its actual arguments. A role with restricted effects cannot use it.
+
 
 The owning agent receives the actual activation result as a `command_outcome`.
-No polling or second activation is needed. Access approval remains separate.
+No polling or second activation is needed. Permission to run a tool is separate from starting its server.
 Local stdio bootstrap has no implicit 30-second deadline. An explicitly set
 connection timeout still applies, and catalog discovery and tool calls keep
 their own limits. Passive restore never restarts a launch. The Settings **Install**
@@ -165,14 +163,15 @@ connection connected. OAuth presents an explicit browser URL and exact loopback
 return flow; credentials are bound to both connection ID and endpoint. Cancellation
 clears the flow; expired/revoked authorization requires explicit reauthentication.
 
-Tools → Review grant requires effect, resource scope and observed schema
-fingerprint. Changed/unknown operations fail closed. Profile/session selection
-cannot exceed the role ceiling or grant permission. A local scope label does not
-sandbox filesystem/network access; unsandboxed local launch requires exact
-authorization and is eligible for Manual/Auto Review/YOLO within host/effect
-ceilings. Authentication and consent remain user-owned. External MCP writes are outside
-native file ownership and undo. Ambiguous mutating outcomes stay unknown and are
-not replayed.
+**Tools → Tool access** lets you turn a tool off or classify its effect and
+resource scope for restricted roles. **Review the call** removes the saved
+classification. A classification applies only to the observed definition. It
+does not sandbox a process. Manual approval, Auto Review and YOLO apply to the
+actual call, not an invented lifetime for tool access. Unknown mutating outcomes
+are not replayed. Use `capabilities.inspect` with the connection ID to see its
+rules. `capabilities.set_tool_enabled` operates on one switch. Test a saved
+connection or a draft with `capabilities.test_connection`; it closes its detached
+transport, calls no tool and saves nothing.
 
 `/mcps [query]` opens the **MCP servers** view of the session capability modal
 (`/skills` opens its separate Skills view).
@@ -284,16 +283,10 @@ ceilings. Source text and server annotations never impersonate human authorizati
    source instructions. Bundled relative files resolve from that path; they are
    not files in the project's current directory. Their execution still uses normal
    tool permissions.
-4. MCP activation connects and returns observed tools and their fingerprints,
-   separately from the actually usable tools. If access is missing, the agent can
-   request `mcp_request_access` with `connection_id` and `grants`: original tool name, fingerprint,
-   effect and resource scope. Human approval persists that exact durable access
-     change; reviewer/YOLO approval grants only run-local access, revoked at the
-     owner/run boundary and rechecked against schema, host, connection and ceilings.
-   Grants inherit the connection's existing binding; approving access never moves
-   an application-bound connection into the workspace. The agent never infers a
-   grant from server annotations or a successful connection.
-5. Approved registrations/grants survive a complete workspace close and reopen.
+4. An active connection exposes its enabled tools, subject to role and session
+   policy. Call a tool by its offered name. The actual call, including a mixed
+   tool such as a clipboard reader/writer, goes through normal permission review.
+5. Registrations and explicit user rules survive close and reopen.
    Reopen is passive: no downloads, connections, model calls or tool replay.
    A later explicit activation reconnects and rechecks current tool fingerprints.
    Disable/remove operates on the same authoritative registration, with no hidden
@@ -438,7 +431,7 @@ Saved Version keep the separate full-file reader in movable main tabs.
   scripted provider: installed-first search → immutable skill acquisition → MCP
   activation → real SDK tool result → passive SQLite resume.
 - `agent/capability/access_test.go` verifies exact access approval, usable dynamic tools,
-  real SDK calls, passive reopen, and rejection of altered scope/fingerprint or
+  real SDK calls, live switches, passive reopen, and rejection of a changed fingerprint or
   agent ceilings. `workspace/capability_registration_test.go` exercises normal
   settings persistence, fresh service reopen, disable/remove and stale-owner checks;
   `tui/viewmodel/capability_visibility_test.go` asserts retained painted catalogs.
@@ -449,7 +442,7 @@ Saved Version keep the separate full-file reader in movable main tabs.
   Unpredictable receipt codes and a changed remote code prove actual asset reads
   and fresh SDK calls. The source is deleted after acquisition; follow-up, passive
   workspace/session reopen, resumed use and a new agent must reuse the installation
-  and grant without new acquisition approvals or registry requests. Optional
+  without new acquisition approvals or registry requests. Optional
   `CRUDE_LIVE_CAPABILITY_CATEGORY` selects an explicitly configured model category;
   `CRUDE_CAPABILITY_PROOF_DIR` retains a new directory under `CRUDE_TEMP_DIR`.
   Credentials stay in memory.

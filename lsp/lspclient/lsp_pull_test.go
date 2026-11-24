@@ -11,6 +11,7 @@ import (
 
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 
+	"crude/internal/metrics"
 	"crude/types/insight"
 )
 
@@ -286,6 +287,9 @@ func TestWorkspaceDiagnosticsReportClosedFiles(t *testing.T) {
 		}
 	}
 	previous, _ := json.Marshal(second["previousResultIds"])
+	if strings.Contains(string(previous), `"value":"open"`) {
+		t.Fatal("an ignored workspace report became a previous result", string(previous))
+	}
 	if !strings.Contains(string(previous), `"value":"a1"`) || !strings.Contains(string(previous), `"value":"b1"`) {
 		t.Fatalf("kept result IDs not sent: %s", previous)
 	}
@@ -293,5 +297,62 @@ func TestWorkspaceDiagnosticsReportClosedFiles(t *testing.T) {
 	defer recorder.mu.Unlock()
 	if len(recorder.unopened[filepath.Join(root, "closed-a.go")]) != 1 {
 		t.Fatal("an unchanged workspace report published again")
+	}
+}
+
+// Overlapping registrations describe the same requests on the wire. Adding
+// one and removing another must not cancel the pull or clear its diagnostics.
+func TestOverlappingRegistrationsKeepOneDiagnosticProducer(t *testing.T) {
+	totals := func() (requests, cancelled uint64) {
+		for _, c := range metrics.Take(metrics.Query{}).Counters {
+			switch c.Meta.Name {
+			case "lsp.document_pulls":
+				requests = c.Total
+			case "lsp.document_pulls_cancelled":
+				cancelled = c.Total
+			}
+		}
+		return
+	}
+	before, stopped := totals()
+	l, rec, ctx, root := startPullFixture(t, "pull-overlap")
+	path := filepath.Join(root, "selected.fixture")
+	openTestFile(t, l, ctx, path, "fixture", "ab")
+	register := func(id string) {
+		t.Helper()
+		if err := l.registerCapabilities(l.launch, json.RawMessage(`{"registrations":[{"id":"`+id+`","method":"textDocument/diagnostic","registerOptions":{"identifier":"shared","documentSelector":[{"language":"fixture"}]}}]}`)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	register("first")
+	rec.waitMessage(t, path, "pulled v1 shared selected.fixture")
+	register("second")
+	if err := l.unregisterCapabilities(l.launch, json.RawMessage(`{"unregisterations":[{"id":"first","method":"textDocument/diagnostic"}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	l.mu.Lock()
+	report := l.openFiles[path].publication
+	l.mu.Unlock()
+	if len(report.Diagnostics) != 1 {
+		t.Fatal("removing an overlapping selector erased the reported problem")
+	}
+	newer := testBoundary(path)
+	newer.Source.Revision++
+	if _, err := l.UpdateFile(ctx, path, "abc", newer); err != nil {
+		t.Fatal(err)
+	}
+	rec.waitMessage(t, path, "pulled v2 shared selected.fixture")
+	trace := protocolTrace(t, l, ctx, path)
+	pulls := pullRequests(trace, path)
+	if len(pulls) != 2 {
+		t.Fatalf("got %d diagnostic pulls for two versions; want one per version", len(pulls))
+	}
+	for _, msg := range trace {
+		if msg["method"] == "$/cancelRequest" {
+			t.Fatal("registration churn cancelled a current request")
+		}
+	}
+	if after, cancelled := totals(); after-before != 2 || cancelled != stopped {
+		t.Fatalf("performance report counts %d requests and %d cancellations for two completed pulls", after-before, cancelled-stopped)
 	}
 }

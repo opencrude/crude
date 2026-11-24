@@ -73,14 +73,14 @@ func TestInlayAdapterServerHelper(t *testing.T) {
 		switch request.Method {
 		case "initialize":
 			save("initialize.json", request.Params)
-			result = `{"capabilities":{"inlayHintProvider":{"resolveProvider":true}}}`
+			result = `{"capabilities":{"textDocumentSync":1,"inlayHintProvider":{"resolveProvider":true}}}`
 			switch mode {
 			case "unsupported":
-				result = `{"capabilities":{}}`
+				result = `{"capabilities":{"textDocumentSync":1}}`
 			case "false":
-				result = `{"capabilities":{"inlayHintProvider":false}}`
+				result = `{"capabilities":{"textDocumentSync":1,"inlayHintProvider":false}}`
 			case "no-resolve":
-				result = `{"capabilities":{"inlayHintProvider":true}}`
+				result = `{"capabilities":{"textDocumentSync":1,"inlayHintProvider":true}}`
 			}
 		case "textDocument/inlayHint", "inlayHint/resolve":
 			save("requested.json", raw)

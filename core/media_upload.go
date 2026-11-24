@@ -228,7 +228,7 @@ func (m *ReferenceUploads) run(ctx context.Context, owner coreprotocol.Owner, wo
 		if u.input.Purpose == coreprotocol.ReferenceUploadCreate {
 			req := *u.input.Create
 			req.Data = data
-			return runReferenceCommand(store, coreprotocol.ReferenceCreate, coreprotocol.ReferenceCommand{SessionID: in.SessionID, Create: &req})
+			return runReferenceCommand(ctx, store, coreprotocol.ReferenceCreate, coreprotocol.ReferenceCommand{SessionID: in.SessionID, Create: &req})
 		}
 		referenceCommandMu.Lock()
 		defer referenceCommandMu.Unlock()

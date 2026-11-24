@@ -4,6 +4,7 @@ package lspcompletion
 
 import (
 	"bytes"
+	"crude/types/insight"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -74,8 +75,7 @@ type Result struct {
 
 func invalid(why string) error { return fmt.Errorf("%w: %s", ErrInvalid, why) }
 
-// Parse accepts a standard array, null, or CompletionList. Defaults are not
-// advertised by the documentation-only consumer and cannot be silently ignored.
+// Parse accepts a standard array, null, or CompletionList. Shared defaults are materialized once, before insertion or resolve.
 // Unknown item fields, including opaque data, remain in the detached original.
 func Parse(raw []byte) (Result, error) {
 	if err := validate(raw); err != nil {
@@ -86,14 +86,24 @@ func Parse(raw []byte) (Result, error) {
 		return Result{Null: true}, nil
 	}
 	itemsJSON := raw
+	var defaults map[string]json.RawMessage
 	out := Result{}
 	if len(raw) != 0 && raw[0] == '{' {
 		var fields map[string]json.RawMessage
 		if err := json.Unmarshal(raw, &fields); err != nil {
 			return Result{}, invalid("completion list object")
 		}
-		if _, supplied := fields["itemDefaults"]; supplied {
-			return Result{}, invalid("completion list defaults are not advertised")
+		if d, ok := fields["itemDefaults"]; ok {
+			if err := json.Unmarshal(d, &defaults); err != nil || defaults == nil {
+				return Result{}, invalid("completion item defaults must be an object")
+			}
+			for key := range defaults {
+				switch key {
+				case "commitCharacters", "editRange", "insertTextFormat", "insertTextMode", "data":
+				default:
+					return Result{}, invalid("unknown completion item default " + key)
+				}
+			}
 		}
 		incomplete, supplied := fields["isIncomplete"]
 		if !supplied || !isBool(incomplete) || json.Unmarshal(incomplete, &out.Incomplete) != nil {
@@ -110,7 +120,42 @@ func Parse(raw []byte) (Result, error) {
 		return Result{}, invalid("completion item count or container")
 	}
 	out.Items = make([]Item, 0, len(originals))
+	expandedBytes := 0
 	for _, rawItem := range originals {
+		if len(defaults) > 0 {
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(rawItem, &fields); err != nil || fields == nil {
+				return Result{}, invalid("completion item object")
+			}
+			for k, v := range defaults {
+				if k != "editRange" && fields[k] == nil {
+					fields[k] = v
+				}
+			}
+			if r := defaults["editRange"]; r != nil && fields["textEdit"] == nil {
+				edit := map[string]json.RawMessage{}
+				var shape map[string]json.RawMessage
+				if err := json.Unmarshal(r, &shape); err != nil || shape == nil {
+					return Result{}, invalid("editRange default")
+				}
+				if shape["insert"] != nil && shape["replace"] != nil {
+					edit["insert"], edit["replace"] = shape["insert"], shape["replace"]
+				} else {
+					edit["range"] = r
+				}
+				text := fields["textEditText"]
+				if text == nil {
+					text = fields["label"]
+				}
+				edit["newText"] = text
+				fields["textEdit"], _ = json.Marshal(edit)
+			}
+			rawItem, _ = json.Marshal(fields)
+			expandedBytes += len(rawItem)
+			if expandedBytes > MaxRawBytes {
+				return Result{}, invalid("expanded completion list is too large")
+			}
+		}
 		item, err := readItem(rawItem)
 		if err != nil {
 			return Result{}, err
@@ -196,25 +241,29 @@ func readDocumentation(fields map[string]json.RawMessage) (Documentation, error)
 	return out, nil
 }
 
-// ResolveDocumentation allows only detail/documentation changes. Every other
-// original field must remain present and structurally identical, and no new
-// adjunct may appear. Comparison keeps exact JSON numeric spellings but ignores
-// insignificant object order/whitespace. Insertion is never reconstructed here.
-func ResolveDocumentation(original, resolved []byte) (Documentation, error) {
+// Resolution holds display text and optional, previously absent edits in this document.
+type Resolution struct {
+	Documentation
+	Additional []insight.LSPTextEdit
+}
+
+// Resolve keeps the original primary insertion, opaque data and declared edits
+// immutable. A server may fill in documentation, detail or missing imports.
+func Resolve(original, resolved []byte) (Resolution, error) {
 	for _, raw := range [][]byte{original, resolved} {
 		if err := validate(raw); err != nil {
-			return Documentation{}, err
+			return Resolution{}, err
 		}
 		if _, err := readItem(raw); err != nil {
-			return Documentation{}, err
+			return Resolution{}, err
 		}
 	}
 	var before, after map[string]json.RawMessage
 	if err := json.Unmarshal(original, &before); err != nil {
-		return Documentation{}, invalid("original completion object")
+		return Resolution{}, invalid("original completion object")
 	}
 	if err := json.Unmarshal(resolved, &after); err != nil {
-		return Documentation{}, invalid("resolved completion object")
+		return Resolution{}, invalid("resolved completion object")
 	}
 	for key, raw := range before {
 		if key == "detail" || key == "documentation" {
@@ -222,15 +271,23 @@ func ResolveDocumentation(original, resolved []byte) (Documentation, error) {
 		}
 		other, exists := after[key]
 		if !exists || !sameValue(raw, other) {
-			return Documentation{}, invalid("resolve changed original completion field " + strconv.Quote(key))
+			return Resolution{}, invalid("resolve changed original completion field " + strconv.Quote(key))
 		}
 	}
 	for key := range after {
-		if _, exists := before[key]; !exists && key != "detail" && key != "documentation" {
-			return Documentation{}, invalid("resolve added unadvertised completion field " + strconv.Quote(key))
+		if _, exists := before[key]; !exists && key != "detail" && key != "documentation" && key != "additionalTextEdits" {
+			return Resolution{}, invalid("resolve added unadvertised completion field " + strconv.Quote(key))
 		}
 	}
-	return readDocumentation(after)
+	doc, err := readDocumentation(after)
+	if err != nil {
+		return Resolution{}, err
+	}
+	out := Resolution{Documentation: doc}
+	if before["additionalTextEdits"] == nil && after["additionalTextEdits"] != nil {
+		out.Additional, err = additionalEdits(after["additionalTextEdits"])
+	}
+	return out, err
 }
 
 func sameValue(a, b []byte) bool {

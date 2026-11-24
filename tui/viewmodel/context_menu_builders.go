@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"crude/agent/sessiondb"
 	"crude/tui/screens/gitdiff"
 	"crude/types/conversation"
 	"crude/types/insight"
@@ -857,12 +858,17 @@ func (m *App) buildAttachmentContextMenu(rr input.RefRange) *ui.ContextMenuState
 	}
 	title := strings.TrimSuffix(strings.TrimPrefix(ref.DisplayName(), "["), "]")
 	st := &ui.ContextMenuState{Title: title}
+	paste := ref.Kind == sessiondb.KindPastedText || ref.Kind == sessiondb.KindPastedTextFile
+	native := "Preview in Crude"
+	if paste {
+		native = "Open in editor"
+	}
 	items := []ui.ContextMenuItem{
 		{Label: "Open", Detail: "Space", Action: func() {
 			m.runDetachedAsyncCmd(m.openAttachment(rr.ID, false))
 		}},
-		{Label: "Preview in Crude", Action: func() {
-			m.openReferenceOverlay(rr.ID)
+		{Label: native, Action: func() {
+			m.runDetachedAsyncCmd(m.openAttachmentIn(rr.ID, setting.AttachmentOpenCrude))
 		}},
 		{Label: "Rename", Action: func() {
 			m.startAttachmentRename(rr.ID, title)
@@ -875,7 +881,7 @@ func (m *App) buildAttachmentContextMenu(rr input.RefRange) *ui.ContextMenuState
 		ui.ContextMenuItem{Label: "Open with default app", Action: func() { m.runDetachedAsyncCmd(m.openAttachmentIn(ref.ID, setting.AttachmentOpenSystem)) }},
 		ui.ContextMenuItem{Label: "Show in file manager", Action: func() { m.runDetachedAsyncCmd(m.openAttachmentIn(ref.ID, setting.AttachmentOpenFileManager)) }},
 	)
-	if ref.FilePath != "" {
+	if !paste && ref.FilePath != "" {
 		path := ref.FilePath
 		items = append(items, ui.ContextMenuItem{Label: "Open in editor", Action: func() {
 			if _, err := m.openEditorTab(path); err != nil {
