@@ -43,14 +43,20 @@ func TestOnlyMountedRunningJobsRequestArcCadence(t *testing.T) {
 		t.Fatal("baseline unexpectedly animating")
 	}
 	now := time.Now()
-	job := fileio.AsyncCmdInfo{TaskID: "fixture", Handle: "auto-1", Command: "Tool", Status: fileio.AsyncRunning, StartedAt: now, Progress: command.Progress{Phase: "Downloading"}}
+	job := fileio.AsyncCmdInfo{Handle: "test", Command: "go test", Status: fileio.AsyncRunning, StartedAt: now}
 	show := func() string {
 		app.presentAgentNotice(workspace.AgentNotice{Type: workspace.NoticeAsyncCommandStatus, AgentID: "bar-agent", Commands: []fileio.AsyncCmdInfo{job}})
 		app.forceFrame()
 		return rendering.StripAnsi(app.View().RenderContent())
 	}
-	show()
 	onBoundary := time.UnixMilli(1600)
+	show()
+	if app.wantsFastTick() || app.nextTickDelay(onBoundary) != workspace.IdleTickInterval {
+		t.Fatal("an ordinary shell command should use the shared blink cadence")
+	}
+	job.TaskID, job.Handle, job.Command = "fixture", "auto-1", "Tool"
+	job.Progress = command.Progress{Phase: "Downloading skill"}
+	show()
 	if app.wantsFastTick() || app.nextTickDelay(onBoundary) != 160*time.Millisecond || app.nextTickDelay(onBoundary.Add(60*time.Millisecond)) != 100*time.Millisecond {
 		t.Fatal("visible arc did not request discrete steps of the shared clock")
 	}
@@ -60,6 +66,16 @@ func TestOnlyMountedRunningJobsRequestArcCadence(t *testing.T) {
 	}
 	if app.wantsFastTick() || app.nextTickDelay(onBoundary) != 160*time.Millisecond {
 		t.Fatal("a measured transfer changed the arc cadence")
+	}
+	job.Progress = command.Progress{Phase: "Verifying skill files"}
+	show()
+	if app.nextTickDelay(onBoundary) != workspace.IdleTickInterval {
+		t.Fatal("verification kept the download cadence")
+	}
+	job.Progress = command.Progress{Phase: "Connecting"}
+	show()
+	if app.nextTickDelay(onBoundary) != 160*time.Millisecond {
+		t.Fatal("a visible connection did not request an arc")
 	}
 	app.openSessionSettings()
 	app.forceFrame()

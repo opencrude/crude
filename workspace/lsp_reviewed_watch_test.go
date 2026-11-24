@@ -280,10 +280,14 @@ func TestReviewedWatchOrdersEventsArrivingDuringReplay(t *testing.T) {
 }
 
 func TestReviewedWatchInvalidatesOtherChangesBeforeOrderedReplay(t *testing.T) {
-	root := t.TempDir()
-	target, unrelated := filepath.Join(root, "target"), filepath.Join(root, "config")
-	m := NewLSPManager(nil)
-	t.Cleanup(m.Close)
+	m, _, root := probeManager(t)
+	target, unrelated := filepath.Join(root, "target.go"), filepath.Join(root, "config")
+	const source = "package fixture\n"
+	createFile(t, target, source)
+	probeEditor(t, m, target, source)
+	awaitLSP(t, func() bool { return m.AssistanceCapabilities(target).SynchronizedSource.DocumentID != "" })
+	current := m.AssistanceCapabilities(target)
+	before := current.SynchronizedContext
 	tx, err := m.reviewWatch.begin([]FileEdit{{Path: target}})
 	if err != nil {
 		t.Fatal(err)
@@ -291,15 +295,13 @@ func TestReviewedWatchInvalidatesOtherChangesBeforeOrderedReplay(t *testing.T) {
 	if err := tx.beginCommit(target); err != nil {
 		t.Fatal(err)
 	}
-	m.mu.Lock()
-	before := m.contextGeneration
-	m.mu.Unlock()
 	m.NotifyWatchedFilesChanged(t.Context(), target, 1)
+	if !m.FileSynchronized(current.SynchronizedSource, before) || tx.check() != nil {
+		t.Fatal("the review's own replacement invalidated its producer before replay")
+	}
 	m.NotifyWatchedFilesChanged(t.Context(), unrelated, 2)
-	m.mu.Lock()
-	after := m.contextGeneration
-	m.mu.Unlock()
-	if after != before+1 || tx.check() == nil {
+	_, after := m.ContextCursor(target)
+	if after != before+1 || m.FileSynchronized(current.SynchronizedSource, before) || tx.check() == nil {
 		t.Fatalf("external change did not immediately revoke the review: %d to %d", before, after)
 	}
 	tx.endCommit(target, true)

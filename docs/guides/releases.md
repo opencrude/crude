@@ -331,18 +331,17 @@ with explicit assets, download it and verify hashes, then publish it deliberatel
 using `gh release edit`. Local artifacts are not a release until the uploaded
 assets and exact tag are verified. Never overwrite a prior release or move a tag.
 
-## Command-only GitHub workflows
+## Dispatch verification and releases
 
-Repository Actions is command-only. No workflow starts on a push, pull request,
-tag creation or schedule. Every source workflow is either an explicit
-`workflow_dispatch` entry point or the reusable `workflow_call` chain used by
-those entry points. The release and website workflows cannot run by accident.
+The **Conventions** workflow checks layout, names and lint on pushes and pull
+requests. It does not build a release or deploy the website. All other source
+workflows start only on `workflow_dispatch` or through their reusable
+`workflow_call` chain. No schedule starts a release or a verification run.
 
 GitHub also lists a generated **Dependency Graph** workflow outside
 `.github/workflows`. It is a GitHub-managed supply-chain workflow, not a source
-workflow. If the repository must have no automatic workflow at all, disable
-Dependency graph under Settings → Advanced Security; the source workflows here
-remain dispatch-only either way.
+workflow. Dependency graph under Settings → Advanced Security controls it
+independently of the source workflows.
 
 Use the exact entry points:
 

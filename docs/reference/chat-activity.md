@@ -18,6 +18,9 @@ workspace Errand shows a readable summary, not its structured order:
 `provider.UserInput.DisplayContent` selects that text for session persistence,
 input-receipt publication, queued rows and steering. A receipt that arrives before
 the provider events must show the same summary as a cold transcript.
+A human interruption keeps its normal author header, time and attachment chips
+when it is admitted and after reopening. Journal attribution does not turn it
+into a peer card. Peer and runtime rows cannot supply a preceding human header.
 An untargeted `agent_wait` row says **Waiting for an update**, then **Wait
 finished**. It can wake for a background command or a message without another
 agent running. A named target retains its identity and agent-specific title.

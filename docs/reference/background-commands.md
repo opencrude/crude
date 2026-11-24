@@ -31,11 +31,12 @@
   name and every row's state, the elapsed time, about 32 cells of status detail,
   the handle, and then to the full job name and status text. The job column is
   never wider than its longest name; spare width trails the status column.
-  A one-cell arc marks each running job, including a measured download. It
-  turns in four even steps on the shell clock and never displaces its label.
-  Measured progress uses a fixed percentage slot and a fill that starts at
-  one shared position after the longest measured phase. A narrow row keeps
-  the percentage before it drops the fill. Unknown progress has no bar. Output and Stop share
+  Running commands, installation, verification, and tool discovery use the
+  shared blinking activity dot. Only a download or a connection handshake
+  shows the four-step arc. Both use the shell clock and keep the label in place.
+  Only a download with a measured total shows a percentage and fill. The
+  percentage has a fixed slot; the fill starts after the longest measured phase.
+  A narrow row keeps the percentage before it drops the fill. Output and Stop share
   aligned columns across kinds; Stop is absent after settlement and uses its
   glyph on narrow decks. PID and exit code belong in the expanded evidence.
 - **One agent command shell.** Settings › Agents › Main Agent › Command shell

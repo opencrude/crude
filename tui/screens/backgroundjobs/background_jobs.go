@@ -71,7 +71,7 @@ type Screen struct {
 	lastNow    time.Time
 	nextExpiry time.Time
 	running    bool
-	animating  bool
+	visibleArc bool
 	ruleBleedX int
 	ruleBleedW int
 	rules      map[string]*ui.ProgressRule
@@ -105,8 +105,8 @@ func (s *Screen) Refresh(now time.Time) bool {
 	return true
 }
 
-// NeedsActivityArc reports whether layout gave a running job a visible glyph.
-func (s *Screen) NeedsActivityArc() bool { return s.animating }
+// NeedsActivityArc reports whether a visible row shows a download or connection arc.
+func (s *Screen) NeedsActivityArc() bool { return s.visibleArc }
 
 func (s *Screen) VisibleCount() int { return s.visible }
 
@@ -173,11 +173,11 @@ func (s *Screen) Layout(ctx ui.LayoutContext, rect ui.Rect) {
 		s.children = append(s.children, control)
 	}
 	cols := s.columns
-	s.animating = false
+	s.visibleArc = false
 	var rules map[string]*ui.ProgressRule
 	for index, job := range jobs {
 		y := 4 + index
-		s.animating = s.animating || job.Status == "running" && cols.statusW >= cols.glyphW
+		s.visibleArc = s.visibleArc || showsArc(job) && cols.statusW >= cols.glyphW
 		if cols.barW > 0 && hasBar(job) {
 			if rules == nil {
 				rules = make(map[string]*ui.ProgressRule)
@@ -213,8 +213,13 @@ func (s *Screen) Layout(ctx ui.LayoutContext, rect ui.Rect) {
 	s.rules = rules
 }
 
-// hasBar requires measured work. Indeterminate activity has only the arc.
-func hasBar(job Job) bool { return job.Status == "running" && job.Progress.Total > 0 }
+func showsArc(job Job) bool {
+	return job.Status == "running" && (job.Progress.Phase == command.PhaseDownloading || job.Progress.Phase == command.PhaseConnecting)
+}
+
+func hasBar(job Job) bool {
+	return job.Status == "running" && job.Progress.Phase == command.PhaseDownloading && job.Progress.Total > 0
+}
 
 // commandText is the single linked label for a shell command or capability.
 func (s *Screen) commandText(job Job) string {
@@ -253,10 +258,9 @@ func (s *Screen) Paint(buf *surface.CellBuffer, originX, originY int, ctx ui.Pai
 		s.paintHeader(buf, x, headerY, r.W, cols, muted, divider, bg, hBorder, r.H > 3)
 	}
 
-	arc := ui.ActivityArc(ctx.Frame)
 	for i, status := range s.statuses {
 		job := s.rows[i]
-		s.paintRow(buf, x, headerY+2+i, cols, job, status.text, arc)
+		s.paintRow(buf, x, headerY+2+i, cols, job, status.text, ctx.Frame)
 		if hasBar(job) {
 			if bar := s.rules[job.TaskID]; bar != nil {
 				bar.Paint(buf, x, y, ctx)
@@ -315,14 +319,14 @@ func (s *Screen) columnWidths(total int, jobs []Job) columnLayout {
 			taskLead = max(taskLead, status.leadWidth)
 		}
 		if job.Status != "running" {
-			glyph, _, _ := s.statusGlyph(job, "")
+			glyph, _, _ := s.statusGlyph(job, 0)
 			c.glyphW = max(c.glyphW, rendering.VisibleWidth(glyph))
 		}
 		handleW = max(handleW, rendering.VisibleWidth(job.Handle)+2)
 		timeW = max(timeW, rendering.VisibleWidth(s.durationLabel(job)))
 	}
 	if stop {
-		c.glyphW = max(c.glyphW, ui.ActivityArcWidth())
+		c.glyphW = max(c.glyphW, ui.ActivityArcWidth(), rendering.VisibleWidth(ui.ActivityDot(0)))
 	}
 	glyphSlot := c.glyphW + 1
 	leadMax = max(len("STATUS"), leadMax+glyphSlot)
@@ -404,7 +408,7 @@ func describeStatus(job Job) rowStatus {
 		if job.Progress.Phase != "" {
 			state = job.Progress.Phase
 		}
-		if job.Progress.Total > 0 {
+		if hasBar(job) {
 			state = fmt.Sprintf("%3d%% · %s", job.Progress.Percent(), state)
 		}
 	case "completed":
@@ -429,10 +433,10 @@ func describeStatus(job Job) rowStatus {
 	return status
 }
 
-func (s *Screen) paintRow(buf *surface.CellBuffer, x, y int, c columnLayout, job Job, status, arc string) {
+func (s *Screen) paintRow(buf *surface.CellBuffer, x, y int, c columnLayout, job Job, status string, frame int) {
 	bg := s.tokens.Color(ui.ColorBg)
 	muted := s.tokens.Color(ui.ColorMuted)
-	glyph, ink, attr := s.statusGlyph(job, arc)
+	glyph, ink, attr := s.statusGlyph(job, frame)
 	w := c.statusW
 	if c.barW > 0 && hasBar(job) {
 		w = c.barX - c.statusX - 1
@@ -459,10 +463,13 @@ func (s *Screen) durationLabel(job Job) string {
 	return rendering.FormatThinkingDuration(duration)
 }
 
-func (s *Screen) statusGlyph(job Job, arc string) (string, cell.Color, cell.Attrs) {
+func (s *Screen) statusGlyph(job Job, frame int) (string, cell.Color, cell.Attrs) {
 	switch job.Status {
 	case "running":
-		return arc, s.tokens.Color(ui.ColorAccent2), cell.AttrBold
+		if showsArc(job) {
+			return ui.ActivityArc(frame), s.tokens.Color(ui.ColorAccent2), cell.AttrBold
+		}
+		return ui.ActivityDot(frame), s.tokens.Color(ui.ColorAccent2), cell.AttrBold
 	case "completed":
 		return "✓", s.tokens.Color(ui.ColorSuccess), cell.AttrBold
 	case "failed":

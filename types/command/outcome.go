@@ -55,6 +55,13 @@ func JobID(taskID string, pid int, started time.Time) string {
 	return ExecutionID(pid, started)
 }
 
+const (
+	// PhaseDownloading marks the transfer of a skill archive.
+	PhaseDownloading = "Downloading skill"
+	// PhaseConnecting marks a server handshake, before tool discovery.
+	PhaseConnecting = "Connecting"
+)
+
 // Progress describes observed work. Total zero means no measured total exists.
 type Progress struct {
 	Phase   string `json:"phase,omitempty"`

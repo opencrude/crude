@@ -2,7 +2,9 @@ package coreprotocol
 
 import "crude/agent/sessiondb"
 
+// Reference and history commands and their shared transfer bounds.
 const (
+	// ReferencePrepareTextFile materializes an editable paste without changing its reference ID.
 	ReferencePrepareTextFile = "reference.prepare-text-file"
 	ReferenceCreate          = "reference.create"
 	ReferenceImport          = "reference.import"

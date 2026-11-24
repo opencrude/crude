@@ -14,6 +14,7 @@ import (
 	"time"
 
 	captypes "crude/types/capability"
+	"crude/types/command"
 )
 
 func actorKey(actor captypes.RuntimeActor) string { return actor.SessionID + "\x00" + actor.ID }
@@ -89,7 +90,7 @@ func (s *Service) activateConnection(ctx context.Context, actor captypes.Runtime
 		}
 	}
 	return captypes.RunActivation(ctx, entry.Name, func(ctx context.Context) (captypes.Result, error) {
-		captypes.ReportProgress(ctx, "Connecting", 0, 0)
+		captypes.ReportProgress(ctx, command.PhaseConnecting, 0, 0)
 		var err error
 		if config.Transport == "stdio" && !manual {
 			err = clients.ConnectAuthorized(ctx, config.ID, config)
