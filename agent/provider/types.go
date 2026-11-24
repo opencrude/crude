@@ -520,9 +520,8 @@ type TokenUsage struct {
 	// ServiceTier is the provider-reported processing tier that served the
 	// request; empty when the provider does not report one.
 	ServiceTier string `json:"service_tier,omitempty"`
-	// Native runtimes such as Ollama report timing but not cache-read token
-	// counts. These diagnostics let live probes distinguish fast prefix reuse
-	// from a full prompt evaluation without pretending they are billing data.
+	// Native runtimes can report prompt evaluation time independently of cache
+	// counts. Timing is a latency measurement, not evidence of billed reads.
 	TotalDuration      time.Duration `json:"-"`
 	LoadDuration       time.Duration `json:"-"`
 	PromptEvalDuration time.Duration `json:"-"`

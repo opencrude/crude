@@ -60,3 +60,9 @@ func (u *ChatUsage) normalized() TokenUsage {
 	}
 	return usage
 }
+
+func (u *TokenUsage) setCacheRead(count *int) {
+	if count != nil {
+		u.PromptTokensCached, u.CacheReadKnown = *count, true
+	}
+}

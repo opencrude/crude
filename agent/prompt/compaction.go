@@ -194,12 +194,3 @@ func AnsweredHumanRequests(requests []string) string {
 	out.WriteString("\n</answered_human_requests>")
 	return out.String()
 }
-
-// ElidedToolResult stands in for a bulky, re-obtainable tool result that a
-// checkpoint left out of the verbatim recent context.
-func ElidedToolResult(tool, operand string, characters int) string {
-	if operand != "" {
-		operand = " " + operand
-	}
-	return fmt.Sprintf("[%s%s returned %d characters, left out at a context checkpoint. Run it again if you still need the content; files may have changed since.]", tool, operand, characters)
-}

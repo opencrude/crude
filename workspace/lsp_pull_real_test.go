@@ -63,3 +63,42 @@ func TestPullOnlyServerAgainstRealJSONServer(t *testing.T) {
 	}
 	check(map[string]bool{broken: false, clean: false})
 }
+
+// dockerfile-language-server-nodejs 0.15 registers for configuration changes
+// after initialization. A rejected registration terminates its Node process.
+func TestDockerfileConfigurationRegistrationKeepsDiagnosticsAlive(t *testing.T) {
+	if testing.Short() {
+		t.Skip("starts a real language server")
+	}
+	if _, err := exec.LookPath("docker-langserver"); err != nil {
+		t.Skip("docker-langserver is not installed")
+	}
+	root := t.TempDir()
+	path := filepath.Join(root, "Dockerfile")
+	m := NewLSPManager(nil)
+	t.Cleanup(m.Close)
+	probeSources(t, m, root)
+	m.SetWorkspaceRoot(root)
+	trustAnalysis(t, m, root)
+	settings := setting.DefaultLSP()
+	settings.Enabled = false
+	m.SetSettings(settings)
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	for _, tc := range []struct {
+		text   string
+		broken bool
+	}{{"FROM alpine\nNOTANINSTRUCTION abc\n", true}, {"FROM alpine\n", false}} {
+		if err := os.WriteFile(path, []byte(tc.text), 0600); err != nil {
+			t.Fatal(err)
+		}
+		got := m.ProbeDiagnosticsBatch(ctx, []string{path})[0]
+		if got.Error != "" || !got.Settled || got.Diagnostics.ID == "" || (len(got.Diagnostics.Diagnostics) > 0) != tc.broken {
+			t.Fatalf("broken=%v diagnostics=%+v health=%+v", tc.broken, got, m.ServerHealthSnapshots())
+		}
+		health := m.ServerHealthSnapshots()
+		if len(health) != 1 || !health[0].Connected || health[0].Restarts != 0 {
+			t.Fatalf("server did not stay connected: %+v", health)
+		}
+	}
+}

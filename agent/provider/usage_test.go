@@ -1,6 +1,9 @@
 package provider
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 func TestOpenAIUsagePresenceIsNotInferredFromDetailsObject(t *testing.T) {
 	for _, test := range []struct {
@@ -76,5 +79,51 @@ func TestOllamaUsageDoesNotInventCacheOrReasoningCounts(t *testing.T) {
 		if u == nil || u.PromptTokens != 100 || u.CompletionTokens != 10 || u.CacheReadKnown || u.CacheWriteKnown || u.ReasoningKnown || u.EvalDuration != 500000000 {
 			t.Fatalf("Ollama token counts/timing misreported: %+v", u)
 		}
+	}
+}
+
+// A gateway may omit optional usage fields. In each codec a missing count,
+// a reported miss and a reported hit must survive both response paths.
+func TestOptionalCacheReadsSurviveWireProjection(t *testing.T) {
+	for _, tc := range []struct {
+		proto                    Protocol
+		key, body, event, stream string
+	}{
+		{&OllamaStandard{}, "prompt_eval_cached_count", `{"done":true,"message":{"role":"assistant","content":"ok"},"prompt_eval_count":100,"eval_count":1%s}`, "", "%s"},
+		{&GeminiStandard{}, "cachedContentTokenCount", `{"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":100%s}}`, "", "%s"},
+		{&GeminiInteractionsStandard{}, "total_cached_tokens", `{"id":"i","status":"completed","steps":[],"usage":{"total_input_tokens":100%s}}`, "interaction.completed", `{"event_type":"interaction.completed","interaction":%s}`},
+	} {
+		t.Run(tc.proto.Info().ID, func(t *testing.T) {
+			for _, n := range []int{-1, 0, 75} {
+				field := ""
+				if n >= 0 {
+					field = fmt.Sprintf(",%q:%d", tc.key, n)
+				}
+				body := fmt.Sprintf(tc.body, field)
+				check := func(u TokenUsage) {
+					t.Helper()
+					if u.PromptTokens != 100 || u.CacheReadKnown != (n >= 0) || u.PromptTokensCached != max(n, 0) {
+						t.Fatalf("%s count %d: %+v", tc.key, n, u)
+					}
+				}
+				response, err := tc.proto.DecodeResponse([]byte(body))
+				if err != nil {
+					t.Fatal(err)
+				}
+				check(response.Usage.Normalized())
+				update, err := tc.proto.NewStreamDecoder().Decode(StreamEvent{Event: tc.event, Data: []byte(fmt.Sprintf(tc.stream, body))})
+				if err != nil || update.Usage == nil {
+					t.Fatalf("stream usage: %v, %v", update, err)
+				}
+				check(*update.Usage)
+				if tc.proto.Info().ID == "ollama" {
+					resp, err := tc.proto.DecodeResponse([]byte(`{"done":false,"message":{"content":"a"}}` + "\n" + body))
+					if err != nil {
+						t.Fatal(err)
+					}
+					check(resp.Usage.Normalized())
+				}
+			}
+		})
 	}
 }

@@ -273,7 +273,7 @@ func (a *Agent) Run(
 	}
 	planner := slot.plannerFor(a.PriorCheckpointTokens)
 	providerName := a.providerDisplayName()
-	cacheUsageUnknown := a.Provider.ProtocolID() == "ollama"
+
 	var bufferedRuntime []RuntimeMessage
 	admitRuntime := func(runtime RuntimeMessage) error {
 		staged, prepareErr := runtime.staged(ctx, msgs)
@@ -332,7 +332,6 @@ steps:
 
 		if a.RequestBoundary != nil && a.RequestBoundary() {
 			providerName = a.providerDisplayName()
-			cacheUsageUnknown = a.Provider.ProtocolID() == "ollama"
 			l.Info("AGENT", "connection_changed", "step", step, "model", a.Model, "provider", providerName, "effort", a.Provider.ThinkingEffort())
 		}
 		if a.PrepareStep != nil {
@@ -492,17 +491,7 @@ steps:
 			hardLimit := max(1, ctxWindow-a.outputTokenLimit(ctxWindow, 0)-contextSafetyReserve(ctxWindow))
 			fixed := estimateCanonicalRequest(msgs[:1], allTools, a.Model)
 			role := checkpointRole(a.Depth)
-			// A provider-rejected context gets a full checkpoint; otherwise the
-			// recent turns stay verbatim after the checkpoint of older context.
-			cut, tailHasHuman := len(msgs), false
-			if !overflowPressure {
-				cut, tailHasHuman = verbatimTailCut(msgs, role, a.Model)
-			}
-			tailTokens := 0
-			if cut < len(msgs) {
-				tailTokens = provider.EstimateMessagesTotal(msgs[cut:], a.Model)
-			}
-			plan := planner.evaluate(a, activeTokens, fixed, tailTokens, hardLimit, ctxWindow, overflowPressure)
+			plan := planner.evaluate(a, activeTokens, fixed, hardLimit, ctxWindow, overflowPressure)
 			// A failed or insufficient attempt defers the next one while the
 			// context still fits: cheap or unstable compaction models never stop
 			// a run that can still make requests, and deferred attempts coalesce
@@ -516,11 +505,11 @@ steps:
 			if requested != "" {
 				plan.force, plan.reason, trigger = true, "requested with /compact", "requested"
 			}
-			l.Debug("COMPACT", "plan", "active", activeTokens, "hard_limit", hardLimit, "tail", tailTokens, "prepare", plan.prepare, "swap", plan.swap, "force", plan.force,
+			l.Debug("COMPACT", "plan", "active", activeTokens, "hard_limit", hardLimit, "prepare", plan.prepare, "swap", plan.swap, "force", plan.force,
 				"excess", planner.excess, "units", planner.units, "checkpoint", planner.checkpoint, "growth", planner.maxGrowth,
 				"meter_input", contextUsage.inputTokens, "meter_messages", contextUsage.requestMessages, "messages", len(msgs))
-			postCompaction = fixed + planner.checkpointEstimate() + tailTokens
-			checkpointTarget := max(1, hardLimit-tailTokens-planner.maxGrowth)
+			postCompaction = fixed + planner.checkpointEstimate()
+			checkpointTarget := max(1, hardLimit-planner.maxGrowth)
 			if overflowPressure {
 				checkpointTarget = max(1, min(hardLimit, activeTokens/2))
 			}
@@ -538,10 +527,9 @@ steps:
 				planner.deferUntil(msgs, at+max(planner.maxGrowth, ctxWindow/50, 1))
 				return true
 			}
-			// adopt commits a checkpoint of msgs[1:cut] followed by the verbatim
-			// tail. begin publishes the full current context as the source
-			// first; synchronous compaction already did so before extraction.
-			adopt := func(outcome compactOutcome, cut int, requestID, trigger string, begin bool) (bool, error) {
+			// Commit only a summary of the complete source. A changed prefix
+			// makes old tool rounds cold even on a previously warm connection.
+			adopt := func(outcome compactOutcome, requestID, trigger string) (bool, error) {
 				compacted := append([]provider.ChatMessage(nil), outcome.Messages...)
 				if len(compacted) > 0 && compacted[len(compacted)-1].Origin == provider.OriginRuntimeContext {
 					continuity, err := a.continuityMessage(ctx, true)
@@ -550,7 +538,6 @@ steps:
 					}
 					compacted[len(compacted)-1] = continuity
 				}
-				compacted = append(compacted, decayVerbatimTail(msgs[cut:], a.Model)...)
 				// Guidance admitted during the run lived in messages the
 				// checkpoint replaces; the system message carries the current
 				// complete guidance instead of the run's initial render.
@@ -563,25 +550,9 @@ steps:
 				if after >= hardLimit || after >= activeTokens {
 					return false, fmt.Errorf("checkpoint with recent context does not reduce the next request enough (%d -> %d of %d tokens)", activeTokens, after, hardLimit)
 				}
-				if begin && a.PrepareCompaction != nil {
-					if err := a.PrepareCompaction(CompactionSource{
-						Messages: append([]provider.ChatMessage(nil), msgs[1:]...), BeforeTokens: activeTokens,
-						ContextWindow: ctxWindow, RequestID: requestID, Trigger: trigger, Role: role,
-						AccountID: a.Provider.AccountID, ProviderID: a.Provider.ID, ModelID: a.Model,
-					}); err != nil {
-						return false, &compactionStorageError{err}
-					}
-				}
 				stageCount := len(rootprompt.CompactionStages())
-				if begin {
-					// Adopting a prepared checkpoint is a compaction boundary like any other.
-					started := compactionEventData(requestID, trigger, role, stageCount, stageCount, activeTokens, 0, ctxWindow)
-					started["stage_label"] = "Adopting the checkpoint prepared in the background"
-					emit(AgentEvent{Type: "context_compaction_started", Data: started})
-				}
 				commitData := compactionEventData(requestID, trigger, role, stageCount, stageCount, activeTokens, after, ctxWindow)
 				commitData["account_id"], commitData["provider_id"], commitData["model_id"] = outcome.AccountID, outcome.ProviderID, outcome.ModelID
-				commitData["verbatim_tokens"] = tailTokensOf(next[len(next)-(len(msgs)-cut):], a.Model)
 				emit(AgentEvent{Type: "context_compaction_committing", Data: commitData})
 				if a.CommitCompaction != nil {
 					if err := a.CommitCompaction(CompactionCommit{
@@ -617,7 +588,7 @@ steps:
 				prefix.reset()
 				checkpointTokens := estimateCanonicalRequest(append([]provider.ChatMessage{system}, outcome.Messages...), allTools, a.Model) - fixed
 				planner.learn(a, outcome.SourceTokens, checkpointTokens, after, outcome.Usage)
-				l.Info("COMPACT", trigger, "reason", plan.reason, "active_before", activeTokens, "active_after", after, "verbatim_messages", len(msgs)-1-len(outcome.Messages))
+				l.Info("COMPACT", trigger, "reason", plan.reason, "active_before", activeTokens, "active_after", after)
 				return true, nil
 			}
 			stopOnCompaction := func(err error) {
@@ -632,61 +603,15 @@ steps:
 				a.emitError(emit, fmt.Errorf("context compaction failed; original context kept: %w", err))
 			}
 
-			// adoptDecay replaces older re-runnable tool results across the
-			// whole context with stubs. It needs no model, so it is the last
-			// resort when every compaction model failed at capacity.
-			adoptDecay := func(requestID string) (bool, error) {
-				decayed := decayVerbatimTail(msgs[1:], a.Model)
-				next := append([]provider.ChatMessage{msgs[0]}, decayed...)
-				after := estimateCanonicalRequest(next, allTools, a.Model)
-				if after >= hardLimit || after >= activeTokens {
-					return false, nil
-				}
-				if a.PrepareCompaction != nil {
-					if err := a.PrepareCompaction(CompactionSource{
-						Messages: append([]provider.ChatMessage(nil), msgs[1:]...), BeforeTokens: activeTokens,
-						ContextWindow: ctxWindow, RequestID: requestID, Trigger: "decay", Role: role,
-						AccountID: a.Provider.AccountID, ProviderID: a.Provider.ID, ModelID: a.Model,
-					}); err != nil {
-						return false, &compactionStorageError{err}
-					}
-				}
-				stageCount := len(rootprompt.CompactionStages())
-				data := compactionEventData(requestID, "decay", role, stageCount, stageCount, activeTokens, after, ctxWindow)
-				data["account_id"], data["provider_id"], data["model_id"] = a.Provider.AccountID, a.Provider.ID, a.Model
-				emit(AgentEvent{Type: "context_compaction_committing", Data: data})
-				if a.CommitCompaction != nil {
-					if err := a.CommitCompaction(CompactionCommit{
-						Messages: decayed, BeforeTokens: activeTokens, AfterTokens: after,
-						ContextWindow: ctxWindow, RequestID: requestID, Trigger: "decay", Role: role,
-						AccountID: a.Provider.AccountID, ProviderID: a.Provider.ID, ModelID: a.Model,
-					}); err != nil {
-						return false, &compactionStorageError{err}
-					}
-				}
-				msgs = next
-				if !runtimeNoticesAccepted && len(runtimeNoticeIDs) > 0 && a.RuntimeNoticesAccepted != nil {
-					a.RuntimeNoticesAccepted()
-					runtimeNoticesAccepted = true
-				}
-				overflowPressure = false
-				planner.clearDeferral()
-				emit(AgentEvent{Type: "context_compacted", Data: data})
-				contextUsage.reset()
-				prefix.reset()
-				planner.learn(a, 0, 0, after, provider.TokenUsage{})
-				return true, nil
-			}
-
 			job := slot.current()
-			if job != nil && !job.matches(msgs, a.Model) {
+			if job != nil && !job.matches(msgs, combinedCompactionKey(a.Provider, a.Model), combinedCompactionKey(compactionConnection, compactionModel)) {
 				// The context no longer starts with what the job summarized
 				// (another checkpoint or a model switch replaced it).
 				slot.discard(job)
 				job = nil
 			}
-			if job != nil && plan.force && overflowPressure {
-				// The provider rejected this context; only a full checkpoint helps.
+			if job != nil && (overflowPressure || requested != "") {
+				// Manual requests own their operation ID; overflow starts from the exact source.
 				slot.discard(job)
 				job = nil
 			}
@@ -704,44 +629,41 @@ steps:
 					return returnMessages()
 				}
 			}
-			if job != nil && job.ready() && job.err == nil && !deferred && planner.adoptPrepared(a, activeTokens, postCompaction, hardLimit) {
-				plan.swap, plan.reason = true, "a prepared checkpoint now costs less than carrying the older context"
+			if job != nil && job.ready() && job.err == nil && !deferred {
+				remaining := 0
+				if job.cut < len(msgs) {
+					remaining = job.outcome.AfterTokens + max(0, activeTokens-job.sourceTokens)
+				}
+				if planner.adoptPrepared(a, activeTokens, remaining, postCompaction, hardLimit) {
+					plan.swap, plan.reason = true, "a prepared checkpoint now costs less than carrying the older context"
+				}
 			}
+			var prepared *precompactionJob
 			if job != nil && job.ready() && (plan.swap || plan.force) {
 				slot.discard(job)
-				unusable := job.err
 				if job.err == nil {
-					adopted, err := adopt(job.outcome, job.cut, job.requestID, "background", true)
-					if adopted {
-						continue steps
-					}
-					var storage *compactionStorageError
-					if errors.As(err, &storage) {
-						stopOnCompaction(err)
-						return returnMessages()
-					}
-					l.Warn("COMPACT", "background_checkpoint_discarded", "error", fmt.Sprint(err))
-					unusable = err
-				}
-				if finishing != nil {
-					// The run compacts synchronously next; this boundary records
-					// why the prepared checkpoint was not used.
+					prepared = job
+					trigger = "background"
+				} else if finishing != nil {
 					failed := maps.Clone(finishing)
 					failed["deferred"] = true
-					failed["error"] = "background checkpoint unusable: " + compactErrorText(unusable) + "; compacting now"
+					failed["error"] = compactErrorText(job.err) + "; compacting now"
 					emit(AgentEvent{Type: "context_compaction_failed", Data: failed})
 				}
 				job = nil
 			}
-			if job == nil && plan.prepare && !plan.force && !serial && cut >= 2 && !deferred {
-				slot.start(a, msgs, allTools, cut, tailHasHuman, checkpointTarget, ctxWindow, activeTokens-tailTokens)
+			if prepared == nil && job == nil && plan.prepare && !plan.force && !serial && !deferred {
+				slot.start(a, msgs, allTools, checkpointTarget, ctxWindow, activeTokens)
 			}
-			if plan.force || serial && plan.swap {
+			if prepared != nil || plan.force || serial && plan.swap {
 				requestID := requested
+				if prepared != nil {
+					requestID = prepared.requestID
+				}
 				if requestID == "" {
 					requestID = fmt.Sprintf("%016x%016x", rand2.Uint64(), rand2.Uint64())
 				}
-				compactor := a.backgroundCompactor(ctxWindow, checkpointTarget, tailHasHuman)
+				compactor := a.backgroundCompactor(ctxWindow, checkpointTarget)
 				if a.PrepareCompaction != nil {
 					if err := a.PrepareCompaction(CompactionSource{
 						Messages: append([]provider.ChatMessage(nil), msgs[1:]...), BeforeTokens: activeTokens,
@@ -752,41 +674,42 @@ steps:
 						return returnMessages()
 					}
 				}
-				// Provider-reported usage covers what local estimates miss
-				// (media, reasoning, protocol overhead); the source is never
-				// smaller than the reported context minus the verbatim tail.
-				source := msgs[:cut]
-				sourceTokens := max(estimateCanonicalRequest(source, allTools, a.Model), activeTokens-tailTokens)
-				outcome, compactErr := compactor.compactWithModel(ctx, source, allTools, requestID, sourceTokens, trigger, emit)
+				source := msgs[1:]
+				var outcome compactOutcome
+				var compactErr error
+				if prepared != nil && prepared.cut == len(msgs) {
+					outcome = prepared.outcome
+					emit(AgentEvent{Type: "context_compaction_started", Data: compactionEventData(requestID, trigger, role, 0, 0, activeTokens, 0, ctxWindow)})
+				} else {
+					if prepared != nil {
+						// The snapshot covered whole tool rounds. Feed its checkpoint
+						// and subsequent complete rounds to the extractor, never to
+						// the main model. Use the original msgs for retention/commit.
+						source = append([]provider.ChatMessage{prepared.outcome.Messages[0]}, msgs[prepared.cut:]...)
+					}
+					outcome, compactErr = compactor.compactSource(ctx, msgs, source, allTools, requestID, activeTokens, trigger, emit)
+					if prepared != nil {
+						outcome.Usage = addTokenUsage(outcome.Usage, prepared.outcome.Usage)
+					}
+				}
 				atCapacity := overflowPressure || activeTokens >= hardLimit
 				if compactErr != nil && ctx.Err() == nil && atCapacity && compactionModelUnavailable(compactErr) &&
-					a.CompactionProvider != nil && !provider.SameConnection(a.CompactionProvider, a.Provider) {
+					a.CompactionProvider != nil && (a.CompactionProvider.Model != a.Model || !provider.SameConnection(a.CompactionProvider, a.Provider)) {
 					// Last resort: the next request cannot be sent and the
 					// configured compaction connection is unavailable (input
 					// limits are already adapted by the extractor). The
 					// agent's own connection writes this one checkpoint.
 					l.Warn("COMPACT", "compaction_model_fallback", "error", compactErr.Error())
-					outcome, compactErr = a.compactorFor(true, ctxWindow, checkpointTarget, tailHasHuman).compactWithModel(ctx, source, allTools, requestID, sourceTokens, trigger, emit)
+					outcome, compactErr = a.compactorFor(true, ctxWindow, checkpointTarget).compactSource(ctx, msgs, source, allTools, requestID, activeTokens, trigger, emit)
 				}
 				if compactErr == nil {
-					adopted, err := adopt(outcome, cut, requestID, trigger, false)
+					adopted, err := adopt(outcome, requestID, trigger)
 					if adopted {
 						continue steps
 					}
 					compactErr = err
 				}
 				var storage *compactionStorageError
-				if compactErr != nil && ctx.Err() == nil && atCapacity && !errors.As(compactErr, &storage) {
-					// No model could summarize. Old re-runnable reads still
-					// make room without one: they are stubbed with how to fetch
-					// them again, and everything else stays verbatim.
-					if adopted, err := adoptDecay(requestID); adopted {
-						l.Warn("COMPACT", "decayed_without_model", "error", compactErr.Error())
-						continue steps
-					} else if err != nil {
-						compactErr = err
-					}
-				}
 				data := compactionEventData(requestID, trigger, role, outcome.StageIndex, outcome.Completed, activeTokens, 0, ctxWindow)
 				data["account_id"], data["provider_id"], data["model_id"] = outcome.AccountID, outcome.ProviderID, outcome.ModelID
 				data["stage_label"], data["retry"], data["error"] = outcome.StageName, outcome.RetryAttempt, compactErrorText(compactErr)
@@ -1010,7 +933,7 @@ steps:
 					"turn_generation":     a.TurnGeneration,
 					"reported_at":         time.Now().UnixNano(),
 					"estimated":           false,
-					"cost_upper_bound":    cacheUsageUnknown,
+					"cost_upper_bound":    a.Provider.ProtocolID() == "ollama" && !completion.Usage.CacheReadKnown,
 					"partial_or_retry":    true,
 				}})
 			}
@@ -1165,7 +1088,7 @@ steps:
 			"turn_generation":     a.TurnGeneration,
 			"reported_at":         time.Now().UnixNano(),
 			"estimated":           estimated,
-			"cost_upper_bound":    cacheUsageUnknown,
+			"cost_upper_bound":    a.Provider.ProtocolID() == "ollama" && !completion.Usage.CacheReadKnown,
 		}})
 
 		accumulatedText := completion.Content

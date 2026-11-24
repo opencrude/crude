@@ -1947,8 +1947,11 @@ Code's language client (`vscode-languageserver-node`,
 - **Providers.** The static `diagnosticProvider` and each
   `client/registerCapability` registration of `textDocument/diagnostic` are
   providers of the launch, matched to open documents by their document
-  selector (language, file scheme, LSP glob through doublestar). Dynamic completion uses the same selector. Other methods are not advertised
-  for dynamic registration. `client/unregisterCapability` removes a
+  selector (language, file scheme, LSP glob through doublestar). Dynamic completion
+  uses the same selector. Crude also accepts configuration-change registrations:
+  settings are immutable until a new launch, so there are no later changes to
+  dispatch on the old connection. Other methods are not advertised for dynamic
+  registration. `client/unregisterCapability` removes a
   provider and its part.
 - **Document pull.** A document is pulled after `didOpen`, after each admitted
   `didChange` (already paced by **Update delay**), after save and on

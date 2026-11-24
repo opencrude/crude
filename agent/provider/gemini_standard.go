@@ -475,26 +475,26 @@ type geminiPart struct {
 type geminiUsage struct {
 	PromptTokenCount        int    `json:"promptTokenCount"`
 	CandidatesTokenCount    int    `json:"candidatesTokenCount"`
-	CachedContentTokenCount int    `json:"cachedContentTokenCount"`
+	CachedContentTokenCount *int   `json:"cachedContentTokenCount"`
 	ThoughtsTokenCount      int    `json:"thoughtsTokenCount"`
 	ToolUsePromptTokenCount int    `json:"toolUsePromptTokenCount"`
 	ServiceTier             string `json:"serviceTier"`
 }
 
 // tokenUsage normalizes Gemini usage. Cached tokens are part of the prompt;
-// thoughts are billed as output. The API omits a zero cache count, so cache
-// reads are always known.
+// thoughts are billed as output. An omitted cache count does not establish
+// a miss on a compatible gateway.
 func (u geminiUsage) tokenUsage() TokenUsage {
-	return TokenUsage{
-		PromptTokens:       u.PromptTokenCount + u.ToolUsePromptTokenCount,
-		CompletionTokens:   u.CandidatesTokenCount + u.ThoughtsTokenCount,
-		PromptTokensCached: u.CachedContentTokenCount,
-		CacheReadKnown:     true,
-		ReasoningTokens:    u.ThoughtsTokenCount,
-		ReasoningKnown:     true,
-		ReasoningInOutput:  true,
-		ServiceTier:        u.ServiceTier,
+	usage := TokenUsage{
+		PromptTokens:      u.PromptTokenCount + u.ToolUsePromptTokenCount,
+		CompletionTokens:  u.CandidatesTokenCount + u.ThoughtsTokenCount,
+		ReasoningTokens:   u.ThoughtsTokenCount,
+		ReasoningKnown:    true,
+		ReasoningInOutput: true,
+		ServiceTier:       u.ServiceTier,
 	}
+	usage.setCacheRead(u.CachedContentTokenCount)
+	return usage
 }
 
 // geminiStreamDecoder assembles one model turn from stream chunks. Text
@@ -690,7 +690,7 @@ func (d *geminiStreamDecoder) response(update StreamUpdate) *ChatResponse {
 		response.Usage = &ChatUsage{
 			PromptTokens: usage.PromptTokens, CompletionTokens: usage.CompletionTokens,
 			TotalTokens:             usage.PromptTokens + usage.CompletionTokens,
-			PromptTokensDetails:     &PromptTokenDetails{CachedTokens: usage.PromptTokensCached, CacheReadKnown: true},
+			PromptTokensDetails:     &PromptTokenDetails{CachedTokens: usage.PromptTokensCached, CacheReadKnown: usage.CacheReadKnown},
 			CompletionTokensDetails: &CompletionTokenDetails{ReasoningTokens: usage.ReasoningTokens, ReasoningKnown: true},
 		}
 	}

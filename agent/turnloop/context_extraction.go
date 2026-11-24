@@ -34,7 +34,6 @@ type compactionExtractor struct {
 	learnedOutputLimit int
 	usageRatio         float64
 	usage              provider.TokenUsage
-	requestNumber      int
 	retryAttempt       int
 }
 
@@ -68,7 +67,6 @@ func (extractor *compactionExtractor) request(source []provider.ChatMessage, dir
 	if input > extractor.inputBudget {
 		return extractor.partition(source, directive, depth)
 	}
-	extractor.requestNumber++
 	var lastErr error
 	for attempt := 0; attempt <= compactionStageRecoveries; attempt++ {
 		if input > extractor.inputBudget {
@@ -76,7 +74,9 @@ func (extractor *compactionExtractor) request(source []provider.ChatMessage, dir
 		}
 		completion, err := extractor.agent.completeStreamWithOptions(extractor.ctx, messages, nil, nil, nil, nil, nil, nil, nil, nil,
 			completionRequestOptions{toolChoice: "none", maxOutputTokens: extractor.responseBudget, maxAttempts: 1, compaction: true})
-		requestID := fmt.Sprintf("%s/%s/%d/%d", extractor.requestID, extractor.stage.Name, extractor.requestNumber, attempt+1)
+		// Preparation, subsequent reduction and fallback share one operation,
+		// but each billable request needs its own durable usage row.
+		requestID := provider.NewMessageID()
 		extractor.usage = addTokenUsage(extractor.usage, completion.Usage)
 		extractor.agent.emitCompactionUsage(extractor.emit, completion.Usage, requestID, extractor.requestID, extractor.trigger, extractor.role, extractor.stage.Name, attempt > 0 || err != nil, err == nil)
 		if window > 0 && input > 0 && completion.Usage.PromptTokens > input && completion.Usage.PromptTokens <= window-contextSafetyReserve(window) {

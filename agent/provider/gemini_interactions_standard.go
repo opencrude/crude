@@ -416,11 +416,11 @@ type geminiInteraction struct {
 	ServiceTier string            `json:"service_tier"`
 	Steps       []json.RawMessage `json:"steps"`
 	Usage       *struct {
-		TotalInputTokens   int `json:"total_input_tokens"`
-		TotalCachedTokens  int `json:"total_cached_tokens"`
-		TotalOutputTokens  int `json:"total_output_tokens"`
-		TotalThoughtTokens int `json:"total_thought_tokens"`
-		TotalToolUseTokens int `json:"total_tool_use_tokens"`
+		TotalInputTokens   int  `json:"total_input_tokens"`
+		TotalCachedTokens  *int `json:"total_cached_tokens"`
+		TotalOutputTokens  int  `json:"total_output_tokens"`
+		TotalThoughtTokens int  `json:"total_thought_tokens"`
+		TotalToolUseTokens int  `json:"total_tool_use_tokens"`
 	} `json:"usage"`
 }
 
@@ -644,15 +644,14 @@ func (d *geminiStepDecoder) complete(interaction geminiInteraction, update Strea
 	}
 	if usage := interaction.Usage; usage != nil {
 		update.Usage = &TokenUsage{
-			PromptTokens:       usage.TotalInputTokens + usage.TotalToolUseTokens,
-			CompletionTokens:   usage.TotalOutputTokens + usage.TotalThoughtTokens,
-			PromptTokensCached: usage.TotalCachedTokens,
-			CacheReadKnown:     true,
-			ReasoningTokens:    usage.TotalThoughtTokens,
-			ReasoningKnown:     true,
-			ReasoningInOutput:  true,
-			ServiceTier:        interaction.ServiceTier,
+			PromptTokens:      usage.TotalInputTokens + usage.TotalToolUseTokens,
+			CompletionTokens:  usage.TotalOutputTokens + usage.TotalThoughtTokens,
+			ReasoningTokens:   usage.TotalThoughtTokens,
+			ReasoningKnown:    true,
+			ReasoningInOutput: true,
+			ServiceTier:       interaction.ServiceTier,
 		}
+		update.Usage.setCacheRead(usage.TotalCachedTokens)
 	}
 	update.Done = true
 	return update, nil

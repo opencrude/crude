@@ -477,7 +477,7 @@ excluded before grouping, spacers and height calculation. Internal
 actor generations still include stopped/unbilled work for cancellation and
 recovery, but are not the displayed successful-call count.
 **Automatic compaction paints as one ordinary tool row, never the operation
-table.** Automatic, background-prepared and decay boundaries use the shared tool
+table.** Automatic, background-prepared and previously recorded decay boundaries use the shared tool
 title (`paintToolTitle`) with no context-boundary rules and no blank rows beyond
 the item's single leading spacer: `Compacting context <before> — <stage>` while
 it works (`— retry n/m` and `— saving checkpoint` name those phases), `Compacted

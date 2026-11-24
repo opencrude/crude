@@ -111,6 +111,8 @@ detail: read the sections that the current checkpoint names.
 
 | 2026-11-24 | Diagnose stale Problems, tree and footer counts and repair completion and inline workflows against their source owners. Check observed performance warnings without requiring manual Refresh. | User |
 
+| 2026-11-24 | Fix the recurring language-server crash and the protocol mismatch found by Errand. | User |
+
 ### Open decisions
 
 None. The 2026-11-03 setup questions are answered in
@@ -140,6 +142,18 @@ Known exception: the compilation-database and CMake importers in
 them; they are not a template for language-specific modules.
 
 ## Current checkpoint
+
+**Configuration registration and crash recovery (2026-11-24): verified.**
+The installed Dockerfile server 0.15.0 exited when Crude rejected its
+registration for configuration changes. Crude now accepts that subscription
+for the lifetime of its immutable launch settings. This is separate from
+answering `workspace/configuration` ([LSP specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#workspace_didChangeConfiguration),
+[VS Code client](https://github.com/microsoft/vscode-languageserver-node/blob/main/client/src/common/configuration.ts)).
+`TestDockerfileConfigurationRegistrationKeepsDiagnosticsAlive` gets the error
+for an unknown instruction and a clean report after its removal without a
+restart. A mixed-registration fixture still rejects unsupported methods;
+`TestLSPUnexpectedExitRestartsWithinBound` checks the unchanged restart budget.
+No server-specific production code or change to tool acquisition.
 
 **Immediate action: diagnostic agreement and unreliable completion (2026-11-23).**
 The working tree retains an early shortcut, scopes source fences to its producer

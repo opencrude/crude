@@ -1159,7 +1159,7 @@ fragments and bounded model-backed chunk-and-reduce instead of deleting history.
 Provider-confirmed overflow retries only after reducing the request; extraction
 capacity adapts to reported usage and explicit context-limit rejections.
 Checkpoints and verbatim human retention are sized for the continuation model.
-Recent turns always stay verbatim after a checkpoint. Each agent's **Keep older
+A checkpoint summarizes recent tool rounds too. Each agent's **Keep older
 input** setting bounds older verbatim human requests; blank (Auto) keeps them up
 to the checkpoint's own size, and an explicit value is 1,000 to 200,000 estimated
 tokens. Application values

@@ -16,44 +16,6 @@ import (
 	"crude/agent/tools"
 )
 
-func TestVerbatimTailKeepsRecentTurnsAndNeverOutweighsTheSummary(t *testing.T) {
-	msgs := []provider.ChatMessage{provider.NewTextMessage("system", "system")}
-	for turn := 0; turn < 8; turn++ {
-		msgs = append(msgs,
-			provider.NewTextMessage("user", fmt.Sprintf("request %d", turn)),
-			provider.NewTextMessage("assistant", strings.Repeat("analysis ", 2_000)),
-		)
-	}
-	cut, tailHuman := verbatimTailCut(msgs, "root", "model")
-	if cut != len(msgs)-4 || !tailHuman {
-		t.Fatalf("cut=%d tailHuman=%t; want the previous and current turns kept (cut %d)", cut, tailHuman, len(msgs)-4)
-	}
-
-	// One huge current turn: whole turns cannot stay, so a later tool round
-	// is the boundary, never a tool result.
-	long := []provider.ChatMessage{provider.NewTextMessage("system", "system"), provider.NewTextMessage("user", "do the long task")}
-	for round := 0; round < 6; round++ {
-		call := provider.NewTextMessage("assistant", "")
-		call.ToolCalls = []provider.ToolCall{{ID: fmt.Sprintf("call-%d", round), Type: "function", Function: provider.FunctionCall{Name: "read_file", Arguments: "{}"}}}
-		result := provider.NewTextMessage("tool", strings.Repeat("evidence ", 3_000))
-		result.ToolCallID = call.ToolCalls[0].ID
-		long = append(long, call, result)
-	}
-	cut, tailHuman = verbatimTailCut(long, "root", "model")
-	if cut <= 2 || cut >= len(long) || long[cut].Role != "assistant" || tailHuman {
-		t.Fatalf("long-turn cut=%d role=%q tailHuman=%t", cut, long[cut].Role, tailHuman)
-	}
-	tail := provider.EstimateMessagesTotal(long[cut:], "model")
-	summarized := provider.EstimateMessagesTotal(long[1:cut], "model")
-	if tail > summarized {
-		t.Fatalf("verbatim tail %d outweighs the summarized part %d", tail, summarized)
-	}
-
-	if cut, _ := verbatimTailCut(msgs[:2], "root", "model"); cut != 2 {
-		t.Fatalf("tiny context cut=%d, want everything summarized", cut)
-	}
-}
-
 func economicAgent(t *testing.T, model string) *Agent {
 	t.Helper()
 	p := provider.FromPreset("openai-chat", "key", "http://127.0.0.1:0")
@@ -74,7 +36,7 @@ func TestAdaptiveCompactionTriggersWhenContextCostsMoreThanACheckpoint(t *testin
 	const fixed, tail, hardLimit, window = 20_000, 10_000, 900_000, 1_000_000
 	prepareAt, swapAt := 0, 0
 	for active := 60_000; active < hardLimit && swapAt == 0; active += 6_000 {
-		plan := planner.evaluate(a, active, fixed, tail, hardLimit, window, false)
+		plan := planner.evaluate(a, active, fixed, hardLimit, window, false)
 		if plan.force {
 			t.Fatalf("economic plan forced at %d tokens", active)
 		}
@@ -99,7 +61,7 @@ func TestAdaptiveCompactionTriggersWhenContextCostsMoreThanACheckpoint(t *testin
 	unreported := newCompactionPlanner(30_000)
 	unreportedAt := 0
 	for active := 60_000; active < hardLimit && unreportedAt == 0; active += 6_000 {
-		if plan := unreported.evaluate(a, active, fixed, tail, hardLimit, window, false); plan.swap {
+		if plan := unreported.evaluate(a, active, fixed, hardLimit, window, false); plan.swap {
 			unreportedAt = active
 		}
 		unreported.observe(a, provider.TokenUsage{PromptTokens: active}, active, fixed+30_000+tail)
@@ -116,7 +78,7 @@ func TestAdaptiveCompactionTriggersWhenContextCostsMoreThanACheckpoint(t *testin
 	tokens := newCompactionPlanner(30_000)
 	tokensAt := 0
 	for active := 60_000; active < hardLimit && tokensAt == 0; active += 6_000 {
-		if plan := tokens.evaluate(unpriced, active, fixed, tail, hardLimit, window, false); plan.swap {
+		if plan := tokens.evaluate(unpriced, active, fixed, hardLimit, window, false); plan.swap {
 			tokensAt = active
 		}
 		tokens.observe(unpriced, provider.TokenUsage{PromptTokens: active, PromptTokensCached: active - 6_000, CacheReadKnown: true}, active, fixed+30_000+tail)
@@ -131,7 +93,7 @@ func TestAdaptiveCompactionTriggersWhenContextCostsMoreThanACheckpoint(t *testin
 	blind := newCompactionPlanner(30_000)
 	blindAt := 0
 	for active := 60_000; active < hardLimit && blindAt == 0; active += 6_000 {
-		if plan := blind.evaluate(unpriced, active, fixed, tail, hardLimit, window, false); plan.swap {
+		if plan := blind.evaluate(unpriced, active, fixed, hardLimit, window, false); plan.swap {
 			blindAt = active
 		}
 		blind.observe(unpriced, provider.TokenUsage{}, active, fixed+30_000+tail)
@@ -157,14 +119,14 @@ func TestCheapCompactorNeverCompactsAPremiumWindowEarly(t *testing.T) {
 	previous := 0
 	for active := 30_000; active < hardLimit/2; active += 12_000 {
 		tail := active / 4
-		plan := planner.evaluate(a, active, fixed, tail, hardLimit, window, false)
+		plan := planner.evaluate(a, active, fixed, hardLimit, window, false)
 		if plan.swap || plan.force || plan.prepare && active < hardLimit*3/8 {
 			t.Fatalf("checkpoint planned at %d of %d tokens: %+v", active, hardLimit, plan)
 		}
 		planner.observe(a, provider.TokenUsage{PromptTokens: active, PromptTokensCached: previous, CacheReadKnown: true}, active, fixed+40_000+tail)
 		previous = active
 	}
-	if plan := planner.evaluate(a, hardLimit-1_000, fixed, 100_000, hardLimit, window, false); !plan.swap {
+	if plan := planner.evaluate(a, hardLimit-1_000, fixed, hardLimit, window, false); !plan.swap {
 		t.Fatalf("near capacity the checkpoint must be adopted: %+v", plan)
 	}
 }
@@ -173,16 +135,16 @@ func TestExplicitPercentIsABoundaryAndPreparationStartsHalfway(t *testing.T) {
 	a := economicAgent(t, "explicit-percent-model")
 	a.ContextCompactionPercent = 50
 	planner := newCompactionPlanner(0)
-	if plan := planner.evaluate(a, 200_000, 10_000, 0, 900_000, 1_000_000, false); plan.prepare || plan.swap {
+	if plan := planner.evaluate(a, 200_000, 10_000, 900_000, 1_000_000, false); plan.prepare || plan.swap {
 		t.Fatalf("plan below halfway=%+v", plan)
 	}
-	if plan := planner.evaluate(a, 300_000, 10_000, 0, 900_000, 1_000_000, false); !plan.prepare || plan.swap {
+	if plan := planner.evaluate(a, 300_000, 10_000, 900_000, 1_000_000, false); !plan.prepare || plan.swap {
 		t.Fatalf("plan past halfway=%+v", plan)
 	}
-	if plan := planner.evaluate(a, 500_000, 10_000, 0, 900_000, 1_000_000, false); !plan.swap || !plan.force {
+	if plan := planner.evaluate(a, 500_000, 10_000, 900_000, 1_000_000, false); !plan.swap || !plan.force {
 		t.Fatalf("plan at the configured percent=%+v", plan)
 	}
-	if plan := planner.evaluate(a, 900_000, 10_000, 0, 900_000, 1_000_000, false); !plan.force {
+	if plan := planner.evaluate(a, 900_000, 10_000, 900_000, 1_000_000, false); !plan.force {
 		t.Fatalf("plan at capacity=%+v", plan)
 	}
 }
@@ -190,12 +152,15 @@ func TestExplicitPercentIsABoundaryAndPreparationStartsHalfway(t *testing.T) {
 // precompactionServer answers compaction extractions with a combined
 // checkpoint and main requests with tool rounds, recording the order.
 type precompactionServer struct {
-	mu          sync.Mutex
-	order       []string
-	main        atomic.Int32
-	compactions atomic.Int32
-	rounds      int32
-	finals      []provider.ChatRequest
+	missingModel           string
+	mu                     sync.Mutex
+	order                  []string
+	main                   atomic.Int32
+	compactions            atomic.Int32
+	rounds                 int32
+	finals                 []provider.ChatRequest
+	firstCheckpointRequest *provider.ChatRequest
+	extractionSources      []string
 	// usage reports provider token usage on main requests, with the previous
 	// request's prompt as the cached prefix, so spend accounting sees real cost.
 	usage  bool
@@ -208,15 +173,29 @@ func (server *precompactionServer) handler(t *testing.T) http.HandlerFunc {
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Error(err)
 		}
+		if server.missingModel != "" && request.Model == server.missingModel {
+			http.Error(w, `{"error":{"message":"model unavailable","type":"not_found"}}`, http.StatusNotFound)
+			return
+		}
 		var text strings.Builder
 		for _, message := range request.Messages {
 			text.WriteString(message.ContentString())
 		}
 		if strings.Contains(text.String(), "Context compaction extraction contract") {
 			server.compactions.Add(1)
+			server.mu.Lock()
+			server.extractionSources = append(server.extractionSources, text.String())
+			server.mu.Unlock()
 			server.record("compaction")
 			writeChatSSE(w, "<<<intent>>>\n- finish the long task\n<<<work>>>\n- rounds summarized\n<<<state>>>\n- workspace clean\n<<<continuation>>>\n- continue with the next round", "stop")
 			return
+		}
+		if strings.Contains(text.String(), "<context_checkpoint") {
+			server.mu.Lock()
+			if server.firstCheckpointRequest == nil {
+				server.firstCheckpointRequest = &request
+			}
+			server.mu.Unlock()
 		}
 		call := server.main.Add(1)
 		server.record("main")
@@ -263,7 +242,7 @@ func precompactionAgent(t *testing.T, url, model string) *Agent {
 	return a
 }
 
-func TestBackgroundCheckpointIsPreparedWhileTheAgentWorksAndAdoptedWithRecentContextVerbatim(t *testing.T) {
+func TestBackgroundCheckpointDoesNotReplayToolHistoryOnColdRequest(t *testing.T) {
 	server := &precompactionServer{rounds: 14}
 	endpoint := httptest.NewServer(server.handler(t))
 	defer endpoint.Close()
@@ -295,6 +274,15 @@ func TestBackgroundCheckpointIsPreparedWhileTheAgentWorksAndAdoptedWithRecentCon
 	if adopted == nil || adopted["trigger"] != "background" {
 		t.Fatalf("checkpoint was not adopted from the background: %+v", adopted)
 	}
+	if r := server.firstCheckpointRequest; r == nil {
+		t.Fatal("no continuation on wire")
+	} else {
+		for _, m := range r.Messages {
+			if m.Role == "tool" || len(m.ToolCalls) > 0 || strings.Contains(m.ContentString(), strings.Repeat("evidence ", 100)) {
+				t.Fatalf("first continuation replayed a %d-byte %s message", len(m.ContentString()), m.Role)
+			}
+		}
+	}
 	first := -1
 	for index, kind := range server.order {
 		if kind == "compaction" && first < 0 {
@@ -322,44 +310,92 @@ func TestBackgroundCheckpointIsPreparedWhileTheAgentWorksAndAdoptedWithRecentCon
 	}
 }
 
-func TestPreparedCheckpointSurvivesTheEndOfARun(t *testing.T) {
-	server := &precompactionServer{rounds: 0}
-	endpoint := httptest.NewServer(server.handler(t))
-	defer endpoint.Close()
-	slot := NewPrecompactionSlot(t.Context(), nil)
-	defer slot.Close()
-	a := precompactionAgent(t, endpoint.URL, "precompaction-slot-model")
-	a.Precompaction = slot
-	history := []provider.ChatMessage{}
-	for turn := 0; turn < 8; turn++ {
-		history = append(history,
-			provider.NewTextMessage("user", fmt.Sprintf("request %d", turn)),
-			provider.NewTextMessage("assistant", strings.Repeat("analysis ", 1_500)),
-		)
-	}
-	history = append(history, provider.NewTextMessage("user", "short question"))
-	archive := a.Run(t.Context(), history, "system", nil, nil, "", nil)
-	job := slot.current()
-	if job == nil {
-		t.Fatal("no background preparation was started past halfway")
-	}
-	if err := job.wait(t.Context()); err != nil || job.err != nil {
-		t.Fatalf("preparation outlived its run but failed: wait=%v job=%v", err, job.err)
-	}
-	prepared := server.compactions.Load()
+func TestPreparedCheckpointAcrossRequestBoundaries(t *testing.T) {
+	for _, mode := range []string{"resume", "new-account", "manual"} {
+		t.Run(mode, func(t *testing.T) {
+			server := &precompactionServer{rounds: 0}
+			endpoint := httptest.NewServer(server.handler(t))
+			defer endpoint.Close()
+			var usageMu sync.Mutex
+			requests := map[string]bool{}
+			recordUsage := func(e AgentEvent) {
+				if e.Type != "usage" {
+					return
+				}
+				d, _ := e.Data.(map[string]any)
+				if d["request_kind"] != "compaction" {
+					return
+				}
+				id, _ := d["request_id"].(string)
+				usageMu.Lock()
+				defer usageMu.Unlock()
+				if id == "" || requests[id] {
+					t.Errorf("duplicate or missing extraction request id: %q", id)
+				}
+				requests[id] = true
+			}
+			slot := NewPrecompactionSlot(t.Context(), recordUsage)
+			defer slot.Close()
+			a := precompactionAgent(t, endpoint.URL, "precompaction-slot-model")
+			a.Precompaction = slot
+			history := []provider.ChatMessage{}
+			for turn := 0; turn < 8; turn++ {
+				history = append(history,
+					provider.NewTextMessage("user", fmt.Sprintf("request %d", turn)),
+					provider.NewTextMessage("assistant", strings.Repeat("analysis ", 1_500)),
+				)
+			}
+			history = append(history, provider.NewTextMessage("user", "short question"))
+			archive := a.Run(t.Context(), history, "system", nil, nil, "", nil)
+			job := slot.current()
+			if job == nil {
+				t.Fatal("no background preparation was started past halfway")
+			}
+			if err := job.wait(t.Context()); err != nil || job.err != nil {
+				t.Fatalf("preparation outlived its run but failed: wait=%v job=%v", err, job.err)
+			}
+			prepared := server.compactions.Load()
 
-	next := a
-	next.Precompaction = slot
-	followUp := append(append([]provider.ChatMessage(nil), archive[1:]...), provider.NewTextMessage("user", strings.Repeat("more detail ", 11_500)))
-	var compacted bool
-	next.Run(t.Context(), followUp, "system", func(event AgentEvent) {
-		if event.Type == "context_compacted" {
-			data, _ := event.Data.(map[string]any)
-			compacted = data["trigger"] == "background"
-		}
-	}, nil, "", nil)
-	if !compacted || server.compactions.Load() != prepared {
-		t.Fatalf("next run did not adopt the prepared checkpoint: compacted=%t extractions %d -> %d", compacted, prepared, server.compactions.Load())
+			next := a
+			next.Precompaction = slot
+			wantTrigger := "background"
+			switch mode {
+			case "new-account":
+				next.Provider.AccountID = "different"
+				wantTrigger = "automatic"
+			case "manual":
+				wantTrigger = "requested"
+				next.CompactionRequest = func() string { next.CompactionRequest = nil; return "manual-id" }
+			}
+
+			followUp := append(append([]provider.ChatMessage(nil), archive[1:]...), provider.NewTextMessage("user", strings.Repeat("more detail ", 11_500)))
+			var compacted bool
+			next.Run(t.Context(), followUp, "system", func(event AgentEvent) {
+				recordUsage(event)
+				if event.Type == "context_compacted" {
+					data, _ := event.Data.(map[string]any)
+					compacted = data["trigger"] == wantTrigger && (mode != "manual" || data["request_id"] == "manual-id")
+				}
+			}, nil, "", nil)
+			if !compacted || server.compactions.Load() != prepared+1 {
+				t.Fatalf("next run did not adopt the prepared checkpoint: compacted=%t extractions %d -> %d", compacted, prepared, server.compactions.Load())
+			}
+			last := server.extractionSources[len(server.extractionSources)-1]
+			if !strings.Contains(last, "more detail") {
+				t.Fatal("new work was not extracted")
+			}
+			if reused := !strings.Contains(last, strings.Repeat("analysis ", 100)); reused != (mode == "resume") || (reused && !strings.Contains(last, "<context_checkpoint")) {
+				t.Fatalf("unexpected reuse of prepared summary: reused=%v mode=%s", reused, mode)
+			}
+			if len(requests) != 2 {
+				t.Fatalf("want two independently accounted extractions, got %d", len(requests))
+			}
+			for _, m := range server.finals[len(server.finals)-1].Messages {
+				if strings.Contains(m.ContentString(), strings.Repeat("more detail ", 100)) {
+					t.Fatal("large post-snapshot input replayed cold")
+				}
+			}
+		})
 	}
 }
 
@@ -373,7 +409,7 @@ func TestDiscardedBackgroundSummaryEmitsTerminalAndNoLateProgress(t *testing.T) 
 	defer slot.Close()
 	a := precompactionAgent(t, endpoint.URL, "summary-discard-model")
 	source := []provider.ChatMessage{provider.NewTextMessage("system", "system"), provider.NewTextMessage("user", strings.Repeat("prior work ", 1000))}
-	if !slot.start(a, source, nil, 2, false, 20_000, 100_000, 5000) {
+	if !slot.start(a, source, nil, 20_000, 100_000, 5000) {
 		t.Fatal("job did not start")
 	}
 	job := slot.current()
@@ -421,7 +457,7 @@ func TestClosingBackgroundSummaryPublishesCancellation(t *testing.T) {
 	defer slot.Close()
 	a := precompactionAgent(t, endpoint.URL, "summary-close-model")
 	source := []provider.ChatMessage{provider.NewTextMessage("system", "system"), provider.NewTextMessage("user", "prior work")}
-	if !slot.start(a, source, nil, 2, false, 20_000, 100_000, 1000) {
+	if !slot.start(a, source, nil, 20_000, 100_000, 1000) {
 		t.Fatal("job did not start")
 	}
 	select {
@@ -459,7 +495,7 @@ func TestUnusableBackgroundCheckpointSettlesItsAnnouncedBoundary(t *testing.T) {
 	slot := NewPrecompactionSlot(t.Context(), nil)
 	defer slot.Close()
 	job := &precompactionJob{
-		requestID: "background-job", cut: 3, digest: contextDigest(history[:2]), model: a.Model,
+		requestID: "background-job", cut: 3, digest: contextDigest(history[:2]), mainRoute: combinedCompactionKey(a.Provider, a.Model), extractionRoute: combinedCompactionKey(a.Provider, a.Model),
 		cancel: func() {}, done: make(chan struct{}), err: fmt.Errorf("compaction model unavailable"),
 	}
 	slot.job = job
@@ -667,36 +703,44 @@ func TestConnectionThatRefusedConcurrencyCompactsSynchronously(t *testing.T) {
 	}
 }
 
-func TestCheckpointDecaysOnlyOlderReobtainableToolResults(t *testing.T) {
-	round := func(id, tool, args, result string) []provider.ChatMessage {
+// If the extractor is unavailable at capacity, replacing just one old read
+// with a stub would fit, but would send the remaining tool output cold.
+func TestRequiredCheckpointFailureNeverSendsPartlyRewrittenHistory(t *testing.T) {
+	var normal atomic.Int32
+	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req provider.ChatRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Error(err)
+			return
+		}
+		if len(req.Tools) == 0 {
+			http.Error(w, `{"error":{"type":"authentication_error","message":"invalid credentials"}}`, http.StatusUnauthorized)
+			return
+		}
+		normal.Add(1)
+		writeChatSSE(w, "not expected", "stop")
+	}))
+	defer endpoint.Close()
+	a := precompactionAgent(t, endpoint.URL, "required-summary-model")
+	a.Provider.SetContextWindow(100_000)
+	history := []provider.ChatMessage{provider.NewTextMessage("user", "Preserve the results")}
+	for i, tool := range []string{"read_file", "execute_command"} {
+		id := fmt.Sprintf("tool-%d", i)
 		call := provider.NewTextMessage("assistant", "")
-		call.ToolCalls = []provider.ToolCall{{ID: id, Type: "function", Function: provider.FunctionCall{Name: tool, Arguments: args}}}
-		output := provider.NewTextMessage("tool", result)
-		output.ToolCallID, output.InternalID = id, "msg-"+id
-		return []provider.ChatMessage{call, output}
+		call.ToolCalls = []provider.ToolCall{{ID: id, Type: "function", Function: provider.FunctionCall{Name: tool, Arguments: "{}"}}}
+		n := 80_000
+		if i == 1 {
+			n = 25_000
+		}
+		result := provider.NewTextMessage("tool", strings.Repeat("data ", n))
+		result.ToolCallID = id
+		history = append(history, call, result)
 	}
-	bulky := strings.Repeat("line of file content\n", 400)
-	var tail []provider.ChatMessage
-	tail = append(tail, round("read-old", "read_file", `{"path":"agent/run.go"}`, bulky)...)
-	tail = append(tail, round("cmd-old", "execute_command", `{"command":"go test ./..."}`, bulky)...)
-	tail = append(tail, round("tiny", "list_directory", `{"path":"."}`, "a\nb")...)
-	tail = append(tail, round("read-new", "read_file", `{"path":"agent/agent.go"}`, bulky)...)
-	decayed := decayVerbatimTail(tail, "model")
-	if !strings.Contains(decayed[1].ContentString(), "left out at a context checkpoint") || !strings.Contains(decayed[1].ContentString(), "agent/run.go") ||
-		decayed[1].ToolCallID != "read-old" || decayed[1].InternalID != "msg-read-old-elided" {
-		t.Fatalf("older read was not replaced by a re-runnable stub: %+v", decayed[1])
-	}
-	if decayed[3].ContentString() != bulky {
-		t.Fatal("command output is not re-obtainable and must stay verbatim")
-	}
-	if decayed[5].ContentString() != "a\nb" {
-		t.Fatal("a result smaller than its stub was replaced")
-	}
-	if decayed[7].ContentString() != bulky {
-		t.Fatal("the latest tool round must stay whole")
-	}
-	if tail[1].ContentString() != bulky {
-		t.Fatal("decay mutated the caller's history")
+	var commits int
+	a.CommitCompaction = func(CompactionCommit) error { commits++; return nil }
+	a.Run(t.Context(), history, "system", nil, nil, "", nil)
+	if commits != 0 || normal.Load() != 0 || a.RunFailureKind() != RecoveryFailureCompaction {
+		t.Fatalf("required full checkpoint failed but commits=%d normal requests=%d failure=%v", commits, normal.Load(), a.RunFailure())
 	}
 }
 
@@ -704,12 +748,12 @@ func TestOneLargeJumpDoesNotKeepTheAgentNearCapacity(t *testing.T) {
 	a := economicAgent(t, "growth-reset-model")
 	a.ContextCompactionPercent = 90
 	planner := newCompactionPlanner(0)
-	planner.evaluate(a, 10_000, 1_000, 0, 100_000, 120_000, false)
-	if plan := planner.evaluate(a, 80_000, 1_000, 0, 100_000, 120_000, false); !plan.swap {
+	planner.evaluate(a, 10_000, 1_000, 100_000, 120_000, false)
+	if plan := planner.evaluate(a, 80_000, 1_000, 100_000, 120_000, false); !plan.swap {
 		t.Fatalf("a 70K jump to 80K of 100K must count as near capacity: %+v", plan)
 	}
 	planner.learn(a, 80_000, 5_000, 20_000, provider.TokenUsage{})
-	if plan := planner.evaluate(a, 21_000, 1_000, 0, 100_000, 120_000, false); plan.swap || plan.prepare {
+	if plan := planner.evaluate(a, 21_000, 1_000, 100_000, 120_000, false); plan.swap || plan.prepare {
 		t.Fatalf("after a checkpoint the old jump still forces compaction: %+v", plan)
 	}
 }
@@ -717,26 +761,31 @@ func TestOneLargeJumpDoesNotKeepTheAgentNearCapacity(t *testing.T) {
 func TestPreparedCheckpointIsAdoptedOnceItsColdCacheIsPaidFor(t *testing.T) {
 	a := economicAgent(t, "sunk-checkpoint-model")
 	planner := newCompactionPlanner(0)
-	if planner.adoptPrepared(a, 500_000, 20_000, 900_000) {
+	if planner.adoptPrepared(a, 500_000, 0, 20_000, 900_000) {
 		t.Fatal("adopted before any spend was observed")
 	}
 	// A cold 20K-token request costs (2e-6-0.2e-6)*20K = $0.036 more than a cached one.
 	for planner.excess < 0.036 {
 		planner.observe(a, provider.TokenUsage{PromptTokens: 500_000, PromptTokensCached: 499_000, CacheReadKnown: true}, 500_000, 20_000)
-		if planner.excess < 0.036 && planner.adoptPrepared(a, 500_000, 20_000, 900_000) {
+		if planner.excess < 0.036 && planner.adoptPrepared(a, 500_000, 0, 20_000, 900_000) {
 			t.Fatalf("adopted at excess %.4f, before the cold cache was paid for", planner.excess)
 		}
 	}
-	if !planner.adoptPrepared(a, 500_000, 20_000, 900_000) {
+	if !planner.adoptPrepared(a, 500_000, 0, 20_000, 900_000) {
 		t.Fatal("prepared checkpoint not adopted once carrying cost exceeded its cold request")
 	}
+	if planner.adoptPrepared(a, 500_000, 120_000, 20_000, 900_000) {
+		t.Fatal("ignored the outstanding reduction of the suffix")
+	}
 	a.ContextCompactionPercent = 80
-	if planner.adoptPrepared(a, 500_000, 20_000, 900_000) {
+	if planner.adoptPrepared(a, 500_000, 0, 20_000, 900_000) {
 		t.Fatal("an explicit percent must keep its own boundary")
 	}
 }
 
 func TestFailingCompactionModelNeverStopsTheAgentBeforeCapacity(t *testing.T) {
+	const window, response = 100_000, 2048
+	hard := window - response - contextSafetyReserve(window)
 	var compactions, mains atomic.Int32
 	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request provider.ChatRequest
@@ -750,8 +799,15 @@ func TestFailingCompactionModelNeverStopsTheAgentBeforeCapacity(t *testing.T) {
 			http.Error(w, `{"error":{"message":"model overloaded","type":"server_error"}}`, http.StatusServiceUnavailable)
 			return
 		}
+		input := estimateCanonicalRequest(request.Messages, request.Tools, request.Model)
+		if input >= hard {
+			t.Errorf("fixture reached capacity: %d of %d", input, hard)
+		}
 		call := mains.Add(1)
 		if call > 10 {
+			if input < hard/2 {
+				t.Error("fixture never reached background preparation pressure")
+			}
 			writeChatSSE(w, "finished", "stop")
 			return
 		}
@@ -760,6 +816,9 @@ func TestFailingCompactionModelNeverStopsTheAgentBeforeCapacity(t *testing.T) {
 	}))
 	defer endpoint.Close()
 	a := precompactionAgent(t, endpoint.URL, "failing-compactor-model")
+	// Keep all eleven requests below capacity without relying on emergency
+	// pruning. Required compaction failure is covered separately.
+	a.MaxOutputTokens = response
 	a.ContextCompactionPercent = 0 // adaptive: preparation past half capacity, never forced below it
 	a.compactionRetryDelay = func(int) time.Duration { return time.Millisecond }
 	var failedHard bool
@@ -781,29 +840,37 @@ func TestFailingCompactionModelNeverStopsTheAgentBeforeCapacity(t *testing.T) {
 }
 
 func TestMainModelWritesTheCheckpointWhenTheCompactionModelIsDown(t *testing.T) {
-	broken := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, `{"error":{"message":"invalid credentials","type":"authentication_error"}}`, http.StatusUnauthorized)
-	}))
-	defer broken.Close()
-	server := &precompactionServer{rounds: 14}
-	endpoint := httptest.NewServer(server.handler(t))
-	defer endpoint.Close()
-	a := precompactionAgent(t, endpoint.URL, "main-fallback-model")
-	compaction := provider.FromPreset("openai-chat", "key", broken.URL)
-	compaction.Model = "broken-compaction-model"
-	provider.SetModelContext(compaction.Model, 100_000)
-	a.CompactionProvider = compaction
-	var adopted bool
-	a.Run(t.Context(), []provider.ChatMessage{provider.NewTextMessage("user", "Do the long task")}, "system", func(event AgentEvent) {
-		if event.Type == "context_compacted" {
-			adopted = true
-		}
-		if event.Type == "error" {
-			t.Errorf("run stopped: %v", event.Data)
-		}
-	}, nil, "", nil)
-	if !adopted || server.compactions.Load() == 0 || len(server.finals) != 1 {
-		t.Fatalf("main connection did not stand in for the failing compaction model: adopted=%t main-model extractions=%d finals=%d", adopted, server.compactions.Load(), len(server.finals))
+	for _, sameEndpoint := range []bool{false, true} {
+		t.Run(fmt.Sprintf("same_endpoint=%t", sameEndpoint), func(t *testing.T) {
+			broken := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				http.Error(w, `{"error":{"message":"invalid credentials","type":"authentication_error"}}`, http.StatusUnauthorized)
+			}))
+			defer broken.Close()
+			server := &precompactionServer{rounds: 14, missingModel: "broken-compaction-model"}
+			endpoint := httptest.NewServer(server.handler(t))
+			defer endpoint.Close()
+			a := precompactionAgent(t, endpoint.URL, "main-fallback-model")
+			url := broken.URL
+			if sameEndpoint {
+				url = endpoint.URL
+			}
+			compaction := provider.FromPreset("openai-chat", "key", url)
+			compaction.Model = "broken-compaction-model"
+			provider.SetModelContext(compaction.Model, 100_000)
+			a.CompactionProvider = compaction
+			var adopted bool
+			a.Run(t.Context(), []provider.ChatMessage{provider.NewTextMessage("user", "Do the long task")}, "system", func(event AgentEvent) {
+				if event.Type == "context_compacted" {
+					adopted = true
+				}
+				if event.Type == "error" {
+					t.Errorf("run stopped: %v", event.Data)
+				}
+			}, nil, "", nil)
+			if !adopted || server.compactions.Load() == 0 || len(server.finals) != 1 {
+				t.Fatalf("main connection did not stand in for the failing compaction model: adopted=%t main-model extractions=%d finals=%d", adopted, server.compactions.Load(), len(server.finals))
+			}
+		})
 	}
 }
 
