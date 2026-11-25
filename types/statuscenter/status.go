@@ -78,13 +78,24 @@ const (
 	UsageAuxiliary UsageScope = "auxiliary"
 )
 
+// RequestCacheUsage reports the selected agent's latest recorded normal request.
+// Present is true even when that request did not report a usable cache count.
+type RequestCacheUsage struct {
+	Present    bool
+	InputTotal UsageValue
+	Read       UsageValue
+}
+
 // UsageSummary is a non-overlapping rollup for one explicit scope.
 type UsageSummary struct {
-	Scope          UsageScope
-	InputTotal     UsageValue
+	Scope      UsageScope
+	InputTotal UsageValue
+	// UncachedInput is input that was not read from cache, including input
+	// written to cache during the request. It does not depend on write reporting.
 	UncachedInput  UsageValue
 	CacheRead      UsageValue
 	CacheWrite     UsageValue
+	LatestCache    RequestCacheUsage
 	Output         UsageValue
 	Reasoning      UsageValue
 	ReasoningInOut bool

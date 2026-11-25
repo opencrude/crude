@@ -50,7 +50,7 @@ func TestShellStatusUsesSharedRailsAndOmitsZeroNoise(t *testing.T) {
 			t.Fatalf("footer repeats routine active-resource state %q: %q", noise, footer)
 		}
 	}
-	if !strings.Contains(header, "glm-5.3") || !strings.Contains(header, "71.5k/1.05M 7%") || !strings.Contains(header, "↓177") || !strings.Contains(header, "cache 20.0%") || !strings.Contains(header, "<$0.01") {
+	if !strings.Contains(header, "glm-5.3") || !strings.Contains(header, "71.5k/1.05M 7%") || !strings.Contains(header, "↓177") || !strings.Contains(header, "last cache ~20.0%") || !strings.Contains(header, "<$0.01") {
 		t.Fatalf("agent context missing from header: %q", header)
 	}
 	if strings.Contains(header, "Reasoning") || strings.Contains(header, "Responding") {

@@ -701,7 +701,7 @@ steps:
 					}
 					outcome, compactErr = compactor.compactSource(ctx, msgs, source, allTools, requestID, activeTokens, trigger, emit)
 					if prepared != nil {
-						outcome.Usage = addTokenUsage(outcome.Usage, prepared.outcome.Usage)
+						outcome.Usage = outcome.Usage.Add(prepared.outcome.Usage)
 					}
 				}
 				atCapacity := overflowPressure || activeTokens >= hardLimit

@@ -37,6 +37,9 @@ func (w *Workspace) recordAgentUsage(agentID string, data any) (statuscenter.Usa
 		sess.usageMu.Unlock()
 		return w.UsageSummary(agentID, statuscenter.UsageThisAgent)
 	}
+	if previous.RequestID != "" {
+		record.CreatedAt = previous.CreatedAt // order requests, not later revisions
+	}
 	if previous.Outcome.Known() {
 		record.Outcome = previous.Outcome
 	}
@@ -153,6 +156,7 @@ func summarizeUsage(records []sessiondb.UsageRecord, agentID string, scope statu
 	costSource := ""
 	var latest int64
 	var latestID string
+	var latestNormal sessiondb.UsageRecord
 	for _, record := range records {
 		if record.Outcome == accounting.Succeeded {
 			summary.Turns++
@@ -163,15 +167,20 @@ func summarizeUsage(records []sessiondb.UsageRecord, agentID string, scope statu
 		}
 		summary.Requests++
 		summary.InputTotal.Value += int64(record.PromptTokens)
-		summary.CacheRead.Value += int64(record.CachedTokens)
-		summary.CacheWrite.Value += int64(record.CacheWriteTokens)
+		readKnown := cacheReadKnown(record)
+		if readKnown {
+			summary.CacheRead.Value += int64(record.CachedTokens)
+		}
+		if record.CacheWriteKnown {
+			summary.CacheWrite.Value += int64(record.CacheWriteTokens)
+		}
 		summary.Output.Value += int64(record.CompletionTokens)
 		summary.Reasoning.Value += int64(record.ReasoningTokens)
 		if record.CostKnown {
 			summary.Cost.USD += record.CostUSD
 		}
 		allCostKnown = allCostKnown && record.CostKnown
-		allCacheReadKnown = allCacheReadKnown && record.CacheReadKnown
+		allCacheReadKnown = allCacheReadKnown && readKnown
 		allCacheWriteKnown = allCacheWriteKnown && record.CacheWriteKnown
 		allReasoningKnown = allReasoningKnown && record.ReasoningKnown
 		anyEstimated = anyEstimated || record.Estimated
@@ -182,6 +191,11 @@ func summarizeUsage(records []sessiondb.UsageRecord, agentID string, scope statu
 			costSource = record.CostSource
 		} else if record.CostSource != "" && record.CostSource != costSource {
 			costSource = "mixed"
+		}
+		if record.AgentID == agentID && (record.RequestKind == "normal" || record.RequestKind == "") &&
+			(latestNormal.RequestID == "" || record.CreatedAt > latestNormal.CreatedAt ||
+				record.CreatedAt == latestNormal.CreatedAt && record.RequestID > latestNormal.RequestID) {
+			latestNormal = record
 		}
 		// Context is the selected agent's latest report, not whichever child
 		// happened to finish last in a session/subtree aggregate.
@@ -198,24 +212,23 @@ func summarizeUsage(records []sessiondb.UsageRecord, agentID string, scope statu
 		}
 	}
 	summary.AgentTurns = len(turns)
-	confidence := statuscenter.ConfidenceMeasured
-	if anyPartial {
-		confidence = statuscenter.ConfidencePartial
-	} else if anyEstimated {
-		confidence = statuscenter.ConfidenceEstimated
+	confidence := usageConfidence(anyEstimated, anyPartial)
+	hasUsage := summary.Requests > 0
+	summary.InputTotal = usageValue(summary.InputTotal.Value, hasUsage, confidence)
+	summary.Output = usageValue(summary.Output.Value, hasUsage, confidence)
+	summary.CacheRead = usageValue(summary.CacheRead.Value, hasUsage && allCacheReadKnown, confidence)
+	summary.CacheWrite = usageValue(summary.CacheWrite.Value, hasUsage && allCacheWriteKnown, confidence)
+	summary.Reasoning = usageValue(summary.Reasoning.Value, hasUsage && allReasoningKnown, confidence)
+	if summary.CacheRead.Known {
+		summary.UncachedInput = usageValue(summary.InputTotal.Value-summary.CacheRead.Value, true, confidence)
 	}
-	summary.InputTotal = statuscenter.UsageValue{Value: summary.InputTotal.Value, Known: true, Confidence: confidence}
-	summary.Output = statuscenter.UsageValue{Value: summary.Output.Value, Known: true, Confidence: confidence}
-	summary.CacheRead.Known, summary.CacheWrite.Known, summary.Reasoning.Known = allCacheReadKnown, allCacheWriteKnown, allReasoningKnown
-	summary.CacheRead.Confidence, summary.CacheWrite.Confidence, summary.Reasoning.Confidence = confidence, confidence, confidence
-	if allCacheReadKnown && allCacheWriteKnown {
-		summary.UncachedInput = statuscenter.UsageValue{Value: summary.InputTotal.Value - summary.CacheRead.Value - summary.CacheWrite.Value, Known: true, Confidence: confidence}
-		if summary.UncachedInput.Value < 0 {
-			summary.UncachedInput.Known = false
+	if latestNormal.RequestID != "" {
+		confidence := usageConfidence(latestNormal.Estimated, latestNormal.Partial)
+		summary.LatestCache = statuscenter.RequestCacheUsage{
+			Present:    true,
+			InputTotal: usageValue(int64(latestNormal.PromptTokens), true, confidence),
+			Read:       usageValue(int64(latestNormal.CachedTokens), cacheReadKnown(latestNormal), confidence),
 		}
-	}
-	if summary.CacheRead.Value > summary.InputTotal.Value {
-		summary.CacheRead.Known = false
 	}
 	summary.Cost.Known = allCostKnown
 	summary.Cost.Source = costSource
@@ -230,6 +243,29 @@ func summarizeUsage(records []sessiondb.UsageRecord, agentID string, scope statu
 		summary.Cost.Confidence = statuscenter.ConfidenceUpperBound
 	}
 	return summary
+}
+
+// Validate each read against its own inclusive input total before adding it.
+func cacheReadKnown(record sessiondb.UsageRecord) bool {
+	return record.CacheReadKnown && record.CachedTokens >= 0 && record.CachedTokens <= record.PromptTokens
+}
+
+func usageConfidence(estimated, partial bool) statuscenter.ValueConfidence {
+	switch {
+	case partial:
+		return statuscenter.ConfidencePartial
+	case estimated:
+		return statuscenter.ConfidenceEstimated
+	default:
+		return statuscenter.ConfidenceMeasured
+	}
+}
+
+func usageValue(value int64, known bool, confidence statuscenter.ValueConfidence) statuscenter.UsageValue {
+	if !known {
+		confidence = statuscenter.ConfidenceUnknown
+	}
+	return statuscenter.UsageValue{Value: value, Known: known, Confidence: confidence}
 }
 
 func knownUsage(value int64, known, estimated bool) statuscenter.UsageValue {

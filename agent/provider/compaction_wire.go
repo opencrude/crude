@@ -215,22 +215,22 @@ func (s *AnthropicStandard) compactResult(body []byte) (nativeWindow, TokenUsage
 	if json.Unmarshal(body, &r) != nil {
 		return nativeWindow{}, u, errNoWindow
 	}
-	var met struct{ Iterations []anthropicUsage }
-	if len(r.Usage) > 0 {
-		_ = json.Unmarshal(r.Usage, &met)
+	var met struct {
+		anthropicUsage
+		Iterations []anthropicUsage `json:"iterations"`
+	}
+	if len(r.Usage) > 0 && json.Unmarshal(r.Usage, &met) == nil {
 		if len(met.Iterations) == 0 {
-			var one anthropicUsage
-			_ = json.Unmarshal(r.Usage, &one)
-			met.Iterations = []anthropicUsage{one}
-		}
-		for _, it := range met.Iterations {
-			u.PromptTokens += it.InputTokens + it.CacheReadInputTokens + it.CacheCreationInputTokens
-			u.PromptTokensCached += it.CacheReadInputTokens
-			u.PromptTokensWritten += it.CacheCreationInputTokens
-			u.CompletionTokens += it.OutputTokens
-			u.CacheReadKnown = u.CacheReadKnown || it.CacheReadKnown
-			u.CacheWriteKnown = u.CacheWriteKnown || it.CacheWriteKnown
-			u.ServiceTier = it.servedTier()
+			u = met.tokenUsage()
+		} else {
+			for _, it := range met.Iterations {
+				u = u.Add(it.tokenUsage())
+			}
+			// Iterations share this request's service tier. Their token counts,
+			// not the outer totals, account for the compaction work.
+			if tier := met.servedTier(); tier != "" {
+				u.ServiceTier = tier
+			}
 		}
 	}
 	if r.Type != "message" || r.Role != "assistant" || r.Stop != "compaction" || len(r.Content) != 1 || len(r.Content[0]) > maxNativeWindowBytes {

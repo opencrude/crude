@@ -658,12 +658,10 @@ type anthropicResponse struct {
 }
 
 type anthropicUsage struct {
-	InputTokens              int  `json:"input_tokens"`
-	OutputTokens             int  `json:"output_tokens"`
-	CacheCreationInputTokens int  `json:"cache_creation_input_tokens"`
-	CacheReadInputTokens     int  `json:"cache_read_input_tokens"`
-	CacheReadKnown           bool `json:"-"`
-	CacheWriteKnown          bool `json:"-"`
+	InputTokens              *int `json:"input_tokens"`
+	OutputTokens             *int `json:"output_tokens"`
+	CacheCreationInputTokens *int `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     *int `json:"cache_read_input_tokens"`
 	// ServiceTier and Speed report how the request was served; fast mode
 	// bills above the standard rate.
 	ServiceTier string `json:"service_tier"`
@@ -679,22 +677,43 @@ func (u anthropicUsage) servedTier() string {
 	return u.ServiceTier
 }
 
-func (u *anthropicUsage) UnmarshalJSON(data []byte) error {
-	type plain anthropicUsage
-	var value plain
-	if err := json.Unmarshal(data, &value); err != nil {
-		return err
+// A delta reports cumulative usage. Replace only fields present in that frame;
+// an explicit zero replaces an earlier count, but an omitted or null field does not.
+func (u *anthropicUsage) merge(delta anthropicUsage) {
+	if delta.InputTokens != nil {
+		u.InputTokens = delta.InputTokens
 	}
-	var presence struct {
-		Read    *int `json:"cache_read_input_tokens"`
-		Written *int `json:"cache_creation_input_tokens"`
+	if delta.OutputTokens != nil {
+		u.OutputTokens = delta.OutputTokens
 	}
-	if err := json.Unmarshal(data, &presence); err != nil {
-		return err
+	if delta.CacheReadInputTokens != nil {
+		u.CacheReadInputTokens = delta.CacheReadInputTokens
 	}
-	*u = anthropicUsage(value)
-	u.CacheReadKnown, u.CacheWriteKnown = presence.Read != nil, presence.Written != nil
-	return nil
+	if delta.CacheCreationInputTokens != nil {
+		u.CacheCreationInputTokens = delta.CacheCreationInputTokens
+	}
+	if delta.ServiceTier != "" {
+		u.ServiceTier = delta.ServiceTier
+	}
+	if delta.Speed != "" {
+		u.Speed = delta.Speed
+	}
+}
+
+func (u anthropicUsage) tokenUsage() TokenUsage {
+	count := func(n *int) int {
+		if n == nil {
+			return 0
+		}
+		return *n
+	}
+	read, written := count(u.CacheReadInputTokens), count(u.CacheCreationInputTokens)
+	return TokenUsage{
+		PromptTokens: count(u.InputTokens) + read + written, CompletionTokens: count(u.OutputTokens),
+		PromptTokensCached: read, PromptTokensWritten: written,
+		CacheReadKnown: u.CacheReadInputTokens != nil, CacheWriteKnown: u.CacheCreationInputTokens != nil,
+		ServiceTier: u.servedTier(),
+	}
 }
 
 type anthropicContentBlock struct {
@@ -757,22 +776,22 @@ func (r *anthropicResponse) toChatResponse() (*ChatResponse, error) {
 	msg.ReasoningContent = trace
 	msg.Reasoning = trace
 
-	promptTokens := r.Usage.InputTokens + r.Usage.CacheCreationInputTokens + r.Usage.CacheReadInputTokens
+	usage := r.Usage.tokenUsage()
 	resp := &ChatResponse{
 		ID:          r.ID,
 		Model:       r.Model,
-		ServiceTier: r.Usage.servedTier(),
+		ServiceTier: usage.ServiceTier,
 		Choices:     []ChatChoice{{Message: msg, FinishReason: r.StopReason}},
 		Usage: &ChatUsage{
-			PromptTokens:     promptTokens,
-			CompletionTokens: r.Usage.OutputTokens,
-			TotalTokens:      promptTokens + r.Usage.OutputTokens,
+			PromptTokens:     usage.PromptTokens,
+			CompletionTokens: usage.CompletionTokens,
+			TotalTokens:      usage.PromptTokens + usage.CompletionTokens,
 		},
 	}
 	resp.Usage.PromptTokensDetails = &PromptTokenDetails{
-		CachedTokens:     r.Usage.CacheReadInputTokens,
-		CacheWriteTokens: r.Usage.CacheCreationInputTokens,
-		CacheReadKnown:   r.Usage.CacheReadKnown, CacheWriteKnown: r.Usage.CacheWriteKnown,
+		CachedTokens:     usage.PromptTokensCached,
+		CacheWriteTokens: usage.PromptTokensWritten,
+		CacheReadKnown:   usage.CacheReadKnown, CacheWriteKnown: usage.CacheWriteKnown,
 	}
 	return resp, nil
 }
@@ -791,7 +810,7 @@ type anthropicStreamBlock struct {
 
 type anthropicStreamDecoder struct {
 	blocks map[int]*anthropicStreamBlock
-	usage  TokenUsage
+	usage  anthropicUsage
 }
 
 func (d *anthropicStreamDecoder) Decode(event StreamEvent) (StreamUpdate, error) {
@@ -833,9 +852,8 @@ func (d *anthropicStreamDecoder) Decode(event StreamEvent) (StreamUpdate, error)
 	switch typ {
 	case "message_start":
 		if envelope.Message != nil {
-			d.setInputUsage(envelope.Message.Usage)
-			d.usage.CompletionTokens = envelope.Message.Usage.OutputTokens
-			usage := d.usage
+			d.usage = envelope.Message.Usage
+			usage := d.usage.tokenUsage()
 			return StreamUpdate{Usage: &usage}, nil
 		}
 		return StreamUpdate{}, nil
@@ -848,13 +866,8 @@ func (d *anthropicStreamDecoder) Decode(event StreamEvent) (StreamUpdate, error)
 	case "content_block_stop":
 		return d.stopBlock(envelope.Index)
 	case "message_delta":
-		if tier := envelope.Usage.servedTier(); tier != "" {
-			d.usage.ServiceTier = tier
-		}
-		if envelope.Usage.OutputTokens > 0 {
-			d.usage.CompletionTokens = envelope.Usage.OutputTokens
-		}
-		usage := d.usage
+		d.usage.merge(envelope.Usage)
+		usage := d.usage.tokenUsage()
 		return StreamUpdate{
 			FinishReason: envelope.Delta.StopReason,
 			Usage:        &usage,
@@ -871,17 +884,6 @@ func (d *anthropicStreamDecoder) Decode(event StreamEvent) (StreamUpdate, error)
 	default:
 		// Ignore unknown event types so newer optional events remain compatible.
 		return StreamUpdate{}, nil
-	}
-}
-
-func (d *anthropicStreamDecoder) setInputUsage(usage anthropicUsage) {
-	d.usage.PromptTokens = usage.InputTokens + usage.CacheCreationInputTokens + usage.CacheReadInputTokens
-	d.usage.PromptTokensCached = usage.CacheReadInputTokens
-	d.usage.PromptTokensWritten = usage.CacheCreationInputTokens
-	d.usage.CacheReadKnown = usage.CacheReadKnown
-	d.usage.CacheWriteKnown = usage.CacheWriteKnown
-	if tier := usage.servedTier(); tier != "" {
-		d.usage.ServiceTier = tier
 	}
 }
 

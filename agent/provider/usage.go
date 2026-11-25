@@ -66,3 +66,32 @@ func (u *TokenUsage) setCacheRead(count *int) {
 		u.PromptTokensCached, u.CacheReadKnown = *count, true
 	}
 }
+
+// Add sums usage across separate requests or billed iterations, not snapshots
+// of one stream. A field is known only when each contributing count is known.
+// A zero TokenUsage has no report and does not contribute to the sum.
+func (u TokenUsage) Add(other TokenUsage) TokenUsage {
+	if u == (TokenUsage{}) {
+		return other
+	}
+	if other == (TokenUsage{}) {
+		return u
+	}
+	u.CacheReadKnown = u.validCacheRead() && other.validCacheRead()
+	u.CacheWriteKnown = u.CacheWriteKnown && other.CacheWriteKnown
+	u.ReasoningKnown = u.ReasoningKnown && other.ReasoningKnown
+	u.ReasoningInOutput = u.ReasoningInOutput && other.ReasoningInOutput
+	u.PromptTokens += other.PromptTokens
+	u.CompletionTokens += other.CompletionTokens
+	u.PromptTokensCached += other.PromptTokensCached
+	u.PromptTokensWritten += other.PromptTokensWritten
+	u.ReasoningTokens += other.ReasoningTokens
+	if u.ServiceTier != other.ServiceTier {
+		u.ServiceTier = ""
+	}
+	return u
+}
+
+func (u TokenUsage) validCacheRead() bool {
+	return u.CacheReadKnown && u.PromptTokensCached >= 0 && u.PromptTokensCached <= u.PromptTokens
+}

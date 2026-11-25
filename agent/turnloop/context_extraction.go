@@ -78,7 +78,7 @@ func (extractor *compactionExtractor) request(source []provider.ChatMessage, dir
 		// Preparation, subsequent reduction and fallback share one operation,
 		// but each billable request needs its own durable usage row.
 		requestID := provider.NewMessageID()
-		extractor.usage = addTokenUsage(extractor.usage, completion.Usage)
+		extractor.usage = extractor.usage.Add(completion.Usage)
 		extractor.agent.emitCompactionUsage(extractor.emit, completion.Usage, requestID, extractor.requestID, extractor.trigger, extractor.role, extractor.stage.Name, attempt > 0 || err != nil, err == nil)
 		if window > 0 && input > 0 && completion.Usage.PromptTokens > input && completion.Usage.PromptTokens <= window-contextSafetyReserve(window) {
 			extractor.usageRatio = max(extractor.usageRatio, float64(completion.Usage.PromptTokens)/float64(input))

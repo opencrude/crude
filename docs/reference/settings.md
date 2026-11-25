@@ -518,9 +518,9 @@ JSON Schema (`parametersJsonSchema`); only `const` (sent as a one-value `enum`),
 `$schema` and `required` names the schema does not declare change.
 
 The model list shows models that generate content or answer typed decisions,
-with their published input and output token limits. Usage counts cached prompt
-tokens (Gemini reports a cache read whenever implicit caching applies) and bills
-thought tokens as output.
+with their published input and output token limits. Usage includes thought
+tokens in output. Crude shows Gemini cache reads when the connection reports
+them. A missing count does not mean that no tokens came from cache.
 
 ### Network
 
