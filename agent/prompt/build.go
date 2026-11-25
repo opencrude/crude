@@ -80,6 +80,7 @@ func RenderRoot(sections []RootSection) string {
 	return b.String()
 }
 
+// BuildRoot renders the root agent's system prompt from its ordered sections.
 func BuildRoot(options RootOptions) string {
 	return RenderRoot(RootSections(options))
 }
