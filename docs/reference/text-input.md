@@ -131,6 +131,11 @@ and [VS Code cursor movement](https://github.com/microsoft/vscode/blob/main/src/
   owner on focus, without changing text, selection or keyboard focus. A terminal
   that does not send focus reports cannot signal OS-window blur.
 
+Windows console text is decoded once, before routing to the composer, editor or
+field. Key release is not a second text insertion. ConPTY can commit UTF-16
+text on an Alt release; discarding those records loses joiners and variation
+selectors. See the [Windows emoji regression](../issues/2026-11-25-windows-emoji-input.md).
+
 ## Clipboard
 
 - **Bracketed paste (`tea.PasteMsg`) is the primary paste mechanism.**

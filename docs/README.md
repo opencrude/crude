@@ -211,6 +211,8 @@ documents to read before changing each area.
 
 ### Issues (dated user reports)
 
+- [Windows emoji input](issues/2026-11-25-windows-emoji-input.md) — why a correct draft could show a second emoji or caret, and how native console text reaches the focused editor.
+
 - [Cold requests after automatic compaction](issues/2026-11-24-compaction-cache-misses.md) — measured cache reads, all seven wire contracts and the portable fallback.
 - [Prompt cache reporting](issues/2026-11-25-cache-reporting.md) — why a full cache miss showed as a high hit rate, and what the header and details report now.
 - [Checkpoint recovery on custom connections](issues/2026-11-25-checkpoint-recovery.md) — native-first recovery, retained prompts, and both persisted threshold journeys.
