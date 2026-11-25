@@ -483,6 +483,37 @@ small output where the route supports a limit; Codex streaming sets its own limi
 Unsupported account request overrides are not silently discarded. The native
 operation, verification and export each account for their own reported usage.
 
+**Threshold requests.** A verified on-demand route takes precedence. Messages can
+use a threshold-only route when the exact model advertises `compact_20260112`
+or the account explicitly requests that edit.
+Responses does not declare this in its public model list. A connection can supply
+a `compaction` edit in **Extra JSON body**; `compact_threshold` can use the service
+default. Other context edits stay in order on ordinary and boundary requests.
+Crude reserves the compaction edit for a compaction boundary; it never enables
+another server schedule. It does not send threshold probes or infer a capability
+from a model name. Ordinary requests do not carry these edits.
+
+At a boundary with room for an ordinary request, send that request once with
+its current instructions, tool declarations, history and cache policy. Messages
+uses the `compact-2026-01-12` beta, a 50,000-token trigger, the portable checkpoint
+instructions and `pause_after_compaction`. A valid unsigned block becomes a
+portable checkpoint; replaying the unsigned block would require leaving the edit on.
+An empty block is not an answer. When the provider actually answers, keep the answer
+or tool calls, not just the checkpoint. An explicit in-run `/compact` that misses the
+wire trigger still writes a complete checkpoint, including any newly accepted work.
+Below the wire minimum, without a pending turn, or when an ordinary request cannot
+fit, use on-demand or full-history extraction instead of generating an unsolicited turn.
+
+A combined Responses reply settles under the original input prefix. Finish and
+publish its tool round before reading the checkpoint. The latest encrypted seal and
+its ordered suffix (including configuration updates, answer, calls and actual results)
+are the bounded stateless export. Do not prune a stored-ID delta, replay an effect,
+or rebind signed reasoning to a rewritten prefix. A changed route or input, ambiguous
+output order or oversized suffix cannot authorize a native export. Use the existing
+full-history writer when needed. Attribute separate Messages iterations to the
+checkpoint and turn respectively; Responses aggregate usage belongs to only one
+request. Read-back usage remains separate.
+
 **What is saved.** Keep the complete returned Responses window, or the signed
 Messages block. Reject oversized or unusable output rather than trim it into an
 invalid artifact. A same-model continuation from an opaque window produces portable

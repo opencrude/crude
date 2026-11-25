@@ -111,7 +111,12 @@ only does not substitute another model. Errand only makes no native discovery
 requests. The agent's **Compact context at** help shows the selected model's
 observed support. **Forget compaction checks**, when offered, takes effect on
 Save; Cancel changes nothing. The next eligible compaction discovers again.
-This does not delete transcripts or force a cold replay of an existing checkpoint.
+Forgetting a check does not delete transcripts or force a cold replay of an existing checkpoint.
+
+On supported Messages and Responses connections, a configured threshold edit
+applies only at a Crude checkpoint boundary. It does not start an independent
+schedule. A provider quota or retry veto never causes a second portable request
+on the rejected account. Use a different writer in Auto, or repair the account.
 See [native compaction](adaptive-context.md#native-compaction-on-custom-connections).
 
 **Removing an account cleans up application settings.** Before you confirm, the

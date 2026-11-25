@@ -1,17 +1,10 @@
 # Provider simulator
 
-> Status: ACTIVE PLAN. Owner: the lead agent. Workers build against the
-> contract below and do not change it without the lead. Phases 1 and 2 are
-> done: all seven wires serve, validate, stream, fault and count caches.
-> Phase 3 is done: `agent/provider/wire_suite_test.go` runs 15 behaviors on
-> every wire through Crude's client. Its first run found four Crude defects,
-> now fixed: Codex shorthand messages, Ollama thinking not sent back, the
-> Ollama context-overflow message, and a synthetic Google overflow message in
-> the simulator. Phases 4 to 6 remain.
+> Status: Current reference. One simulator serves seven conversation protocols and three fill-in-the-middle dialects. The [offline conformance guide](../guides/protocol-conformance.md) distinguishes schema checks, recordings and the independent MCP referee.
 
 ## Why
 
-About 209 test files start their own HTTP server, and 168 of them contain
+Before migration, about 209 test files started their own HTTP server, and 168 contained
 provider stream text written by hand. The author of a request encoder also
 writes the fake that accepts it, so they agree by construction. In November
 2026 this hid real defects and produced false failures:
@@ -28,13 +21,13 @@ The MCP tests already avoid this: they run the official MCP Go SDK server.
 ## The rule
 
 `internal/providersim` is one in-process simulator for seven conversation wires
-and three explicit fill-in-the-middle (FIM) dialects. Its
-truth comes from sources outside Crude, never from `agent/provider`:
+and three explicit fill-in-the-middle (FIM) dialects. Keep the wire evidence independent
+of `agent/provider`:
 
 1. pinned official specs and official SDK types, compiled into JSON Schema
    bundles with a manifest (URL, revision, SHA-256, license, generator);
-2. sanitized recordings of real traffic (go-vcr v4 cassettes);
-3. an optional live run of the same scenarios against real accounts.
+2. offline go-vcr v4 replay (the checked-in cassette is synthetic and independently authored);
+3. optional, explicitly authorized capture of a fixed synthetic turn on a real account.
 
 `internal` packages cannot import `agent`, so the layout gate enforces the
 independence. A simulator fact that no source establishes is marked
@@ -108,7 +101,8 @@ req := sim.Requests()                       // the journal
   encodes it in that wire's streaming or non-streaming form.
 - `Turn{}.WithToolArgumentDeltas(id, name, parts...)` appends a call with
   `Arguments = strings.Join(parts, "")`. Chat sends `function.arguments`;
-  Responses and Codex send `response.function_call_arguments.delta`;
+  Responses and Codex send `response.function_call_arguments.delta` for functions
+  and `response.custom_tool_call_input.delta` for declared free-form tools;
   Messages sends `input_json_delta.partial_json`; Interactions sends
   `arguments_delta.arguments`. `WithGateAfter` counts each such event.
   Empty fragments and splits inside an argument string or JSON escape are
@@ -147,36 +141,40 @@ req := sim.Requests()                       // the journal
   profile (minimum size, granularity, explicit breakpoints) and are labeled
   synthetic. Tests assert prefix stability; that is the property Crude owns.
 - State: Responses stores responses (`store` default true) and resolves
-  `previous_response_id`; compaction artifacts are sealed so a changed replay
+  `previous_response_id`. Use `ExpireResponse` to expire a real stored ID without
+  consuming the next turn; a fabricated ID is still a fixture error. Public Responses
+  and Codex accept an explicit final `compaction_trigger`; the pinned Codex client does
+  not define a standalone compact endpoint. Messages serves credential-specific model
+  lists and detail with beta capabilities. Compaction artifacts are sealed so a changed replay
   is rejected exactly as the real API does; Codex, Anthropic threshold and
   on-demand compaction follow the table above.
 - Replay: a go-vcr cassette can be served as a script, and a conformance test
   checks that the simulator's encoding of an equivalent turn has the same event
   sequence and required fields as the recording.
 
-## Phases and acceptance
+## Where to use it
 
-1. **Core + Chat + schema pipeline.** Server, journal, turns, faults, gates,
-   validation, prefix analysis and the Chat wire, with the pinned OpenAI
-   bundle. Self-tests prove every emitted body validates against the response
-   and event schemas.
-2. **Remaining wires, in parallel:** Responses + Codex; Anthropic; Gemini +
-   Interactions + Ollama. Each wire has self-tests for its schema, strictness,
-   errors, faults, cache profile and state.
-3. **Seven-wire behavior suite** in `agent/provider` (external test package):
-   one table of behaviors run against every wire through Crude's real client —
-   text, tools, reasoning replay, usage and cache counters, context overflow,
-   429 with each hint, mid-stream error, cut stream, continuation, native
-   compaction round trip and the first continuation after it.
-4. **Migration.** Every hand-written provider fake moves to the simulator and
-   is deleted. Assertions keep their meaning; raw-JSON probing becomes
-   `Request` fields. Tests that test an encoder byte for byte keep that check,
-   against the journal.
-5. **Recordings and live runs.** A capture tool records synthetic scenarios
-   through the user's accounts into sanitized cassettes; CI never calls out.
-6. **MCP conformance.** The official suite (`@modelcontextprotocol/conformance`)
-   runs against Crude's MCP client in its own CI lane with a baseline file.
+Use `providersim` for ordinary provider replies in `agent`, `core`, `workspace`
+and `tui` tests. `agent/provider/wire_suite_test.go` exercises 15 behaviors on all
+seven conversation wires through the real client. An inapplicable cell names the
+protocol reason; it is not a passing observation. The first run exposed Codex
+input typing, Ollama thinking replay and context-error classification, plus an
+inaccurate simulator error message. The session tests cover all 49 wire transitions,
+the first post-checkpoint request, and stored and stateless resume.
 
-The plan is complete when no test file under `agent/`, `core/`, `workspace/`
-or `tui/` writes provider wire text by hand, every phase gate passes, and this
-file is replaced by a reference document.
+Keep raw bytes only when generating a valid ordinary reply would defeat the test:
+
+- **Exact codec and gateway behavior:** duplicate or missing fields or stored IDs,
+  reduced usage rows, conflicting terminal snapshots, interrupted patch arguments,
+  out-of-order items around a seal, pagination, a nonstandard media part, and a
+  gateway-only operation or quota code. Examples are `agent/provider/text_once_test.go`,
+  `agent/turnloop/response_continuation_policy_test.go` and `agent/session/usage_integrity_test.go`.
+- **Transport behavior:** first-byte and write stalls, early EOF, HTTP/2 upload
+  backpressure, redirects, and cancellation after a partial reply. A transport wrapper
+  may alter just the part under test and forward ordinary requests to the simulator.
+- **Other protocols:** Decisions and System One are not chat; OAuth authorization,
+  the MCP SDK server, registries and file downloads need their own protocol fixtures.
+
+Do not add an accepting fake to work around a schema violation. Correct the client
+or the simulator against the cited wire contract. Assert the emitted request or
+user-visible outcome, not just how a responder was scripted.
