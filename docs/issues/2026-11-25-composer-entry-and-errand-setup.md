@@ -238,16 +238,17 @@ running Crude on its own repository (see [Run Crude on itself](#run-crude-on-its
 
 ### Commits of this request
 
-Newest first, all on `master`:
+Newest first, as published on `master`. The unpublished development history is
+kept locally under `refs/archive/crude/2026-11-25-development-final`.
 
 | Commit | Content |
 |---|---|
-| (this commit) | Workspace entry: **New workspace** caption; explicit top-level folders open with Local History and language servers off by default; demand-driven watcher and text index for top-level folders; `crude PATH` opens one file in its parent folder; capture launcher fix for `.cmd` wrappers; this handoff. |
-| `b1d6c7a3` | Native capture fixtures for wrapped composer chips and the first AI setup prompt (`tui/viewmodel/composer_entry_visual_test.go`, env-gated). |
-| `55553bef` | `scripts/tuishot.ps1` sends the requested key through the user's PowerToys remaps (Esc and CapsLock are swapped on this machine). |
-| `820c21b0` | Composer chips are one unit (wrap, caret, selection, delete, undo, style); `/` matching is the same in an empty and a dirty draft; first Esc closes a visible command list. |
-| `a14b16f4` | First AI setup asks for a Main Agent model and an Errand model, and explains why. |
-| `812adcc3` | This issue file (the five actions). |
+| `3b8814e6` | Workspace entry: **New workspace** caption; explicit top-level folders open with Local History and language servers off by default; demand-driven watcher and text index for top-level folders; `crude PATH` opens one file in its parent folder; capture launcher fix for `.cmd` wrappers; this handoff. |
+| `3282ec05` | Native capture fixtures for wrapped composer chips and the first AI setup prompt (`tui/viewmodel/composer_entry_visual_test.go`, env-gated). |
+| `d5be8d50` | `scripts/tuishot.ps1` sends the requested key through the user's PowerToys remaps (Esc and CapsLock are swapped on this machine). |
+| `696a0008` | Composer chips are one unit (wrap, caret, selection, delete, undo, style); `/` matching is the same in an empty and a dirty draft; first Esc closes a visible command list. |
+| `b5783f4f` | First AI setup asks for a Main Agent model and an Errand model, and explains why. |
+| `0e149b0c` | This issue file (the five actions). |
 
 ### Verification at handoff
 
