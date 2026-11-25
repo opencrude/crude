@@ -92,11 +92,10 @@ func (p *Provider) CompleteTextOnce(ctx context.Context, r TextOnceRequest) (res
 	}
 	messages = append(messages, NewTextMessage("user", r.Input))
 	sampling := p.Sampling()
-	request := &ChatRequest{
-		Model: r.Model, Messages: messages, ToolChoice: "none", Stream: true,
-		StreamOptions: &StreamOptions{IncludeUsage: true}, MaxOutputTokens: r.MaxOutputTokens,
+	request := withStreamFlag(&ChatRequest{
+		Model: r.Model, Messages: messages, ToolChoice: "none", MaxOutputTokens: r.MaxOutputTokens,
 		Temperature: sampling.Temperature, TopP: sampling.TopP,
-	}
+	}, true)
 	body, err := c.encodeChatRequest(request)
 	if err != nil {
 		return result, err

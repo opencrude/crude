@@ -162,7 +162,6 @@ func (a *Agent) completeStreamWithOptions(
 		Messages:                  msgs,
 		Tools:                     tools,
 		Stream:                    true,
-		StreamOptions:             &provider.StreamOptions{IncludeUsage: true},
 	}
 	if requestOptions.toolChoice != nil {
 		req.ToolChoice = requestOptions.toolChoice
