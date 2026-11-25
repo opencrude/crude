@@ -51,11 +51,18 @@ func TestCorePlanReviewMirrorsCompletionAndCanonicalEditorFeedback(t *testing.T)
 		}
 		var captured wirePlanInput
 		for _, message := range input.Messages {
+			text := message.ContentString()
 			switch message.Role {
 			case "user":
-				captured.users = append(captured.users, message.ContentString())
+				captured.users = append(captured.users, text)
 			case "system":
-				captured.planMode = captured.planMode || strings.Contains(message.ContentString(), "<plan_mode>")
+				captured.planMode = strings.Contains(text, "<plan_mode>")
+			}
+			// The root prompt stays fixed until compaction; a later settings
+			// update replaces its planning section for the model.
+			if _, section, ok := strings.Cut(text, `<section name="planning">`); ok {
+				section, _, _ = strings.Cut(section, "</section>")
+				captured.planMode = strings.Contains(section, "<plan_mode>")
 			}
 		}
 		modelRequests <- captured
