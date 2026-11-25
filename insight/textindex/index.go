@@ -127,8 +127,10 @@ func newCorpus() *corpus {
 
 // Index is safe for concurrent use. Readers never wait for a build.
 type Index struct {
-	root  string
-	limit int64
+	demand  chan struct{}
+	request sync.Once
+	root    string
+	limit   int64
 
 	mu     sync.RWMutex
 	live   *corpus
@@ -152,7 +154,7 @@ func New(root string, memoryLimit int64) *Index {
 	if memoryLimit <= 0 {
 		memoryLimit = DefaultMemoryLimit
 	}
-	return &Index{root: filepath.Clean(root), limit: memoryLimit, live: newCorpus(),
+	return &Index{demand: make(chan struct{}), root: filepath.Clean(root), limit: memoryLimit, live: newCorpus(),
 		updates: make(chan string, 1024), rescan: make(chan struct{}, 1)}
 }
 
@@ -205,6 +207,15 @@ func (x *Index) Close() {
 	liveMemory.Add(-x.live.memory)
 	x.live = newCorpus()
 	x.mu.Unlock()
+}
+
+// Demand closes on the first content query. A broad workspace uses it to
+// establish complete file observation before starting the index worker.
+func (x *Index) Demand() <-chan struct{} {
+	if x == nil {
+		return nil
+	}
+	return x.demand
 }
 
 // Ready reports a finished first build. Before it, readers use the disk.
@@ -704,7 +715,11 @@ func compareWalkOrder(a, b string) int {
 // limit snippets, skipping chunks for which skip returns true. It never waits
 // for a build and returns nothing while coverage is incomplete.
 func (x *Index) Related(query string, limit int, skip func(path string, line int) bool) []Snippet {
-	if !x.Ready() || limit <= 0 {
+	if x == nil || limit <= 0 {
+		return nil
+	}
+	x.request.Do(func() { close(x.demand) })
+	if !x.Ready() {
 		return nil
 	}
 	tokens := Tokens(query)

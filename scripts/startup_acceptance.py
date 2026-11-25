@@ -116,10 +116,12 @@ class Profile:
                                 env=self.env, check=check, capture_output=True, text=True, timeout=8)
         return result.stdout.strip()
 
-    def launch(self, name, root=None, workspace=None):
+    def launch(self, name, root=None, workspace=None, path=None):
         cmd = [self.harness.binary, "--client-profile", "startup-acceptance"]
         if workspace is not None:
             cmd += ["--workspace", str(workspace)]
+        if path is not None:
+            cmd += ["--", str(path)]
         command = "exec env " + " ".join(shlex.quote(k + "=" + v) for k, v in self.env.items())
         command += " " + shlex.join(cmd)
         # Retain exited panes too, so early product errors remain inspectable.
@@ -371,35 +373,38 @@ class Harness:
 
     def boundaries(self):
         p = self.profile("boundaries", {"onboarding": {"introduction_completed": True, "ai_setup_reminder_hidden": True}})
-        n = p.launch("explicit-home", workspace=p.home)
-        p.visible(n, "explicit-home-navigation-only", "home folder", "Open Workspace")
+        n = p.launch("implicit-home")
+        p.visible(n, "implicit-home-chooser", "home folder", "New workspace")
         p.connect()
-        p.no_project("explicit-home")
+        p.no_project("implicit-home")
         p.keys(n, "Enter")
         p.visible(n, "home-picker", "Choose a project folder")
-        p.navigate(n, p.home / "Desktop", "desktop-navigation")
-        p.keys(n, "C-o")
-        p.visible(n, "desktop-not-project", "personal folder", "Choose a project folder")
-        p.no_project("desktop-no-project")
         p.navigate(n, p.sample, "typed-file-error", error="not a directory")
         p.no_project("typed-file-no-parent-fallback")
         missing = p.home / "missing-project"
         p.navigate(n, missing, "typed-missing-error", error="no such file")
         p.no_project("typed-missing-no-parent-fallback")
-        p.navigate(n, p.project, "typed-error-recovery")
+        desktop = p.home / "Desktop"
+        p.navigate(n, desktop, "typed-error-recovery")
         p.keys(n, "C-o")
         p.dismiss_workspace_trust(n)
-        p.visible(n, "child-project-editor", "New Session", absent=("Choose a project folder", "Set up AI"))
-        status = p.no_sessions("child-project-allowed")
-        assert [w["root"] for w in status["workspaces"]] == [str(p.project)], status
+        p.visible(n, "desktop-editor", "New Session", absent=("Choose a project folder",))
+        assert str(desktop) in [w["root"] for w in p.no_sessions("desktop-attached")["workspaces"]]
+        assert not list((p.data / "workspaces").glob("*/local-history"))
         p.stop_shell(n)
-        # Explicit CLI file/missing roots must expose errors, never attach parent.
+        n = p.launch("explicit-home", workspace=p.home)
+        p.dismiss_workspace_trust(n)
+        p.visible(n, "home-editor", "New Session", absent=("Choose a project folder",))
+        assert str(p.home) in [w["root"] for w in p.no_sessions("home-attached")["workspaces"]]
+        assert not list((p.data / "workspaces").glob("*/local-history"))
+        p.stop_shell(n)
+        # --workspace accepts directories only. A positional path can name a file.
         for name, path, error in (("cli-file", p.sample, "not a directory"),
                                   ("cli-missing", missing, "no such file")):
             n = p.launch(name, workspace=path)
-            p.visible(n, name + "-visible-error", error, "Open Workspace")
+            p.visible(n, name + "-visible-error", error, "New workspace")
             status = p.no_sessions(name + "-no-parent-fallback")
-            assert [w["root"] for w in status["workspaces"]] == [str(p.project)], status
+            assert str(path) not in [w["root"] for w in status["workspaces"]], status
             p.keys(n, "Enter")
             p.visible(n, name + "-picker", "Choose a project folder")
             p.navigate(n, p.project, name + "-recovered-path")
@@ -409,11 +414,46 @@ class Harness:
             p.no_sessions(name + "-recovered-no-session")
             p.stop_shell(n)
 
+        # The document opens without tree input. A unique sibling would be
+        # visible if the launch had left the tree expanded. Trust the folder
+        # so trust alone cannot explain the absence of a language server.
+        f = self.profile("direct-file", {"onboarding": {"introduction_completed": True,
+                                                      "ai_setup_reminder_hidden": True}})
+        trace = f.home / "server-started"
+        server = f.home / "test-language-server"
+        server.write_text("#!/bin/sh\n: > " + shlex.quote(str(trace)) + "\nexit 1\n")
+        server.chmod(0o700)
+        cfg = json.loads(f.config.read_text())
+        cfg["lsp"] = {"enabled": True, "auto_detect": True, "start_on_open": True,
+                      "languages": {"go": {"enabled": True, "command": str(server)}}}
+        f.config.write_text(json.dumps(cfg))
+        source = f.project / "entry.go"
+        source.write_text("package direct_file_sentinel\n")
+        marker = "tree-visibility-marker.txt"
+        (f.project / marker).touch()
+        n = f.launch("open-file", path=source)
+        f.visible(n, "file-trust", "Trust this folder?")
+        f.keys(n, "Left", "Enter")
+        f.visible(n, "direct-file-editor", "package direct_file_sentinel", "entry.go", absent=(marker, "Trust this folder?"))
+        f.connect()
+        assert [w["root"] for w in f.status("file-parent")["workspaces"]] == [str(f.project)]
+        assert not trace.exists(), "direct file started the configured language server"
+        f.stop_shell(n)
+        target = f.project / "new note.txt"
+        n = f.launch("missing-file", path=target)
+        f.visible(n, "new-buffer", "new note.txt", absent=(marker,))
+        assert not target.exists(), "file launch wrote an empty file without Save"
+        f.text(n, "created on Save")
+        f.keys(n, "C-s")
+        until("manual save created the requested file", lambda: target.exists() and target.read_text() == "created on Save", timeout=15)
+        assert not trace.exists()
+        f.stop_shell(n)
+
     def corrupt(self):
         original = b'{"onboarding": {BROKEN STARTUP CONFIG\n'
         p = self.profile("corrupt", original)
         n = p.launch("corrupt")
-        text = p.visible(n, "top-level-config-issue", "Configuration needs repair", "configuration must contain one JSON object", "Open Workspace")
+        text = p.visible(n, "top-level-config-issue", "Configuration needs repair", "configuration must contain one JSON object", "New workspace")
         assert "Welcome to Crude" not in text
         p.connect()
         p.no_project("corrupt-config-no-workspace")
@@ -449,7 +489,7 @@ class Harness:
     def core_crash(self):
         p = self.profile("core-crash", {"onboarding": {"introduction_completed": True, "ai_setup_reminder_hidden": True}})
         n = p.launch("picker")
-        p.visible(n, "before-crash-selection", "Open Workspace")
+        p.visible(n, "before-crash-selection", "New workspace")
         core = p.connect()
         p.keys(n, "Enter")
         p.visible(n, "before-core-crash-picker", "Choose a project folder")

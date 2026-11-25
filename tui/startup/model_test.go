@@ -174,7 +174,7 @@ func TestNativePaintThemesAndSizes(t *testing.T) {
 				}
 				send(t, m, key(tea.KeyEsc))
 				text = paintText(m)
-				for _, label := range []string{"Previous workspaces", "Open Workspace", "Quit", fixturePath("/home/demo"), "home folder"} {
+				for _, label := range []string{"Previous workspaces", "New workspace", "Quit", fixturePath("/home/demo"), "home folder"} {
 					if !strings.Contains(text, label) {
 						t.Fatalf("missing selection %q\n%s", label, text)
 					}
@@ -324,7 +324,7 @@ func TestBrowseFailuresStaleAndReopen(t *testing.T) {
 		t.Fatal("closed/reopened picker accepted stale read")
 	}
 }
-func TestInspectRejectsTopLevelAndPathErrors(t *testing.T) {
+func TestExplicitSelectionOpensTopLevelButNotMissingFolder(t *testing.T) {
 	for _, kind := range []string{"root", "home", "personal", "error"} {
 		t.Run(kind, func(t *testing.T) {
 			f := &fakeStartup{inspect: func(_ context.Context, root string) (coreprotocol.StartupSnapshot, error) {
@@ -337,16 +337,12 @@ func TestInspectRejectsTopLevelAndPathErrors(t *testing.T) {
 			m := fixture(t, f, false)
 			send(t, m, key(tea.KeyEnter))
 			send(t, m, ctrl('o'))
-			if m.Result() != "" || m.closed || m.root.mode != picking {
-				t.Fatal("non-project path selected")
-			}
-			text := paintText(m)
-			label := "project folder"
 			if kind == "error" {
-				label = "folder vanished"
-			}
-			if !strings.Contains(text, label) {
-				t.Fatalf("rejection not clear: %s", text)
+				if m.Result() != "" || m.closed || !strings.Contains(paintText(m), "folder vanished") {
+					t.Fatal("missing folder lost its error or attached")
+				}
+			} else if m.Result() != fixturePath("/home/demo") || !m.closed {
+				t.Fatalf("explicit %s selection did not open: %q", kind, m.Result())
 			}
 		})
 	}
@@ -664,7 +660,7 @@ func TestSnapshotIssuesRemainVisibleAndSurviveSelection(t *testing.T) {
 						t.Fatalf("repair evidence absent, picker=%v: %q\n%s", picker, label, text)
 					}
 				}
-				if !picker && (!strings.Contains(text, "Previous project") || !strings.Contains(text, "Open Workspace") || !strings.Contains(text, "Quit")) {
+				if !picker && (!strings.Contains(text, "Previous project") || !strings.Contains(text, "New workspace") || !strings.Contains(text, "Quit")) {
 					t.Fatalf("issues replaced navigation\n%s", text)
 				}
 			}
@@ -681,7 +677,7 @@ func TestLongStartupIssueScrollKeepsActionsAndPreviousRows(t *testing.T) {
 	m := NewModel(context.Background(), &fakeStartup{}, coreprotocol.StartupSnapshot{Root: fixturePath("/home/demo"), FolderKind: "home", Issues: []statuscenter.OperationIssue{{Title: "Configuration needs repair", Path: "/profile/config.json", Detail: strings.Repeat("Long error evidence. ", 100) + "END OF ERROR"}}, Workspaces: []workspace.Info{{ProjectName: "Previous project", ProjectDir: fixturePath("/previous/project")}}})
 	t.Cleanup(m.Close)
 	text := paintText(m)
-	if strings.Contains(text, "END OF ERROR") || !strings.Contains(text, "Previous project") || !strings.Contains(text, "Open Workspace") || !strings.Contains(text, "Quit") {
+	if strings.Contains(text, "END OF ERROR") || !strings.Contains(text, "Previous project") || !strings.Contains(text, "New workspace") || !strings.Contains(text, "Quit") {
 		t.Fatalf("long error escaped its viewport\n%s", text)
 	}
 	// Focus the mounted native reader through the same keyboard cycle as users.
@@ -716,7 +712,7 @@ func TestLongStartupIssueScrollKeepsActionsAndPreviousRows(t *testing.T) {
 	}
 }
 
-func TestPreviousTopLevelOpensInspectedLocationAndReopensThere(t *testing.T) {
+func TestPreviousTopLevelOpensInspectedLocation(t *testing.T) {
 	var browsed []string
 	f := &fakeStartup{inspect: func(_ context.Context, root string) (coreprotocol.StartupSnapshot, error) {
 		if root != fixturePath("/saved/Downloads") {
@@ -731,13 +727,8 @@ func TestPreviousTopLevelOpensInspectedLocationAndReopensThere(t *testing.T) {
 	t.Cleanup(m.Close)
 	send(t, m, key(tea.KeyTab))
 	send(t, m, key(tea.KeyEnter))
-	if m.Result() != "" || m.closed || m.root.mode != picking || m.picker.Current() != fixturePath("/relocated/Downloads") || m.root.path.Value() != fixturePath("/relocated/Downloads") {
-		t.Fatal("previous top-level entry did not become its inspected browsing location")
-	}
-	send(t, m, key(tea.KeyEsc))
-	send(t, m, key(tea.KeyEnter))
-	if len(browsed) != 2 || browsed[0] != fixturePath("/relocated/Downloads") || browsed[1] != fixturePath("/relocated/Downloads") {
-		t.Fatalf("reopen returned to launch folder: %v", browsed)
+	if m.Result() != fixturePath("/relocated/Downloads") || !m.closed || len(browsed) != 0 {
+		t.Fatalf("previous folder was not opened: %q, browsed %v", m.Result(), browsed)
 	}
 }
 

@@ -16,5 +16,5 @@ func coreWatchPathKey(path string) string { return filepath.Clean(path) }
 
 func addCoreWatchParent(w *fsnotify.Watcher, root string) bool {
 	parent := filepath.Dir(root)
-	return parent != root && w.Add(parent) == nil
+	return parent == root || w.Add(parent) == nil
 }

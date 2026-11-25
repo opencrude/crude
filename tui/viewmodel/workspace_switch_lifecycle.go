@@ -239,7 +239,9 @@ func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
 		arrival = &viewMemoryArrival{}
 	}
 	m.viewMemory, m.viewMemoryLoadErr = arrival.store, arrival.err
+	m.SetLaunchFile("", false)
 	m.installViewMemory(arrival.memory)
+	m.showEntryFolderNotice()
 	// Surfaces moved out of the dock belong to the old project's layout.
 	for id := range m.panelPlacements {
 		m.releasePlacement(id)

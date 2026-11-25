@@ -30,6 +30,7 @@ type watchNotification struct {
 // coreFileWatch is retained once per workspace, independently of shell count.
 // Its ordered notification queue is independent of actor and shell delivery.
 type coreFileWatch struct {
+	scope                *directoryScope
 	cancel               context.CancelFunc
 	done, ready, lspDone chan struct{}
 	once                 sync.Once

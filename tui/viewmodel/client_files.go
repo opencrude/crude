@@ -131,7 +131,7 @@ func (m *App) applyCoreFileChanges(changes []coreprotocol.FileChange) tea.Cmd {
 		if change.Resync {
 			paths[m.ws.RootPath()] = true
 			for _, node := range m.Tree.Model.VisibleNodes() {
-				if node.IsDir {
+				if node.IsDir && (node.IsExpanded || node.Children != nil) {
 					paths[node.Path] = true
 				}
 			}

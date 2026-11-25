@@ -48,6 +48,8 @@ type CLIFlags struct {
 	SSHPort              int
 	SSHIdentity          string
 	Workspace            string
+	Path                 string
+	extraPaths           bool
 	MCP                  bool
 	MCPEffects           string
 	MCPShell             string
@@ -118,6 +120,8 @@ func ParseFlags() CLIFlags {
 		SSHPort:              *sshPortFlag,
 		SSHIdentity:          *sshIdentityFlag,
 		Workspace:            *workspaceFlag,
+		Path:                 flag.Arg(0),
+		extraPaths:           flag.NArg() > 1,
 		MCP:                  *mcpFlag,
 		MCPEffects:           *mcpEffectsFlag,
 		MCPShell:             *mcpShellFlag,

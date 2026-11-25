@@ -885,8 +885,9 @@ func (w *Workspace) bindSessionHistory(backend *session.Session) {
 	}
 	if w.HistoryService == nil {
 		openErr := w.localHistoryErr
+		enabled := w.EffectiveAppSettings().LocalHistory.EnabledValue()
 		backend.SetHistoryHooks(func(context.Context, string, string) error {
-			if !w.EffectiveAppSettings().LocalHistory.EnabledValue() {
+			if !enabled {
 				return session.ErrHistoryDisabled
 			}
 			if openErr != nil {

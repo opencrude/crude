@@ -53,16 +53,21 @@ func openCoreWatchScope(path string, recursive bool, rootName string) (*coreWind
 }
 
 func newCoreWatcher(root string) (*coreWindowsWatcher, error) {
-	parent, err := openCoreWatchScope(filepath.Dir(root), false, filepath.Base(root))
-	if err != nil {
-		return nil, err
+	w := &coreWindowsWatcher{Events: make(chan fsnotify.Event), Errors: make(chan error), stop: make(chan struct{}), done: make(chan struct{})}
+	if parentDir := filepath.Dir(root); parentDir != root {
+		parent, err := openCoreWatchScope(parentDir, false, filepath.Base(root))
+		if err != nil {
+			return nil, err
+		}
+		w.scopes = append(w.scopes, parent)
 	}
-	w := &coreWindowsWatcher{Events: make(chan fsnotify.Event), Errors: make(chan error), scopes: []*coreWindowsWatchScope{parent}, stop: make(chan struct{}), done: make(chan struct{})}
 	project, err := openCoreWatchScope(root, true, "")
 	if err == nil {
 		w.scopes = append(w.scopes, project)
 	} else if !os.IsNotExist(err) {
-		_ = windows.CloseHandle(parent.handle)
+		for _, scope := range w.scopes {
+			_ = windows.CloseHandle(scope.handle)
+		}
 		return nil, err
 	}
 	// Missing roots remain admissible as an unreliable parent-only observer;
@@ -84,8 +89,9 @@ func newCoreWatcher(root string) (*coreWindowsWatcher, error) {
 	return w, nil
 }
 
-func addCoreWatchParent(_ *coreWindowsWatcher, root string) bool {
-	return filepath.Dir(root) != root
+func addCoreWatchParent(_ *coreWindowsWatcher, _ string) bool {
+	// newCoreWatcher already opened the parent, unless the root has none.
+	return true
 }
 
 func (*coreWindowsWatcher) Add(string) error { return nil }

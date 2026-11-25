@@ -704,6 +704,10 @@ try {
         $CrudeBin = (Resolve-Path $CrudeBin).Path
     }
 
+    # A .cmd wrapper (for example one that sets CRUDE_HOME) needs `call`, or
+    # the launcher never returns to write the exit marker. An executable runs
+    # directly, because `call` would double the carets in its arguments.
+    $invoke = if ($CrudeBin -match '\.(cmd|bat)$') { 'call ' } else { '' }
     $launchText = @"
 @echo off
 set "NO_COLOR="
@@ -712,7 +716,7 @@ set "CLICOLOR="
 set "COLORTERM=truecolor"
 set "TERM=xterm-256color"
 cd /d "$CrudeCwd" || exit /b 1
-"$CrudeBin" $CrudeArgs 2>>"$Log"
+$invoke"$CrudeBin" $CrudeArgs 2>>"$Log"
 >>"$Log" echo CRUDE-EXITED rc=%ERRORLEVEL%
 ping -n 900 127.0.0.1 >nul
 "@

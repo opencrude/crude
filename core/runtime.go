@@ -487,7 +487,7 @@ func (c *Connection) attach(ctx context.Context, request coreprotocol.Request) c
 	if err := input.ValidateEnvironment(); err != nil {
 		return fault(request, "invalid_request", err.Error())
 	}
-	root, err := inspectProject(input.Root)
+	root, err := inspectProject(input.Root, input.Entry.Explicit)
 	if err != nil {
 		return fault(request, "project_folder_required", err.Error())
 	}
@@ -501,11 +501,11 @@ func (c *Connection) attach(ctx context.Context, request coreprotocol.Request) c
 	key := sha256.Sum256([]byte(filepath.Clean(root)))
 	id := hex.EncodeToString(key[:])
 	r := c.runtime
-	a, err := r.workspace(ctx, id, root)
+	a, err := r.workspaceForEntry(ctx, id, root, input.Entry.FileOnly)
 	if err != nil {
 		return fault(request, "workspace_unavailable", err.Error())
 	}
-	view, err := a.subscribe(ctx, c)
+	view, err := a.subscribe(ctx, c, input.Entry.FileOnly)
 	if err != nil {
 		return fault(request, "attach_failed", err.Error())
 	}
@@ -555,7 +555,7 @@ type workspaceCreation struct {
 	savedID string
 }
 
-func (r *Runtime) workspace(ctx context.Context, id, root string) (*actor, error) {
+func (r *Runtime) workspaceForEntry(ctx context.Context, id, root string, fileOnly bool) (*actor, error) {
 	r.mu.Lock()
 	if r.closed || r.draining || r.stopping {
 		r.mu.Unlock()
@@ -576,6 +576,7 @@ func (r *Runtime) workspace(ctx context.Context, id, root string) (*actor, error
 			if err == nil && ws != nil {
 				// Retained resources initialize before an actor or shell can read
 				// them. This I/O belongs to the factory worker, never actor Update.
+				ws.SetFileOnly(fileOnly)
 				if ws.LSPMgr != nil {
 					// Assembly may start a project producer as soon as analysis
 					// policy is installed. Fence that admission before starting
@@ -696,14 +697,15 @@ type actor struct {
 }
 
 type actorCommand struct {
-	control *actorControlCommand
-	request *coreprotocol.Request
-	client  *Connection
-	attach  *Connection
-	detach  *Connection
-	result  chan coreprotocol.Response
-	view    chan coreprotocol.WorkspaceSnapshot
-	inspect func()
+	fileOnly bool
+	control  *actorControlCommand
+	request  *coreprotocol.Request
+	client   *Connection
+	attach   *Connection
+	detach   *Connection
+	result   chan coreprotocol.Response
+	view     chan coreprotocol.WorkspaceSnapshot
+	inspect  func()
 	// retire acknowledges the atomic quiescence/admission decision before the
 	// loop exits. Its worker owns full off-actor resource shutdown afterward.
 	retire func() bool
@@ -726,7 +728,8 @@ func newActor(id string, ws *workspace.Workspace, receipts *receiptJournal) *act
 	// never executes on the actor or any shell's Update goroutine.
 	// The text index builds on its own worker; the watch keeps it current.
 	index := ws.TextIndex
-	if index != nil {
+	onDemand := ws.EffectiveAppSettings().Entry.DeferProjectScan()
+	if index != nil && !onDemand {
 		index.Start()
 	}
 	notify := func(ctx context.Context, path string, kind int) {
@@ -742,8 +745,14 @@ func newActor(id string, ws *workspace.Workspace, receipts *receiptJournal) *act
 			index.Rescan()
 		}
 	}
-	watch, err := startCoreFileWatch(ws.RootPath, func(change coreprotocol.FileChange) { a.Send(change) },
-		notify, reliable)
+	publish := func(change coreprotocol.FileChange) { a.Send(change) }
+	var watch *coreFileWatch
+	var err error
+	if onDemand {
+		watch, err = startDirectoryScope(ws.RootPath, publish, notify, reliable, ws.AnalysisDemand(), index)
+	} else {
+		watch, err = startCoreFileWatch(ws.RootPath, publish, notify, reliable)
+	}
 	if err != nil {
 		ws.Logger.Warn("CORE", "file_watch_failed", "error", err.Error())
 	} else {
@@ -1031,12 +1040,25 @@ func (a *actor) runCommand(command actorCommand) (retired bool) {
 		return false
 	}
 	if command.attach != nil {
+		if !command.fileOnly && a.ws.SetFileOnly(false) {
+			a.queueState(coreprotocol.TopicSettings)
+			a.queueState(coreprotocol.TopicLSP)
+		}
+		if command.fileOnly && a.ws.LiveDocuments != nil {
+			a.ws.LiveDocuments.SetFileOnlyOwner(document.Owner{ClientID: command.attach.Owner.ClientID, Epoch: command.attach.Owner.Epoch})
+		}
+		if w := a.fileWatch; w != nil && w.scope != nil {
+			w.scope.attach(command.attach.Owner)
+		}
 		a.subscribers[command.attach] = struct{}{}
 		a.evaluateAttention(time.Now())
 		command.view <- a.snapshot()
 		return false
 	}
 	if command.detach != nil {
+		if w := a.fileWatch; w != nil && w.scope != nil {
+			w.scope.detach(command.detach.Owner)
+		}
 		delete(a.subscribers, command.detach)
 		a.forgetPresence(command.detach.Owner)
 		a.evaluateAttention(time.Now())
@@ -1098,10 +1120,10 @@ func (a *actor) broadcast(change coreprotocol.Change) {
 	a.queueTopic(change)
 }
 
-func (a *actor) subscribe(ctx context.Context, c *Connection) (coreprotocol.WorkspaceSnapshot, error) {
+func (a *actor) subscribe(ctx context.Context, c *Connection, fileOnly bool) (coreprotocol.WorkspaceSnapshot, error) {
 	ch := make(chan coreprotocol.WorkspaceSnapshot, 1)
 	select {
-	case a.commands <- actorCommand{attach: c, view: ch}:
+	case a.commands <- actorCommand{attach: c, view: ch, fileOnly: fileOnly}:
 	case <-ctx.Done():
 		return coreprotocol.WorkspaceSnapshot{}, ctx.Err()
 	case <-a.stop:

@@ -269,6 +269,7 @@ func (a *actor) captureSettings() (coreprotocol.SettingsFetchResult, setting.Age
 	// here would reauthorize a replaced folder in every shell projection.
 	effective := a.ws.LoadAppSettings()
 	out := coreprotocol.SettingsFetchResult{
+		Entry:               effective.Entry,
 		ApplicationRevision: entityRevision(app), WorkspaceRevision: entityRevision(overrides), CapabilitiesRevision: entityRevision(effective.Capabilities),
 		Overrides: publicWorkspaceOverrides(overrides), Accounts: make(map[string]coreprotocol.AccountView), ConnectionSecretsPresent: make(map[string]bool),
 		ApplicationConnectionSecretFields: make(map[string]coreprotocol.ConnectionSecretPresence), ConnectionSecretFields: make(map[string]coreprotocol.ConnectionSecretPresence),

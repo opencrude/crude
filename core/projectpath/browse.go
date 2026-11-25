@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+
+	"crude/workspace/folderkind"
 )
 
 const (
@@ -46,7 +48,7 @@ func Browse(ctx context.Context, path string, offset int) (Directory, error) {
 	if offset < 0 || offset > ScanLimit {
 		return Directory{}, fmt.Errorf("directory offset must be between 0 and %d", ScanLimit)
 	}
-	path, _, err := canonicalDirectory(path)
+	path, _, err := folderkind.Directory(path)
 	if err != nil {
 		return Directory{}, err
 	}

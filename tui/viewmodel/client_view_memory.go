@@ -226,7 +226,12 @@ func (m *App) installViewMemory(memory viewMemory) {
 	}
 	m.treeHiddenChoice = memory.ShowHiddenFiles
 	if m.Tree != nil {
+		m.rememberedSidebarHidden = nil
 		m.Tree.Visible = !memory.SidebarHidden
+		if m.launchFile != "" {
+			m.rememberedSidebarHidden = &memory.SidebarHidden
+			m.Tree.Visible = false
+		}
 		if m.sidebarScreen != nil {
 			// No search is active in a freshly built view, so no command.
 			_ = m.sidebarScreen.SetShowHidden(m.treeShowHidden())
@@ -242,6 +247,21 @@ func (m *App) installViewMemory(memory viewMemory) {
 	// view's geometry into the layout just installed.
 	m.activityView = view
 	m.setActivity(view, false)
+	if m.launchFile != "" {
+		if memory.PaneLayout == nil || len(memory.Panes) == 0 {
+			memory.Panes = []viewMemoryPane{{}}
+			memory.PaneLayout = &viewMemoryPaneNode{}
+			memory.ActivePane = 0
+		}
+		if memory.ActivePane < 0 || memory.ActivePane >= len(memory.Panes) {
+			memory.ActivePane = 0
+		}
+		pane := &memory.Panes[memory.ActivePane]
+		if !slices.Contains(pane.Files, m.launchFile) {
+			pane.Files = append(pane.Files, m.launchFile)
+		}
+		pane.Active = m.launchFile
+	}
 	m.restoreViewPanes(memory)
 	m.viewMemoryVersion, m.viewMemorySavedVersion = 0, 0
 	m.viewMemorySaveQueued, m.viewMemorySaving = false, false
@@ -304,6 +324,9 @@ func (m *App) captureViewMemory() viewMemory {
 		memory.ShowHiddenFiles = &show
 	}
 	memory.SidebarHidden = m.Tree != nil && !m.Tree.Visible
+	if m.rememberedSidebarHidden != nil && memory.SidebarHidden {
+		memory.SidebarHidden = *m.rememberedSidebarHidden
+	}
 	memory.Panes, memory.PaneLayout, memory.ActivePane, _ = m.captureViewPanes()
 	m.captureEditorFolds(memory.Panes)
 	return memory
@@ -323,6 +346,9 @@ func (m *App) noteViewMemoryChange() tea.Cmd {
 		if show := m.Tree.Model.ShowHidden(); show != m.treeShowHidden() {
 			m.treeHiddenChoice = &show
 		}
+	}
+	if m.Tree != nil && m.Tree.Visible {
+		m.rememberedSidebarHidden = nil
 	}
 	if marks := m.viewMemoryMarks(); marks != m.viewMemoryMarked {
 		m.viewMemoryMarked = marks

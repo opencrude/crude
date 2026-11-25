@@ -14,16 +14,17 @@ import (
 // attachStartupSelection is the single startup chooser/attachment lifecycle.
 // Private handovers never enter the ordinary repair chooser, including failures
 // after a successful initial inspection. Callbacks are the existing I/O owners.
-func attachStartupSelection(ctx context.Context, root string, exact bool, selection coreprotocol.StartupSnapshot,
+func attachStartupSelection(ctx context.Context, root string, exact, explicit bool, selection coreprotocol.StartupSnapshot,
 	choose func(context.Context, coreprotocol.StartupSnapshot) (startuptui.Selection, error),
-	attach func(context.Context, string) (*remote.Workspace, error),
+	attach func(context.Context, string, coreprotocol.EntryIntent) (*remote.Workspace, error),
 ) (string, *remote.Workspace, []statuscenter.OperationIssue, error) {
-	if exact && (selection.Root != root || selection.FolderKind != "" || selection.PathError != "" || selection.ShowIntroduction) {
+	if exact && (selection.Root != root || selection.ChooseWorkspace || selection.PathError != "" || selection.ShowIntroduction) {
 		return "", nil, nil, errors.New("handover destination is not ready; no alternative workspace or onboarding choice was selected")
 	}
 	issues := append([]statuscenter.OperationIssue(nil), selection.Issues...)
 	for {
-		if selection.ShowIntroduction || selection.FolderKind != "" || selection.PathError != "" {
+		entry := coreprotocol.EntryIntent{Explicit: explicit, FileOnly: selection.FilePath != ""}
+		if selection.ChooseWorkspace {
 			selected, err := choose(ctx, selection)
 			if err != nil {
 				return "", nil, nil, fmt.Errorf("select project: %w", err)
@@ -32,10 +33,11 @@ func attachStartupSelection(ctx context.Context, root string, exact bool, select
 				return "", nil, nil, nil
 			}
 			root, issues = selected.Root, selected.Issues
+			entry = coreprotocol.EntryIntent{Explicit: true}
 		} else {
 			root = selection.Root
 		}
-		ws, err := attach(ctx, root)
+		ws, err := attach(ctx, root, entry)
 		if err == nil {
 			return root, ws, issues, nil
 		}
@@ -45,5 +47,6 @@ func attachStartupSelection(ctx context.Context, root string, exact bool, select
 		// Ordinary launch keeps its repair navigation after disappearance or
 		// initialization failure. It never discards an old attachment/draft.
 		selection.Root, selection.PathError, selection.ShowIntroduction, selection.Issues = root, err.Error(), false, issues
+		selection.ChooseWorkspace = true
 	}
 }

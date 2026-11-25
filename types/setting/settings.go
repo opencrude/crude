@@ -327,9 +327,18 @@ func MergeAppWorkspace(app App, ws WorkspaceOverrides) App {
 	app = cloneAppSettings(app)
 	ApplyAppDefaults(&app)
 	out := cloneAppSettings(app)
+	if app.Entry.FolderKind != "" {
+		out.LocalHistory.Enabled = "off"
+		out.LSP.Enabled = false
+	}
 	applySparse(&out.Theme, ws.Theme)
 	applySparse(&out.Editor, ws.Editor)
 	applySparse(&out.LSP, ws.LSP)
+	// No project attachment has requested language services. A saved switch
+	// still takes effect as soon as a project attachment joins the actor.
+	if app.Entry.FileOnly {
+		out.LSP.Enabled = false
+	}
 	out.Analysis = WorkspaceAnalysisChoice(ws)
 	out.Prediction = DefaultWorkspacePrediction()
 	if choice, err := DecodeWorkspacePrediction(ws.Prediction); err == nil {

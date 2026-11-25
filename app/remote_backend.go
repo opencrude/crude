@@ -239,7 +239,7 @@ func (m *remoteBackendManager) Attach(ctx context.Context, id, root string) (she
 		}
 		namespace = "remote:" + id
 	}
-	attached, err := remote.Attach(ctx, remote.Options{Root: root, Dial: dial, Namespace: namespace, ClientID: shellClientID(m.profile, namespace), Logger: m.logger})
+	attached, err := remote.Attach(ctx, remote.Options{Root: root, Entry: coreprotocol.EntryIntent{Explicit: true}, Dial: dial, Namespace: namespace, ClientID: shellClientID(m.profile, namespace), Logger: m.logger})
 	if err == nil && notice != "" {
 		attached.AddStartupIssues([]statuscenter.OperationIssue{{Title: "Remote credential storage", Summary: notice, Guidance: "Re-pair with an OS keychain to move future device credentials out of private-file storage."}})
 	}

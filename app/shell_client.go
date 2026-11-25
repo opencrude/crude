@@ -35,6 +35,9 @@ var ErrClientProfileBusy = errors.New("private client profile is already in use"
 var ErrInvocationConfiguration = errors.New("invalid invocation configuration")
 
 func validateConnectedInvocation(flags CLIFlags) error {
+	if flags.extraPaths || flags.Path != "" && (flags.Workspace != "" || flags.Core || flags.CoreStatus || flags.CoreStop || flags.CoreStdio || flags.Server || flags.MCP || flags.ListSessions || flags.DeleteSession != "") {
+		return fmt.Errorf("%w: give one file or folder path for the editor, without --workspace or administration flags", ErrInvocationConfiguration)
+	}
 	if flags.SSHHost == "" && (flags.SSHUser != "" || flags.SSHPort != 0 || flags.SSHIdentity != "") {
 		return fmt.Errorf("%w: --ssh-user/--ssh-port/--ssh-identity require --ssh", ErrInvocationConfiguration)
 	}
@@ -58,6 +61,9 @@ func invocationRoot(flags CLIFlags) (string, error) {
 	}
 	if flags.SSHHost != "" {
 		return flags.Workspace, nil
+	}
+	if flags.Path != "" {
+		return filepath.Abs(flags.Path)
 	}
 	if flags.Workspace != "" {
 		return filepath.Abs(flags.Workspace)
@@ -225,22 +231,26 @@ func runConnectedShellAttachment(home, root, resumeID, profile string, flags CLI
 	}
 	defer func() { result = errors.Join(result, navigation.Close()) }()
 	inspectCtx, inspectCancel := context.WithTimeout(ctx, 15*time.Second)
-	selection, err := navigation.Inspect(inspectCtx, root)
+	explicit := flags.Workspace != "" || flags.Path != ""
+	selection, err := navigation.InspectLaunch(inspectCtx, coreprotocol.StartupInspectRequest{Root: root, Explicit: explicit, AllowFile: flags.Path != ""})
 	inspectCancel()
 	if err != nil {
 		return fmt.Errorf("inspect launch folder: %w", err)
 	}
-	selectedRoot, ws, startupIssues, err := attachStartupSelection(ctx, root, flags.CoreHandover != "", selection,
+	selectedRoot, ws, startupIssues, err := attachStartupSelection(ctx, root, flags.CoreHandover != "", explicit, selection,
 		func(ctx context.Context, initial coreprotocol.StartupSnapshot) (startuptui.Selection, error) {
 			selected, err := startuptui.Run(ctx, navigation, initial)
 			if err == nil && selected.Root != "" && selected.Root != initial.Root {
 				resumeID = ""
 			}
 			return selected, err
-		}, func(ctx context.Context, root string) (*remote.Workspace, error) {
+		}, func(ctx context.Context, root string, entry coreprotocol.EntryIntent) (*remote.Workspace, error) {
 			attachCtx, attachCancel := context.WithTimeout(ctx, 30*time.Second)
 			defer attachCancel()
-			return navigation.AttachWorkspace(attachCtx, root)
+			if !entry.FileOnly {
+				selection.FilePath = ""
+			}
+			return navigation.AttachWorkspace(attachCtx, root, entry)
 		})
 	if err != nil {
 		return err
@@ -284,7 +294,7 @@ func runConnectedShellAttachment(home, root, resumeID, profile string, flags CLI
 	notifier := desktopnotify.Start(desktopnotify.Identity{AppID: "Crude", Name: "Crude", IconPNG: assets.IconPNG, Dir: filepath.Join(DataDir(home), "notifications")})
 	defer notifier.Close()
 	options := []tui.StartOption{
-		tui.WithComposerDrafts(drafts.store, drafts.attachment, ws.DraftWorkspaceID()), tui.WithRemoteManager(manager, backend),
+		tui.WithWorkspaceEntry(selection.FilePath, selection.FileMissing), tui.WithComposerDrafts(drafts.store, drafts.attachment, ws.DraftWorkspaceID()), tui.WithRemoteManager(manager, backend),
 		tui.WithDesktopNotifications(notifier),
 	}
 	var restart *coreRestartHost

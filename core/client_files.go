@@ -66,6 +66,7 @@ func (a *actor) prepareClientFiles(request coreprotocol.Request) (func(context.C
 		return nil, false
 	}
 	root := a.ws.RootPath
+	watch := a.fileWatch
 	return func(ctx context.Context) coreprotocol.Response {
 		if err := ctx.Err(); err != nil {
 			return fault(request, "cancelled", err.Error())
@@ -85,6 +86,15 @@ func (a *actor) prepareClientFiles(request coreprotocol.Request) (func(context.C
 			var in coreprotocol.FilePathRequest
 			if err := decodeRequest(request, &in); err != nil {
 				return fault(request, "invalid_request", err.Error())
+			}
+			if request.Method == coreprotocol.ClientFilesBrowse && watch != nil && watch.scope != nil {
+				path, checkErr := workspaceFilePath(root, in.Path, false)
+				if checkErr != nil {
+					return fault(request, "files_failed", checkErr.Error())
+				}
+				if err := watch.scope.observe(ctx, request.Owner, path); err != nil {
+					return fault(request, "files_failed", err.Error())
+				}
 			}
 			value, err = wiredList[coreprotocol.ClientDirectoryEntries](browseClientDirectory(ctx, root, in.Path, request.Method == coreprotocol.ClientFilesBrowseExternal))
 		}

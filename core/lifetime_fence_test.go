@@ -30,11 +30,11 @@ func idleRuntime(t *testing.T) (*Runtime, *actor, *actor) {
 			t.Error(err)
 		}
 	})
-	a, err := r.workspace(t.Context(), "a", t.TempDir())
+	a, err := r.workspaceForEntry(t.Context(), "a", t.TempDir(), false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := r.workspace(t.Context(), "b", t.TempDir())
+	b, err := r.workspaceForEntry(t.Context(), "b", t.TempDir(), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestIdleShutdownRollbackAcrossWorkspaces(t *testing.T) {
 	if !result.Accepted {
 		t.Fatal(result)
 	}
-	if _, err := r.workspace(t.Context(), "new", t.TempDir()); err == nil {
+	if _, err := r.workspaceForEntry(t.Context(), "new", t.TempDir(), false); err == nil {
 		t.Fatal("factory crossed accepted fence")
 	}
 }

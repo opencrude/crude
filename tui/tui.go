@@ -256,6 +256,11 @@ func (t *TUI) AddOrchestrator(orchID string) {
 // StartOption configures shell-local state before the program's first frame.
 type StartOption func(*viewmodel.App) error
 
+// WithWorkspaceEntry selects an explicit file before restoring this shell's panes.
+func WithWorkspaceEntry(file string, missing bool) StartOption {
+	return func(a *viewmodel.App) error { a.SetLaunchFile(file, missing); return nil }
+}
+
 // WithComposerDrafts binds the already exclusively acquired private profile.
 // The caller retains the store and attachment until Wait completes.
 func WithComposerDrafts(store *clientstate.Store, attachment clientstate.Attachment, workspaceID string) StartOption {

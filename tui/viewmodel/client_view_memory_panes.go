@@ -219,10 +219,15 @@ func (m *App) restoreViewPanes(memory viewMemory) {
 		}
 		activePath := pane.Active
 		restoreForeground := restored[i] == active
+		entryFile := ""
+		if restoreForeground {
+			entryFile = m.launchFile
+		}
 		queued = true
 		m.editorCommands = append(m.editorCommands, func() tea.Msg {
 			msg := cmd().(paneFilesOpenedMsg)
 			msg.activePath = activePath
+			msg.entryFile = entryFile
 			msg.restoring = true
 			msg.folds = pane.Folds
 			msg.indentation = pane.Indentation

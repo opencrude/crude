@@ -169,10 +169,7 @@ func (s *DocumentService) commitReviewedDraftSaveLocked(p *reviewedEdit) error {
 		return err
 	}
 	*d = *trial
-	if s.lsp != nil && !d.lspOpen {
-		s.lsp.OpenFile(context.Background(), s.analysisIdentityLocked(d), string(d.snapshot.Text))
-		d.lspOpen = true
-	}
+	s.openLanguageView(d)
 	return nil
 }
 

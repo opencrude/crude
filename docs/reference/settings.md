@@ -167,6 +167,23 @@ only explicit choices and restores live inheritance. See
 [orientation](editor.md#indentation-guides-and-minimap) for sampling and geometry
 bounds. The remaining semantic work is tracked in [Complete editor experience](../plans/editor-parity.md).
 
+### Workspace entry defaults
+
+Home, personal folders (including Desktop), and filesystem roots turn off
+Local History and language servers by default. The core applies these defaults
+after application preferences and before explicit workspace preferences. The
+workspace stores nothing for automatic choices. Reset restores the folder
+default. The Local History and Code Intelligence switches explain it. Enabling
+Local History requires a profile outside the folder being tracked; a history
+store cannot contain itself. A child folder uses normal project settings.
+
+When the first attachment opens one file, no language server starts, even if
+workspace preferences enable it. Opening the parent as a project activates the
+saved project settings on the same actor. An additional file shell does not
+change settings or request a language-server view for the document; a project
+shell can still analyze it. A file launch in a top-level folder also gets that
+folder's Local History default. These rules do not grant project analysis Trust.
+
 ### First-use profile choices and AI setup
 
 The selected core owns two application-only choices under `onboarding`:
@@ -184,7 +201,7 @@ An absent flag or an empty configuration object alone does not identify previous
 The metadata check does not open workspace databases or inspect project trees.
 Unreadable or malformed configuration remains a repair condition, not proof of first use.
 
-A new profile shows one native introduction with four feature rows and **Let's go!**.
+A new profile launched without an explicit path shows one native introduction with four feature rows and **Let's go!**.
 That button opens the shared native folder picker directly at the launch folder.
 The picker confirms the current root unless the user highlights another folder.
 The completion save runs off the UI thread and does not block folder selection.
@@ -196,7 +213,7 @@ Picker cancellation returns to detached project selection, not an attached launc
 Project attachment precedes AI setup guidance.
 Established project launches keep the current workspace home, controls, and services.
 Existing in-project switch confirmation and dirty-work protection remain unchanged.
-See [startup admission](core-client-protocol.md#startup-before-workspace-attachment) for navigation-only locations and request bounds.
+See [startup admission](core-client-protocol.md#startup-before-workspace-attachment) for launch paths, the chooser and request bounds.
 
 After attachment, a shell can show **Set up AI** when no saved account exists.
 It asks for an account and for two models: one for Main Agent and one for Errand.

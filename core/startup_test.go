@@ -112,7 +112,7 @@ func TestStartupProjectAndLinkAdmission(t *testing.T) {
 	if err := os.Symlink(home, alias); err != nil {
 		return
 	}
-	if _, err := inspectProject(alias); err == nil {
+	if _, err := inspectProject(alias, false); err == nil {
 		t.Fatal("home alias admitted")
 	}
 }

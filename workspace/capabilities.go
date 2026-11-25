@@ -414,7 +414,10 @@ func (w *Workspace) CapabilityAction(ctx context.Context, action captypes.Action
 		if action.Scope == captypes.ScopeApplication {
 			err = w.SaveAppSettings(working)
 		} else {
-			err = w.SaveWorkspaceSettings(setting.OverridesFromDiff(w.AppDefaults(), working))
+			overrides := w.LoadWorkspaceOverrides()
+			diff := setting.OverridesFromDiff(w.AppDefaults(), working)
+			overrides.Capabilities = diff.Capabilities
+			err = w.SaveWorkspaceSettings(overrides)
 		}
 		if err == nil {
 			err = service.Configure(ctx, w.LoadAppSettings().Capabilities)

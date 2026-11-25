@@ -29,7 +29,7 @@ func TestRetainedCoreWatcherInvalidatesSelectedArtifactsWithoutAShell(t *testing
 		t.Fatal(err)
 	}
 	defer runtime.Close()
-	a, err := runtime.workspace(t.Context(), "artifact-workspace", root)
+	a, err := runtime.workspaceForEntry(t.Context(), "artifact-workspace", root, false)
 	if err != nil {
 		t.Fatal(err)
 	}

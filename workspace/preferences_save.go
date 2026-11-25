@@ -7,10 +7,12 @@ import (
 
 	"crude/agent/session"
 	"crude/types/setting"
+	"crude/workspace/localhistory"
 )
 
 // PreferencesSaveResult separates I/O from publication on the workspace owner.
 type PreferencesSaveResult struct {
+	history     *localhistory.Store
 	Scope       setting.Scope
 	AppSettings setting.App
 	Effective   setting.App
@@ -31,6 +33,12 @@ func (w *Workspace) PreparePreferencesSave(scope setting.Scope, edits []setting.
 	root, observedRoot := w.RootPath, w.analysisRootIdentity
 	persistApplication := w.OnAppPreferencesCommit
 	defaults := w.AppDefaults()
+	entry := w.entry
+	workspaceDefaults := defaults
+	workspaceDefaults.Entry = entry
+	needHistory := entry.FolderKind != "" && w.LocalHistory == nil
+	workspaceDir := w.WorkspaceDir
+	overridesAtOpen := w.LoadWorkspaceOverrides()
 	var predictionCompleter session.EditorPredictionCompleter
 	var predictionConnectionErr error
 	if len(predictionEdits(edits)) != 0 {
@@ -77,8 +85,25 @@ func (w *Workspace) PreparePreferencesSave(scope setting.Scope, edits []setting.
 			}
 			if database != nil {
 				binding := predictionPreferenceBinding{root: root, completer: predictionCompleter, connectionErr: predictionConnectionErr}
+				if needHistory {
+					candidate := overridesAtOpen
+					if err := setting.ApplyEdits(&candidate, edits); err != nil {
+						result.Err = err
+						return result
+					}
+					if setting.MergeAppWorkspace(workspaceDefaults, candidate).LocalHistory.EnabledValue() {
+						result.history, err = openLocalHistory(root, workspaceDir)
+						if err != nil {
+							result.Err = fmt.Errorf("cannot turn on Local History: %w", err)
+							return result
+						}
+					}
+				}
 				overrides, err := saveWorkspacePreferences(database, defaults, edits, identity, binding)
 				if err != nil {
+					if result.history != nil {
+						_ = result.history.Close()
+					}
 					result.Err = err
 					return result
 				}
@@ -87,7 +112,7 @@ func (w *Workspace) PreparePreferencesSave(scope setting.Scope, edits []setting.
 					result.PredictionRootIdentity, result.PredictionObserved = resultRoot, true
 				}
 				result.Overrides = overrides
-				result.Effective = boundWorkspaceSettings(defaults, overrides, resultRoot)
+				result.Effective = boundWorkspaceSettings(workspaceDefaults, overrides, resultRoot)
 				return result
 			}
 			if touched || len(predictionEdits(edits)) != 0 {
@@ -95,7 +120,7 @@ func (w *Workspace) PreparePreferencesSave(scope setting.Scope, edits []setting.
 				return result
 			}
 			result.Err = setting.ApplyEdits(&result.Overrides, edits)
-			result.Effective = setting.MergeAppWorkspace(defaults, result.Overrides)
+			result.Effective = setting.MergeAppWorkspace(workspaceDefaults, result.Overrides)
 			return result
 		}
 		settings := setting.CloneApp(defaults)
@@ -118,7 +143,9 @@ func (w *Workspace) PreparePreferencesSave(scope setting.Scope, edits []setting.
 				_ = json.Unmarshal([]byte(encoded), &workspaceOverrides)
 			}
 		}
-		result.Effective = boundWorkspaceSettings(result.AppSettings, workspaceOverrides, resultRoot)
+		workspaceDefaults = result.AppSettings
+		workspaceDefaults.Entry = entry
+		result.Effective = boundWorkspaceSettings(workspaceDefaults, workspaceOverrides, resultRoot)
 		return result
 	}
 }
@@ -224,5 +251,17 @@ func (w *Workspace) ApplyPreferencesSave(result PreferencesSaveResult) {
 	if result.PredictionObserved {
 		w.analysisRootIdentity = result.PredictionRootIdentity
 	}
-	w.applySettingsProjection(result.Effective)
+	if result.history != nil {
+		w.LocalHistory = result.history
+		w.HistoryService = NewLocalHistoryService(w.RootPath, result.history, w.Logger)
+		w.HistoryService.SetEventBus(w.eventBus)
+		for _, s := range w.Sessions {
+			if s != nil && s.backend != nil {
+				w.bindSessionHistory(s.backend)
+			}
+		}
+	}
+	// Re-read current runtime demand: a project attachment may have arrived
+	// while the preference worker was writing its captured choices.
+	w.applyEffectiveSettings()
 }
