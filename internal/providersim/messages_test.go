@@ -42,7 +42,7 @@ func sendMessages(t *testing.T, s *Server, body messageObject, betas ...string) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := http.NewRequestWithContext(t.Context(), "POST", s.BaseURL(Messages)+"/v1/messages", strings.NewReader(string(raw)))
+	r, err := http.NewRequestWithContext(t.Context(), "POST", mountURL(s, Messages)+"/v1/messages", strings.NewReader(string(raw)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +248,7 @@ func TestMessagesValidationAndFaults(t *testing.T) {
 	// Doc-sourced edge response, not represented in SDK ErrorResponse:
 	// https://platform.claude.com/docs/en/api/errors.md (SHA-256 above).
 	// Expect avoids allocating/sending a 128 MiB body just to exercise the limit.
-	r, err := http.NewRequestWithContext(t.Context(), "POST", s.BaseURL(Messages)+"/v1/messages", strings.NewReader("x"))
+	r, err := http.NewRequestWithContext(t.Context(), "POST", mountURL(s, Messages)+"/v1/messages", strings.NewReader("x"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -502,7 +502,7 @@ func TestMessagesThresholdCompaction(t *testing.T) {
 func TestMessagesModelInventory(t *testing.T) {
 	s := New(t, WithModels(Messages, "claude-opus-4-6", "claude-haiku-4-5"))
 	for _, beta := range []bool{false, true} {
-		r, err := http.NewRequestWithContext(t.Context(), "GET", s.BaseURL(Messages)+"/v1/models", nil)
+		r, err := http.NewRequestWithContext(t.Context(), "GET", mountURL(s, Messages)+"/v1/models", nil)
 		if err != nil {
 			t.Fatal(err)
 		}

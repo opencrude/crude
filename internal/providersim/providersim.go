@@ -42,10 +42,10 @@ var wireRoutes = map[Wire]wireRoute{
 	Chat:         {base: "/v1"},
 	Responses:    {mount: "/responses", base: "/v1"},
 	Codex:        {mount: "/codex", base: "/backend-api/codex"},
-	Messages:     {mount: "/messages"},
-	Gemini:       {mount: "/gemini"},
-	Interactions: {mount: "/interactions"},
-	Ollama:       {mount: "/ollama"},
+	Messages:     {mount: "/messages", base: "/v1"},
+	Gemini:       {mount: "/gemini", base: "/v1beta"},
+	Interactions: {mount: "/interactions", base: "/v1beta"},
+	Ollama:       {mount: "/ollama", base: "/api"},
 }
 
 // Each codec registers its local handler once, during package initialization.

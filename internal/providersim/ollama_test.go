@@ -197,7 +197,7 @@ func TestOllamaValidatesRequests(t *testing.T) {
 
 func TestOllamaInventory(t *testing.T) {
 	s := New(t, WithModels(Ollama, "fixture:latest", "other:1"))
-	res, err := http.Get(s.BaseURL(Ollama) + "/api/tags")
+	res, err := http.Get(mountURL(s, Ollama) + "/api/tags")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,7 +285,7 @@ func TestOllamaGate(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			body := strings.TrimSuffix(ollamaPrompt, "}") + `,"stream":true}`
-			req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.BaseURL(Ollama)+"/api/chat", strings.NewReader(body))
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, mountURL(s, Ollama)+"/api/chat", strings.NewReader(body))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -319,7 +319,7 @@ func TestOllamaGate(t *testing.T) {
 
 func postOllama(t *testing.T, s *Server, path, body string) *http.Response {
 	t.Helper()
-	res, err := http.Post(s.BaseURL(Ollama)+path, "application/json", strings.NewReader(body))
+	res, err := http.Post(mountURL(s, Ollama)+path, "application/json", strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
