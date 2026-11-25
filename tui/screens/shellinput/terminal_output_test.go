@@ -77,7 +77,7 @@ func TestComposerIncrementalWideText(t *testing.T) {
 			want := "prefix"
 			m.SetInput(want)
 			check(want, true)
-			for _, key := range []rune("😂😂b") {
+			for _, key := range "😂😂b" {
 				m, _, _ = m.Update(tea.KeyPressMsg{Code: key, Text: string(key)}, false, false)
 				want += string(key)
 				check(want, true)
