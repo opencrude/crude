@@ -485,6 +485,13 @@ operation, verification and export each account for their own reported usage.
 Messages block. Reject oversized or unusable output rather than trim it into an
 invalid artifact. A same-model continuation from an opaque window produces portable
 text (also used if a signed summary does not provide the required sections).
+This read-back is a normal request of the serving model. It gets that model's
+normal response allowance, never a fixed cap, and its instructions never offer
+more checkpoint space than that allowance (hidden reasoning shares it). On the
+Responses wires it streams, so a long reply keeps the connection active. If the
+reply still stops at its output limit, read the same paid window once more and
+ask for the checkpoint in half the space. Only then fall back to a portable
+checkpoint. A read-back at its limit is not evidence against native support.
 The existing four-section validator, bounded human/assignment retention, refreshed
 runtime handoff and transactional source archive apply before installation. A
 compatible connection can replay the native item. Another account, model, wire or

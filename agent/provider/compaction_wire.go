@@ -32,6 +32,10 @@ var errIgnoredCompaction = errors.New("the provider answered normally instead of
 var errNoWindow = errors.New("the provider did not return a usable compaction item")
 var errUnusableCheckpoint = errors.New("the provider returned a checkpoint that Crude cannot use")
 
+// errCheckpointOutputLimit is a checkpoint read-back that stopped at its output
+// allowance. The native operation itself worked, so this is not a refusal.
+var errCheckpointOutputLimit = errors.New("the provider checkpoint reached its output limit")
+
 const nativeOptionsReason = "Native compaction cannot keep this account's request options."
 
 // nativeStandard is the item format a wire replays: the Responses family
@@ -294,6 +298,8 @@ func newNativeFailure(err error) *nativeFailure {
 		return &nativeFailure{text: fmt.Sprintf("The provider did not confirm native compaction (HTTP %d).", s.StatusCode), cause: err}
 	case errors.Is(err, errUnusableCheckpoint):
 		return &nativeFailure{text: "The provider returned a checkpoint that Crude cannot use."}
+	case errors.Is(err, errCheckpointOutputLimit):
+		return &nativeFailure{text: "The provider checkpoint reached its output limit."}
 	case errors.Is(err, errIgnoredCompaction), errors.Is(err, errNoWindow):
 		return &nativeFailure{text: "The provider did not return a native checkpoint."}
 	default:

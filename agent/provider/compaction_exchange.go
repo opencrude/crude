@@ -127,7 +127,10 @@ func (x *compactExchange) follow(ctx context.Context, w nativeWindow, instructio
 		}
 		c.requestExtras["store"] = false
 	}
-	q := &ChatRequest{Model: r.Model, Messages: []ChatMessage{msg, NewTextMessage("user", instruction)}, MaxOutputTokens: limit}
+	// A long read-back must keep bytes moving: silence until a large reply is
+	// complete looks like a stalled connection. send rebuilds the final
+	// Responses object from the stream; other wires answer in one body.
+	q := &ChatRequest{Model: r.Model, Messages: []ChatMessage{msg, NewTextMessage("user", instruction)}, MaxOutputTokens: limit, Stream: nativeStandard(c.proto) == "openai-responses"}
 	raw, err := c.encodeChatRequest(q)
 	if err != nil {
 		return "", err
@@ -170,7 +173,20 @@ func (x *compactExchange) follow(ctx context.Context, w nativeWindow, instructio
 	}
 	x.report(label, u, valid)
 	if !valid {
+		if outputLimitReached(obj) {
+			return "", errCheckpointOutputLimit
+		}
 		return "", errors.New("the provider did not finish the checkpoint continuation")
 	}
 	return strings.TrimSpace(resp.Choices[0].Message.ContentString()), nil
+}
+
+// outputLimitReached reports a reply that stopped at its output allowance:
+// Responses status incomplete for max_output_tokens, or Messages max_tokens.
+func outputLimitReached(obj map[string]any) bool {
+	if obj["stop_reason"] == "max_tokens" {
+		return true
+	}
+	details, _ := obj["incomplete_details"].(map[string]any)
+	return obj["status"] == "incomplete" && details["reason"] == "max_output_tokens"
 }

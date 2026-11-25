@@ -20,9 +20,12 @@ type NativeCheckpointRequest struct {
 	Tools                                                      []ToolDef
 	Limit                                                      int
 	Directive, Verify, ProbeSource, ProbeQuestion, ProbeAnswer string
-	ValidatePortable                                           func(string) error
-	Usage                                                      func(string, TokenUsage, bool)
-	Stage                                                      func(string)
+	// Shorter asks for the same checkpoint in less space. It is read back from
+	// the same paid window when the first read-back stops at its output limit.
+	Shorter          string
+	ValidatePortable func(string) error
+	Usage            func(string, TokenUsage, bool)
+	Stage            func(string)
 }
 
 // NativeCheckpointResult distinguishes a safe portable fallback from an
@@ -112,7 +115,7 @@ func (p *Provider) NativeCheckpoint(ctx context.Context, r NativeCheckpointReque
 	if !p.UsesNativeCompaction() {
 		return fallback("This connection uses Errand for compaction.", false)
 	}
-	if len(r.Messages) < 2 || r.Messages[0].Role != "system" || r.Limit <= 0 || r.Limit > 8192 || len(r.ProbeSource) > 512 || len(r.ProbeQuestion) > 512 || len(r.ProbeAnswer) > 96 || r.ProbeAnswer == "" || r.Directive == "" || r.Verify == "" {
+	if len(r.Messages) < 2 || r.Messages[0].Role != "system" || r.Limit <= 0 || r.ValidatePortable == nil || len(r.ProbeSource) > 512 || len(r.ProbeQuestion) > 512 || len(r.ProbeAnswer) > 96 || r.ProbeAnswer == "" || r.Directive == "" || r.Verify == "" {
 		return zero, errors.New("incomplete compaction request")
 	}
 	proto := p.Protocol()
@@ -310,20 +313,21 @@ func (p *Provider) NativeCheckpoint(ctx context.Context, r NativeCheckpointReque
 		return fail(err, false)
 	}
 	text := w.text
-	if text == "" || !verified || r.ValidatePortable != nil && r.ValidatePortable(text) != nil {
+	if text == "" || !verified || r.ValidatePortable(text) != nil {
 		op.stage("Reading the provider checkpoint")
 		text, err = op.follow(ctx, w, r.Verify, r.Limit, "native_checkpoint_replay")
+		if errors.Is(err, errCheckpointOutputLimit) && r.Shorter != "" {
+			// The window is already paid for; reading it again costs far less
+			// than writing a portable checkpoint from the whole source.
+			op.stage("Shortening the provider checkpoint")
+			text, err = op.follow(ctx, w, r.Shorter, r.Limit, "native_checkpoint_replay")
+		}
 		if err != nil {
 			return fail(err, false)
 		}
 	}
-	if r.ValidatePortable != nil {
-		if err := r.ValidatePortable(text); err != nil {
-			return fail(fmt.Errorf("%w: %w", errUnusableCheckpoint, err), false)
-		}
-	}
-	if EstimateTokens(text, r.Model) > r.Limit {
-		return fail(errUnusableCheckpoint, false)
+	if err := r.ValidatePortable(text); err != nil {
+		return fail(fmt.Errorf("%w: %w", errUnusableCheckpoint, err), false)
 	}
 	if err = record(supportVerified); err != nil {
 		return zero, err
