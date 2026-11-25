@@ -131,6 +131,7 @@ func (a *Agent) contextCompactor(targetWindow int) *Agent {
 	compactor.CompactionTargetModel = a.Model
 	compactor.CompactionTargetWindow = targetWindow
 	compactor.CompactionTargetTokens = a.contextThreshold(targetWindow)
+	compactor.CompactionTargetOutput = a.MaxOutputTokens
 	compactor.CompactionRetentionTokens = a.CompactionRetentionTokens
 	compactor.MaxOutputTokens = a.CompactionMaxOutput
 	compactor.CompactionAgentProfile = a.CompactionAgentProfile
@@ -299,6 +300,13 @@ func (a *Agent) compactSource(ctx context.Context, msgs, source []provider.ChatM
 	var fallbackChanged, transient bool
 	if main != nil && main.UsesNativeCompaction() {
 		owner := NewAgent(main, targetModel, a.logger)
+		owner.MaxOutputTokens = a.CompactionTargetOutput
+		// Reading the checkpoint back is a normal request of the serving model,
+		// so it gets that model's normal response allowance. Hidden reasoning
+		// shares the allowance; the instructions never offer more text space
+		// than the request can return.
+		limit := owner.outputTokenLimit(ctxWindow, 0)
+		textBudget := min(checkpointBudget, limit)
 		stage := func(label string) {
 			data := owner.compactionEventData(requestID, trigger, role, 1, 0, beforeTokens, 0, ctxWindow)
 			data["stage_name"], data["stage_label"] = label, label
@@ -307,16 +315,15 @@ func (a *Agent) compactSource(ctx context.Context, msgs, source []provider.ChatM
 		emit(AgentEvent{Type: "context_compaction_started", Data: owner.compactionEventData(requestID, trigger, role, 0, 0, beforeTokens, 0, ctxWindow)})
 		ticket := provider.NewMessageID()
 		probe, question := rootprompt.CompactionChallenge(ticket)
-		directive := rootprompt.CompactionCommon(role, compactionHumanManifest(msgs[1:], role, targetModel, 1024), continuity.ContentString()) + "\n\n" + rootprompt.CompactionStageInstruction(role, rootprompt.CombinedCompactionStage(), checkpointBudget, rootprompt.InitialCompactionDirective())
+		common := rootprompt.CompactionCommon(role, compactionHumanManifest(msgs[1:], role, targetModel, 1024), continuity.ContentString())
+		instructions := func(space int) string {
+			return common + "\n\n" + rootprompt.CompactionStageInstruction(role, rootprompt.CombinedCompactionStage(), space, rootprompt.InitialCompactionDirective())
+		}
+		directive := instructions(textBudget)
 		var usage provider.TokenUsage
 		var opts []provider.ClientOption
 		if a.testHTTPClient != nil {
 			opts = append(opts, provider.WithHTTPClient(a.testHTTPClient))
-		}
-		// Hidden reasoning consumes the response allowance, not the portable text budget.
-		limit := 8192
-		if a.CompactionTargetOutput > 0 {
-			limit = min(limit, a.CompactionTargetOutput)
 		}
 		var checkpoint string
 		validate := func(text string) error {
@@ -331,7 +338,7 @@ func (a *Agent) compactSource(ctx context.Context, msgs, source []provider.ChatM
 			checkpoint, e = validateContextCheckpoint(xml, role, checkpointBudget)
 			return e
 		}
-		r, e := main.NativeCheckpoint(ctx, provider.NativeCheckpointRequest{ValidatePortable: validate, Owner: string(a.AgentID), Explicit: trigger == CompactionTriggerManual || trigger == "requested", Model: targetModel, Messages: msgs, Tools: tools, Limit: limit, Directive: directive, Verify: directive, ProbeAnswer: ticket, ProbeSource: probe, ProbeQuestion: question, Stage: stage, Usage: func(kind string, u provider.TokenUsage, ok bool) {
+		r, e := main.NativeCheckpoint(ctx, provider.NativeCheckpointRequest{ValidatePortable: validate, Owner: string(a.AgentID), Explicit: trigger == CompactionTriggerManual || trigger == "requested", Model: targetModel, Messages: msgs, Tools: tools, Limit: limit, Directive: directive, Verify: directive, Shorter: instructions(max(1, textBudget/2)), ProbeAnswer: ticket, ProbeSource: probe, ProbeQuestion: question, Stage: stage, Usage: func(kind string, u provider.TokenUsage, ok bool) {
 			usage = usage.Add(u)
 			owner.emitCompactionUsage(emit, u, provider.NewMessageID(), requestID, trigger, role, kind, false, ok)
 		}}, opts...)

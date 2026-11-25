@@ -16,7 +16,7 @@ import (
 )
 
 func compactFixture(p *Provider) NativeCheckpointRequest {
-	return NativeCheckpointRequest{Model: p.Model, Messages: []ChatMessage{NewTextMessage("system", "current instructions"), NewTextMessage("user", "real-history-secret")}, ProbeAnswer: "blue-91", ProbeSource: "preserve blue-91", ProbeQuestion: "what was the code?", Directive: "summarize", Verify: "export", Limit: 900}
+	return NativeCheckpointRequest{Model: p.Model, Messages: []ChatMessage{NewTextMessage("system", "current instructions"), NewTextMessage("user", "real-history-secret")}, ProbeAnswer: "blue-91", ProbeSource: "preserve blue-91", ProbeQuestion: "what was the code?", Directive: "summarize", Verify: "export", Limit: 900, ValidatePortable: func(string) error { return nil }}
 }
 func responsesText(w http.ResponseWriter, text string) {
 	fmt.Fprintf(w, `{"object":"response","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":%q}]}],"usage":{"input_tokens":16,"output_tokens":3}}`, text)

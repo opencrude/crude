@@ -223,7 +223,7 @@ func TestAutomaticNativeCheckpointRecoversRejectedArtifactBeforeOutput(t *testin
 		if strings.Contains(s, "old assistant evidence") {
 			t.Error("old history replayed")
 		}
-		if !body.Stream {
+		if isReadBack(s) {
 			answer := handoff
 			if strings.Contains(s, "secret-probe") {
 				answer = observedTicket
@@ -291,7 +291,7 @@ func TestAutoUncertainNativeCheckpointUsesErrandAndContinues(t *testing.T) {
 			fmt.Fprint(w, `{"object":"response.compaction","output":[{"type":"compaction","encrypted_content":"probe-token"}]}`)
 			return
 		}
-		if !body.Stream {
+		if isReadBack(s) {
 			answer, _ := ticket.Load().(string)
 			fmt.Fprintf(w, `{"object":"response","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":%q}]}]}`, answer)
 			return
@@ -430,4 +430,10 @@ func probeTicket(body string) string {
 		return match[1]
 	}
 	return ""
+}
+
+// isReadBack reports a request that reads a native window back: the synthetic
+// check's question or the checkpoint instructions. Both may stream.
+func isReadBack(body string) bool {
+	return strings.Contains(body, "What was the ticket code?") || statedCheckpointSpace.MatchString(body)
 }

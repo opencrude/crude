@@ -214,6 +214,7 @@ documents to read before changing each area.
 
 - [Cold requests after automatic compaction](issues/2026-11-24-compaction-cache-misses.md) — measured cache reads, all seven wire contracts and the portable fallback.
 - [Prompt cache reporting](issues/2026-11-25-cache-reporting.md) — why a full cache miss showed as a high hit rate, and what the header and details report now.
+- [Provider checkpoint read-back](issues/2026-11-25-native-checkpoint-read-back.md) — why a working provider compaction was discarded, and how the read-back now gets the serving model's allowance.
 
 - [LSP completion reliability: immediate action (2026-11-23)](issues/2026-11-23-lsp-completion-immediate-action.md)
   — reproduced Ctrl+Space request loss, open protocol gaps and exit tests.
