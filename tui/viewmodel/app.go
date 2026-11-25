@@ -195,11 +195,9 @@ type App struct {
 	launcherCapabilityAt       time.Time
 	agentPrompt                *agentPromptState
 	agentPrompts               []*agentPromptState
-	// pendingTabClose holds the tabs still to close after a bulk close
-	// ("Close others" / "Close to the right") stopped at a dirty buffer and
-	// opened the unsaved-changes prompt. Cancel drops it; a confirmed close
-	// resumes the walk.
-	pendingTabClose []window.TabID
+	// pendingTabClose owns the remaining closes while a file awaits a
+	// Save/Discard/Cancel decision or its writer.
+	pendingTabClose *paneTabClose
 	// lastFocusedAgent and lastFocusedEditorPath remember the agent and the
 	// file the user focused most recently, for Split with Agent / with File.
 	lastFocusedAgent      string

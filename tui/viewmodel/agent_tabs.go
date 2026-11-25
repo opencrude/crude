@@ -106,11 +106,23 @@ func (m *App) RemoveOrchestrator(orchID string) {
 // Agents panel so one click brings it back. Closing a tab must never kill
 // work in flight; terminating is the explicit cleanupAgent path.
 func (m *App) minimizeAgent(agentID string) {
-	if agentID == "" || m.ws.AgentMgr() == nil || m.ws.AgentMgr().Get(agentID) == nil {
+	m.minimizeAgentView(agentID, minimizeAgentFamily)
+}
+
+func (m *App) minimizeAgentView(agentID string, choice agentTabChoice) {
+	mgr := m.ws.AgentMgr()
+	if agentID == "" || mgr == nil {
 		return
 	}
-	ids := agentSubtreeIDs(m.ws.AgentMgr().Get(agentID))
-	m.MinimizeAgent(agentID)
+	node := mgr.Get(agentID)
+	if node == nil {
+		return
+	}
+	ids := []string{agentID}
+	if choice == minimizeAgentFamily {
+		ids = agentSubtreeIDs(node)
+	}
+	m.AgentView.setChoice(node, choice)
 	for _, id := range ids {
 		if m.Win == nil {
 			break

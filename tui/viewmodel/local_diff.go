@@ -440,6 +440,10 @@ func (m *App) returnToEditor(ed *editor.Editor) {
 }
 
 func (m *App) closeLocalDiff(id window.TabID) {
+	m.removeLocalDiff(id, true)
+}
+
+func (m *App) removeLocalDiff(id window.TabID, returnToSave bool) {
 	view := m.localDiffs[id]
 	if view == nil {
 		return
@@ -453,7 +457,9 @@ func (m *App) closeLocalDiff(id window.TabID) {
 	m.Win.CloseTabByID(id)
 	m.handleTabSwitch()
 	m.forceFrame()
-	m.restoreUntitledSave(view.returnSave)
+	if returnToSave {
+		m.restoreUntitledSave(view.returnSave)
+	}
 }
 
 func (m *App) cancelLocalDiffs() {

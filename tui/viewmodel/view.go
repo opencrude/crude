@@ -744,7 +744,7 @@ func (m *App) configureLauncherScreen() {
 
 func (m *App) contextualHelpSegments() (prefix string, segs []ui.HintSegment) {
 	if m.emptyPaneActive() && m.focusTarget() == FocusInput {
-		return "", []ui.HintSegment{ui.TextSeg("N new session · O open file · Tab choose"), ui.ActionSeg("pane.next"), ui.ActionSeg("file.close")}
+		return "", []ui.HintSegment{ui.TextSeg("N new session · O open file · Tab choose · Enter act"), ui.ActionSeg("pane.next"), ui.ActionSeg("file.close")}
 	}
 	if m.windowManager != nil {
 		if fw := m.focusedPopup(); fw != nil {

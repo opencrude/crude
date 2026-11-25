@@ -297,8 +297,8 @@ func TestPaneContextOwnerSurvivesReorderButNotStaleScope(t *testing.T) {
 	}
 }
 
-func TestPaneContextGroupFileCloseSafety(t *testing.T) {
-	for _, label := range []string{"Close other files", "Close files to the right"} {
+func TestPaneContextGroupTabCloseSafety(t *testing.T) {
+	for _, label := range []string{"Close other tabs", "Close tabs to the right"} {
 		t.Run(label, func(t *testing.T) {
 			app, ws := newRealShellApp(t)
 			defer ws.Close()
@@ -321,11 +321,15 @@ func TestPaneContextGroupFileCloseSafety(t *testing.T) {
 				t.Fatal("bulk close bypassed dirty decision or continued past it")
 			}
 			paneJourneyKey(app, tea.KeyEsc, 0)
-			if app.DirtyPromptPath != "" || app.EditorState.Tabs[paths[2]] == nil || app.EditorState.Tabs[paths[3]] == nil || app.Win.GroupOf(agent) != group || app.AgentView.IsHidden("keep-agent") || app.EditorState.Tabs[paths[4]] == nil {
-				t.Fatal("cancel lost dirty/later/neighbor/agent resource")
+			if app.DirtyPromptPath != "" || app.EditorState.Tabs[paths[2]] == nil || app.EditorState.Tabs[paths[3]] == nil || app.EditorState.Tabs[paths[4]] == nil {
+				t.Fatal("cancel lost dirty/later/neighbor tab")
 			}
-			if label == "Close files to the right" && app.EditorState.Tabs[paths[0]] == nil {
-				t.Fatal("right-only close consumed earlier file")
+			if label == "Close tabs to the right" {
+				if app.EditorState.Tabs[paths[0]] == nil || app.Win.GroupOf(agent) != group || app.AgentView.IsHidden("keep-agent") {
+					t.Fatal("right-only close changed earlier tabs")
+				}
+			} else if app.Win.IndexOf(agent) >= 0 || !app.AgentView.IsHidden("keep-agent") {
+				t.Fatal("Cancel should not reopen tabs already closed before the prompt")
 			}
 			paneOpenTabMenu(t, app, clicked)
 			paneChooseMenu(t, app, label, false)
@@ -337,18 +341,19 @@ func TestPaneContextGroupFileCloseSafety(t *testing.T) {
 	}
 }
 
-// The file tab menu closes exactly the files its label names, relative to the
-// clicked tab, and leaves agents and other panes alone.
+// The shared Tabs section always stays in its pane. Close saved files
+// deliberately skips the unsaved file and the agent.
 func TestPaneContextCloseLeftSavedAndAll(t *testing.T) {
 	type want struct{ earlier, clicked, dirty, later bool }
 	for _, tc := range []struct {
 		label  string
 		open   want
 		prompt bool
+		agent  bool
 	}{
-		{"Close files to the left", want{false, true, true, true}, false},
-		{"Close saved files", want{false, false, true, false}, false},
-		{"Close all files", want{false, false, true, true}, true},
+		{"Close tabs to the left", want{false, true, true, true}, false, false},
+		{"Close saved files", want{false, false, true, false}, false, true},
+		{"Close all tabs", want{false, false, true, true}, true, false},
 	} {
 		t.Run(tc.label, func(t *testing.T) {
 			app, ws := newRealShellApp(t)
@@ -375,8 +380,11 @@ func TestPaneContextCloseLeftSavedAndAll(t *testing.T) {
 			if got != tc.open {
 				t.Fatalf("open files = %+v, want %+v", got, tc.open)
 			}
-			if !dirty.Modified() || app.EditorState.Tabs[paths[4]] == nil || app.Win.GroupOf(agent) != group || ws.AgentMgr.Get("keep-agent") == nil {
-				t.Fatal("bulk close changed a dirty buffer, another pane or an agent")
+			if !dirty.Modified() || app.EditorState.Tabs[paths[4]] == nil || ws.AgentMgr.Get("keep-agent") == nil {
+				t.Fatal("bulk close discarded a dirty file, crossed panes, or terminated an agent")
+			}
+			if (app.Win.GroupOf(agent) == group) != tc.agent || app.AgentView.IsHidden("keep-agent") == tc.agent {
+				t.Fatal("bulk close used the wrong agent tab scope")
 			}
 		})
 	}

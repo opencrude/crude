@@ -289,6 +289,16 @@ func (s *Screen) PrepareResize(first, minMain, minDock int) {
 }
 
 func (s *Screen) Mount(id string, screen *shellterm.Screen) {
+	s.mount(id, screen, true)
+}
+
+// MountInactive adds a terminal without opening the dock or selecting it over
+// another terminal.
+func (s *Screen) MountInactive(id string, screen *shellterm.Screen) {
+	s.mount(id, screen, false)
+}
+
+func (s *Screen) mount(id string, screen *shellterm.Screen, activate bool) {
 	if id == "" || screen == nil {
 		return
 	}
@@ -298,9 +308,15 @@ func (s *Screen) Mount(id string, screen *shellterm.Screen) {
 	s.screens[id] = screen
 	screen.SetFloating(false)
 	screen.SetTokens(s.tokens)
-	s.active = id
+	if activate || s.active == "" {
+		s.active = id
+	}
 	delete(s.attention, id)
-	s.ShowPanel(PanelTerminal)
+	if activate {
+		s.ShowPanel(PanelTerminal)
+	} else if s.TerminalActive() {
+		s.syncTabs()
+	}
 }
 
 func (s *Screen) Unmount(id string) *shellterm.Screen {

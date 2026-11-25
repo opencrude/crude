@@ -132,7 +132,7 @@ func (m *App) emptyPaneMenu() *ui.ContextMenuState {
 		{"Split right", "pane.split-right"}, {"Split down", "pane.split-down"},
 		{"Split left", "pane.split-left"}, {"Split up", "pane.split-up"},
 		{"Split containing layout", "pane.split-layout"},
-		{"Close empty pane", "pane.close"}, {"Merge all panes", "pane.merge-all"},
+		{"Merge all panes", "pane.merge-all"},
 	} {
 		id := action.id
 		menu.Sections[0].Items = append(menu.Sections[0].Items, ui.ContextMenuItem{Label: action.label, Detail: m.menuShortcut(ui.ActionID(id)), Action: owner.action(m, func() {
@@ -141,7 +141,23 @@ func (m *App) emptyPaneMenu() *ui.ContextMenuState {
 			m.runDetachedAsyncCmd(cmd)
 		})})
 	}
+	menu.Sections[0].Items = append(menu.Sections[0].Items, ui.ContextMenuItem{
+		Label: "Close pane", Detail: m.menuShortcut("file.close"),
+		Action: owner.action(m, func() { m.closeEmptyPane(group) }),
+	})
 	return menu
+}
+
+func (m *App) closeEmptyPane(group window.GroupID) {
+	focused := m.Win.ActiveGroup() == group
+	if !m.Win.RemoveEmptyGroup(group) {
+		return
+	}
+	if focused {
+		m.focusMainGroup(m.Win.ActiveGroup())
+		return
+	}
+	m.forceFrame()
 }
 
 // openMainPaneMenu keeps compacted groups reachable by mouse as well as keys.
@@ -211,9 +227,6 @@ func (m *App) paneTabAt(x, y int) int {
 	return -1
 }
 
-// paneCloseScope names which file tabs of a pane a bulk close covers. Bulk
-// closes never touch agent, panel or comparison tabs: closing those has its own
-// lifecycle (an agent tab minimizes).
 type paneCloseScope int
 
 const (
@@ -224,10 +237,16 @@ const (
 	paneCloseAll
 )
 
-// closePaneEditorTabs closes file tabs of the clicked tab's pane, relative to
-// that tab. Dirty files keep the Save/Discard/Cancel decision.
-func (m *App) closePaneEditorTabs(owner paneMenuOwner, scope paneCloseScope) {
-	if !owner.valid(m) {
+// A batch owns one pane and a snapshot of the affected tabs in visual order.
+// The anchor can itself close; the group's identity remains the fence.
+type paneTabClose struct {
+	owner   paneMenuOwner
+	next    []window.TabID
+	waiting *EditorView
+}
+
+func (m *App) closePaneTabs(owner paneMenuOwner, scope paneCloseScope) {
+	if !owner.valid(m) || m.pendingTabClose != nil || m.DirtyPromptPath != "" {
 		return
 	}
 	var ids []window.TabID
@@ -237,8 +256,7 @@ func (m *App) closePaneEditorTabs(owner paneMenuOwner, scope paneCloseScope) {
 		if clicked {
 			before = false
 		}
-		view := m.editorView(tab.ID)
-		if view == nil && !isImageTab(&tab) {
+		if !tab.Closable {
 			continue
 		}
 		include := false
@@ -250,7 +268,8 @@ func (m *App) closePaneEditorTabs(owner paneMenuOwner, scope paneCloseScope) {
 		case paneCloseRight:
 			include = !before && !clicked
 		case paneCloseSaved:
-			include = view == nil || !view.Editor.Modified()
+			ed := m.editorForTab(tab.ID)
+			include = isImageTab(&tab) || ed != nil && ed.FilePath() != "" && !ed.Modified()
 		case paneCloseAll:
 			include = true
 		}
@@ -258,9 +277,49 @@ func (m *App) closePaneEditorTabs(owner paneMenuOwner, scope paneCloseScope) {
 			ids = append(ids, tab.ID)
 		}
 	}
-	m.releaseTabBarFocus()
-	m.closeEditorViews(ids)
-	m.syncRootFocus()
+	if len(ids) == 0 {
+		return
+	}
+	owner.tab = 0
+	m.pendingTabClose = &paneTabClose{owner: owner, next: ids}
+	m.continuePendingTabClose()
+}
+
+// Continue only after the owned view has closed. A save/discard can defer the
+// close, and an unrelated editor receipt must not run the rest of the batch.
+func (m *App) continuePendingTabClose() {
+	batch := m.pendingTabClose
+	if batch == nil {
+		return
+	}
+	if batch.waiting != nil && batch.waiting.Editor.IsOpen() {
+		return
+	}
+	batch.waiting = nil
+	if !batch.owner.valid(m) {
+		m.abortPendingTabClose()
+		return
+	}
+	for len(batch.next) != 0 {
+		id := batch.next[0]
+		batch.next = batch.next[1:]
+		index := m.Win.IndexOf(id)
+		tab, ok := m.Win.TabAt(index)
+		if !ok || tab.Group != batch.owner.group || !tab.Closable || tab.Pinned && m.Win.TabCount() > 1 {
+			continue
+		}
+		m.runDetachedAsyncCmd(m.closeMainTab(index, true))
+		if view := m.editorView(id); view != nil && m.Win.TabByID(id) != nil {
+			// A file can be awaiting a dirty decision or its writer.
+			batch.waiting = view
+			return
+		}
+	}
+	m.abortPendingTabClose()
+}
+
+func (m *App) abortPendingTabClose() {
+	m.pendingTabClose = nil
 }
 
 // activatePaneAt is input policy, called after floating/modal ownership checks.
@@ -301,8 +360,7 @@ func (m *App) splitMainGroup(dir ui.Direction, before bool, tab window.TabID) wi
 
 // splitEditor splits the focused pane. A file is shown again in the new pane
 // at the same caret and scroll (one document, two views), as in established
-// editors; any other tab leaves the new pane empty, ready for New Session or
-// Open File.
+// editors; any other tab leaves the new pane empty.
 func (m *App) splitEditor(dir ui.Direction, before bool) {
 	imagePath := ""
 	if active := m.Win.ActiveTab(); isImageTab(active) {
@@ -582,9 +640,7 @@ func (m *App) handleMainPaneCommand(id string) (tea.Cmd, bool) {
 		m.Win.MergeAllGroups()
 		m.focusMainGroup(m.Win.ActiveGroup())
 	case "pane.close":
-		if m.Win.RemoveEmptyGroup(m.Win.ActiveGroup()) {
-			m.focusMainGroup(m.Win.ActiveGroup())
-		}
+		m.closeEmptyPane(m.Win.ActiveGroup())
 	case "pane.new-session":
 		return m.launcherNewSession(), true
 	case "pane.open-file":
@@ -645,6 +701,11 @@ func (m *App) handleMainPaneAction(a *ui.Action) (tea.Cmd, bool) {
 		return nil, false
 	}
 	switch a.ID {
+	case "pane.close":
+		if group, ok := a.Payload.(window.GroupID); ok {
+			m.closeEmptyPane(group)
+		}
+		return nil, true
 	case "tabs.new", "tabs.new-buffer", "pane.new-session", "pane.open-file":
 		group, ok := a.Payload.(window.GroupID)
 		if !ok {

@@ -53,8 +53,8 @@ Closing a view of a file that another tab still shows closes only that view,
 without a prompt: the text, unsaved changes and history stay. Closing the
 primary view hands the primary editor to a sibling tab, which keeps its own
 caret and scroll. Closing the last view uses the dirty-safe close path.
-Bulk closes (Close Other Files in Pane, Close Files to the Right) operate on
-views, so they never close a file another pane still shows.
+Bulk tab closes operate on views, so they never close a file another pane
+still shows.
 Each leaf retains its own selected tab. Selecting a tab focuses its group.
 Selecting the current tab does not advance its selection history or change a
 drag preview's source state.
@@ -247,13 +247,13 @@ editor/chat facts. Workspace status remains workspace-owned.
 | Grow / shrink focused group's containing split | Ctrl+Alt+= / Ctrl+Alt+- |
 | New session in focused group | Ctrl+Alt+N; group **+**; Ctrl+T then N or + |
 | New unnamed buffer | Double-click the empty part of the main tab rail |
-| Empty pane New Session / Open File | N / O; Tab or Shift+Tab chooses, Enter/Space activates |
-| Close an empty group | Ctrl+W, or palette Close Empty Pane; never closes a populated group through this operation |
+| Empty pane New Session / Open File | N / O; Tab or Shift+Tab chooses a button, Enter/Space activates |
+| Close an empty group | **Close Pane** button, Ctrl+W, or palette **Close Empty Pane**; never closes a populated group or workspace home |
 | Split an empty pane or move a tab to a new left/right/upper/lower split | Command palette and tab context menu; moving is one preview-validated placement including sole-tab source collapse |
 | Arrange tab beside any exact pane or mixed-axis subtree | Tab context menu **Move beside a pane** / palette **Move Tab Beside a Pane…** → layout scope → Left / Right / Above / Below; leaf scopes also offer **Move into this pane** |
 | Split a containing subtree, initially empty | **Split containing layout** → this pane / containing layout / entire layout → edge |
 | Move active tab to next/previous pane; Merge all panes | Command palette and tab context menu |
-| Close file tabs of the clicked tab's pane | File tab menu **Close other files**, **Close files to the left**, **Close files to the right**, **Close saved files**, **Close all files**. They close only files and images; agent, panel and comparison tabs stay. Each dirty file asks Save / Discard / Cancel, and Cancel stops the rest |
+| Close tabs in the clicked tab's pane | The **Tabs** section offers **Close other tabs**, **Close tabs to the left**, **Close tabs to the right**, and **Close all tabs** |
 | Reorder selected tab inside its group | Palette Move Tab Left/Right in Group |
 | Open File in Pane and all pane operations above | Ctrl+Alt+P Command Palette, registry-backed labels |
 
@@ -266,16 +266,18 @@ takes more than a second shows one "Starting the session. Please wait." notice.
 This holds however the user reached the launcher: first start, every agent
 hidden, or a restarted shell.
 
-An empty pane uses native New Session/Open File buttons. The final unsplit,
-tabless main area retains workspace home rather than introducing a second
-launcher. Editor closes retain the dirty-safe Save/Discard/Cancel path.
+An empty split uses native **New Session**, **Open File** and **Close Pane**
+buttons. The final unsplit, tabless main area shows workspace home without a
+**Close Pane** button. Closing an empty split does not quit Crude.
+Editor closes retain the dirty-safe Save/Discard/Cancel path.
 Closing an agent tab minimizes it, not terminates its orchestrator; explicit
 Terminate remains a separate action.
 
 ### Exact tab context ownership
 
-Right-click targets the mounted strip under both pointer coordinates, including
-inactive docked panes and raised pane windows. The WM's top visible focusable
+Right-click targets the mounted strip under both pointer coordinates without
+changing the selection or focusing another pane. This includes inactive docked
+panes and pane windows. The WM's top visible focusable
 window is authoritative; neither creation order, a retained group map nor the
 focused-strip alias may select an underlying resource. Files, agents, workspace
 surfaces, Git reviews and local comparisons share pane placement actions. Their
@@ -299,10 +301,16 @@ activation close the old popup before invoking its action, so the scope→edge
 follow-up remains open. Menus are clamped to shell bounds and use the shared
 List's scrolling, keeping the final scope reachable in large layouts.
 
-File menus explicitly say **Close Other Files in Pane** and **Close Files to
-the Right**. These operate only on editor files in the clicked group, not on
-neighboring panes, agents or comparison/surface tabs. Dirty files retain the
-Save / Discard / Cancel sequence; Cancel aborts the remaining file closes.
+The **Tabs** section is shared by all tab types and the Agents list for an
+agent with an open tab. Actions use that tab's position and close only
+matching tabs in that pane. **File → Close saved files** closes unchanged files
+and read-only images, not unnamed files, agents, comparisons or panels. Each
+close uses the tab's normal resource policy: agents minimize, workspace
+surfaces return to the dock, and comparisons release their snapshots. A dirty
+file's last view asks **Save**, **Discard** or **Cancel** before any later tab
+closes. **Cancel** stops the rest of the batch; it does not reopen tabs already
+closed. A close that waits for a save cannot remove a view that another pane
+opened in the meantime.
 
 When the selected tab leaves a pane (moved, dragged to a split or closed), the
 pane shows its most recently selected remaining tab, like an editor stack;
@@ -400,10 +408,12 @@ ownership are all retained. A stray click must never destroy work in flight.
 
 - `App.MinimizeAgent` / `RestoreAgent` change only that shell's exact-node
   visibility map; `AgentView.IsHidden()` also checks
-  ancestors. Minimizing a root hides its subtree without overwriting archived
-  child choices. Restoring it returns previously open children, while completed
-  review children remain closed. Explicitly opening a nested child reveals its
-  ancestor path and leaves archived siblings closed.
+  ancestors. An individual family minimize hides its subtree without
+  overwriting archived child choices. Restoring it returns previously open
+  children, while completed review children remain closed. Bulk tab closes
+  minimize only the targeted agent tabs, even when their children are open.
+  Explicitly opening a nested child reveals its family path but does not
+  reopen ancestors independently minimized by a bulk tab close.
 - `AgentTabViews()` filters effectively hidden nodes, so `syncAgentWindowTabs` cannot
   resurrect a minimized tab, and `purgeStaleAgentTabs` closes one that
   lingers.

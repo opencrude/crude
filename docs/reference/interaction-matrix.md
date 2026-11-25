@@ -92,7 +92,7 @@ on return or restart. Header telemetry follows the focused group.
 | Previous / next pane | Alt+[ / Alt+] | Visual leaf order; remains available in compact presentation |
 | Grow / shrink pane | Ctrl+Alt+= / Ctrl+Alt+- | Shared split sizing with minimum bounds |
 | New Session in Pane | Group +; Ctrl+Alt+N; Ctrl+T then N/+ | + sits after content-sized tabs, pinned at the trailing edge during overflow |
-| Populate empty pane | New Session / Open File; N / O | Tab/Shift+Tab chooses and Enter/Space activates; Ctrl+W closes only that empty group |
+| Empty split actions | **New Session** / **Open File** / **Close Pane**; N / O; Ctrl+W closes the empty split | Tab/Shift+Tab chooses and Enter/Space activates; workspace home does not offer Close Pane |
 | Reorder tab | Drag tab along its own strip | Other tabs slide aside with a short ease-out; no split preview while the pointer stays on the strip; release moves only the order |
 | Move tab | Drag tab off its strip to a body center or another group's strip | Off its strip the tab becomes the shared drag ghost at the pointer, which states the drop (**Move tab here**, **Split right**, **Drop on a pane**). Existing identity moves; strip drop inserts before hit tab or appends; empty source collapses |
 | Edge split preview | Drag to left/right/top/bottom body edge | The exact resulting area is tinted with ColorHover and outlined in the accent color until release; the ghost names the split. Esc or release outside a valid target cancels; floating windows are not drop targets |
@@ -100,6 +100,7 @@ on return or restart. Header telemetry follows the focused group.
 | Split/move/merge/open/new/resize/focus/close | Shortcuts above; tab context menu for split/move/merge | Registry-backed operations retain modal and terminal input ownership |
 | Too-small terminal | Automatic compact layout | Preserves the recursive tree and selection; shows focused group only, restores all groups on enlargement |
 | Close agent tab | Tab × / close action | Minimizes, never terminates; explicit Terminate is separate |
+| Close tabs in a pane | Right-click a tab or its agent in the Agents list, then use **Tabs** | Other/left/right/all includes agents and other closable tab types. **File → Close saved files** closes only unchanged named files and images. Relative actions use the clicked tab's position. Cancel stops the remaining closes |
 | Markdown file | File tree, Open File or a Markdown link; icon toolbar, Alt+V or the palette's Markdown commands switch Preview / Side by side / Source | Preview keys scroll the rendered document (arrows, Page Up/Down, Space, Home/End), Ctrl+F finds in it, Ctrl+S saves and edit keys do nothing. Side by side keeps the keys in the editor; the preview follows the pointer and the wheel, and each side follows the other. |
 | Image file viewer | File tree or Open File in Pane; wheel or `+`/`-` zoom, `0` fits, arrows / drag pan, Shift+wheel pans sideways, Esc or Ctrl+W closes | Mouse zoom keeps the source point under the pointer where bounds permit. Read-only PNG, JPEG, GIF first frame, WebP and BMP tabs; SVG remains source. Independent pane views use Kitty or Sixel pixels when supported and a cell preview otherwise. Close and reopen to read external file changes. |
 

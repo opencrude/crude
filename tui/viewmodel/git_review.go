@@ -180,6 +180,10 @@ func (m *App) gitChangeReviewOpen() bool {
 
 // closeGitReview closes one review tab and returns to the tab it came from.
 func (m *App) closeGitReview(id window.TabID) {
+	m.removeGitReview(id, true)
+}
+
+func (m *App) removeGitReview(id window.TabID, returnToSource bool) {
 	if cancel := m.gitEvidenceCancel[id]; cancel != nil {
 		cancel()
 		delete(m.gitEvidenceCancel, id)
@@ -194,13 +198,15 @@ func (m *App) closeGitReview(id window.TabID) {
 		m.cancelOrphanedComparisonGeometry(view.screen.Document().SourceGeometry())
 	}
 	m.Win.CloseTabByID(id)
-	if wasActive && view != nil {
+	if returnToSource && wasActive && view != nil {
 		if index := m.Win.IndexOf(view.returnTab); index >= 0 {
 			m.Win.SwitchTo(index)
 		}
 	}
 	m.handleTabSwitch()
-	m.FocusStack.Clear()
+	if returnToSource {
+		m.FocusStack.Clear()
+	}
 }
 
 // returnFromGitReview leaves the review for the tab it was opened from,
