@@ -7,8 +7,9 @@ import (
 )
 
 // handleCancel runs the composer's Esc ladder. Esc frees the text area before
-// it cancels anything: an active selection is dropped first, then the draft is
-// cleared, and only then does Esc cancel the selected agent's turn, or else
+// it cancels anything: an active selection is dropped first, then a visible
+// command list closes, then the draft is cleared, and only then does Esc
+// cancel the selected agent's turn, or else
 // every other agent's live work. Cancelling the turn therefore always needs
 // the draft out of the way, which is what the user sees as "Esc clears the
 // text area". Esc with nothing to stop is a no-op: it reports nothing and
@@ -16,6 +17,9 @@ import (
 func (m *App) handleCancel() tea.Cmd {
 	if m.Input.HasInputSelection() {
 		m.Input.ClearInputSelection()
+		return nil
+	}
+	if m.Input.DismissSlashSuggestions() {
 		return nil
 	}
 	if m.Input.Value() != "" {

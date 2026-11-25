@@ -85,7 +85,10 @@ func (lb textLineBidi) line(start, n, span int) *bidi.Line {
 	}
 	start = min(max(0, start), len(lb.runeCol)-1)
 	end := min(max(start, start+n), len(lb.runeCol)-1)
-	return lb.layout.Line(int(lb.runeCol[start]), int(lb.runeCol[end]), span)
+	// An oversized inline object occupies its own row. Arrange only the visible
+	// part, so bidi cannot move cells in the neighboring control.
+	col := int(lb.runeCol[start])
+	return lb.layout.Line(col, min(int(lb.runeCol[end]), col+span), span)
 }
 
 // rtl reports the line's resolved direction.

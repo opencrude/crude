@@ -178,7 +178,7 @@ func WordWrap(s string, maxWidth int) []string {
 	if maxWidth <= 0 || VisibleWidth(s) <= maxWidth {
 		return []string{s}
 	}
-	ranges := wordWrapRanges(s, maxWidth)
+	ranges := wordWrapRanges(s, maxWidth, nil)
 	lines := make([]string, len(ranges))
 	for i, r := range ranges {
 		lines[i] = s[r.Start:r.End]
@@ -193,21 +193,33 @@ func WordWrapRanges(s string, maxWidth int) []WrapRange {
 	if maxWidth <= 0 || VisibleWidth(s) <= maxWidth {
 		return []WrapRange{{0, len(s)}}
 	}
-	return wordWrapRanges(s, maxWidth)
+	return wordWrapRanges(s, maxWidth, nil)
 }
 
-func wordWrapRanges(s string, maxWidth int) []WrapRange {
+func wordWrapRanges(s string, maxWidth int, objects []WrapRange) []WrapRange {
 	type cluster struct{ end, width int }
 	clusters := make([]cluster, 0, len(s))
 	var state byte
-	rest := s
 	remainingW := 0
-	for len(rest) > 0 {
-		c, cw, _, next := ansi.DecodeSequence(rest, state, nil)
-		rest = rest[len(c):]
-		state = next
-		clusters = append(clusters, cluster{end: len(s) - len(rest), width: cw})
-		remainingW += cw
+	for pos := 0; pos < len(s); {
+		limit := len(s)
+		if len(objects) > 0 {
+			limit = objects[0].Start
+		}
+		var width int
+		if pos == limit {
+			end := objects[0].End
+			width = VisibleWidth(s[pos:end])
+			pos = end
+			objects = objects[1:]
+		} else {
+			cluster, cw, _, next := ansi.DecodeSequence(s[pos:limit], state, nil)
+			pos += len(cluster)
+			width = cw
+			state = next
+		}
+		clusters = append(clusters, cluster{end: pos, width: width})
+		remainingW += width
 	}
 	begin := func(i int) int {
 		if i == 0 {
@@ -288,20 +300,37 @@ func TruncateLine(s string, max int) string {
 	return result.String()
 }
 
-// FindSegmentStarts returns the rune offset where each WordWrap segment of one
-// logical line begins. It projects canonical byte segments to rune offsets in
-// one walk. Asking for one start per segment
-// re-parsed the whole line for every row, so a 1 MiB single-line paste spent
-// minutes in cursor projection before the view could repaint.
-func FindSegmentStarts(logLine []rune, textW int) []int {
-	text := string(logLine)
-	ranges := WordWrapRanges(text, textW)
-	starts := make([]int, len(ranges))
-	byteStart, runeStart := 0, 0
-	for i, r := range ranges {
-		runeStart += utf8.RuneCountInString(text[byteStart:r.Start])
-		starts[i] = runeStart
-		byteStart = r.Start
+// RuneRange is a half-open interval of logical runes on one line.
+type RuneRange struct{ Start, End int }
+
+// WordWrapRuneRanges wraps one editor line. Objects are ordered, disjoint
+// rune ranges. Each consumes its full display width as a single wrap unit.
+// An object wider than the column occupies a row by itself.
+func WordWrapRuneRanges(line []rune, width int, objects []RuneRange) []RuneRange {
+	text := string(line)
+	if width <= 0 || VisibleWidth(text) <= width {
+		return []RuneRange{{0, len(line)}}
 	}
-	return starts
+	// Move between source bytes and editor runes once in each direction.
+	var spans []WrapRange
+	rp, bp := 0, 0
+	for _, obj := range objects {
+		if obj.Start < rp || obj.End <= obj.Start || obj.End > len(line) {
+			continue
+		}
+		bp += len(string(line[rp:obj.Start]))
+		end := bp + len(string(line[obj.Start:obj.End]))
+		spans = append(spans, WrapRange{bp, end})
+		rp, bp = obj.End, end
+	}
+	rows := wordWrapRanges(text, width, spans)
+	result := make([]RuneRange, len(rows))
+	rp, bp = 0, 0
+	for i, r := range rows {
+		rp += utf8.RuneCountInString(text[bp:r.Start])
+		end := rp + utf8.RuneCountInString(text[r.Start:r.End])
+		result[i] = RuneRange{rp, end}
+		rp, bp = end, r.End
+	}
+	return result
 }

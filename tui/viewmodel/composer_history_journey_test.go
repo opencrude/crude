@@ -43,8 +43,11 @@ func TestComposerSessionSwitchOwnsDraftAndReferenceLifecycle(t *testing.T) {
 	app.Input.InsertReference(ref)
 	app.Input, _, _ = app.Input.Update(tea.PasteMsg{Content: " first draft"}, false, false)
 	text := app.Input.Value()
-	app.Input.SetCursorFlat(3)
-	app.Input.SetSelection(1, 3)
+	// Caret and selection sit in the prose after the chip; the chip itself
+	// is one unit that a caret or selection edge cannot enter.
+	chipEnd := len([]rune(ref.DisplayName()))
+	app.Input.SetCursorFlat(chipEnd + 3)
+	app.Input.SetSelection(chipEnd+1, chipEnd+3)
 	app.AddOrchestrator("second")
 	if app.Input.Value() != "" || len(app.Input.PromptReferences()) != 0 {
 		t.Fatal("new session inherited another session's draft or attachments")
@@ -52,7 +55,7 @@ func TestComposerSessionSwitchOwnsDraftAndReferenceLifecycle(t *testing.T) {
 	app.Input.SetInput("second draft")
 	app.switchToAgentView("first")
 	start, end := app.Input.InputSelectionRange()
-	if app.Input.Value() != text || app.Input.CursorFlat() != 3 || start != 1 || end != 3 || !slices.Equal(app.Input.ReferencedIDs(), []string{ref.ID}) {
+	if app.Input.Value() != text || app.Input.CursorFlat() != chipEnd+3 || start != chipEnd+1 || end != chipEnd+3 || !slices.Equal(app.Input.ReferencedIDs(), []string{ref.ID}) {
 		t.Fatalf("switch lost first draft state: text=%q cursor=%d selection=%d:%d refs=%v", app.Input.Value(), app.Input.CursorFlat(), start, end, app.Input.ReferencedIDs())
 	}
 	// Repaint and background tab synchronization must not load an older draft.

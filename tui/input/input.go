@@ -141,7 +141,6 @@ type Model struct {
 
 	slashActive bool
 	slashList   *ui.List
-	slashFilter string
 	// slash is the command token at the caret. A token that is the whole
 	// draft is the command line itself; any other token was typed inside a
 	// prompt and runs without consuming the rest of the draft.
@@ -409,7 +408,6 @@ func (m *Model) ClearDraft() {
 	m.historyGeneration++
 	m.historyLoading = false
 	m.input.ClearWithHistory()
-	m.applyReferenceRanges()
 	m.histIdx = -1
 	m.histDraft, m.histPrefix = "", ""
 	m.slashActive = false
@@ -506,7 +504,11 @@ func (m *Model) SetSelection(anchor, end int) {
 }
 
 func (m *Model) recordDraftEdit(before ui.TextAreaState) {
-	if m.input.EditState() != before {
+	after := m.input.EditState()
+	if before.ContentRevision != after.ContentRevision && m.refStore != nil {
+		m.applyReferenceRanges(m.input.AtomicRanges())
+	}
+	if after != before {
 		m.draftRevision++
 	}
 }
@@ -599,6 +601,18 @@ func (m Model) SlashActive() bool {
 	return m.slashActive
 }
 
+func (m Model) slashVisible() bool { return m.slashActive && !m.slashList.Bounds().Empty() }
+
+// DismissSlashSuggestions closes the visible command list without consuming
+// the draft. With no visible choice, Escape belongs to the shell.
+func (m *Model) DismissSlashSuggestions() bool {
+	if !m.slashVisible() {
+		return false
+	}
+	m.slashActive = false
+	return true
+}
+
 func (m Model) SlashFiltered() []CmdInfo {
 	if m.slashList == nil {
 		return nil
@@ -623,15 +637,8 @@ func (m Model) ShellHeight(width int) int {
 		h++
 	}
 	h += m.inputVisualHeight(width)
-	if m.showSlashPopup() {
-		n := len(m.slashList.Items())
-		if n > slashPageSize {
-			n = slashPageSize
-		}
-		if n < 1 {
-			n = 1
-		}
-		h += n
+	if m.slashActive {
+		h += min(len(m.slashList.Items()), slashPageSize)
 	}
 	return h
 }
@@ -665,10 +672,6 @@ func (m Model) ComposerViewport() (first, last, total int) {
 	return first, min(total, first+height-1), total
 }
 
-func (m Model) showSlashPopup() bool {
-	return m.slashActive && m.slashList != nil && len(m.slashList.Items()) > 0
-}
-
 func (m Model) activePromptRefs() []sessiondb.Reference {
 	return m.PromptReferences()
 }
@@ -684,13 +687,15 @@ func (m *Model) LayoutShell(width, height int) {
 	}
 	inputH := min(m.inputVisualHeight(width), max(0, height-y))
 	m.input.Layout(ui.LayoutContext{}, ui.Rect{X: pad, Y: y, W: innerW, H: inputH})
-	if m.showSlashPopup() {
+	if m.slashActive {
 		slashY := y + inputH
 		slashH := max(0, height-slashY)
 		if slashH > slashPageSize {
 			slashH = slashPageSize
 		}
 		m.slashList.Layout(ui.LayoutContext{}, ui.Rect{X: pad, Y: slashY, W: innerW, H: slashH})
+	} else {
+		m.slashList.Layout(ui.LayoutContext{}, ui.Rect{})
 	}
 }
 
@@ -724,7 +729,7 @@ func (m Model) PaintShell(buf *surface.CellBuffer, ox, oy, width, height int, ct
 	m.input.Layout(ui.LayoutContext{}, ui.Rect{X: pad, Y: y, W: innerW, H: inputH})
 	m.input.Paint(buf, ox, oy, ui.PaintContext{Focused: ctx.Focused, Frame: m.spinFrame})
 	y += inputH
-	if m.showSlashPopup() && y < height {
+	if m.slashActive && y < height {
 		slashH := height - y
 		if slashH > slashPageSize {
 			slashH = slashPageSize
@@ -764,7 +769,7 @@ func (m *Model) HandleShell(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 			}
 		}
 	}
-	if m.showSlashPopup() && m.slashList != nil {
+	if m.slashActive {
 		b := m.slashList.Bounds()
 		if b.Contains(ctx.LocalX, ctx.LocalY) {
 			res := m.slashList.Handle(ui.ChildEventContext(ctx, b), evt)

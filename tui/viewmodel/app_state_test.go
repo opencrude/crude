@@ -1063,16 +1063,6 @@ func TestHandleInputEvent_SlashCommand(t *testing.T) {
 	}
 }
 
-func TestHandleInputEvent_RefOpen(t *testing.T) {
-	app := newTestApp(t)
-	cmds := app.handleInputEvent(input.RefOpenEvent{ID: "test-ref"})
-
-	// Should not panic and return 0 cmds
-	if len(cmds) != 0 {
-		t.Fatalf("expected 0 cmds, got %d", len(cmds))
-	}
-}
-
 func TestHandleInputEvent_SettingsOpen(t *testing.T) {
 	app := newTestApp(t)
 	selectDeckSession(t, app, app.ActiveSession, "agent")

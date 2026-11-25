@@ -65,10 +65,11 @@ func TestShellInputKeyboardContractTable(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			th := theme.DefaultDark()
 			m := input.NewModel(th)
-			m.SetWidth(48)
 			if tc.input != "" {
 				m.SetInput(tc.input)
 			}
+
+			m.LayoutShell(48, m.ShellHeight(48))
 
 			updated, _, ev := m.Update(tc.key, false, false)
 

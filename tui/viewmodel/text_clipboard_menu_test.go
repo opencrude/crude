@@ -217,6 +217,31 @@ func TestEscLadderSelectionDraftThenTurn(t *testing.T) {
 	}
 }
 
+// A visible command list is part of the Esc ladder: the first Esc closes it
+// and keeps the prose, the next one clears the draft. The list offers the same
+// description match (/model finds settings) as in an empty composer.
+func TestEscClosesVisibleCommandListBeforeTheDraft(t *testing.T) {
+	app := setupChatInputApp(t, 80, 24, false)
+	for _, r := range "review this /model" {
+		_, _ = app.dispatchKeyPress(tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	app.paintShellFrame()
+	if !app.Input.SlashActive() || len(app.Input.SlashFiltered()) == 0 || app.Input.SlashFiltered()[0].Name != "settings" {
+		t.Fatalf("/model after prose did not offer settings: active=%v %+v", app.Input.SlashActive(), app.Input.SlashFiltered())
+	}
+	_, _ = app.dispatchKeyPress(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if app.Input.SlashActive() {
+		t.Fatal("esc did not close the visible command list")
+	}
+	if got := app.Input.Value(); got != "review this /model" {
+		t.Fatalf("esc on the command list changed the draft: %q", got)
+	}
+	_, _ = app.dispatchKeyPress(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if got := app.Input.Value(); got != "" {
+		t.Fatalf("second esc=%q, want the draft cleared", got)
+	}
+}
+
 // Ctrl+C is owned by the composer: it copies a live selection, and with nothing
 // selected it clears the draft (no clipboard write).
 func TestChatKeyCtrlCCopiesOrClearsRatherThanShadowingTheComponent(t *testing.T) {

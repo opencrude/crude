@@ -145,7 +145,7 @@ func TestSlashPointerIgnoresOtherButtonsAndBlankSpace(t *testing.T) {
 					t.Fatalf("nonactivation emitted an effect: %+v", result)
 				}
 			}
-			if model.Value() != value || model.CursorFlat() != cursor || model.SelectedText() != selected || !model.SlashActive() || model.DraftRevision() != revision || !slices.Equal(model.SnapshotReferenceIDs(), refs) {
+			if model.Value() != value || model.CursorFlat() != cursor || model.SelectedText() != selected || model.SlashActive() != (test.point != "empty") || model.DraftRevision() != revision || !slices.Equal(model.SnapshotReferenceIDs(), refs) {
 				t.Fatal("nonactivation changed the draft or its reference/selection state")
 			}
 		})

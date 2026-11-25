@@ -403,10 +403,10 @@ func TestTextArea_PaintSelectionAndAtomicChipStyles(t *testing.T) {
 	if !buf.Get(chipStart, 0).BG.Equal(tokens.Color(ColorTextSelection)) {
 		t.Fatalf("selected chip bg=%v want %v", buf.Get(chipStart, 0).BG, tokens.Color(ColorTextSelection))
 	}
-	// The whole token paints as a filled pill (selection overlap or not);
+	// A selection boundary inside a chip selects the whole chip;
 	// plain text AFTER the chip must stay on the default background.
-	if !buf.Get(chipStart+2, 0).BG.Equal(tokens.Color(ColorSelection)) {
-		t.Fatalf("chip cell %d lost pill background=%v", chipStart+2, tokens.Color(ColorSelection))
+	if !buf.Get(chipStart+2, 0).BG.Equal(tokens.Color(ColorTextSelection)) {
+		t.Fatalf("chip cell %d lost selection background=%v", chipStart+2, tokens.Color(ColorSelection))
 	}
 	if buf.Get(5, 0).BG.Equal(tokens.Color(ColorSelection)) {
 		t.Fatalf("text after chip inherited chip background")
