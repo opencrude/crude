@@ -431,8 +431,10 @@ those remain available in their existing transcript/details surfaces.
 
 Priority is required action/failure/retry, upload and provider wait, live thinking
 reasoning, then the compact current task (`2/4 Refine plan updates`). Ordinary
-planned work shows only that task; Goal/Next/completion-count pages and call-count
-suffixes are absent. Upload bytes sent/total, percent, provider-wait identity
+planned work shows every running step number in plan order and names only the
+first (`1,2,3/6 Refine plan updates`). If none is running, it shows the first
+pending step, or `Plan ready` if none is pending. Goal/Next/completion-count
+pages and call-count suffixes are absent. Upload bytes sent/total, percent, provider-wait identity
 and elapsed time, and retry reason/attempt/countdown retain the former indicator's
 information. These critical states never rotate away. Late upload callbacks for
 an already-streaming request cannot rewind the actor or its presentation.
@@ -556,7 +558,8 @@ not change table widths, wrapping, selection text, or the painted transcript.
 - The strip prioritizes upload bytes/percent, provider waiting, retry and required
   action over optional rotation. Tidal motion applies to every active strip
   state; provisional and summarized thinking get the compact preview. Do not
-  echo the user prompt there. Ordinary planned activity is only `a/n Task name`;
+  echo the user prompt there. Ordinary planned activity shows only the step
+  numbers and one task name (`2/4 Task name` or `1,3/6 Task name`);
   no Goal/Next/progress-count pages or call-count suffix. Thinking can share or
   rotate with that compact task. Stopping, cancelled, completed and idle strips
   are static; cancellation says only `Stopped`. Stopping never changes the

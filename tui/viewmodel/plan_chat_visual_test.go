@@ -21,7 +21,8 @@ import (
 // Run sequentially through scripts/tuishot.sh. Data is isolated/seeded; normal
 // Host pointer, scroll, hover, stop/recovery event and compositor routes remain.
 func TestPlanChatVisualAcceptance(t *testing.T) {
-	if os.Getenv("CRUDE_VISUAL_PLAN_CHAT") != "1" {
+	mode := os.Getenv("CRUDE_VISUAL_PLAN_CHAT")
+	if mode != "1" && mode != "parallel" {
 		t.Skip("dedicated terminal capture")
 	}
 	app, ws := newRealShellApp(t)
@@ -35,12 +36,22 @@ func TestPlanChatVisualAcceptance(t *testing.T) {
 	}
 	app.syncAgentMessages("visual-plan", false)
 	app.Input.SetInput("Draft stays here")
-	p := hoverPlanFixture("Make plans useful and chat easier to read", 4)
 	names := []string{"Trace current behavior", "Refine plan updates", "Simplify chat navigation", "Verify recovery and UI"}
+	if mode == "parallel" {
+		names = append(names, "Check narrow layouts", "Review the changes")
+	}
+	p := hoverPlanFixture("Make plans useful and chat easier to read", len(names))
 	for i := range p.Steps {
 		p.Steps[i].Text = names[i]
 	}
 	p.Current = []activity.Step{p.Steps[1]}
+	if mode == "parallel" {
+		p.Completed = 0
+		for i := range 3 {
+			p.Steps[i].Status = "in_progress"
+		}
+		p.Current, p.Next = p.Steps[:3], &p.Steps[3]
+	}
 	wsOf(app).Status.SetAgent(statuscenter.AgentStatusSnapshot{Ref: statuscenter.ResourceRef{ID: "visual-plan"}, Phase: statuscenter.AgentTool, Detail: "Working"})
 	model := &planChatVisualModel{App: app, t: t, plan: p}
 	program := tea.NewProgram(model, tea.WithWidthMethod(ansi.GraphemeWidth))
