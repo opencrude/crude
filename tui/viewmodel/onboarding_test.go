@@ -89,6 +89,39 @@ func TestOnboardingReminderNativeActionsAndEscDefersOnce(t *testing.T) {
 	}
 }
 
+// The first AI setup asks for Errand's model and says why, in full, at every
+// supported size: the reminder must not cut its explanation.
+func TestOnboardingReminderAsksForErrandModelInFull(t *testing.T) {
+	for _, size := range [][2]int{{160, 40}, {80, 24}, {44, 24}} {
+		m := onboardingTestApp(t)
+		m.width, m.height = size[0], size[1]
+		loadOnboarding(t, m)
+		m.Update(TickMsg{})
+		painted := paintOnboarding(t, m)
+		var text []string
+		for _, line := range strings.Split(painted, "\n") {
+			text = append(text, strings.Fields(strings.Trim(line, " │╭╮╰╯─"))...)
+		}
+		flat := strings.Join(text, " ")
+		for _, want := range []string{
+			"select models for Main Agent and Errand.",
+			"Errand does background work: checkpoints, code suggestions, memory and language-server checks.",
+			"A fast, low-cost model is a good choice for Errand.",
+			"Until you select one, Errand uses the Main Agent model.",
+			"You can edit files without AI.",
+		} {
+			if !strings.Contains(flat, want) {
+				t.Fatalf("reminder at %v is missing %q:\n%s", size, want, painted)
+			}
+		}
+		// The shared key hint below the buttons may shorten; the explanation
+		// above them may not.
+		if detail, _, _ := strings.Cut(painted, "[ Do not show this again ]"); strings.Contains(detail, "…") {
+			t.Fatalf("reminder at %v cut its text:\n%s", size, painted)
+		}
+	}
+}
+
 func TestOnboardingReminderDefersAndRejectsStaleReads(t *testing.T) {
 	m := onboardingTestApp(t)
 	cmd := m.onboardingCmd()

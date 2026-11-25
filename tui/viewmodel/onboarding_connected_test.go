@@ -173,8 +173,39 @@ func TestOnboardingConnectedAccountModelSaveAndExplicitSession(t *testing.T) {
 	if committed.Agents.Categories["default"].Model != "startup-model" || app.ws.AgentMgr().Count() != 0 || requests(http.MethodPost) != 0 {
 		t.Fatal("model Save did not commit cleanly or setup started AI work")
 	}
-	if current := app.settingsSurface(app.overlayHost.Window(ui.OverlayWorkspaceSettings)); current == nil || len(current.Model().Edits()) != 0 {
+	current := app.settingsSurface(app.overlayHost.Window(ui.OverlayWorkspaceSettings))
+	if current == nil || len(current.Model().Edits()) != 0 {
 		t.Fatal("Save closed Settings or left the saved model dirty")
+	}
+	// The saved Main Agent moves setup on to Errand's model, with the reason
+	// beside the field, and saves nothing for Errand by itself.
+	if !strings.Contains(current.PaneTitle(), "Errand") {
+		t.Fatalf("Main Agent save did not continue to Errand: %q", current.PaneTitle())
+	}
+	frame.Host().MarkLayout()
+	frame.Host().Layout()
+	form = frame.Host().Component(settingsui.AgentSettingsFormID).(*ui.Form)
+	if field := form.Field("model"); field == nil || !strings.Contains(field.FieldState().Description, "fast, low-cost model") {
+		t.Fatal("Errand model field does not explain the recommended model")
+	}
+	if committed, _ = owner.ReadStartupSettings(t.Context()); committed.Agents.Categories[setting.ErrandRoleID].Model != "" {
+		t.Fatal("opening Errand saved a model")
+	}
+	errandModel := current.Model()
+	errandModel.SetValueForTest(errandModel.SelectedCategory(), "model", "startup-model")
+	agents = frame.Host().Component("settings/agents").(ui.ActionHandler)
+	agents.HandleAction(ui.EventContext{}, ui.Action{ID: "agents.save"})
+	save := current.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.save"})
+	if save.Cmd == nil {
+		t.Fatal("Errand Save did not emit preferences")
+	}
+	_, command = app.Update(save.Cmd())
+	runAppCommand(t, app, command)
+	if committed, _ = owner.ReadStartupSettings(t.Context()); committed.Agents.Categories[setting.ErrandRoleID].Model != "startup-model" {
+		t.Fatal("Errand model was not saved")
+	}
+	if after := app.settingsSurface(app.overlayHost.Window(ui.OverlayWorkspaceSettings)); after == nil || len(after.Model().Edits()) != 0 {
+		t.Fatal("Errand save left setup dirty")
 	}
 	remoteJourneyCreate(t, shell)
 	if requests(http.MethodPost) != 0 {

@@ -69,4 +69,5 @@ func (m *App) applyPreferencesSaved(message preferencesSavedMsg) {
 	body.CancelRemoteAccess()
 	body.SetModel(message.target.SavedModel(application, effective, overrides))
 	m.bindRemoteSettings(body)
+	m.continueOnboardingErrand(message.target, body)
 }
