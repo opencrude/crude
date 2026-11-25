@@ -29,6 +29,12 @@ const (
 	Interactions Wire = "interactions"
 	// Ollama is the native Ollama wire.
 	Ollama Wire = "ollama"
+	// FIMOpenAI is OpenAI's legacy text completion wire.
+	FIMOpenAI Wire = "openai-completions"
+	// FIMDeepSeek is DeepSeek's beta fill-in-the-middle wire.
+	FIMDeepSeek Wire = "deepseek-fim"
+	// FIMCodestral is Mistral's Codestral fill-in-the-middle wire.
+	FIMCodestral Wire = "codestral-fim"
 )
 
 type wireRoute struct {
@@ -46,6 +52,9 @@ var wireRoutes = map[Wire]wireRoute{
 	Gemini:       {mount: "/gemini", base: "/v1beta"},
 	Interactions: {mount: "/interactions", base: "/v1beta"},
 	Ollama:       {mount: "/ollama", base: "/api"},
+	FIMOpenAI:    {mount: "/openai-completions", base: "/v1"},
+	FIMDeepSeek:  {mount: "/deepseek-fim", base: "/beta"},
+	FIMCodestral: {mount: "/codestral-fim", base: "/v1"},
 }
 
 // Each codec registers its local handler once, during package initialization.
@@ -238,13 +247,22 @@ func (s *Server) dispatchWithPrefix(req *Request, blocks []block, fallback Cache
 		s.turns[0] = Turn{}
 		s.turns = s.turns[1:]
 		s.mu.Unlock()
-		return turn, true
+		return s.checkedTurn(req.Wire, turn), true
 	}
 	responder := s.responder
 	s.mu.Unlock()
 	if responder != nil {
-		return responder(req.snapshot()).snapshot(), true
+		return s.checkedTurn(req.Wire, responder(req.snapshot()).snapshot()), true
 	}
 	s.report("simulate %s %s: no turn scripted; use Script or Respond", req.Wire, req.Path)
 	return Turn{}, false
+}
+
+func (s *Server) checkedTurn(wire Wire, t Turn) Turn {
+	if err := t.validateToolDeltas(wire); err != nil {
+		s.report("simulate %s: %v", wire, err)
+		// Synthetic fixture failure; use the codec's own internal-error body.
+		return HTTPError("").WithFaultMessage(err.Error())
+	}
+	return t
 }

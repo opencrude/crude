@@ -15,7 +15,10 @@ type streamCodec struct {
 	contentType string
 	write       func(io.Writer, frame) error
 	encodeFault func(f fault, sent int) frame
-	terminal    []frame
+	// faultFinishes means the fault is a finish choice followed by the
+	// documented terminator, not an error that interrupts framing.
+	faultFinishes bool
+	terminal      []frame
 }
 
 // awaitBody gates an entire non-stream response, regardless of event position.
@@ -45,7 +48,13 @@ func (s *Server) sendStream(w http.ResponseWriter, r *http.Request, turn Turn, c
 		}
 		switch f.mode {
 		case faultStream:
-			write(codec.encodeFault(f, sent))
+			if write(codec.encodeFault(f, sent)) && codec.faultFinishes {
+				for _, terminal := range codec.terminal {
+					if !write(terminal) {
+						break
+					}
+				}
+			}
 			return true
 		case faultCut:
 			// net/http aborts the connection without writing the HTTP chunked

@@ -3833,6 +3833,51 @@
       "sha256": "b8dd1a1349582aaf6854edad86b91ef5214db6c6928189ae9cb4a25e6891ec7d",
       "source": "ollama"
     },
+    "openai-completions.json": {
+      "adaptations": [
+        {
+          "change": "Stream-only root: allow null as specified by ChatCompletionStreamOptions.include_usage. Keep the JSON response root unchanged.",
+          "pointer": "#/components/schemas/CreateCompletionResponse/properties/usage"
+        }
+      ],
+      "components": [
+        "ChatCompletionStreamOptions",
+        "CompletionStreamChunk",
+        "CompletionUsage",
+        "CreateCompletionRequest",
+        "CreateCompletionResponse",
+        "Error",
+        "ErrorResponse",
+        "MisalignmentErrorDetailsResource",
+        "StopConfiguration",
+        "_MisalignmentErrorType",
+        "_MisalignmentSteer"
+      ],
+      "roots": {
+        "CompletionStreamChunk": [
+          "CompletionStreamChunk",
+          "CompletionUsage"
+        ],
+        "CreateCompletionRequest": [
+          "ChatCompletionStreamOptions",
+          "CreateCompletionRequest",
+          "StopConfiguration"
+        ],
+        "CreateCompletionResponse": [
+          "CompletionUsage",
+          "CreateCompletionResponse"
+        ],
+        "ErrorResponse": [
+          "Error",
+          "ErrorResponse",
+          "MisalignmentErrorDetailsResource",
+          "_MisalignmentErrorType",
+          "_MisalignmentSteer"
+        ]
+      },
+      "sha256": "3711448cbb970e4bf8176897b32be0d29742fd5764e1a591588ae09cc61907d0",
+      "source": "openai"
+    },
     "responses.json": {
       "adaptations": [
         "#/$defs/ToolSearchOutputFunctionToolParam/properties/name: express the CR/LF exclusion as a separate not assertion",

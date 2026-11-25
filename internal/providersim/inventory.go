@@ -41,7 +41,9 @@ func configureCatalog(wire Wire, key string, keyed bool, models []Model) Option 
 }
 
 func (s *Server) setCatalog(wire Wire, key string, keyed bool, rows []Model) error {
-	if _, ok := wireRoutes[wire]; !ok || wire == Interactions {
+	switch wire {
+	case Chat, Responses, Codex, Messages, Gemini, Ollama:
+	default:
 		return fmt.Errorf("%s has no model inventory in its pinned wire", wire)
 	}
 	if keyed && strings.TrimSpace(key) == "" {

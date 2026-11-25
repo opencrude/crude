@@ -97,7 +97,7 @@ func (s *interactionWire) create(w http.ResponseWriter, r *http.Request) {
 	}
 	var frames []frame
 	if req.Stream || req.Store == nil || *req.Store {
-		frames = reply.frames()
+		frames = reply.frames(turn.toolDeltas)
 	}
 	save := func() { s.save(req, reply, current, window, frames) }
 	if req.Stream {
@@ -273,7 +273,7 @@ func (c interactionReply) body(steps []interactionStep) googleObject {
 
 func interactionEventID(id string, i int) string { return fmt.Sprintf("%s_event_%d", id, i) }
 
-func (c interactionReply) frames() []frame {
+func (c interactionReply) frames(toolDeltas map[int][]string) []frame {
 	var events []frame
 	emit := func(name string, fields googleObject) {
 		fields["event_type"] = name
@@ -283,6 +283,7 @@ func (c interactionReply) frames() []frame {
 	emit(interactionCreated, googleObject{"interaction": c.identityBody("in_progress")})
 	// Synthetic chunk boundaries. Use documented typed deltas and put the
 	// signature last in a thought step, as in the thinking guide.
+	tool := 0
 	for i, item := range c.steps {
 		step := item.body
 		start := maps.Clone(step)
@@ -310,7 +311,12 @@ func (c interactionReply) frames() []frame {
 				}
 			}
 		case "function_call":
-			delta(googleObject{"type": "arguments_delta", "arguments": string(jsonBytes(step["arguments"]))})
+			// ArgumentsDelta.arguments is a string, not the object carried by
+			// FunctionCallStep.arguments (pinned Interactions SDK schema).
+			for _, part := range textChunks(toolDeltas[tool], string(jsonBytes(step["arguments"]))) {
+				delta(googleObject{"type": "arguments_delta", "arguments": part})
+			}
+			tool++
 		}
 		emit(interactionStepStop, googleObject{"index": i})
 	}

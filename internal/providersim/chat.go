@@ -291,8 +291,12 @@ func (c chatReply) events(includeUsage bool) iter.Seq[frame] {
 			if !delta(map[string]any{"tool_calls": []map[string]any{start}}, nil) {
 				return
 			}
-			if call.Arguments != "" {
-				args := map[string]any{"index": i, "function": map[string]any{"arguments": call.Arguments}}
+			// ChatCompletionMessageToolCallChunk.function.arguments (OpenAI pin).
+			if call.Arguments == "" && len(c.turn.toolDeltas[i]) == 0 {
+				continue
+			}
+			for _, part := range textChunks(c.turn.toolDeltas[i], call.Arguments) {
+				args := map[string]any{"index": i, "function": map[string]any{"arguments": part}}
 				if !delta(map[string]any{"tool_calls": []map[string]any{args}}, nil) {
 					return
 				}
