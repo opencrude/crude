@@ -161,3 +161,32 @@ func TestReportWithoutHistory(t *testing.T) {
 		}
 	}
 }
+
+func TestArchivedStallReportKeepsProducerAndTimedContext(t *testing.T) {
+	at := time.Now().Truncate(time.Second).Add(-time.Minute)
+	path := filepath.Join(t.TempDir(), "performance.db")
+	db, err := openArchive(t.Context(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	archived := metrics.ArchiveStall{At: at, Series: "ui.update", Micros: 80_000, WatchdogSampled: true, WatchdogDelayMicros: 17_000,
+		Context: &metrics.StallContext{From: at.Add(-time.Second), Until: at, ProcessCPUPercent: -1, HostCPUPercent: 78,
+			SchedulerMaxMicros: 16_000, GCPauseMaxMicros: 11_000, GCAssistCPUMicros: 2_000}}
+	source := ArchiveSource{ArchiveProcess: metrics.ArchiveProcess{Incarnation: "old-shell"}, Role: "shell", Build: "old-build", BucketUpperUS: metrics.BucketUpperMicros()}
+	if err := storeArchiveWindow(t.Context(), db, source, metrics.ArchiveWindow{From: at.Unix(), Until: at.Unix() + 1, Stalls: []metrics.ArchiveStall{archived}}); err != nil {
+		t.Fatal(err)
+	}
+	report := Report{Host: ReportHost{Build: "current-build"}}
+	ReadReportHistory(t.Context(), path, &report)
+	var out strings.Builder
+	if err := WriteReport(&out, report); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Build: old-build", "Watchdog wake-up delay: 17ms", "Nearby sample: " + at.Add(-time.Second).UTC().Format(stallClock),
+		"Process CPU (one core = 100%): unavailable", "Host CPU (all cores = 100%): 78%", "Longest Go scheduling wait: 16ms", "Longest GC pause: 11ms", "GC assist CPU time (sum): 2.0ms"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("report lacks %q", want)
+		}
+	}
+}

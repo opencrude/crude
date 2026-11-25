@@ -46,8 +46,6 @@ type SubPaneView struct {
 // import any TUI package or emit ANSI. It reads sp.Messages and the
 // compact scroll fields only.
 func (sp *SubPane) View() SubPaneView {
-	msgs := sp.Messages.Messages()
-
 	header := SubPaneHeaderView{
 		ID:         sp.ID,
 		Title:      sp.Title,
@@ -57,9 +55,10 @@ func (sp *SubPane) View() SubPaneView {
 		Elapsed:    sp.Elapsed(),
 		TokenCount: sp.TokenCount,
 	}
-	if len(msgs) > 0 {
-		last := msgs[len(msgs)-1]
-		header.Thinking = last.ThinkingActive
+	if source := sp.Messages; source != nil && len(source.messages) > 0 {
+		// Only the last row contributes to the header. The transcript is
+		// borrowed here, never exported or retained in the view.
+		header.Thinking = source.messages[len(source.messages)-1].ThinkingActive
 	}
 
 	view := SubPaneView{

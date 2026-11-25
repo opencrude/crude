@@ -76,8 +76,8 @@ func TestFirstLoopBindsBeforeWork(t *testing.T) {
 	o.BeginLoop()
 	holdTheUIThread()
 	o.EndLoop()
-	if !strings.Contains(strings.Join(o.stalled, "\n"), "holdTheUIThread") {
-		t.Fatalf("first iteration stack: %v", o.stalled)
+	if !strings.Contains(strings.Join(o.stalled.Stack, "\n"), "holdTheUIThread") {
+		t.Fatalf("first iteration stack: %v", o.stalled.Stack)
 	}
 }
 
@@ -101,6 +101,9 @@ func TestStalledUpdateRecordsTheStalledCode(t *testing.T) {
 		}
 		if event.Label != "perf.stallMsg" {
 			t.Fatalf("the stall names %q, want the message type", event.Label)
+		}
+		if !event.WatchdogSampled || event.WatchdogDelayMicros < 0 {
+			t.Fatalf("watchdog timing missing: %+v", event)
 		}
 		for _, frame := range event.Stack {
 			if strings.Contains(frame, "holdTheUIThread") && strings.Contains(frame, "loop_test.go:") {

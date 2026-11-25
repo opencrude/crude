@@ -153,7 +153,7 @@ func WriteReport(w io.Writer, r Report) error {
 		b.line("")
 		b.line("> Some saved measurements could not be read.")
 	}
-	writeTraces(b, stalls)
+	writeStallEvidence(b, stalls)
 	_, err := io.WriteString(w, b.String())
 	return err
 }
@@ -446,17 +446,24 @@ type reportStall struct {
 	build                  string
 	micros                 int64
 	stack                  []string
+	context                *metrics.StallContext
+	watchdogSampled        bool
+	watchdogDelay          int64
 }
 
 func writeStalls(b *reportWriter, r Report) []reportStall {
 	var stalls []reportStall
-	seen := map[string]bool{}
+	seen := map[string]int{}
 	key := func(s reportStall) string { return s.process + s.series + s.at.Format(time.RFC3339Nano) }
 	if r.Live != nil {
 		for _, e := range r.Live.Events() {
 			s := reportStall{at: e.At, process: e.Process.Label(), title: e.Title, series: e.Series,
-				group: e.Group, severity: e.Severity, label: e.Label, micros: e.Micros, stack: e.Stack}
-			seen[key(s)] = true
+				group: e.Group, severity: e.Severity, label: e.Label, micros: e.Micros, stack: e.Stack,
+				build: e.BuildID, context: e.Context, watchdogSampled: e.WatchdogSampled, watchdogDelay: e.WatchdogDelayMicros}
+			if s.build == "" && e.Process == ProcessShell {
+				s.build = r.Host.Build
+			}
+			seen[key(s)] = len(stalls)
 			stalls = append(stalls, s)
 		}
 	}
@@ -469,11 +476,18 @@ func writeStalls(b *reportWriter, r Report) []reportStall {
 				meta = metrics.Meta{Title: saved.Series}
 			}
 			s := reportStall{at: saved.At, process: historyRole(h.Role), title: meta.Title, series: saved.Series,
-				group: meta.Group, severity: saved.Severity, build: saved.Build, label: saved.Label, micros: saved.Micros, stack: saved.Stack}
-			if !seen[key(s)] {
-				seen[key(s)] = true
-				stalls = append(stalls, s)
+				group: meta.Group, severity: saved.Severity, build: saved.Build, label: saved.Label, micros: saved.Micros, stack: saved.Stack,
+				context: saved.Context, watchdogSampled: saved.WatchdogSampled, watchdogDelay: saved.WatchdogDelayMicros}
+			if index, exists := seen[key(s)]; exists {
+				// Live and saved views can overlap. The archive already knows its
+				// exact build even if the live sampler was still warming up.
+				if stalls[index].build == "" {
+					stalls[index].build = s.build
+				}
+				continue
 			}
+			seen[key(s)] = len(stalls)
+			stalls = append(stalls, s)
 		}
 	}
 	b.line("")
@@ -495,15 +509,12 @@ func writeStalls(b *reportWriter, r Report) []reportStall {
 		if s.series != "" {
 			took = FormatMicros(s.micros)
 		}
-		build := "live"
-		if s.build != "" {
-			build = shortID(s.build)
-		}
+		build := shortID(s.build)
 		detail := s.title
 		if s.label != "" {
 			detail += ": " + ShortKey(s.label)
 		}
-		rows = append(rows, []string{s.at.UTC().Format("Jan 2 15:04:05"), s.process + " / " + build,
+		rows = append(rows, []string{s.at.UTC().Format(stallClock), s.process + " / " + build,
 			cmp.Or(s.group, "Other"), eventSeverity(s.severity) + " · " + detail, took})
 	}
 	b.table([]string{"UTC", "Process / Build", "Area", "Event", "Took"}, rows)
@@ -514,28 +525,66 @@ func writeStalls(b *reportWriter, r Report) []reportStall {
 	return stalls
 }
 
-func writeTraces(b *reportWriter, stalls []reportStall) {
+const stallClock = "Jan 2 15:04:05.000"
+
+func writeStallEvidence(b *reportWriter, stalls []reportStall) {
+	// Reserve the report's bounded evidence section for captured code first.
+	// Untraced stalls can still carry resource or watchdog evidence.
 	shown := 0
-	for _, s := range stalls {
-		if len(s.stack) == 0 || shown == 10 {
-			continue
-		}
-		if shown == 0 {
+	for _, traced := range []bool{true, false} {
+		for _, s := range stalls {
+			if shown == 10 {
+				return
+			}
+			if (len(s.stack) > 0) != traced || (!traced && s.context == nil && !s.watchdogSampled) {
+				continue
+			}
+			if shown == 0 {
+				b.line("")
+				b.line("## Stall evidence")
+				b.line("")
+				b.line("Up to ten stalls. The stack shows where the UI was sampled, not how long it ran there. CPU and runtime readings are process-wide over the stated interval. A late watchdog can indicate scheduling pressure or a pause. These readings do not prove the cause.")
+			}
+			shown++
 			b.line("")
-			b.line("## Captured traces")
+			b.line("### %s · %s · %s · %s UTC", s.process, s.title, FormatMicros(s.micros), s.at.UTC().Format(stallClock))
 			b.line("")
-			b.line("Up to ten stalls with stacks, newest first. A missing trace does not identify the cause.")
+			b.line("- Build: %s", cell(shortID(s.build)))
+			if s.watchdogSampled {
+				b.line("- Watchdog wake-up delay: %s", FormatMicros(s.watchdogDelay))
+			}
+			if c := s.context; c != nil {
+				b.line("- Nearby sample: %s–%s UTC", c.From.UTC().Format(stallClock), c.Until.UTC().Format(stallClock))
+				b.line("- Process CPU (one core = 100%%): %s. Host CPU (all cores = 100%%): %s.", stallPercent(c.ProcessCPUPercent), stallPercent(c.HostCPUPercent))
+				b.line("- Longest Go scheduling wait: %s. Longest GC pause: %s. GC assist CPU time (sum): %s.",
+					stallMicros(c.SchedulerMaxMicros), stallMicros(c.GCPauseMaxMicros), stallMicros(c.GCAssistCPUMicros))
+			} else {
+				b.line("- No nearby CPU or Go runtime sample.")
+			}
+			if traced {
+				b.line("")
+				b.line("```text")
+				for _, frame := range s.stack {
+					b.line("%s", strings.ReplaceAll(frame, "`", "'"))
+				}
+				b.line("```")
+			}
 		}
-		shown++
-		b.line("")
-		b.line("### %s · %s · %s · %s UTC", s.process, s.title, FormatMicros(s.micros), s.at.UTC().Format("Jan 2 15:04:05"))
-		b.line("")
-		b.line("```text")
-		for _, frame := range s.stack {
-			b.line("%s", strings.ReplaceAll(frame, "`", "'"))
-		}
-		b.line("```")
 	}
+}
+
+func stallPercent(percent float64) string {
+	if percent < 0 {
+		return "unavailable"
+	}
+	return FormatValue(percent, "%")
+}
+
+func stallMicros(micros int64) string {
+	if micros < 0 {
+		return "unavailable"
+	}
+	return FormatMicros(micros)
 }
 
 // savedLabel keeps a stall's label only when its series names code-defined

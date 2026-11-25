@@ -207,9 +207,7 @@ func takeResourcesContext(parent context.Context, all bool) *Resources {
 	fail(err)
 	out.ProcessCount = len(tree) + 1
 	if times, err := cpu.TimesWithContext(ctx, false); err == nil && len(times) == 1 {
-		t := times[0]
-		busy := t.User + t.Nice + t.System + t.Irq + t.Softirq + t.Steal
-		total := busy + t.Idle + t.Iowait
+		busy, total := cpuTotals(times[0])
 		out.System.SampledAt = time.Now()
 		out.System.CPUStatus = "warming_up"
 		if sampler.system.set && total > sampler.system.total && busy >= sampler.system.busy {
@@ -368,6 +366,11 @@ func takeResourcesContext(parent context.Context, all bool) *Resources {
 }
 
 // CPU baselines are valid only for the same OS process creation identity.
+func cpuTotals(t cpu.TimesStat) (busy, total float64) {
+	busy = t.User + t.Nice + t.System + t.Irq + t.Softirq + t.Steal
+	return busy, busy + t.Idle + t.Iowait
+}
+
 func processCPU(last, current cpuSample) (float64, time.Time) {
 	if current.created == 0 || last.created != current.created || !current.at.After(last.at) || current.busy < last.busy {
 		return -1, time.Time{}

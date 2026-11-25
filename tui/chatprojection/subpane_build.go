@@ -169,12 +169,48 @@ func (r *Renderer) BuildSubPaneToolLines(messages []*conversation.ChatMessage, w
 			continue
 		}
 		active = active || toolRowFrameSensitive(*msg)
-		body := renderProjectToolMessageLines(*msg, nil, width-toolBodyGutterWidth, width, width, frame, 12, msg.ToolPreviewPhase, r.disclosureState(msg), r.projectPaths)
-		for _, line := range body.native {
-			lines = append(lines, NativeLine(padPaintLine(line, width)))
-		}
+		lines = r.appendSubPaneToolLines(lines, msg, width, frame)
 	}
 	return lines, active
+}
+
+// BuildSubPaneToolVariants projects the compact pane at one animation phase.
+// Only the cells of active rows can differ at the opposite phase. The shared
+// activity glyph reserves the same columns for both shapes, so row positions
+// are unchanged. Settled rows have a single representation.
+func (r *Renderer) BuildSubPaneToolVariants(width, frame int) ([]SubPaneLine, map[int]SubPaneLine) {
+	var lines, animated []SubPaneLine
+	var alternate map[int]SubPaneLine
+	for _, msg := range r.Messages() {
+		if msg.Role != conversation.RoleTool || msg.ToolName == "" {
+			continue
+		}
+		start := len(lines)
+		lines = r.appendSubPaneToolLines(lines, msg, width, frame)
+		if !toolRowFrameSensitive(*msg) {
+			continue
+		}
+		animated = r.appendSubPaneToolLines(animated[:0], msg, width, frame+ui.ActivityBlinkPhaseMillis)
+		for i, line := range animated {
+			if line.Text == lines[start+i].Text {
+				continue
+			}
+			if alternate == nil {
+				alternate = make(map[int]SubPaneLine)
+			}
+			alternate[start+i] = line
+		}
+	}
+	return lines, alternate
+}
+
+func (r *Renderer) appendSubPaneToolLines(lines []SubPaneLine, msg *conversation.ChatMessage, width, frame int) []SubPaneLine {
+	body := renderProjectToolMessageLines(*msg, nil, width-toolBodyGutterWidth, width, width, frame, 12,
+		msg.ToolPreviewPhase, r.disclosureState(msg), r.projectPaths)
+	for _, line := range body.native {
+		lines = append(lines, NativeLine(padPaintLine(line, width)))
+	}
+	return lines
 }
 
 // BuildCompactWorkingLine builds the placeholder when a compact pane has no tools yet.

@@ -48,7 +48,7 @@ type LoopObserver struct {
 	names      map[reflect.Type]string
 	displayNS  atomic.Int64
 	stallPhase uint32
-	stalled    []string // UI stack captured during the iteration that just ended
+	stalled    metrics.UIStallEvidence // watchdog sample from the iteration that just ended
 }
 
 // BeginLoop runs on the event-loop goroutine before Update.
@@ -71,19 +71,19 @@ func NewLoopObserver() *LoopObserver {
 // ObserveLoop runs on the event-loop goroutine.
 func (o *LoopObserver) ObserveLoop(sample tea.LoopSample) {
 	name := o.typeName(sample.Msg)
-	stack := o.stalled
-	o.stalled = nil
-	stackFor := func(phase tea.LoopPhase) []string {
+	evidence := o.stalled
+	o.stalled = metrics.UIStallEvidence{}
+	evidenceFor := func(phase tea.LoopPhase) metrics.UIStallEvidence {
 		if uint32(phase) == o.stallPhase {
-			return stack
+			return evidence
 		}
-		return nil
+		return metrics.UIStallEvidence{}
 	}
-	uiUpdate.ObserveStack(sample.Update, name, stackFor(tea.LoopUpdate))
+	uiUpdate.ObserveUIStall(sample.Update, name, evidenceFor(tea.LoopUpdate))
 	uiMessages.Observe(name, sample.Update)
-	uiDispatch.ObserveStack(sample.Dispatch, name, stackFor(tea.LoopDispatch))
-	uiView.ObserveStack(sample.View, name, stackFor(tea.LoopView))
-	uiPresent.ObserveStack(sample.Present, name, stackFor(tea.LoopPresent))
+	uiDispatch.ObserveUIStall(sample.Dispatch, name, evidenceFor(tea.LoopDispatch))
+	uiView.ObserveUIStall(sample.View, name, evidenceFor(tea.LoopView))
+	uiPresent.ObserveUIStall(sample.Present, name, evidenceFor(tea.LoopPresent))
 	if sample.Input {
 		total := sample.Wait + sample.Update + sample.Dispatch + sample.View + sample.Present
 		label := inputKind(sample.Msg)

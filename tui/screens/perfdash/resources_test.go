@@ -84,7 +84,7 @@ func TestResourcesTabPaintsAtWideAndNarrowWidths(t *testing.T) {
 		buf := surface.NewCellBuffer(width, 40)
 		host.Paint(buf)
 		text := paintedText(buf)
-		for _, want := range []string{"Crude memory", "Processes", "gopls", "started by Core", "Disk · ", "Largest workspaces", "folder deleted", "4,476 saved workspaces", "no longer exist"} {
+		for _, want := range []string{"Crude tree memory", "Processes", "gopls", "started by Core", "Disk · ", "Largest workspaces", "folder deleted", "4,476 saved workspaces", "no longer exist"} {
 			if !strings.Contains(text, want) {
 				t.Fatalf("width %d lacks %q:\n%s", width, want, text)
 			}
@@ -133,16 +133,16 @@ func TestResourcesNeverPaintCrossHostAggregate(t *testing.T) {
 			buf := surface.NewCellBuffer(width, 50)
 			host.Paint(buf)
 			text := paintedText(buf)
-			for _, want := range []string{"Shell memory", "Core memory", "Processes · Shell", "Processes · Core", "gopls"} {
+			for _, want := range []string{"Shell tree memory", "Core tree memory", "Processes · Shell", "Processes · Core", "gopls"} {
 				if !strings.Contains(text, want) {
 					t.Fatalf("unknown=%v width=%d lacks %q:\n%s", unknown, width, want, text)
 				}
 			}
-			if strings.Contains(text, "Crude memory") || strings.Contains(text, "Crude CPU") {
+			if strings.Contains(text, "Crude tree memory") || strings.Contains(text, "Crude tree CPU") {
 				t.Fatalf("mixed machines painted aggregate:\n%s", text)
 			}
 			report := screen.Report()
-			if !strings.Contains(report, "| Shell memory | 200 MiB |") || !strings.Contains(report, "| Core memory | 730 MiB |") || strings.Contains(report, "| Crude memory |") {
+			if !strings.Contains(report, "| Shell memory | 80 MiB |") || !strings.Contains(report, "| Core memory | 120 MiB |") || !strings.Contains(report, "| Shell tree memory | 200 MiB |") || !strings.Contains(report, "| Core tree memory | 730 MiB |") || strings.Contains(report, "| Crude tree memory |") {
 				t.Fatalf("report mixed host totals:\n%s", report)
 			}
 		}
