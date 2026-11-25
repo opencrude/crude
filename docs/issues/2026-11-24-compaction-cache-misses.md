@@ -2,8 +2,8 @@
 
 > Status: RESOLVED for raw history replay after a model-written checkpoint. The subsequent [native implementation](../reference/adaptive-context.md#native-compaction-on-custom-connections) covers Responses and Messages. Exact gateway billing is not claimed. Research checked on 2026-11-24.
 
-For the later Codex HTTP and serving-model changes, known regressions, and
-unfinished threshold work, see the [provider compaction handoff](../plans/provider-compaction-handoff.md).
+For the later fixes and the stored and stateless threshold checks, see
+[checkpoint recovery on custom connections](2026-11-25-checkpoint-recovery.md).
 
 ## What happened on the wire
 

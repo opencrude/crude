@@ -132,6 +132,8 @@ documents to read before changing each area.
 - [Right-to-left and bidirectional text](reference/bidi.md) — UAX #9
   arrangement, Arabic joining, caret, pointer and selection mapping, terminal
   rows, host BiDi mode and the right-to-left settings.
+- [Provider simulator](reference/provider-simulator.md) — independent wire fixtures,
+  synthetic cache accounting, stateful replay and exact-wire exceptions.
 - [Performance baselines](reference/performance-baselines.md) — recorded paint
   and allocation numbers, CI-enforced ceilings and `CRUDE_PERF_LOG`.
 - [Design token bypasses](reference/design-token-bypasses.md) — the frozen
@@ -143,6 +145,8 @@ documents to read before changing each area.
 
 - [Validation and visual capture](guides/validation.md) — gates, test isolation,
   helper ownership and the Linux capture workflow.
+- [Offline protocol conformance](guides/protocol-conformance.md) — replay synthetic
+  provider fixtures and run the official MCP client checks.
 - [Releases and installation](guides/releases.md) — native Linux/Windows packages,
   verified/instant release modes, beta-risk consent, setup advice, and
   public-launch requirements.
@@ -161,11 +165,6 @@ documents to read before changing each area.
 
 ### Plans (active work only)
 
-- [Provider compaction handoff](plans/provider-compaction-handoff.md) lists the
-  pushed changes, failing checks, and remaining wire and retry work.
-- [Provider simulator](plans/provider-simulator.md) — one spec-validated,
-  in-process simulator for all seven provider wires that replaces hand-written
-  test fakes.
 - [Complete editor experience](plans/editor-parity.md) — audited gaps, one complete
   target UX, implementation owners and behavioral acceptance for later agents.
 
@@ -214,6 +213,7 @@ documents to read before changing each area.
 
 - [Cold requests after automatic compaction](issues/2026-11-24-compaction-cache-misses.md) — measured cache reads, all seven wire contracts and the portable fallback.
 - [Prompt cache reporting](issues/2026-11-25-cache-reporting.md) — why a full cache miss showed as a high hit rate, and what the header and details report now.
+- [Checkpoint recovery on custom connections](issues/2026-11-25-checkpoint-recovery.md) — native-first recovery, retained prompts, and both persisted threshold journeys.
 - [Provider checkpoint read-back](issues/2026-11-25-native-checkpoint-read-back.md) — why a working provider compaction was discarded, and how the read-back now gets the serving model's allowance.
 - [UI stalls from the performance dashboard](issues/2026-11-25-ui-stalls.md) — measured paint costs behind the reported freezes, the fixes and their gates.
 

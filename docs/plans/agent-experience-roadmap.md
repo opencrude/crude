@@ -85,11 +85,11 @@ fixed.
   checkpoints survive across runs; resumed runs seed their first projection
   from provider-reported usage (it used to fall back to local estimates that
   were half the real size on dense content).
-- Native compaction on custom connections: one account choice (Auto, Provider
-  only, Errand only), lazy per-route checks with synthetic input on Responses
-  and Messages, portable text kept beside the opaque item, and Errand for any
-  checkpoint the provider cannot finish in Auto. Server-side threshold
-  compaction is not used; the local planner decides when.
+- Native compaction uses the selected account and verified on-demand route first.
+  At Crude's boundary a declared threshold route can compact an ordinary Messages
+  or Responses request. Auto otherwise chooses a full-history writer (Errand or
+  the serving model). Provider only never charges a different model. A temporary
+  rate limit does not mean the route lacks compaction. See [adaptive context](../reference/adaptive-context.md#native-compaction-on-custom-connections).
 - Shuffled, unbounded agent names and optional parent-chosen nicknames.
 - Guidance deferral runs pure reads; parents get a children-status notice on
   change; claim changes need only the new paths; per-role service tier and
@@ -127,7 +127,7 @@ serves them (the audit shows 96-97% cached input):
 | Situation | What happens today | Cache effect |
 |---|---|---|
 | Ordinary step | Tool list rebuilt each step by `PrepareStep`; built-ins are fixed lists, MCP connections sorted by ID | Stable; prefix cached |
-| Capability activated or session toggle changed | New tools appear in the list | One cold request, then cached |
+| Multi-agent setting changed | Keep root instructions and tool declarations stable; send the settings change separately | Crude preserves the prefix; only the provider can report a cache hit |
 | Automatic compaction | Same tools; system message rebuilt from the current guidance; history replaced by the checkpoint | One cold request (the history changed anyway) |
 | Compaction extraction requests | Reuse the agent's own system message and tool list | Share the conversation's cached prefix |
 | Child agent | Own category tool set and child system prompt | First request cold, then cached |
