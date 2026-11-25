@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"image"
 	"os"
 	"strings"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	"github.com/charmbracelet/x/ansi/kitty"
 
 	"crude/agent/sessiondb"
+	"crude/internal/terminalvt"
 	"crude/tui/ui"
 	"crude/tui/wm"
 )
@@ -289,9 +291,14 @@ func TestSixelAttachmentResizeAndCloseDuringMotion(t *testing.T) {
 	}
 }
 
+type previewInk struct{ fg, bg uv.Color }
+
 type pacedSixelModel struct {
 	*App
 	frame int
+	// Capture the intended first preview on the Update/View goroutine. Later
+	// frames must translate these same pixels by exactly the pointer movement.
+	firstPreview chan<- map[image.Point]previewInk
 }
 
 func (*pacedSixelModel) Init() tea.Cmd { return nil }
@@ -309,6 +316,20 @@ func (m *pacedSixelModel) View() tea.View {
 	v := m.App.View()
 	// The marker and the physical cell diff count as one writer flush.
 	v.WindowTitle = fmt.Sprintf("sixel-motion-frame-%d!", m.frame)
+	if m.frame == 2 && m.firstPreview != nil {
+		grid := uv.NewScreenBuffer(m.width, m.height)
+		v.Surface.Draw(grid, grid.Bounds())
+		ink := make(map[image.Point]previewInk)
+		for y := range m.height {
+			for x := range m.width {
+				if c := grid.CellAt(x, y); c.Content == "▀" {
+					ink[image.Pt(x, y)] = previewInk{c.Style.Fg, c.Style.Bg}
+				}
+			}
+		}
+		m.firstPreview <- ink
+		m.firstPreview = nil
+	}
 	return v
 }
 
@@ -354,7 +375,13 @@ func TestSixelAttachmentPacedDragThroughTerminalWriter(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Second)
 	defer cancel()
 	sink := &pacedSixelSink{out: make(chan pacedSixelWrite, 128), loops: make(chan tea.LoopSample, 16)}
-	program := tea.NewProgram(&pacedSixelModel{App: app}, tea.WithContext(ctx), tea.WithInput(nil), tea.WithOutput(sink),
+	terminal, err := terminalvt.New(terminalvt.Options{Cols: app.width, Rows: app.height})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer terminal.Close()
+	firstPreview := make(chan map[image.Point]previewInk, 1)
+	program := tea.NewProgram(&pacedSixelModel{App: app, firstPreview: firstPreview}, tea.WithContext(ctx), tea.WithInput(nil), tea.WithOutput(sink),
 		tea.WithWindowSize(app.width, app.height), tea.WithEnvironment([]string{"TERM=xterm-256color"}),
 		tea.WithColorProfile(colorprofile.TrueColor), tea.WithObserver(sink), tea.WithoutSignals())
 	done := make(chan error, 1)
@@ -374,6 +401,7 @@ func TestSixelAttachmentPacedDragThroughTerminalWriter(t *testing.T) {
 		for {
 			select {
 			case write := <-sink.out:
+				terminal.Feed(write.data)
 				received++
 				longest = max(longest, len(write.data))
 				last = fmt.Sprintf("%q", write.data[:min(70, len(write.data))])
@@ -394,6 +422,7 @@ func TestSixelAttachmentPacedDragThroughTerminalWriter(t *testing.T) {
 	program.Send(tea.MouseClickMsg{X: x + 6, Y: y, Button: tea.MouseLeft})
 	await(func(w pacedSixelWrite) bool { return bytes.Contains(w.data, []byte("sixel-motion-frame-1!")) })
 
+	var ink map[image.Point]previewInk
 	pace := time.NewTicker(80 * time.Millisecond)
 	defer pace.Stop()
 	for i := range 5 {
@@ -411,8 +440,38 @@ func TestSixelAttachmentPacedDragThroughTerminalWriter(t *testing.T) {
 			}
 			return bytes.Contains(w.data, marker)
 		})
-		if !bytes.Contains(preview.data, []byte("▀")) {
-			t.Fatalf("physical frame %d did not write any of the live image preview", i)
+		if i == 0 {
+			select {
+			case ink = <-firstPreview:
+			case <-ctx.Done():
+				t.Fatal("no first image preview from the shell")
+			}
+			if len(ink) == 0 {
+				t.Fatal("the shell produced an empty first preview")
+			}
+		}
+		// ICH/DCH may move an entire row without transmitting another block
+		// glyph. Check the resulting physical positions and both half-pixel
+		// colours, not which encoding the writer chose for this frame.
+		grid, err := terminal.Rows(terminalvt.RowRequest{Start: -1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		seen := 0
+		for y, row := range grid.Cells {
+			for x, cell := range row {
+				if cell.Text != "▀" {
+					continue
+				}
+				want, ok := ink[image.Pt(x-i, y)]
+				if !ok || !nativeFrameColorEqual(cell.FG, want.fg) || !nativeFrameColorEqual(cell.BG, want.bg) {
+					t.Fatalf("motion %d: unexpected preview cell or colours at (%d,%d)", i+1, x, y)
+				}
+				seen++
+			}
+		}
+		if seen != len(ink) {
+			t.Fatalf("motion %d: terminal retained %d of %d preview cells", i+1, seen, len(ink))
 		}
 		select {
 		case loop := <-sink.loops:

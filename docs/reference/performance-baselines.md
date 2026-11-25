@@ -1209,7 +1209,11 @@ replaces the raster request even when a terminal write is still in flight.
 The raster cache retains newly finished and visible rasters before evicting
 older entries, so it does not keep rebuilding an evicted current view. That test's 112×34-cell window
 (685,440 pixels) is above the native-motion limit, so its moves still preview. This measures the writer sink,
-not the emulator's paint latency.
+not the emulator's paint latency. The paced drag check also replays the
+actual VT in libghostty-vt: every half-block and both colours must move exactly
+one column per pointer step. Moving a verified suffix with ICH/DCH does not
+require sending its glyphs again. With the synthetic gradient, later steps
+sent 947 bytes without losing any preview cells.
 
 `TestImageWorkingSetManyTabs` opened 24 distinct 2048×1024 images from the file
 tree. Three Windows runs retained one mounted placement and eight decoded
