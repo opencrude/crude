@@ -13,17 +13,20 @@ import (
 	"crude/agent/provider"
 	"crude/internal/providersim"
 	"crude/types/statuscenter"
+	"crude/workspace"
 )
 
-// Dedicated scripts/tuishot.sh acceptance. Every backend, project and shell is
-// test-owned; interaction enters the real connected composer and /compact path.
+// The capture driver sends /compact and the queued prompt through the composer.
+// F6 releases the provider, F7 shuts down the first shell/core, and F9 verifies
+// the cold-resumed session and exits. Each stage signals its painted evidence.
 func TestCompactionVisualAcceptance(t *testing.T) {
 	if os.Getenv("CRUDE_VISUAL_COMPACTION") != "1" {
 		t.Skip("dedicated terminal capture")
 	}
-	home := t.TempDir()
+	home, root := t.TempDir(), t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("CRUDE_HOME", home)
 	gate := providersim.NewGate()
 	var normal, extraction atomic.Int32
 	server := providersim.New(t)
@@ -31,14 +34,15 @@ func TestCompactionVisualAcceptance(t *testing.T) {
 		text := "Initial work completed. Full source remains archived."
 		if string(request.ToolChoice) == `"none"` {
 			extraction.Add(1)
-			return simulatedAnswer("Retain accepted work and continue with queued human input.").WithGate(gate)
+			return simulatedAnswer("<<<intent>>>\nKeep the request.\n<<<work>>>\nSource retained.\n<<<state>>>\nCheckpoint ready.\n<<<continuation>>>\nContinue with the next human input.").WithGate(gate)
 		} else if normal.Add(1) > 1 {
 			text = "Queued prompt executed exactly once after compaction."
 		}
 		return simulatedAnswer(text)
 	})
-	runtime := remoteJourneyRuntime(t, server.BaseURL(providersim.Chat))
-	shell := newRemoteJourneyShell(t, runtime, t.TempDir())
+	endpoint := server.BaseURL(providersim.Chat)
+	runtime := remoteJourneyRuntime(t, endpoint, func(w *workspace.Workspace) { restrictFixture(t, w) })
+	shell := newRemoteJourneyShell(t, runtime, root)
 	t.Cleanup(gate.Release)
 	id := remoteJourneyCreate(t, shell)
 	shell.app.Tree.Visible = false
@@ -47,40 +51,145 @@ func TestCompactionVisualAcceptance(t *testing.T) {
 		DisplayText: "Review the saved source evidence without deleting prior work.",
 	}, shell.app.Input.DraftRevision()))
 	remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool { return shell.app.ws.AgentActivity(id).Status.Phase == statuscenter.AgentCompleted })
-	model := &compactionVisualModel{App: shell.app, t: t, id: id, normal: &normal, extraction: &extraction, release: gate.Release}
+	evidence := os.Getenv("CRUDE_CAPTURE_EVIDENCE")
+	live := &compactionVisualModel{App: shell.app, id: id, release: gate.Release, evidence: evidence}
+	runCompactionVisualProgram(t, live)
+	if live.phase != "settled" || normal.Load() != 2 || extraction.Load() != 1 || live.Input.Value() != "Private draft remains" || live.ws.AgentMgr().Get(id).State.ActiveCompaction.Phase != "" {
+		t.Fatalf("live journey not settled: phase=%q normal=%d extraction=%d draft=%q", live.phase, normal.Load(), extraction.Load(), live.Input.Value())
+	}
+
+	resumed := coldResumeCompactionJourney(t, runtime, []remoteJourneyShell{shell}, root, endpoint)
+	resumed.app.Tree.Visible = false
+	revived := &compactionVisualModel{App: resumed.app, id: resumed.app.AgentView.ActiveID(), revived: true, evidence: evidence}
+	runCompactionVisualProgram(t, revived)
+	revived.StopAsyncIO()
+	if err := revived.CloseWorkspaceAttachment(); err != nil {
+		t.Fatal(err)
+	}
+	if revived.phase != "revived" || live.settledTitle != revived.settledTitle || normal.Load() != 2 || extraction.Load() != 1 {
+		t.Fatalf("cold resume changed the checkpoint or replayed work: live=%q revived=%q normal=%d extraction=%d", live.settledTitle, revived.settledTitle, normal.Load(), extraction.Load())
+	}
+	if path := os.Getenv("CRUDE_VISUAL_PROOF"); path != "" {
+		proof := fmt.Sprintf("PASS compaction native\nlive grid: %dx%d\nactive: %s\nsettled: %s\nrevived grid: %dx%d\nrevived: %s\n", live.width, live.height, live.activeTitle, live.settledTitle, revived.width, revived.height, revived.settledTitle)
+		if err := os.WriteFile(path, []byte(proof), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func runCompactionVisualProgram(t *testing.T, model *compactionVisualModel) {
+	t.Helper()
 	program := tea.NewProgram(model, tea.WithWidthMethod(ansi.GraphemeWidth))
-	shell.app.SetProgram(program)
+	model.SetProgram(program)
+	defer model.SetProgram(nil)
 	if _, err := program.Run(); err != nil {
 		t.Fatal(err)
+	}
+	if model.evidenceErr != nil {
+		t.Fatal(model.evidenceErr)
 	}
 }
 
 type compactionVisualModel struct {
 	*App
-	t                  *testing.T
-	id                 string
-	normal, extraction *atomic.Int32
-	release            func()
+	id, phase, evidence       string
+	activeTitle, settledTitle string
+	release                   func()
+	revived, sawSize          bool
+	evidenceErr               error
 }
 
+type compactionVisualEvidenceError struct{ err error }
+
 func (m *compactionVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if key, ok := msg.(tea.KeyPressMsg); ok {
-		switch key.Code {
+	switch msg := msg.(type) {
+	case compactionVisualEvidenceError:
+		m.evidenceErr = msg.err
+		return m, tea.Quit
+	case tea.WindowSizeMsg:
+		m.sawSize = true
+	case tea.KeyPressMsg:
+		switch msg.Code {
 		case tea.KeyF6:
-			m.release()
+			if m.release != nil {
+				m.release()
+			}
 			return m, nil
+		case tea.KeyF7:
+			if !m.revived {
+				return m, tea.Quit
+			}
 		case tea.KeyF9:
-			if m.normal.Load() != 2 || m.extraction.Load() != 4 || m.Input.Value() != "Private draft remains" || m.ws.AgentMgr().Get(m.id).State.ActiveCompaction.Phase != "" {
-				m.t.Errorf("visual journey did not settle: normal=%d extraction=%d draft=%q", m.normal.Load(), m.extraction.Load(), m.Input.Value())
+			if m.revived {
+				return m, tea.Quit
 			}
-			if path := os.Getenv("CRUDE_VISUAL_PROOF"); path != "" {
-				if err := os.WriteFile(path, []byte(fmt.Sprintf("compaction visual acceptance; failed=%v\n", m.t.Failed())), 0600); err != nil {
-					m.t.Error(err)
-				}
-			}
-			return m, tea.Quit
 		}
 	}
 	_, cmd := m.App.Update(msg)
-	return m, cmd
+	return m, tea.Batch(cmd, m.observePaint())
+}
+
+func (m *compactionVisualModel) observePaint() tea.Cmd {
+	if !m.sawSize || m.mainSurf == nil || m.mainSurf.Width() != m.width || m.mainSurf.Height() != m.height || m.focusedPopup() != nil {
+		return nil
+	}
+	settled := paintedCompactionTitle(m.App, "Compacted context (Manual) ")
+	if m.revived {
+		if m.phase == "" && settled != "" && paintedCompactionChatContains(m.App, "Queued prompt executed exactly once") {
+			m.settledTitle = settled
+			return m.mark("revived")
+		}
+		return nil
+	}
+	switch m.phase {
+	case "":
+		if paintedCompactionChatContains(m.App, "Initial work completed.") {
+			return m.mark("ready")
+		}
+	case "ready":
+		if active := paintedCompactionTitle(m.App, "Compacting context (Manual) "); active != "" {
+			m.activeTitle = active
+			return m.mark("active")
+		}
+	case "active":
+		if m.ws.AgentMgr().Get(m.id).State.Messages.PendingSteeringCount() == 1 && paintedCompactionChatContains(m.App, "Queue this after compaction") {
+			return m.mark("queued")
+		}
+	case "queued":
+		if settled != "" && paintedCompactionChatContains(m.App, "Queued prompt executed exactly once") {
+			m.settledTitle = settled
+			return m.mark("settled")
+		}
+	}
+	return nil
+}
+
+func paintedCompactionChatContains(app *App, text string) bool {
+	for y := app.chatRect.Y; y < app.chatRect.Y+app.chatRect.H-1; y++ {
+		if strings.Contains(shellBufferRow(app, y), text) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *compactionVisualModel) mark(phase string) tea.Cmd {
+	m.phase = phase
+	if m.evidence == "" {
+		return nil
+	}
+	return func() tea.Msg {
+		file, err := os.OpenFile(m.evidence, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+		if err != nil {
+			return compactionVisualEvidenceError{err}
+		}
+		_, err = fmt.Fprintln(file, phase)
+		if closeErr := file.Close(); err == nil {
+			err = closeErr
+		}
+		if err != nil {
+			return compactionVisualEvidenceError{err}
+		}
+		return nil
+	}
 }
