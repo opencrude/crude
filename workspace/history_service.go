@@ -140,26 +140,25 @@ func (s *LocalHistoryService) Status() HistoryServiceStatus {
 	return status
 }
 
-// KeepBeforeDelete records a safety snapshot that includes rel, so a deleted
+// KeepBeforeDelete records a safety snapshot of the native path, so a deleted
 // file or folder can be restored from Local History. It is a no-op when Local
 // History is off. A failure means the caller must not delete.
-func (s *LocalHistoryService) KeepBeforeDelete(ctx context.Context, rel string) error {
+func (s *LocalHistoryService) KeepBeforeDelete(ctx context.Context, path string) error {
 	s.mu.Lock()
 	settings := s.settings
 	s.mu.Unlock()
-	if s.store == nil || !settings.EnabledValue() {
+	if !settings.EnabledValue() {
 		return nil
+	}
+	if s.store == nil {
+		return errors.New("could not keep a Local History safety copy; check storage permissions before deleting")
 	}
 	// A delete waits for this copy, so it takes the store from maintenance.
 	s.mu.Lock()
 	s.beginWorkLocked()
 	s.mu.Unlock()
 	defer s.endWork()
-	opts := historyOptions(settings, "safety", "Before delete: "+rel, "")
-	if _, err := s.store.SnapshotSubtree(ctx, opts, rel); err != nil {
-		return fmt.Errorf("local history could not keep a copy of %s, so it was not deleted: %w", rel, err)
-	}
-	return nil
+	return s.store.KeepBeforeDelete(ctx, path)
 }
 
 func historyOptions(settings setting.LocalHistory, kind, label, parent string) localhistory.SnapshotOptions {

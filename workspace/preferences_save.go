@@ -253,6 +253,7 @@ func (w *Workspace) ApplyPreferencesSave(result PreferencesSaveResult) {
 	}
 	if result.history != nil {
 		w.LocalHistory = result.history
+		w.localHistoryErr = nil
 		w.HistoryService = NewLocalHistoryService(w.RootPath, result.history, w.Logger)
 		w.HistoryService.SetEventBus(w.eventBus)
 		for _, s := range w.Sessions {

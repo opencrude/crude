@@ -3,14 +3,17 @@ package core
 import (
 	"bytes"
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+
 	"crude/core/coreprotocol"
+	"crude/types/control"
 	"crude/types/setting"
 	"crude/workspace"
 	"crude/workspace/localhistory"
-	"os"
-	"path/filepath"
-	"sync"
-	"testing"
 )
 
 func TestFilesDeleteReportsJoinedProgress(t *testing.T) {
@@ -73,6 +76,31 @@ func fileBridge(t *testing.T, a *actor, method string, in any) coreprotocol.Resp
 		t.Fatal("unknown method", method)
 	}
 	return run(context.Background())
+}
+
+func TestFilesDeleteKeepsBytesWhenHistoryCannotOpen(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("CRUDE_HOME", root) // History cannot keep a backup inside the project.
+	ws := workspace.NewWorkspace(root, "", "tester", setting.Settings{}, coreTestLogger{})
+	defer ws.Close()
+	path := filepath.Join(root, "keep.txt")
+	if err := os.WriteFile(path, []byte("original"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if ws.HistoryService != nil || !ws.EffectiveAppSettings().LocalHistory.EnabledValue() {
+		t.Fatal("expected required but unavailable history")
+	}
+	a := &actor{ws: ws}
+	result := fileBridge(t, a, coreprotocol.FilesDelete, coreprotocol.FilePathRequest{Path: path})
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != "original" || result.Error == nil || !strings.Contains(strings.ToLower(result.Error.Message), "history") {
+		t.Fatalf("required copy failed: delete=%+v file=%q read=%v", result.Error, got, err)
+	}
+	out := controlDelete(t, a, "", path)
+	got, err = os.ReadFile(path)
+	if out.State != control.Failed || out.Fault == nil || !strings.Contains(strings.ToLower(out.Fault.Message), "history") || err != nil || string(got) != "original" {
+		t.Fatalf("semantic delete lost an unprotected file: %+v, file %q, read %v", out, got, err)
+	}
 }
 func TestFilesChunksBoundedAndImmutable(t *testing.T) {
 	root := t.TempDir()

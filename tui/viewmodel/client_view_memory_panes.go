@@ -1,9 +1,7 @@
 package viewmodel
 
 import (
-	"crude/insight/syntax"
-	"crude/text/indentation"
-	"crude/tui/editor"
+	"context"
 	"fmt"
 	"hash/fnv"
 	"path/filepath"
@@ -12,6 +10,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/insight/syntax"
+	"crude/text/indentation"
+	"crude/tui/editor"
 	"crude/tui/ui"
 	"crude/tui/window"
 	"crude/workspace/document"
@@ -46,7 +47,7 @@ func (m *App) captureViewPanes() ([]viewMemoryPane, *viewMemoryPaneNode, int, bo
 	hasFiles := false
 	for i, group := range groups {
 		for _, tab := range m.Win.GroupTabs(group) {
-			if tab.Resource.Kind != window.ResourceDocument || tab.Resource.ID == "" {
+			if tab.Resource.Kind != window.ResourceDocument || tab.Resource.ID == "" || len(tab.Resource.ID) > maxRememberedPanePath {
 				continue
 			}
 			panes[i].Files = append(panes[i].Files, tab.Resource.ID)
@@ -54,7 +55,7 @@ func (m *App) captureViewPanes() ([]viewMemoryPane, *viewMemoryPaneNode, int, bo
 		if len(panes[i].Files) > maxRememberedPaneFiles {
 			panes[i].Files = panes[i].Files[:maxRememberedPaneFiles]
 		}
-		if active := m.Win.GroupActiveTab(group); active != nil && active.Resource.Kind == window.ResourceDocument {
+		if active := m.Win.GroupActiveTab(group); active != nil && active.Resource.Kind == window.ResourceDocument && slices.Contains(panes[i].Files, active.Resource.ID) {
 			panes[i].Active = active.Resource.ID
 		}
 		hasFiles = hasFiles || len(panes[i].Files) > 0
@@ -199,6 +200,14 @@ func (m *App) restoreViewPanes(memory viewMemory) {
 			panes[i].Active = clean
 		}
 	}
+	// The launch target was admitted by the core, not read from the saved profile.
+	if m.launchFile != "" && memory.ActivePane >= 0 && memory.ActivePane < len(panes) {
+		p := &panes[memory.ActivePane]
+		if !slices.Contains(p.Files, m.launchFile) {
+			p.Files = append(p.Files, m.launchFile)
+		}
+		p.Active = m.launchFile
+	}
 	restored := make([]window.GroupID, len(panes))
 	if !m.buildRememberedPaneTree(memory.PaneLayout, groups[0], restored) {
 		return
@@ -213,19 +222,25 @@ func (m *App) restoreViewPanes(memory viewMemory) {
 		if len(pane.Files) == 0 || restored[i] == 0 {
 			continue
 		}
-		cmd := m.openPaneFiles(pane.Files, restored[i])
+		activePath := pane.Active
+		restoreForeground := restored[i] == active
+		entryFile, newFile := "", ""
+		if restoreForeground {
+			entryFile = m.launchFile
+			if m.launchFileMissing {
+				newFile = entryFile
+			}
+		}
+		cmd := m.preparePaneFiles(context.Background(), pane.Files, restored[i], false, newFile)
 		if cmd == nil {
 			continue
 		}
-		activePath := pane.Active
-		restoreForeground := restored[i] == active
-		entryFile := ""
-		if restoreForeground {
-			entryFile = m.launchFile
-		}
 		queued = true
 		m.editorCommands = append(m.editorCommands, func() tea.Msg {
-			msg := cmd().(paneFilesOpenedMsg)
+			msg, ok := cmd().(paneFilesOpenedMsg)
+			if !ok {
+				return nil
+			} // The workspace closed before the read began.
 			msg.activePath = activePath
 			msg.entryFile = entryFile
 			msg.restoring = true

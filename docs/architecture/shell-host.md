@@ -184,7 +184,7 @@ Rules:
   hotpath). Guarded by `launcher_async_test.go`.
 - **Workspace home preserves its original action controls.** On wide grids New
   Session keeps the full-width four-row outline with the original cycling icon,
-  project path and Enter hint. Beneath it, the folder-icon New Workspace control
+  project path and Enter hint. Beneath it, the folder-icon New workspace control
   returns to the left pane; after one blank row, Skills and MCP split all remaining
   left-pane height equally while Recent workspaces stays in the right pane. On
   cramped grids the two action controls stack with one blank row, the capability

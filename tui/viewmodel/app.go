@@ -66,6 +66,7 @@ const (
 type App struct {
 	launchFile              string
 	launchFileMissing       bool
+	openingEntry            shellport.Workspace
 	rememberedSidebarHidden *bool // A launch collapse does not replace this client's explicit choice.
 	ws                      shellport.Workspace
 	hostBidi                hostBidi // host terminal BiDi mode (text_direction.go)
@@ -859,7 +860,7 @@ func (m *App) openFilePickerWindow() {
 	w, h := fitFloatingSize(m.width, m.height, 96, 28, 60, 18)
 	title := "Attach Files"
 	if folderMode {
-		title = "New Workspace"
+		title = "New workspace"
 	} else if saveMode {
 		title = "Save File"
 	}

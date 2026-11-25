@@ -37,7 +37,7 @@ Crude.
 | Replace in Files | Ctrl+Alt+H | Sibling of Find in Files; not Ctrl+Shift+H under tmux |
 | Toggle sidebar | Ctrl+B | Hides/shows the sidebar body; the 8-col activity rail (outer gutter plus padding before the panel left border) stays |
 | Files / Agents / Terminals / Git | Ctrl+Shift+E / A / U, Ctrl+Alt+G | Files and Agents are rail destinations; Terminals and Git are bottom-dock destinations (footer pills). Rail and panel bodies expose destination-aware context menus |
-| Recent Workspaces | Rail below Agents; palette **Switch Workspace** | Shared sidebar icon/search/count chrome and a New Workspace command row, with no Refresh row. Most recently accessed first (successful core attachment, not session creation or background activity). Single click on a name or path, or Enter, requests opening; every different-workspace route (home, rail/context menu, folder picker, cross-workspace session resume) previews the exact destination with Open workspace / Cancel and Cancel focused. Approval proceeds through dirty-file/draft safety; Esc or outside clicks never silently switch. Current is a no-op. New Workspace opens the folder picker; context-menu Refresh retains usable rows on failure. Short rails keep it reachable through More and the palette. |
+| Recent Workspaces | Rail below Agents; palette **Switch Workspace** | Shared sidebar icon/search/count chrome and a New workspace command row, with no Refresh row. Most recently accessed first (successful core attachment, not session creation or background activity). Single click on a name or path, or Enter, requests opening; every different-workspace route (home, rail/context menu, folder picker, cross-workspace session resume) previews the exact destination with Open workspace / Cancel and Cancel focused. Approval proceeds through dirty-file/draft safety; Esc or outside clicks never silently switch. Opening Current promotes a file-only shell in place; otherwise it is a no-op. New workspace opens the folder picker; context-menu Refresh retains usable rows on failure. Short rails keep it reachable through More and the palette. |
 | Application Settings | activity-bar gear | Bottom rail gear opens Application Settings (VS Code manage control); right-click also offers Workspace Settings |
 | Performance | Bottom-bar **Performance**; **More** on narrow terminals; palette **Performance** | App-owned dashboard, available without a session. Toggles the retained bottom panel; recent stalls change the button's severity, not its availability. No session slash command. |
 | Core connection details | Hover/click the **Crude** wordmark; palette **Connection Details** | Healthy brand stays quiet; connecting/reconnecting tides, slow links show ⚠ and unavailable links ✕. Passive native popover shows backend/state/transport/RTT and what the state means, with **Connections** and **Close** actions. Moving into it keeps it open; explicit click or palette opening enables keyboard reading, Tab reaches actions, wheel/PgUp/PgDn browse and text selection copies on release. Hover never changes the draft or active pane. Leave/Esc/outside/modal/workspace changes dismiss it. |
@@ -47,7 +47,7 @@ Crude.
 | Notices → Terminals | Bottom-row pills | Changes the painted panel even when a new terminal's create receipt arrives before its inventory. Notices restore on cold core start and new workspace notices reach all connected shells |
 | Composer | Alt+C | |
 | Modified Enter | Semantic chords, captions resolved per terminal | Ctrl+Enter / Shift+Enter exist only where the terminal disambiguates them (Windows console, kitty keyboard protocol); tmux and legacy terminals send plain Enter, and Windows Terminal takes Alt+Enter for fullscreen. Every caption comes from `ui.FormatShortcut` of a chord token and every matcher from the same token: **commit** (`CommitChord`) and editor **code actions** (`CodeActionsChord`) accept Ctrl+Enter and Alt+Enter; **new line** (`NewlineChord`) accepts Shift+Enter, Alt+Enter and Ctrl+J (LF, delivered everywhere); **previous match** accepts Shift+Enter and Shift+F3; **replace all** accepts Ctrl+Alt+Enter and Alt+Enter. A caption always names a key this terminal delivers; `TestNoHardCodedModifiedEnterCaptions` rejects hard-coded ones. |
-| Quit application | Ctrl+Q | |
+| Close, then quit | Ctrl+Q | Close the focused window or active tab first. In a Trust or AI setup prompt, close without choosing or saving a decision. With nothing left to close, quit the shell. Dirty-work checks still apply. |
 | Close active editor tab / empty pane | Ctrl+W | Editor uses the dirty-close Save / Discard / Cancel prompt; an empty focused group alone is removed without closing neighboring resources; terminal focus keeps the key as PTY input |
 | Cancel/back | Plain Esc | When the terminal reports a modifier, Esc does not run Back or Stop. This includes Windows Ctrl+Shift+Esc. A focused PTY can receive the modified key. Never Ctrl+C for Back. In the editor, Back closes the tab after it dismisses transient controls. On a tool permission dock, Esc stops the turn without denying permission; Deny / `n` explicitly rejects it. In the composer, Esc drops the selection, then clears the draft, then stops active work or a run parked for retry. Esc with nothing to stop does nothing. It never stops a turn twice. **Cancel Agent** on an idle agent says "Nothing to stop". |
 | Previous / next tab | Ctrl+[ / Ctrl+] | Within the focused main group, outside terminal key ownership, including editor focus |
@@ -482,7 +482,7 @@ name/path resource pairs with theme-muted paths, no empty separator rows, and
 the shared search, scrollbar and draggable divider. Both lines are one resource
 for scrolling, selection, hover and context menus. A single click on either
 line, or Enter, requests the exact-destination switch confirmation; attachment
-waits for approval. The New Workspace command activates on
+waits for approval. The New workspace command activates on
 one click and uses the same persistent idle background and focus/hover treatment
 as New Agent. The shared launcher/settings progress-rule animation beneath search
 indicates a catalog refresh; no loading-text row is inserted and resource targets
@@ -492,8 +492,8 @@ change it. The list remains available with any main-pane topology or floating
 editor open. Both views consume one asynchronous, cancelable catalog, including
 after home unmounts. Search, selected identity, scroll and width survive sidebar
 destination changes. Right-click offers the same Open/Copy path/Delete workspace
-resource menu as Home, plus New Workspace/Refresh. Open/Delete are disabled on
-the current workspace; old-menu callbacks cannot act on a replacement attachment.
+resource menu as Home, plus New workspace/Refresh. Delete is disabled on the current workspace. Open is available there only in a
+file-only shell. Old-menu callbacks cannot act on a replacement attachment.
 
 Connected switching keeps the old attachment, tabs and processes until the
 destination is ready. Unsaved shared editors offer Save / Keep unsaved / Cancel;
@@ -515,13 +515,13 @@ does not terminate the old core's agents or PTYs.
 
 - On wide grids, the original four-row New Session control (cycling sparkle,
   project path and Enter hint) spans the complete top section. Beneath it, the
-  original folder-icon New Workspace control starts the left pane. There is no
+  original folder-icon New workspace control starts the left pane. There is no
   additional workspace heading or duplicate Settings, palette or Sessions
   control. On cramped grids the two action controls stack with exactly one blank
   row between them. Retry belongs to the Recent workspaces heading row and never
   shortens the dedicated search row.
 - Skills and MCP retain their named current resources and independent scrolling
-  in the wide left pane. After one blank row below New Workspace, they divide all
+  in the wide left pane. After one blank row below New workspace, they divide all
   remaining height equally. Clicking a resource opens its exact source-qualified
   detail in the existing manager. The left pane, including both capability panels,
   is hidden in cramped mode.

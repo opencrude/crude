@@ -63,7 +63,11 @@ func invocationRoot(flags CLIFlags) (string, error) {
 		return flags.Workspace, nil
 	}
 	if flags.Path != "" {
-		return filepath.Abs(flags.Path)
+		path, err := filepath.Abs(flags.Path)
+		if err == nil && (os.IsPathSeparator(flags.Path[len(flags.Path)-1]) || filepath.Base(flags.Path) == "." || filepath.Base(flags.Path) == "..") && !os.IsPathSeparator(path[len(path)-1]) {
+			path += string(os.PathSeparator)
+		}
+		return path, err
 	}
 	if flags.Workspace != "" {
 		return filepath.Abs(flags.Workspace)
@@ -237,7 +241,11 @@ func runConnectedShellAttachment(home, root, resumeID, profile string, flags CLI
 	if err != nil {
 		return fmt.Errorf("inspect launch folder: %w", err)
 	}
-	selectedRoot, ws, startupIssues, err := attachStartupSelection(ctx, root, flags.CoreHandover != "", explicit, selection,
+	entry := coreprotocol.EntryIntent{Explicit: explicit}
+	if flags.CoreHandover != "" {
+		entry = flags.handoverEntry
+	}
+	selectedRoot, ws, startupIssues, err := attachStartupSelection(ctx, root, flags.CoreHandover != "", entry, selection,
 		func(ctx context.Context, initial coreprotocol.StartupSnapshot) (startuptui.Selection, error) {
 			selected, err := startuptui.Run(ctx, navigation, initial)
 			if err == nil && selected.Root != "" && selected.Root != initial.Root {

@@ -36,6 +36,12 @@ type ReplicaFailureMsg struct {
 	Reloaded bool
 }
 
+// FolderEntry can promote this exact file attachment without replacing its live views.
+type FolderEntry interface {
+	FileOnly() bool
+	OpenFolder(context.Context) error
+}
+
 // Connection owns one client attachment, not the retained core workspace.
 // A replacement is prepared off the UI thread before the old one is detached.
 type Connection interface {

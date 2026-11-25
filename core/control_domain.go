@@ -104,7 +104,7 @@ func (a *actor) prepareControlDomain(in control.Request, owner coreprotocol.Owne
 	if run, handled = a.prepareResource(request); handled {
 		apply = func(result coreprotocol.Response) error { a.applyResource(request, result); return nil }
 	} else {
-		if run, handled = a.prepareFilesAtRoot(request, root); !handled {
+		if run, handled = a.prepareFilesAtRoot(request, root, in.Target.ExecutionID); !handled {
 			run, handled = a.prepareServiceAtRoot(request, root)
 			apply = func(result coreprotocol.Response) error { a.applyService(request, result); return nil }
 		}

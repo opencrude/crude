@@ -10,8 +10,9 @@ engine and its invariants.
 `crude PATH` opens an existing file directly in the editor and uses its parent
 as the workspace. A missing leaf opens as a named draft until manual Save.
 The file tree starts collapsed for this launch, not as a saved preference.
-The user can show it again. The shell does not request language servers for
-this view. See [startup](core-client-protocol.md#startup-before-workspace-attachment).
+Ctrl+B shows it again. The file shell does not request language servers for
+this view. **Open folder as workspace** in Notices promotes the attachment
+in place, retaining unsaved text and undo. See [startup](core-client-protocol.md#startup-before-workspace-attachment).
 
 ## Shared document publication
 

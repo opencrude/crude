@@ -39,6 +39,12 @@ func (m *App) confirmModalInput(id ui.OverlayID, msg tea.KeyPressMsg, busy bool,
 	if busy && msg.Code != tea.KeyEsc {
 		return true, nil
 	}
+	if !busy && m.actionRegistry != nil {
+		if action := m.actionRegistry.MatchGlobal(msg); action != nil && action.ID == "app.quit" {
+			_, cmd := m.handleQuit()
+			return true, cmd
+		}
+	}
 	switch msg.Code {
 	case tea.KeyEsc:
 		m.overlayHost.Close(id)

@@ -8,6 +8,7 @@ import (
 
 	"crude/core/coreprotocol"
 	"crude/workspace"
+	"crude/workspace/document"
 )
 
 // prepareOwner serves owner operations whose exact target is resolved on the
@@ -24,6 +25,17 @@ func (a *actor) prepareOwner(request coreprotocol.Request) (func(context.Context
 		return func(context.Context) coreprotocol.Response { return responseValue(request, value) }, true
 	}
 	switch request.Method {
+	case coreprotocol.WorkspaceOpenFolder:
+		if err := decodeRequest(request, &coreprotocol.Empty{}); err != nil {
+			return bad(err)
+		}
+		a.openProjectFolder()
+		docs := ws.LiveDocuments
+		owner := document.Owner{ClientID: request.Owner.ClientID, Epoch: request.Owner.Epoch}
+		return func(context.Context) coreprotocol.Response {
+			docs.OpenFolder(owner)
+			return response(request, coreprotocol.Empty{})
+		}, true
 	case coreprotocol.AgentRecover, coreprotocol.AgentRecoverCancel:
 		var in coreprotocol.RecoveryRequest
 		if err := decodeRequest(request, &in); err != nil {
@@ -293,7 +305,7 @@ func ownerMutation(method string) bool {
 		return method != coreprotocol.CoreRestartInspect
 	}
 	switch method {
-	case coreprotocol.AgentRecover, coreprotocol.AgentRecoverCancel, coreprotocol.AgentStopCommand, coreprotocol.AgentCompact, coreprotocol.AgentPlanMode, coreprotocol.AgentGoal, coreprotocol.AgentLoop,
+	case coreprotocol.WorkspaceOpenFolder, coreprotocol.AgentRecover, coreprotocol.AgentRecoverCancel, coreprotocol.AgentStopCommand, coreprotocol.AgentCompact, coreprotocol.AgentPlanMode, coreprotocol.AgentGoal, coreprotocol.AgentLoop,
 		coreprotocol.AgentPlanReviewOpen, coreprotocol.AgentPlanComment, coreprotocol.AgentPlanSettle,
 		coreprotocol.WorkspaceOverridesSet,
 		coreprotocol.GitStagePaths, coreprotocol.GitUnstagePaths:
@@ -307,7 +319,7 @@ func ownerOperation(method string) bool {
 		return true
 	}
 	switch method {
-	case coreprotocol.AgentRecover, coreprotocol.AgentRecoverCancel, coreprotocol.AgentStopCommand, coreprotocol.AgentCompact, coreprotocol.AgentPlanMode, coreprotocol.AgentGoal, coreprotocol.AgentLoop,
+	case coreprotocol.WorkspaceOpenFolder, coreprotocol.AgentRecover, coreprotocol.AgentRecoverCancel, coreprotocol.AgentStopCommand, coreprotocol.AgentCompact, coreprotocol.AgentPlanMode, coreprotocol.AgentGoal, coreprotocol.AgentLoop,
 		coreprotocol.AgentPlanReviewOpen, coreprotocol.AgentPlanComment, coreprotocol.AgentPlanSettle,
 		coreprotocol.HistoryUndoScopes, coreprotocol.CommandViewOpen, coreprotocol.AgentPlanEvidence,
 		coreprotocol.GitStagePaths, coreprotocol.GitUnstagePaths, coreprotocol.GitCommitModel, coreprotocol.GitCommitMessage:

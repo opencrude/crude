@@ -35,25 +35,33 @@ func (s *Store) Snapshot(ctx context.Context, opts SnapshotOptions) (Manifest, e
 	return s.snapshot(ctx, opts)
 }
 
-// SnapshotSubtree keeps delete recovery proportional to the deleted tree.
-// It uses the same immutable object/index owner, without discovering ignores
-// or reading any sibling tree. Ignore and size rules cannot omit deleted bytes.
-func (s *Store) SnapshotSubtree(ctx context.Context, opts SnapshotOptions, rel string) (Manifest, error) {
-	if !validSubtreePath(rel) {
-		return Manifest{}, errors.New("localhistory: invalid subtree path")
+// KeepBeforeDelete saves only the exact native target in this checkout's store.
+// Ignore and size rules cannot omit deleted bytes.
+func (s *Store) KeepBeforeDelete(ctx context.Context, path string) error {
+	rel, err := filepath.Rel(s.workspaceRoot, path)
+	rel = filepath.ToSlash(rel)
+	if err != nil || !filepath.IsAbs(path) || !validSubtreePath(rel) {
+		return errors.New("the path is outside this Local History backup. Check the file location before deleting")
 	}
 	if err := s.beginOperation(); err != nil {
-		return Manifest{}, err
+		return err
 	}
 	defer s.endOperation()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	unlock, err := s.lockMutation(ctx)
 	if err != nil {
-		return Manifest{}, err
+		return err
 	}
 	defer unlock()
-	return s.snapshotRoots(ctx, opts, []string{rel})
+	manifest, err := s.snapshotRoots(ctx, SnapshotOptions{Kind: "safety", Label: "Before delete: " + rel}, []string{rel})
+	if err != nil {
+		return fmt.Errorf("local history could not keep a copy of %s, so it was not deleted: %w", rel, err)
+	}
+	if _, kept := manifest.Entries[rel]; !kept {
+		return fmt.Errorf("no safety copy of %s in Local History; check the file location before deleting", rel)
+	}
+	return nil
 }
 
 func (s *Store) snapshotRoots(ctx context.Context, opts SnapshotOptions, roots []string) (Manifest, error) {

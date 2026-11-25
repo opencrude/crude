@@ -282,7 +282,9 @@ func (op *SessionLifecycleOperation) run(ctx context.Context) (result SessionLif
 		backend.SetMemoryStore(op.database.Memory)
 		backend.SetCollaboration(op.collaboration, op.instanceID)
 		backend.SetCapabilities(op.capabilities, op.claims)
-		backend.SetExecutionService(op.executions)
+		if op.executions != nil {
+			backend.SetExecutionService(op.executions)
+		}
 		if op.documents != nil {
 			backend.SetWorkingSet(op.documents.workingSetBrief)
 		}

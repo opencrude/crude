@@ -31,7 +31,7 @@ type coreWindowsWatchScope struct {
 	path       string
 	recursive  bool
 	rootName   string // The parent observer admits this one directory name only.
-	ready      chan struct{}
+	ready      chan error
 	overlapped windows.Overlapped
 	buffer     []byte
 }
@@ -49,11 +49,12 @@ func openCoreWatchScope(path string, recursive bool, rootName string) (*coreWind
 	if err != nil {
 		return nil, os.NewSyscallError("CreateFile", err)
 	}
-	return &coreWindowsWatchScope{handle: h, path: path, recursive: recursive, rootName: rootName, ready: make(chan struct{})}, nil
+	return &coreWindowsWatchScope{handle: h, path: path, recursive: recursive, rootName: rootName, ready: make(chan error, 1)}, nil
 }
 
-func newCoreWatcher(root string) (*coreWindowsWatcher, error) {
+func newCoreWatcher(pin watchRoot) (*coreWindowsWatcher, error) {
 	w := &coreWindowsWatcher{Events: make(chan fsnotify.Event), Errors: make(chan error), stop: make(chan struct{}), done: make(chan struct{})}
+	root := pin.path
 	if parentDir := filepath.Dir(root); parentDir != root {
 		parent, err := openCoreWatchScope(parentDir, false, filepath.Base(root))
 		if err != nil {
@@ -63,15 +64,24 @@ func newCoreWatcher(root string) (*coreWindowsWatcher, error) {
 	}
 	project, err := openCoreWatchScope(root, true, "")
 	if err == nil {
+		var pinned, opened windows.ByHandleFileInformation
+		err = windows.GetFileInformationByHandle(windows.Handle(pin.handle.Fd()), &pinned)
+		if err == nil {
+			err = windows.GetFileInformationByHandle(project.handle, &opened)
+		}
+		if err == nil && (opened.VolumeSerialNumber != pinned.VolumeSerialNumber || opened.FileIndexHigh != pinned.FileIndexHigh || opened.FileIndexLow != pinned.FileIndexLow) {
+			err = errWatchRootChanged
+		}
+	}
+	if project != nil {
 		w.scopes = append(w.scopes, project)
-	} else if !os.IsNotExist(err) {
+	}
+	if err != nil {
 		for _, scope := range w.scopes {
 			_ = windows.CloseHandle(scope.handle)
 		}
 		return nil, err
 	}
-	// Missing roots remain admissible as an unreliable parent-only observer;
-	// the initial traversal reports the failure and cannot restore reliability.
 	var readers sync.WaitGroup
 	for _, scope := range w.scopes {
 		readers.Add(1)
@@ -84,7 +94,10 @@ func newCoreWatcher(root string) (*coreWindowsWatcher, error) {
 		close(w.done)
 	}()
 	for _, scope := range w.scopes {
-		<-scope.ready
+		if err := <-scope.ready; err != nil {
+			_ = w.Close()
+			return nil, err
+		}
 	}
 	return w, nil
 }
@@ -121,8 +134,7 @@ func (w *coreWindowsWatcher) Close() error {
 func (w *coreWindowsWatcher) read(scope *coreWindowsWatchScope) {
 	event, err := windows.CreateEvent(nil, 1, 0, nil)
 	if err != nil {
-		close(scope.ready)
-		w.sendError(err)
+		scope.ready <- err
 		return
 	}
 	defer func() { _ = windows.CloseHandle(event) }()
@@ -152,7 +164,11 @@ func (w *coreWindowsWatcher) read(scope *coreWindowsWatchScope) {
 			nil, &scope.overlapped, 0)
 		w.mu.Unlock()
 		if first {
-			close(scope.ready)
+			if err != nil && err != windows.ERROR_IO_PENDING {
+				scope.ready <- err
+				return
+			}
+			scope.ready <- nil
 			first = false
 		}
 		if err != nil && err != windows.ERROR_IO_PENDING {

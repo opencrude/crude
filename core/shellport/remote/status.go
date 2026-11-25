@@ -178,6 +178,7 @@ func (s *statusReplica) Notify(n statuscenter.NotificationRecord) string {
 				old.Summary, old.Detail, old.Severity = n.Summary, n.Detail, n.Severity
 				old.UpdatedAt, old.Read = now, false
 				old.Occurrences++
+				old.Actions = slices.Clone(n.Actions)
 				s.version++
 				s.send(coreprotocol.StatusMutation{Op: coreprotocol.StatusNotify, Notification: &n})
 				return old.ID

@@ -11,12 +11,14 @@ import (
 	"testing"
 	"time"
 
+	"crude/core/coreprotocol"
 	"crude/core/shellport"
 	"crude/types/control"
 	"crude/types/handover"
 )
 
 type restartTestPort struct {
+	entry                                                  coreprotocol.EntryIntent
 	state                                                  handover.State
 	reservation                                            handover.Reservation
 	reserves, inspects, cancels, continues                 int
@@ -33,6 +35,8 @@ func TestCoreRestartIdentityRejectsInvalidNativeExecutable(t *testing.T) {
 		t.Fatal("invalid native executable passed the real identity probe")
 	}
 }
+
+func (p *restartTestPort) EntryIntent() coreprotocol.EntryIntent { return p.entry }
 
 func (p *restartTestPort) ReserveCoreRestart(_ context.Context, _, _ string, r handover.Reservation) (handover.State, error) {
 	p.reserves++
@@ -115,7 +119,7 @@ func newRestartFixture(t *testing.T) *restartFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity := CoreRestartIdentity{BuildID: digest[:16], SHA256: digest, Cohort: strings.Repeat("3", 64), Schema: "new-schema", GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}
+	identity := CoreRestartIdentity{ManifestVersion: restartManifestVersion, BuildID: digest[:16], SHA256: digest, Cohort: strings.Repeat("3", 64), Schema: "new-schema", GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}
 	target := control.Target{WorkspaceID: "workspace-1", Shell: &control.ShellOwner{ClientID: "original-shell-client", Epoch: 42}}
 	port := &restartTestPort{}
 	host, err := newCoreRestartHost(home, root, "original-profile", target, port)
@@ -165,6 +169,7 @@ func (f *restartFixture) ready(t *testing.T) {
 
 func TestCoreRestartScheduleDurablePrivateAndIdempotent(t *testing.T) {
 	f := newRestartFixture(t)
+	f.port.entry = coreprotocol.EntryIntent{Explicit: true, FileOnly: true}
 	path := f.host.manifestPath(f.request.ID)
 	f.port.beforeReserve = func() {
 		m, r, _, err := readRestartManifest(f.host.home, path)
@@ -179,6 +184,10 @@ func TestCoreRestartScheduleDurablePrivateAndIdempotent(t *testing.T) {
 	m, r, _, err := readRestartManifest(f.host.home, path)
 	if err != nil {
 		t.Fatal(err)
+	}
+	startup, err := ReadCoreRestartStartup(f.host.home, path)
+	if err != nil || !startup.Entry.FileOnly || !startup.Entry.Explicit {
+		t.Fatal("file-only routing did not survive the manifest", startup, err)
 	}
 	if m.OldOwner != f.old || m.Identity != f.identity || m.Target.Shell.ClientID != f.request.Target.Shell.ClientID ||
 		!m.NotBefore.Equal(f.now.Add(5*time.Second)) || !m.ExpiresAt.Equal(f.now.Add(10*time.Minute)) ||
@@ -254,7 +263,7 @@ func TestCoreRestartUncertainReserveRestoreOnlyObserves(t *testing.T) {
 }
 
 func TestCoreRestartScheduleRejectsCompetingAndUnboundRequests(t *testing.T) {
-	for _, test := range []string{"shell", "workspace", "goal", "digest", "delay", "symlink", "mode", "source-change", "identity", "owner-change"} {
+	for _, test := range []string{"shell", "workspace", "goal", "digest", "delay", "symlink", "mode", "source-change", "identity", "entry-format", "owner-change"} {
 		t.Run(test, func(t *testing.T) {
 			f := newRestartFixture(t)
 			switch test {
@@ -292,6 +301,12 @@ func TestCoreRestartScheduleRejectsCompetingAndUnboundRequests(t *testing.T) {
 				f.host.identity = func(context.Context, string) (CoreRestartIdentity, error) {
 					i := f.identity
 					i.GOARCH = "wrong"
+					return i, nil
+				}
+			case "entry-format":
+				f.host.identity = func(context.Context, string) (CoreRestartIdentity, error) {
+					i := f.identity
+					i.ManifestVersion = 0 // The previous candidate did not advertise a manifest format.
 					return i, nil
 				}
 			case "owner-change":
@@ -345,9 +360,10 @@ func TestCoreRestartReadyRequiresNaturalCheckpointAndExactOwner(t *testing.T) {
 }
 
 func TestCoreRestartReadyRejectsExpiredTamperedAndRetargeted(t *testing.T) {
-	for _, test := range []string{"expired", "image", "profile-epoch", "receipt", "manifest", "symlink-directory"} {
+	for _, test := range []string{"expired", "image", "profile-epoch", "entry-promoted", "receipt", "manifest", "symlink-directory"} {
 		t.Run(test, func(t *testing.T) {
 			f := newRestartFixture(t)
+			f.port.entry = coreprotocol.EntryIntent{Explicit: true, FileOnly: true}
 			f.schedule(t)
 			f.now = f.now.Add(5 * time.Second)
 			f.port.state.Phase = handover.Ready
@@ -365,6 +381,8 @@ func TestCoreRestartReadyRejectsExpiredTamperedAndRetargeted(t *testing.T) {
 				}
 			case "profile-epoch":
 				f.host.target.Shell.Epoch++
+			case "entry-promoted":
+				f.port.entry.FileOnly = false
 			case "receipt":
 				if err := os.WriteFile(filepath.Join(filepath.Dir(path), "receipt-000002.json"), []byte("{}"), 0600); err != nil {
 					t.Fatal(err)

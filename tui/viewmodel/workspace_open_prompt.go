@@ -23,6 +23,9 @@ func (m *App) requestWorkspaceOpen(root, resumeID string) tea.Cmd {
 		return nil
 	}
 	if m.workspaceRootMatches(root) {
+		if resumeID == "" && m.fileOnly() {
+			return m.openEntryFolder()
+		}
 		if resumeID != "" {
 			return m.remoteSessionCommand(resumeID)
 		}

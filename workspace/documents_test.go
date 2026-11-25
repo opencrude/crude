@@ -50,6 +50,40 @@ func documentText(t *testing.T, s *DocumentService, id, want string) document.Sn
 	return snap
 }
 
+func TestFileOwnerPromotionAnalyzesItsUnsavedText(t *testing.T) {
+	root := t.TempDir()
+	saves := NewDocumentSaveService()
+	lsp := NewLSPManager(nil)
+	docs := NewDocumentService(root, saves, lsp)
+	t.Cleanup(func() { docs.Close(); lsp.Close(); saves.Close() })
+	first := document.Owner{ClientID: "file-one", Epoch: 1}
+	second := document.Owner{ClientID: "file-two", Epoch: 1}
+	open := func(owner document.Owner, name string) document.Snapshot {
+		t.Helper()
+		docs.SetFileOnlyOwner(owner)
+		snap, err := docs.Open(owner, filepath.Join(root, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return snap
+	}
+	target, peer := open(first, "first.txt"), open(second, "second.txt")
+	documentEdit(t, docs, first, target.ID, "edit", target.Revision, 0, 0, "unsaved")
+	lsp.mu.Lock()
+	started := len(lsp.documents) != 0
+	lsp.mu.Unlock()
+	if started {
+		t.Fatal("opening or editing a file-only buffer requested a language view")
+	}
+	docs.OpenFolder(first)
+	lsp.mu.Lock()
+	defer lsp.mu.Unlock()
+	view := lsp.documents[target.Path]
+	if view == nil || !view.editor || view.text != "unsaved" || lsp.documents[peer.Path] != nil {
+		t.Fatal("promotion did not register exactly this owner's current text")
+	}
+}
+
 func TestDocumentServiceInterleavedUndoRedo(t *testing.T) {
 	s, snap, a, b := documentFixture(t, "alpha beta gamma")
 	r := documentEdit(t, s, a, snap.ID, "a1", 1, 0, 5, "ALPHA")

@@ -173,7 +173,7 @@ Home, personal folders (including Desktop), and filesystem roots turn off
 Local History and language servers by default. The core applies these defaults
 after application preferences and before explicit workspace preferences. The
 workspace stores nothing for automatic choices. Reset restores the folder
-default. The Local History and Code Intelligence switches explain it. Enabling
+default. The **Local History** and **Code intelligence** switches explain it. Enabling
 Local History requires a profile outside the folder being tracked; a history
 store cannot contain itself. A child folder uses normal project settings.
 
@@ -183,6 +183,18 @@ saved project settings on the same actor. An additional file shell does not
 change settings or request a language-server view for the document; a project
 shell can still analyze it. A file launch in a top-level folder also gets that
 folder's Local History default. These rules do not grant project analysis Trust.
+
+An explicit top-level entry with services off posts one unread workspace
+notice. It names only the services that are off and offers **Open Workspace
+Settings**. A file entry uses the same notice to name the file and folder and
+explain how to show the tree. Reopening renews the notice instead of adding a
+second unread row. It stays in **Notices** after the startup prompt closes.
+
+In file mode the workspace **Code intelligence** switch is read-only. Choose
+**Open folder as workspace** in the file notice, or open the same folder from
+the picker or Recent Workspaces. Crude keeps the editor, unsaved text, undo
+and composer draft in place. It applies the saved project settings without
+saving the file or changing another shell's attachment.
 
 ### First-use profile choices and AI setup
 

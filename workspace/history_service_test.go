@@ -39,7 +39,7 @@ func TestDeleteSafetyCapturesOnlyDeletedTree(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := service.KeepBeforeDelete(t.Context(), "gone"); err != nil {
+	if err := service.KeepBeforeDelete(t.Context(), filepath.Join(root, "gone")); err != nil {
 		t.Fatal(err)
 	}
 	records, err := store.Timeline(1)
@@ -102,7 +102,7 @@ func BenchmarkDeleteSafetyInDenseWorkspace(b *testing.B) {
 	}
 	b.ResetTimer()
 	for range b.N {
-		if err := service.KeepBeforeDelete(b.Context(), "delete-me"); err != nil {
+		if err := service.KeepBeforeDelete(b.Context(), filepath.Join(root, "delete-me")); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -418,7 +418,7 @@ func TestKeepBeforeDeleteMakesDeletionRestorable(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "gone", "kept.txt"), []byte("kept"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := service.KeepBeforeDelete(context.Background(), "gone"); err != nil {
+	if err := service.KeepBeforeDelete(context.Background(), filepath.Join(root, "gone")); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.RemoveAll(filepath.Join(root, "gone")); err != nil {
@@ -440,7 +440,7 @@ func TestKeepBeforeDeleteMakesDeletionRestorable(t *testing.T) {
 	}
 
 	service.settings = setting.LocalHistory{Enabled: "off"}
-	if err := service.KeepBeforeDelete(context.Background(), "gone"); err != nil {
+	if err := service.KeepBeforeDelete(context.Background(), filepath.Join(root, "gone")); err != nil {
 		t.Fatalf("disabled history must not block a delete: %v", err)
 	}
 }

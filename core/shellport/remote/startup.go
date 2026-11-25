@@ -8,6 +8,7 @@ import (
 	"crude/core/coreclient"
 	"crude/core/coreprotocol"
 	"crude/core/shellport"
+	"crude/internal/retry"
 	"crude/types/setting"
 	"crude/workspace"
 )
@@ -24,27 +25,52 @@ type StartupClient struct {
 
 var _ shellport.Startup = (*StartupClient)(nil)
 
-func (s *StartupClient) call(ctx context.Context, method string, in coreprotocol.Value, out coreprotocol.Target) error {
+func (s *StartupClient) connection(ctx context.Context) (*coreclient.Client, error) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if s.Client == nil || s.Client.Err() != nil {
 		if s.Dial == nil {
-			s.mu.Unlock()
-			return coreclient.ErrClosed
+			return nil, coreclient.ErrClosed
 		}
 		if s.Client != nil {
 			_ = s.Client.Close()
 		}
 		client, err := s.Dial(ctx, s.ClientID)
 		if err != nil {
-			s.mu.Unlock()
-			return err
+			return nil, err
 		}
 		s.Client = client
 	}
-	client := s.Client
-	s.mu.Unlock()
-	// An uncertain Save is never replayed here. The next explicit action reads
-	// committed state or makes the same idempotent preference choice.
+	return s.Client, nil
+}
+
+func (s *StartupClient) call(ctx context.Context, method string, in coreprotocol.Value, out coreprotocol.Target) error {
+	client, err := s.connection(ctx)
+	if err != nil {
+		return err
+	}
+	err = client.Call(ctx, "", method, in, out)
+	if !errors.Is(err, coreclient.ErrSessionLost) {
+		return err
+	}
+	// A navigation request can be the first to discover that the session
+	// ended. Read its original path on the selected host once more. Never
+	// replay a folder creation or preference save after losing its reply.
+	switch method {
+	case coreprotocol.StartupInspect, coreprotocol.StartupBrowse, coreprotocol.StartupCatalog:
+	default:
+		return err
+	}
+	if err := retry.Wait(ctx, 0); err != nil {
+		return err
+	}
+	client, err = s.connection(ctx)
+	if err != nil {
+		return err
+	}
 	return client.Call(ctx, "", method, in, out)
 }
 

@@ -260,6 +260,16 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// retain source damage until a frame actually paints it.
 
 	switch msg := msg.(type) {
+	case entryFolderOpenedMsg:
+		if msg.owner == m.ws && m.openingEntry == msg.owner {
+			m.openingEntry = nil
+			if msg.err != nil {
+				m.showOperationFailure("Could not open the folder", msg.err.Error())
+			} else {
+				m.postEntryNotice("Opened "+m.entryName(m.ws.RootPath())+" as a workspace.", "Your open files and drafts stay here. Workspace settings now apply.", false)
+			}
+		}
+		return m, nil
 	case editorSnippetChoiceMsg:
 		m.handleSnippetChoice(msg)
 		return m, nil

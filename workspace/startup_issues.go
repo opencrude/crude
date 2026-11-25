@@ -25,6 +25,9 @@ func (w *Workspace) queuePersistenceStartupIssues() {
 		w.QueueStartupIssue(statuscenter.OperationIssue{Title: "Workspace runtime needs attention", Summary: "Crude opened, but agent registration is unavailable.", Detail: w.collaborationErr.Error(), Guidance: "Check access to workspace storage. Repair the reported problem before starting an agent; no saved sessions have been reset.", Target: statuscenter.RepairSettings, Path: w.WorkspaceDir})
 	}
 	if w.localHistoryErr != nil {
+		if w.Logger != nil {
+			w.Logger.Warn("WORKSPACE", "local_history_open_failed", "error", w.localHistoryErr.Error())
+		}
 		w.QueueStartupIssue(statuscenter.OperationIssue{Title: "Local History needs attention", Summary: "Crude opened, but workspace history could not initialize.", Detail: w.localHistoryErr.Error(), Guidance: "Check the reported path and storage permissions. Required history safeguards remain enforced; Crude will not bypass them to execute work.", Target: statuscenter.RepairSettings, Path: w.WorkspaceDir})
 	}
 }

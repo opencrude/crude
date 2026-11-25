@@ -17,6 +17,39 @@ import (
 func (w *Workspace) RootPath() string    { return w.root }
 func (w *Workspace) WorkspaceID() string { return w.id }
 
+// FileOnly reports this shell's entry, independent of a peer's project demand.
+func (w *Workspace) FileOnly() bool {
+	return w.EntryIntent().FileOnly
+}
+
+// EntryIntent returns the acknowledged routing choice for reconnect and handover.
+func (w *Workspace) EntryIntent() coreprotocol.EntryIntent {
+	if entry := w.entry.Load(); entry != nil {
+		return *entry
+	}
+	return coreprotocol.EntryIntent{}
+}
+
+// OpenFolder promotes this attachment in place. No editor, draft or terminal changes owner.
+func (w *Workspace) OpenFolder(ctx context.Context) error {
+	client, id := w.conn()
+	ctx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
+	if client == nil {
+		return errDisconnected
+	}
+	if err := client.Call(ctx, id, coreprotocol.WorkspaceOpenFolder, &coreprotocol.Empty{}, &coreprotocol.Empty{}); err != nil {
+		return err
+	}
+	w.connMu.Lock()
+	defer w.connMu.Unlock()
+	if w.client != client {
+		return errors.New("connection changed; open the folder again")
+	}
+	w.entry.Store(&coreprotocol.EntryIntent{Explicit: true})
+	return nil
+}
+
 // DraftWorkspaceID names private client data independently of the transport's
 // workspace ID, which can be identical on unrelated SSH hosts.
 func (w *Workspace) DraftWorkspaceID() string {

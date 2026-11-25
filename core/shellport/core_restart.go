@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"crude/core/coreprotocol"
 	"crude/types/control"
 	"crude/types/handover"
 )
@@ -17,6 +18,7 @@ var ErrCoreRestartPending = errors.New("core restart is waiting for its checkpoi
 // Reservation admission is rechecked against the pending semantic control;
 // these methods are not a generic goal-resume or lifecycle administration API.
 type CoreRestartPort interface {
+	EntryIntent() coreprotocol.EntryIntent
 	ReserveCoreRestart(context.Context, string, string, handover.Reservation) (handover.State, error)
 	InspectCoreRestart(context.Context, string, string) (handover.State, error)
 	CancelCoreRestart(context.Context, string, string, string) (handover.State, error)

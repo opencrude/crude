@@ -116,3 +116,25 @@ func TestWireEntryAdmissionAndSharedLanguageDemand(t *testing.T) {
 		}
 	})
 }
+
+func TestPositionalDirectorySpellingNeverCreatesAFile(t *testing.T) {
+	parent := t.TempDir()
+	for _, suffix := range []string{string(os.PathSeparator), string(os.PathSeparator) + "."} {
+		raw := filepath.Join(parent, "not-created") + suffix
+		root, err := invocationRoot(CLIFlags{Path: raw})
+		if err != nil {
+			t.Fatal(err)
+		}
+		profile := coreTestHome(t)
+		c, err := ConnectCore(t.Context(), profile, "spelling")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out coreprotocol.StartupSnapshot
+		err = c.Call(t.Context(), "", coreprotocol.StartupInspect, &coreprotocol.StartupInspectRequest{Root: root, Explicit: true, AllowFile: true}, &out)
+		_ = c.Close()
+		if err != nil || out.PathError == "" || !out.ChooseWorkspace || out.FilePath != "" {
+			t.Fatalf("%q selected a file instead of reporting the missing directory: file=%q error=%q (%v)", raw, out.FilePath, out.PathError, err)
+		}
+	}
+}

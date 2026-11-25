@@ -129,24 +129,13 @@ func (m *App) applyCoreFileChanges(changes []coreprotocol.FileChange) tea.Cmd {
 	}
 	for _, change := range changes {
 		if change.Resync {
-			paths[m.ws.RootPath()] = true
-			for _, node := range m.Tree.Model.VisibleNodes() {
-				if node.IsDir && (node.IsExpanded || node.Children != nil) {
-					paths[node.Path] = true
-				}
-			}
+			return m.Tree.Model.RefreshRemoteDirectories(nil)
 		}
 		if change.Path != "" {
 			paths[filepath.Dir(change.Path)] = true
 		}
 	}
-	var commands []tea.Cmd
-	for path := range paths {
-		if cmd := m.Tree.Model.RequestRemoteDirectory(path); cmd != nil {
-			commands = append(commands, cmd)
-		}
-	}
-	return tea.Batch(commands...)
+	return m.Tree.Model.RefreshRemoteDirectories(paths)
 }
 
 func clientDirectoryListing(path string, entries []coreprotocol.ClientDirectoryEntry) workspace.DirectoryListing {

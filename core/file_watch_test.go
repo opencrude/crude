@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"crude/core/coreprotocol"
+	"crude/insight/textindex"
 	"fmt"
 	"io/fs"
 	"os"
@@ -12,6 +13,31 @@ import (
 	"testing"
 	"time"
 )
+
+// Exercise the production feed with separate test sinks for delivery and LSP.
+func testFileWatchFeed(publish func(coreprotocol.FileChange), notify func(context.Context, string, int), reliable func(bool)) fileWatchFeed {
+	return fileWatchFeed{publish: publish, notify: notify, coverage: func(c watchCoverage) {
+		if reliable != nil {
+			reliable(c.complete())
+		}
+	}}
+}
+func startCoreFileWatch(root string, publish func(coreprotocol.FileChange), notify func(context.Context, string, int), reliable func(bool)) (*coreFileWatch, error) {
+	return testFileWatchFeed(publish, notify, reliable).start(root, false, nil, nil)
+}
+func startDirectoryScope(root string, publish func(coreprotocol.FileChange), notify func(context.Context, string, int), reliable func(bool), analysis <-chan struct{}, index *textindex.Index) (*coreFileWatch, error) {
+	return testFileWatchFeed(publish, notify, reliable).start(root, true, analysis, index)
+}
+
+func testWatchRoot(t *testing.T, path string) watchRoot {
+	t.Helper()
+	pin, err := pinWatchRoot(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = pin.handle.Close() })
+	return pin
+}
 
 func TestCoreWatchWalkPreservesOrderAndSkip(t *testing.T) {
 	root := t.TempDir()
@@ -330,12 +356,11 @@ func TestCoreFileWatchAdmissionFailureStaysUnreliable(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "missing")
 	states := make(chan bool, 8)
 	w, err := startCoreFileWatch(root, nil, nil, func(v bool) { states <- v })
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		w.Close()
+		t.Fatal("missing workspace admitted")
 	}
-	defer w.Close()
-	<-w.ready
-	w.Close()
+
 	close(states)
 	for state := range states {
 		if state {

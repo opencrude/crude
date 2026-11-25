@@ -58,7 +58,9 @@ Setup created no session and sent no inference request.
 5. Exact test-core termination during browsing, followed by explicit navigation and reconnection.
 6. Exact shell termination, profile-lock recovery, and reopening the same project file.
 
-The original six scenarios passed with no owned process survivors before the November 25 entry change. The revised entry scenario needs separate Linux evidence.
+All six scenarios passed on Linux after the November 25 entry change, with no
+owned process survivors. This includes opening home and Desktop explicitly,
+saving a previously missing file and reconnecting after loss during a browse.
 The script retains bounded text captures and structured results.
 Text captures are not screenshots.
 Use the repository capture workflow for visual acceptance.

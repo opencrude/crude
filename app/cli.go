@@ -2,9 +2,6 @@ package app
 
 import (
 	"context"
-	"crude/insight/catalog"
-	"crude/internal/buildinfo"
-	"crude/internal/crashlog"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -15,6 +12,10 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/session"
+	"crude/core/coreprotocol"
+	"crude/insight/catalog"
+	"crude/internal/buildinfo"
+	"crude/internal/crashlog"
 	"crude/tui/perf"
 )
 
@@ -49,6 +50,7 @@ type CLIFlags struct {
 	SSHIdentity          string
 	Workspace            string
 	Path                 string
+	handoverEntry        coreprotocol.EntryIntent // from the verified private manifest only
 	extraPaths           bool
 	MCP                  bool
 	MCPEffects           string
@@ -374,6 +376,7 @@ func Main() int {
 			fmt.Fprintf(os.Stderr, "crude handover: %v\n", err)
 			return 1
 		}
+		flags.handoverEntry = startup.Entry
 		flags.ClientProfile, flags.Workspace, flags.Resume = startup.Profile, startup.Root, startup.SessionID
 	}
 	projectDir, err := invocationRoot(flags)

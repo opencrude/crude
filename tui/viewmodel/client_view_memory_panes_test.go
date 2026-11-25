@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
+	"crude/tui/editor"
 	"crude/tui/ui"
 )
 
@@ -16,6 +19,30 @@ func writePaneFile(t *testing.T, root, name, body string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func TestExplicitFileOpensBeyondSavedPanePathLimit(t *testing.T) {
+	app := newTestApp(t)
+	root := t.TempDir()
+	app.ws = &diagnosticFixtureWorkspace{Workspace: app.ws, service: app.ws.LSPMgr(), root: root}
+	other := writePaneFile(t, root, "other.txt", "remember this tab")
+	target := filepath.Join(root, strings.Repeat("directory/", maxRememberedPanePath/10+1), "selected.txt")
+	// Supply the admitted document in memory. The shell must not impose its
+	// own OS path limit on a file from a different host.
+	buf := editor.NewBufferManager().CreateScratch()
+	buf.Path, buf.Title = target, "selected.txt"
+	buf.ReplaceContents("text from the selected host")
+	app.BufferMgr.InstallPrepared(buf)
+	app.SetLaunchFile(target, false)
+	app.installViewMemory(viewMemory{Panes: []viewMemoryPane{{Files: []string{other}, Active: other}}, PaneLayout: &viewMemoryPaneNode{}})
+	runAppCommand(t, app, app.drainLiveEditorCommands())
+	if app.EditorState.ActiveView != target || app.EditorState.Editor.LineText(0) != "text from the selected host" {
+		t.Fatal("the explicit file did not become the active editor")
+	}
+	saved := app.captureViewMemory()
+	if !validViewPanes(saved) || len(saved.Panes) != 1 || !slices.Equal(saved.Panes[0].Files, []string{other}) {
+		t.Fatal("one long path invalidated the saved layout or hid another open file")
+	}
 }
 
 func TestRememberedPaneLayoutRestoresOpenEditors(t *testing.T) {

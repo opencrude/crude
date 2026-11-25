@@ -232,7 +232,7 @@ func (s *Surface) SetTokens(tokens *ui.TokenSet) {
 	s.listScroll.SetTokens(tokens)
 	s.utilityActions.SetTokens(tokens)
 	s.primaryActions.SetTokens(tokens)
-	s.rebuildActions()
+	s.syncItems(true)
 }
 
 func (s *Surface) SetFocusHandler(fn func(ui.ComponentID)) { s.focus = fn }
@@ -365,11 +365,14 @@ func (s *Surface) appendExpandedRows(rows []ui.ListItem, item Item) []ui.ListIte
 		}
 	}
 	lines := make([]DetailLine, 0, len(item.Lines)+8)
+	if item.NotificationID != "" && rendering.VisibleWidth(item.Label) > s.headlineLayout(item, s.listWidth).labelW {
+		lines = append(lines, DetailLine{Value: item.Label, Role: ui.ColorFg})
+	}
 	if item.Subtitle != "" {
 		lines = append(lines, DetailLine{Value: item.Subtitle, Role: ui.ColorMuted})
 	}
 	if len(item.Lines) > 0 {
-		if len(lines) > 0 {
+		if item.Subtitle != "" {
 			lines = append(lines, DetailLine{Blank: true})
 		}
 		lines = append(lines, item.Lines...)
@@ -403,9 +406,9 @@ func (s *Surface) appendExpandedRows(rows []ui.ListItem, item Item) []ui.ListIte
 		if line.Label != "" {
 			valueWidth = max(1, width-labelW)
 		}
-		parts := rendering.HardWrap(line.Value, valueWidth)
-		if len(parts) == 0 {
-			parts = []string{""}
+		var parts []string
+		for logicalLine := range strings.SplitSeq(line.Value, "\n") {
+			parts = append(parts, rendering.WordWrap(logicalLine, valueWidth)...)
 		}
 		for partIndex, value := range parts {
 			visual := line
@@ -632,66 +635,71 @@ func (s *Surface) paintStatusRow(buf *surface.CellBuffer, x, y, width int, item 
 	if state == ui.StateFocused || state == ui.StateSelected {
 		attr = cell.AttrBold
 	}
-	chevron := ""
-	if s.items[payload.ItemID].ActivateAction == "" {
-		chevron = string(ui.FirstRune(tokens.Glyphs().TreeCollapsed, '▸'))
-		if s.expanded[payload.ItemID] {
-			chevron = string(ui.FirstRune(tokens.Glyphs().TreeExpanded, '▾'))
-		}
-	}
-	prefix := strings.Repeat(" ", max(0, tokens.FormIndent()))
-	if chevron != "" {
-		prefix += chevron + " "
-	}
-	if item.Icon != "" {
-		prefix += item.Icon + " "
-	}
-	buf.WriteString(x, y, prefix, fg, bg, attr)
-	contentX := x + rendering.VisibleWidth(prefix)
-	contentW := max(0, width-rendering.VisibleWidth(prefix))
 	entry := s.items[payload.ItemID]
-	metadata := entry.Context
-	if metadata == "" {
-		metadata = entry.Subtitle
+	layout := s.headlineLayout(entry, width)
+	buf.WriteString(x, y, rendering.TruncateVisual(layout.prefix, width, ""), fg, bg, attr)
+	contentX := x + width - layout.contentW
+	if layout.labelW > 0 {
+		buf.WriteString(contentX, y, rendering.TruncateVisual(entry.Label, layout.labelW, "…"), fg, bg, attr)
 	}
-	if metadata == "" && entry.Compact == "" {
-		paintStatusMainLine(buf, contentX, y, contentW, item.Label, item.Detail, fg, muted, bg, attr)
+	if layout.metadata == "" && entry.Compact == "" {
+		if layout.stateW > 0 {
+			buf.WriteString(x+width-layout.stateW, y, rendering.TruncateVisual(entry.Summary, layout.stateW, "…"), muted, bg, attr)
+		}
 		return
 	}
-	// Stable columns keep identity, useful facts and lifecycle on one row.
-	// At narrow widths identity and lifecycle take priority over optional facts.
-	stateW := min(rendering.VisibleWidth(item.Detail), min(22, contentW/3))
-	labelW := min(34, max(10, contentW/4))
-	labelW = min(labelW, max(0, contentW-stateW-2))
-	buf.WriteString(contentX, y, rendering.TruncateVisual(item.Label, labelW, "…"), fg, bg, attr)
-	metaX := contentX + labelW + 2
-	metaW := max(0, contentW-labelW-stateW-4)
+	metaX := contentX + layout.labelW + ui.TableMinGap
+	metaW := max(0, layout.contentW-layout.labelW-layout.stateW-2*ui.TableMinGap)
 	if entry.Compact != "" && metaW >= 36 {
 		compactW := min(rendering.VisibleWidth(entry.Compact), metaW/2)
 		buf.WriteString(metaX+metaW-compactW, y, rendering.TruncateVisual(entry.Compact, compactW, "…"), muted, bg, 0)
-		metaW -= compactW + 2
+		metaW -= compactW + ui.TableMinGap
 	}
-	buf.WriteString(metaX, y, rendering.TruncateVisual(metadata, metaW, "…"), muted, bg, 0)
-	buf.WriteString(contentX+contentW-stateW, y, rendering.TruncateVisual(item.Detail, stateW, "…"), muted, bg, 0)
+	if metaW > 0 {
+		buf.WriteString(metaX, y, rendering.TruncateVisual(layout.metadata, metaW, "…"), muted, bg, 0)
+	}
+	if layout.stateW > 0 {
+		buf.WriteString(x+width-layout.stateW, y, rendering.TruncateVisual(entry.Summary, layout.stateW, "…"), muted, bg, 0)
+	}
 }
 
-func paintStatusMainLine(buf *surface.CellBuffer, x, y, width int, label, detail string, fg, muted, bg cell.Color, attr cell.Attrs) {
-	if width <= 0 {
-		return
+type headlineLayout struct {
+	prefix, metadata         string
+	contentW, labelW, stateW int
+}
+
+// Disclosure and paint use the same column budget, including the glyphs and
+// trailing state. A notice needs its full text only if this label is clipped.
+func (s *Surface) headlineLayout(item Item, width int) headlineLayout {
+	layout := headlineLayout{prefix: strings.Repeat(" ", max(0, s.tokens.FormIndent())), metadata: item.Context}
+	if item.ActivateAction == "" {
+		chevron := ui.FirstRune(s.tokens.Glyphs().TreeCollapsed, '▸')
+		if s.expanded[item.ID] {
+			chevron = ui.FirstRune(s.tokens.Glyphs().TreeExpanded, '▾')
+		}
+		layout.prefix += string(chevron) + " "
 	}
-	if detail == "" {
-		buf.WriteString(x, y, rendering.TruncateVisual(label, width, "…"), fg, bg, attr)
-		return
+	if item.Icon != "" {
+		layout.prefix += item.Icon + " "
 	}
-	detailW := min(rendering.VisibleWidth(detail), max(0, width/2))
-	labelW := max(0, width-detailW-2)
-	if labelW == 0 {
-		buf.WriteString(x, y, rendering.TruncateVisual(detail, width, "…"), muted, bg, attr)
-		return
+	layout.contentW = max(0, width-rendering.VisibleWidth(layout.prefix))
+	if layout.metadata == "" {
+		layout.metadata = item.Subtitle
 	}
-	buf.WriteString(x, y, rendering.TruncateVisual(label, labelW, "…"), fg, bg, attr)
-	detailX := x + width - detailW
-	buf.WriteString(detailX, y, rendering.TruncateVisual(detail, detailW, "…"), muted, bg, attr)
+	if layout.metadata != "" || item.Compact != "" {
+		// At narrow widths identity and lifecycle take priority over optional facts.
+		layout.stateW = min(rendering.VisibleWidth(item.Summary), 22, layout.contentW/3)
+		layout.labelW = min(34, max(10, layout.contentW/4), max(0, layout.contentW-layout.stateW-ui.TableMinGap))
+	} else if item.Summary == "" {
+		layout.labelW = layout.contentW
+	} else {
+		layout.stateW = min(rendering.VisibleWidth(item.Summary), layout.contentW/2)
+		layout.labelW = max(0, layout.contentW-layout.stateW-ui.TableMinGap)
+		if layout.labelW == 0 {
+			layout.stateW = layout.contentW
+		}
+	}
+	return layout
 }
 
 func expandedLabelWidth(width int) int {

@@ -2,14 +2,15 @@ package workspace
 
 import (
 	"context"
-	"crude/agent/session"
-	"crude/agent/worktree"
-	"crude/workspace/fileio"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	"crude/agent/session"
+	"crude/agent/worktree"
+	"crude/workspace/fileio"
 )
 
 // ExecutionService borrows the logical workspace's document/history owners.
@@ -27,6 +28,11 @@ func (w *Workspace) ensureExecutions() error {
 		return nil
 	}
 	service, err := worktree.Open(w.RootPath, filepath.Join(w.WorkspaceDir, "executions"), worktree.Options{})
+	if w.entry.DeferProjectScan() && errors.Is(err, worktree.ErrOverlappingStore) {
+		// A home or volume can contain its own profile. Ordinary editing and
+		// sessions need no isolated checkout. Never create one inside its source.
+		return nil
+	}
 	if err != nil {
 		return err
 	}

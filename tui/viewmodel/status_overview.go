@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -401,7 +402,9 @@ func (m *App) footerStatusSegments() []shellfooter.Segment {
 		unread = m.ws.Status().UnreadCount()
 	}
 	noticeText := "Notices"
-	if unread > 0 {
+	if unread == 1 {
+		noticeText = "1 Notice"
+	} else if unread > 1 {
 		noticeText = fmt.Sprintf("%d Notices", unread)
 	}
 	terminalCount := 0
@@ -906,6 +909,7 @@ func displayProvider(provider string) string {
 func (m *App) statusNotificationItems() []statusoverview.Item {
 	items := []statusoverview.Item{{ID: "notices", Label: "Notifications", Header: true}}
 	now := time.Now()
+	fileOnly := m.fileOnly()
 	for _, notice := range m.ws.Status().Notifications(false) {
 		state := "Read"
 		if !notice.Read {
@@ -914,20 +918,30 @@ func (m *App) statusNotificationItems() []statusoverview.Item {
 		if !notice.ResolvedAt.IsZero() {
 			state += " · Resolved"
 		}
+		actions := append([]statuscenter.Action(nil), notice.Actions...)
+		if !fileOnly {
+			actions = slices.DeleteFunc(actions, func(a statuscenter.Action) bool { return a.ID == openEntryFolderAction })
+		}
+		source := notice.Source
+		if source == entryNoticeSource {
+			source = "Workspace"
+		}
+		lines := []statusoverview.DetailLine{}
+		if notice.Detail != "" {
+			lines = append(lines, statusoverview.DetailLine{Value: notice.Detail, Role: ui.ColorFg}, statusoverview.DetailLine{Blank: true})
+		}
 		items = append(items, statusoverview.Item{
 			ID: "notice:" + notice.ID, Label: notice.Summary, Summary: noticeAge(notice, now), Icon: severityIcon(notice.Severity), Owner: notice.Owner,
 			NotificationID:     notice.ID,
 			NotificationUnread: !notice.Read,
-			Lines: []statusoverview.DetailLine{
-				{Label: "Source", Value: notice.Source, Role: ui.ColorMuted},
-				{Label: "State", Value: state, Role: severityRole(notice.Severity)},
-				{Label: "When", Value: notice.UpdatedAt.Format("2006-01-02 15:04:05"), Role: ui.ColorMuted},
-				{Label: "Occurrences", Value: fmt.Sprintf("%d", notice.Occurrences), Role: ui.ColorMuted},
-				{Blank: true}, {Value: notice.Detail, Role: ui.ColorFg},
-			},
+			Lines: append(lines,
+				statusoverview.DetailLine{Label: "Source", Value: source, Role: ui.ColorMuted},
+				statusoverview.DetailLine{Label: "State", Value: state, Role: severityRole(notice.Severity)},
+				statusoverview.DetailLine{Label: "When", Value: notice.UpdatedAt.Format("2006-01-02 15:04:05"), Role: ui.ColorMuted},
+				statusoverview.DetailLine{Label: "Occurrences", Value: fmt.Sprint(notice.Occurrences), Role: ui.ColorMuted}),
 			PrimaryAction: ownerNavigation(notice.Owner), PrimaryLabel: ownerNavigationLabel(notice.Owner), PrimaryEnabled: notice.Owner.ID != "",
 			DisabledReason: "The originating resource is no longer open",
-			Actions:        append([]statuscenter.Action(nil), notice.Actions...),
+			Actions:        actions,
 		})
 	}
 	return items
@@ -963,6 +977,11 @@ func (m *App) handleStatusOverviewNavigate(msg statusoverview.NavigateMsg) tea.C
 		m.focusTerminal(strings.TrimPrefix(action, "terminal:"))
 	case strings.HasPrefix(action, "session:resume:"):
 		return m.resumeWorkspaceSession(strings.TrimPrefix(action, "session:resume:"))
+	case action == openEntryFolderAction:
+		if msg.Item.Owner.ID == m.ws.RootPath() && m.fileOnly() {
+			return m.openEntryFolder()
+		}
+		return nil
 	case action == "settings:workspace":
 		m.openWorkspaceSettings()
 		return nil
@@ -1062,7 +1081,9 @@ func (m *App) openStatusOverviewMore(item statusoverview.Item) {
 		action := statusAction
 		menuItems = append(menuItems, ui.ContextMenuItem{
 			Label: action.Label, Disabled: !action.Enabled, Detail: action.Reason,
-			Action: func() { _ = m.handleStatusOverviewNavigate(statusoverview.NavigateMsg{Item: item, Action: action.ID}) },
+			Action: func() {
+				m.runDetachedAsyncCmd(m.handleStatusOverviewNavigate(statusoverview.NavigateMsg{Item: item, Action: action.ID}))
+			},
 		})
 	}
 	if len(menuItems) == 0 {

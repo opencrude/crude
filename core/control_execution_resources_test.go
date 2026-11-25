@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"crude/types/control"
 	"crude/workspace"
 	"crude/workspace/document"
+	"crude/workspace/localhistory"
 )
 
 // Integration and its inverse must publish the accepted document journal without
@@ -345,5 +347,104 @@ func TestControlDomainRootMayUseExternallyCreatedPinnedExecution(t *testing.T) {
 	claims, err := a.ws.Collaboration.Claims(ctx, parent.ID, true)
 	if err != nil || len(claims) != 1 || claims[0].Path != filepath.Join(c.Root, "root-created.txt") || claims[0].RequestID != in.ID {
 		t.Fatal("missing native claim", claims, err)
+	}
+}
+
+func controlDelete(t *testing.T, a *actor, executionID, name string) control.Result {
+	t.Helper()
+	raw, err := json.Marshal(coreprotocol.FilePathRequest{Path: name})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := control.Request{ID: "delete", CommandID: "files.delete", Target: control.Target{ExecutionID: executionID}, Input: raw}
+	work, _, ok := a.prepareControlDomain(request, coreprotocol.Owner{ClientID: "test", Epoch: 1})
+	if !ok {
+		t.Fatal("missing files.delete route")
+	}
+	return work(t.Context())
+}
+
+func TestControlDeleteRestoresFromTargetCheckout(t *testing.T) {
+	a := controlExecutionFixture(t)
+	c, err := a.ws.Executions.Create(t.Context(), worktree.Request{Owner: worktree.Owner{AgentID: "test", RunID: "checkout"}, Mode: worktree.Isolated})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(c.Root, "disk.txt"), []byte("checkout edits\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	executionStore, _, err := a.ws.ExecutionHistory(c.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, executionID, root, want string
+		store                         *localhistory.Store
+	}{
+		{"managed", c.ID, c.Root, "checkout edits\n", executionStore},
+		{"logical", "", a.ws.RootPath, "human dirty\n", a.ws.LocalHistory},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(tc.root, "disk.txt")
+			if out := controlDelete(t, a, tc.executionID, "disk.txt"); out.State != control.Committed || out.Fault != nil {
+				t.Fatalf("delete: %+v", out)
+			}
+			if _, err := os.Stat(path); !os.IsNotExist(err) {
+				t.Fatalf("target not deleted: %v", err)
+			}
+			records, err := tc.store.FileHistory("disk.txt", 100)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var safety string
+			for _, r := range records {
+				if r.Kind == "safety" {
+					safety = r.ID
+					break
+				}
+			}
+			if safety == "" {
+				t.Fatal("delete committed without a safety copy in the target checkout")
+			}
+			plan, err := tc.store.PlanRestore(t.Context(), safety, localhistory.SnapshotOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tc.store.ApplyRestore(t.Context(), plan.ID, nil); err != nil {
+				t.Fatal(err)
+			}
+			if got, err := os.ReadFile(path); err != nil || string(got) != tc.want {
+				t.Fatalf("delete backup restored %q, want %q: %v", got, tc.want, err)
+			}
+		})
+	}
+}
+
+func TestControlDeleteDoesNotFallBackToLogicalHistory(t *testing.T) {
+	a := controlExecutionFixture(t)
+	c, err := a.ws.Executions.Create(t.Context(), worktree.Request{Owner: worktree.Owner{AgentID: "test", RunID: "checkout"}, Mode: worktree.Isolated})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulate an unusable history directory without relying on Unix permissions.
+	if err := os.WriteFile(filepath.Join(a.ws.WorkspaceDir, "execution-history"), []byte("not a directory"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	result := controlDelete(t, a, c.ID, "disk.txt")
+	data, err := os.ReadFile(filepath.Join(c.Root, "disk.txt"))
+	if result.State != control.Failed || result.Fault == nil || !strings.Contains(strings.ToLower(result.Fault.Message), "history") || err != nil || string(data) != "human dirty\n" {
+		t.Fatalf("delete with no checkout backup: %+v, file %q, read %v", result, data, err)
+	}
+	settings := a.ws.AppDefaults()
+	settings.LocalHistory.Enabled = "off"
+	a.ws.SetAppDefaults(settings)
+	if out := controlDelete(t, a, c.ID, "disk.txt"); out.Fault != nil || out.State != control.Committed {
+		t.Fatalf("delete with history off: %+v", out)
+	}
+	if _, err := os.Stat(filepath.Join(c.Root, "disk.txt")); !os.IsNotExist(err) {
+		t.Fatal("history-off delete did not remove the checkout file", err)
+	}
+	if data, err := os.ReadFile(filepath.Join(a.ws.RootPath, "disk.txt")); err != nil || string(data) != "human dirty\n" {
+		t.Fatalf("logical file changed: %q %v", data, err)
 	}
 }
