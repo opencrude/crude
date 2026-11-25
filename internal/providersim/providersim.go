@@ -73,7 +73,11 @@ func WithCacheProfile(wire Wire, model string, profile CacheProfile) Option {
 
 // WithModels sets the model IDs returned by the wire's model inventory.
 func WithModels(wire Wire, ids ...string) Option {
-	return func(s *Server) { s.models[wire] = slices.Clone(ids) }
+	rows := make([]Model, len(ids))
+	for i, id := range ids {
+		rows[i].ID = id
+	}
+	return WithModelCatalog(wire, rows...)
 }
 
 // Server is one test-owned HTTP endpoint for all configured wires. Its journal
@@ -85,7 +89,7 @@ type Server struct {
 	done   chan struct{}
 
 	cacheProfiles map[prefixKey]CacheProfile
-	models        map[Wire][]string
+	catalogs      map[Wire]map[string][]Model
 	chatGateways  map[string]ChatGateway
 
 	mu        sync.Mutex
@@ -103,8 +107,8 @@ func New(t testing.TB, opts ...Option) *Server {
 func newServer(t testing.TB, report func(string, ...any), opts []Option) *Server {
 	s := &Server{
 		t: t, report: report, done: make(chan struct{}),
-		cacheProfiles: make(map[prefixKey]CacheProfile), models: make(map[Wire][]string),
-		chatGateways: make(map[string]ChatGateway), prefixes: make(map[prefixKey]*prefixNode),
+		cacheProfiles: make(map[prefixKey]CacheProfile),
+		chatGateways:  make(map[string]ChatGateway), prefixes: make(map[prefixKey]*prefixNode),
 	}
 	for _, opt := range opts {
 		opt(s)

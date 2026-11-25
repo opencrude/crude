@@ -204,6 +204,26 @@ func contextOverflow(t *testing.T, w wireProfile) {
 	}
 }
 
+// requestTimeout checks that HTTP 408 is temporary on every wire. RFC 9110
+// section 15.5.9 defines it, and the OpenAI and Anthropic SDKs retry it.
+func requestTimeout(t *testing.T, w wireProfile) {
+	f := fixture(t, w)
+	f.sim.Script(providersim.HTTPError(providersim.RequestTimeout), providersim.Text("recovered"))
+	var callbacks int
+	c := f.client(t, provider.WithMaxAttempts(2), provider.OnRetry(func(_ int, _ time.Duration, err error) {
+		callbacks++
+		var status *provider.StatusError
+		if !errors.As(err, &status) || status.StatusCode != http.StatusRequestTimeout || provider.Classify(err) != provider.FailureTransient || !provider.Retryable(err) {
+			t.Errorf("expected transient HTTP 408, got %v", err)
+		}
+	}))
+	r, err := readStream(t.Context(), c, f.request())
+	if err != nil || r.text != "recovered" || callbacks != 1 {
+		t.Fatalf("expected one retry and success: callbacks=%d text=%q err=%v", callbacks, r.text, err)
+	}
+	f.last(t, 2)
+}
+
 func retryCase(format string) func(*testing.T, wireProfile) {
 	return func(t *testing.T, w wireProfile) {
 		f := fixture(t, w)

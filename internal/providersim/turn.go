@@ -1,6 +1,9 @@
 package providersim
 
-import "slices"
+import (
+	"slices"
+	"strings"
+)
 
 // ToolCall is a tool invocation. Arguments is the encoded input (JSON for a
 // function tool), not a second parsed copy that could change stream fragments.
@@ -31,6 +34,8 @@ type Usage struct {
 	Output int
 	// Cached is the cache-read subset of input.
 	Cached int
+	// OmitCacheRead omits the wire's cache-read counter where the schema allows it.
+	OmitCacheRead bool
 	// CacheWrite is the cache-write subset of input.
 	CacheWrite int
 	// Reasoning is the reasoning subset of output.
@@ -65,13 +70,46 @@ type Turn struct {
 	// Usage overrides all synthetic usage counters when non-nil.
 	Usage *Usage
 	// Finish overrides the inferred finish reason when non-empty.
-	Finish FinishReason
-	fault  fault
-	gate   *Gate
+	Finish     FinishReason
+	fault      fault
+	gate       *Gate
+	gateAfter  int
+	omitUsage  bool
+	textDeltas []string
 }
 
 // Text builds a turn with visible text.
-func Text(text string) Turn { return Turn{Text: text} }
+func Text(text string) Turn { return Turn{}.WithText(text) }
+
+// WithText replaces t's visible answer and resets any scripted text deltas.
+func (t Turn) WithText(text string) Turn {
+	t.Text, t.textDeltas = text, nil
+	return t
+}
+
+// WithTextDeltas replaces t's visible answer with the joined parts. A stream
+// sends one text delta per part; a non-streaming request gets the whole answer.
+func (t Turn) WithTextDeltas(parts ...string) Turn {
+	t.Text, t.textDeltas = strings.Join(parts, ""), slices.Clone(parts)
+	return t
+}
+
+// mergedDeltas preserves the refusal on wires that encode it as visible text.
+func (t Turn) mergedDeltas() []string {
+	if len(t.textDeltas) == 0 || t.Refusal == "" {
+		return t.textDeltas
+	}
+	return append(slices.Clip(t.textDeltas), t.Refusal)
+}
+
+// textChunks keeps the wire's original whole-field boundary unless a scenario
+// explicitly specifies a sequence of text events.
+func textChunks(parts []string, whole string) []string {
+	if len(parts) == 0 {
+		return []string{whole}
+	}
+	return parts
+}
 
 // Reasoning builds a turn with reasoning and optional replay payloads.
 func Reasoning(text, signature, encrypted string) Turn {
@@ -104,7 +142,16 @@ func (t Turn) WithRefusal(text string) Turn {
 
 // WithUsage replaces all synthetic token counters for t.
 func (t Turn) WithUsage(usage Usage) Turn {
+	t.omitUsage = false
 	t.Usage = &usage
+	return t
+}
+
+// WithoutUsage omits usage counts where the wire's schema allows it.
+// A wire that requires usage reports a fixture error.
+func (t Turn) WithoutUsage() Turn {
+	t.Usage = nil
+	t.omitUsage = true
 	return t
 }
 
@@ -116,11 +163,23 @@ func (t Turn) WithFinish(reason FinishReason) Turn {
 
 // WithGate waits for gate release before writing t's first event or body.
 func (t Turn) WithGate(gate *Gate) Turn {
+	return t.WithGateAfter(0, gate)
+}
+
+// WithGateAfter waits at gate after events successful stream events have been
+// written and flushed. Zero waits before the first event, like WithGate.
+// A non-streamed body or HTTP error waits before it is written.
+func (t Turn) WithGateAfter(events int, gate *Gate) Turn {
 	t.gate = gate
+	t.gateAfter = events
 	return t
 }
 
 func (t Turn) snapshot() Turn {
+	// Text is public. A direct replacement after WithTextDeltas also wins.
+	if len(t.textDeltas) > 0 && strings.Join(t.textDeltas, "") != t.Text {
+		t.textDeltas = nil
+	}
 	t.Tools = slices.Clone(t.Tools)
 	if t.Usage != nil {
 		t = t.WithUsage(*t.Usage)

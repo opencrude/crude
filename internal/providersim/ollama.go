@@ -46,20 +46,29 @@ func (s *Server) completeOllama(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, ollamaError("No reply is scripted."))
 		return
 	}
-	fault := turn.fault
+	f := turn.fault
+	if f.kind == Quota {
+		// https://docs.ollama.com/api/errors.md documents rate limiting, not
+		// an exhausted-credit response. The pinned server/cloud_proxy.go
+		// forwards upstream errors without defining a quota code or message.
+		const msg = "Ollama has no documented quota error. Use RateLimit for HTTP 429."
+		s.report("simulate Ollama: %s", msg)
+		writeJSON(w, http.StatusInternalServerError, ollamaError(msg))
+		return
+	}
 	// Ollama commits a 200 stream only once it sends content. A failure
 	// before the first line is an HTTP error even with stream:true.
-	if fault.mode == faultHTTP || (req.Stream && fault.mode == faultStream && fault.after == 0) {
-		if turn.gate.await(r.Context(), s.done) {
-			status, message := ollamaFault(fault.kind)
-			if hint := fault.hint; hint.header != "" {
+	if f.mode == faultHTTP || (req.Stream && f.mode == faultStream && f.after == 0) {
+		if s.awaitBody(r, turn) {
+			status, message := ollamaFault(f)
+			if hint := f.hint; hint.header != "" {
 				w.Header().Set(hint.header, hint.value)
 			}
 			writeJSON(w, status, ollamaError(message))
 		}
 		return
 	}
-	if !req.Stream && (fault.mode == faultStream || fault.mode == faultCut) {
+	if !req.Stream && (f.mode == faultStream || f.mode == faultCut) {
 		s.report("simulate Ollama: use a streaming request for a stream fault")
 		writeJSON(w, http.StatusInternalServerError, ollamaError("The scripted fault requires streaming."))
 		return
@@ -75,9 +84,11 @@ func (s *Server) completeOllama(w http.ResponseWriter, r *http.Request) {
 	if turn.finish() == FinishLength {
 		final.DoneReason = "length"
 	}
-	s.addOllamaCounts(req, turn, &final)
+	if !turn.omitUsage {
+		s.addOllamaCounts(req, turn, &final)
+	}
 	if !req.Stream {
-		if turn.gate.await(r.Context(), s.done) {
+		if s.awaitBody(r, turn) {
 			writeJSON(w, http.StatusOK, final)
 		}
 		return
@@ -86,13 +97,13 @@ func (s *Server) completeOllama(w http.ResponseWriter, r *http.Request) {
 	s.sendStream(w, r, turn, streamCodec{
 		contentType: ollamaNDJSON,
 		write:       writeOllamaLine,
-		fault: func(kind FaultKind, _ int) frame {
-			_, message := ollamaFault(kind)
+		encodeFault: func(f fault, _ int) frame {
+			_, message := ollamaFault(f)
 			return frame{data: jsonBytes(ollamaError(message))}
 		},
 		terminal: []frame{{data: jsonBytes(final)}},
 	}, func(yield func(frame) bool) {
-		sendOllamaMessage(req.Model, message, yield)
+		sendOllamaMessage(req.Model, message, turn.mergedDeltas(), yield)
 	})
 }
 
@@ -163,7 +174,10 @@ func (s *Server) addOllamaCounts(req Request, turn Turn, final *ollamaCompletion
 	// Synthetic token counts. prompt_eval_count is the entire prompt, not
 	// the uncached portion. No native cache-write or reasoning-only metric.
 	if usage := turn.Usage; usage != nil {
-		final.Input, final.Output, final.Cached = usage.Input, usage.Output, &usage.Cached
+		final.Input, final.Output = usage.Input, usage.Output
+		if !usage.OmitCacheRead {
+			final.Cached = &usage.Cached
+		}
 		return
 	}
 	final.Input = req.Prefix.InputTokens
@@ -177,7 +191,7 @@ func (s *Server) addOllamaCounts(req Request, turn Turn, final *ollamaCompletion
 	}
 }
 
-func sendOllamaMessage(model string, message ollamaMessage, yield func(frame) bool) {
+func sendOllamaMessage(model string, message ollamaMessage, deltas []string, yield func(frame) bool) {
 	emit := func(msg ollamaMessage) bool {
 		msg.Role = "assistant"
 		return yield(frame{data: jsonBytes(ollamaReply(model, msg, false))})
@@ -187,8 +201,12 @@ func sendOllamaMessage(model string, message ollamaMessage, yield func(frame) bo
 	if message.Thinking != "" && !emit(ollamaMessage{Thinking: message.Thinking}) {
 		return
 	}
-	if message.Content != "" && !emit(ollamaMessage{Content: message.Content}) {
-		return
+	if message.Content != "" || len(deltas) > 0 {
+		for _, chunk := range textChunks(deltas, message.Content) {
+			if !emit(ollamaMessage{Content: chunk}) {
+				return
+			}
+		}
 	}
 	if len(message.ToolCalls) != 0 {
 		emit(ollamaMessage{ToolCalls: message.ToolCalls})
@@ -205,31 +223,34 @@ func writeOllamaLine(w io.Writer, f frame) error {
 
 func ollamaError(message string) map[string]string { return map[string]string{"error": message} }
 
-func ollamaFault(kind FaultKind) (int, string) {
-	switch kind {
+func ollamaFault(f fault) (int, string) {
+	// https://docs.ollama.com/api/errors.md lists 400, 404, 429 and 502.
+	// Wording and the timeout pairing are synthetic.
+	switch f.kind {
+	case ModelNotFound:
+		return 404, f.text("model not found")
+	case BadGateway:
+		return 502, f.text("cloud model unavailable")
+	case InvalidRequest:
+		return 400, f.text("invalid request")
+	case RequestTimeout:
+		return 408, f.text(requestTimedOut)
 	case ContextOverflow:
 		// llama_server.go maps the runner's context overflow to 413.
-		return http.StatusRequestEntityTooLarge, "the input length exceeds the context length"
+		return http.StatusRequestEntityTooLarge, f.text("the input length exceeds the context length")
 	case Overload:
 		// routes.go maps the scheduler's ErrMaxQueue (sched.go) to 503.
-		return http.StatusServiceUnavailable, "server busy, please try again.  maximum pending requests exceeded"
+		return http.StatusServiceUnavailable, f.text("server busy, please try again.  maximum pending requests exceeded")
 	case Auth:
 		// cloud_proxy.go emits this native 401 envelope (signin_url is optional).
-		return http.StatusUnauthorized, "unauthorized"
+		return http.StatusUnauthorized, f.text("unauthorized")
 	case RateLimit:
 		// Synthetic cloud rejection: the native cloud proxy preserves upstream
 		// status; the local queue uses 503 instead of rate limiting.
-		return http.StatusTooManyRequests, "rate limit exceeded"
+		return http.StatusTooManyRequests, f.text("rate limit exceeded")
 	default:
-		return http.StatusInternalServerError, "The request failed."
+		return http.StatusInternalServerError, f.text("The request failed.")
 	}
-}
-
-func (s *Server) ollamaModels() []string {
-	if ids, configured := s.models[Ollama]; configured {
-		return ids
-	}
-	return []string{ollamaDefaultModel}
 }
 
 func (s *Server) listOllama(w http.ResponseWriter, r *http.Request) {
@@ -239,9 +260,13 @@ func (s *Server) listOllama(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.observe(req)
-	models := s.ollamaModels()
+	models, ok := s.inventory(w, r, Ollama, ollamaDefaultModel)
+	if !ok {
+		return
+	}
 	rows := make([]map[string]any, 0, len(models))
-	for _, id := range models {
+	for _, m := range models {
+		id := m.ID
 		// Synthetic metadata, including the digest of the fixture name rather
 		// than a model file.
 		rows = append(rows, map[string]any{
@@ -259,7 +284,11 @@ func (s *Server) showOllama(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.observe(req)
-	if !slices.Contains(s.ollamaModels(), req.Model) {
+	models, ok := s.inventory(w, r, Ollama, ollamaDefaultModel)
+	if !ok {
+		return
+	}
+	if !slices.ContainsFunc(models, func(m Model) bool { return m.ID == req.Model }) {
 		writeJSON(w, http.StatusNotFound, ollamaError(fmt.Sprintf("model '%s' not found", req.Model)))
 		return
 	}

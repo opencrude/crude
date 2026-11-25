@@ -1,6 +1,7 @@
 package providersim
 
 import (
+	"cmp"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -127,14 +128,15 @@ func (s *messageState) listModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.server.observe(req)
-	ids, ok := s.server.models[Messages]
+	entries, ok := s.server.inventory(w, r, Messages, "claude-sonnet-4-6")
 	if !ok {
-		ids = []string{"claude-sonnet-4-6"}
+		return
 	}
-	models := make([]messageObject, 0, len(ids))
+	models := make([]messageObject, 0, len(entries))
 	var first, last any
 	yes, no := messageObject{"supported": true}, messageObject{"supported": false}
-	for _, id := range ids {
+	for _, m := range entries {
+		id := m.ID
 		p := messageModelProfile(id)
 		caps := messageObject{"batch": no, "citations": no, "code_execution": no, "image_input": yes, "pdf_input": no, "structured_outputs": no,
 			"server_tools": messageObject{"supported": false, "web_search": no, "code_execution": no}, "effort": messageObject{"supported": false, "high": no, "low": no, "max": no, "medium": no},
@@ -143,10 +145,14 @@ func (s *messageState) listModels(w http.ResponseWriter, r *http.Request) {
 		if hasMessageBeta(r.Header, demandBeta) {
 			caps["compaction"] = messageObject{"supported": p.demand, "summarize": messageObject{"supported": p.demand}}
 		}
-		models = append(models, messageObject{"id": id, "type": "model", "created_at": "1970-01-01T00:00:00Z", "display_name": id, "lifecycle": "active", "capabilities": caps})
+		row := messageObject{"id": id, "type": "model", "created_at": "1970-01-01T00:00:00Z", "display_name": cmp.Or(m.DisplayName, id), "lifecycle": "active", "capabilities": caps}
+		if m.ContextWindow != 0 {
+			row["max_input_tokens"] = m.ContextWindow
+		}
+		models = append(models, row)
 	}
-	if len(ids) > 0 {
-		first, last = ids[0], ids[len(ids)-1]
+	if len(entries) > 0 {
+		first, last = entries[0].ID, entries[len(entries)-1].ID
 	}
 	writeJSON(w, 200, messageObject{"data": models, "first_id": first, "last_id": last, "has_more": false})
 }
