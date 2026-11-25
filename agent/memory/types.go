@@ -90,6 +90,8 @@ type RecallQuery struct {
 	// IncludeArchived widens the search to decayed records (explicit
 	// recall_memory searches set this; auto-injection does not).
 	IncludeArchived bool
+	// Exclude holds revisions the agent already has in its context.
+	Exclude map[RevisionRef]bool
 }
 
 // ListQuery describes a browse/list request (memory browser UI).

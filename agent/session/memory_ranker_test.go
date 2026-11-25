@@ -265,7 +265,7 @@ func TestRankedMemoryAbstentionDisableAndRevisionFence(t *testing.T) {
 
 func TestActionRankingUsesParallelOperationsNotWrapper(t *testing.T) {
 	batch := []provider.ChatMessage{{Role: "assistant", ToolCalls: []provider.ToolCall{{ID: "pair", Function: provider.FunctionCall{Name: "multi_tool_use.parallel", Arguments: `{"tool_uses":[{"recipient_name":"functions.read_file","parameters":{"path":"a.go"}},{"recipient_name":"functions.read_file","parameters":{"path":"b.go"}}]}`}}}}, {Role: "tool", ToolCallID: "pair", DisplayContent: `{"results":[{"recipient_name":"read_file","result":"ok"},{"recipient_name":"read_file","result":"missing fixture","error":true,"outcome":{"state":"error"}}]}`}}
-	state, paths := actionRankingState(nil, batch, ".")
+	state, paths := actionRankingState(nil, batch, ".", humanText)
 	if len(paths) != 2 || len(state.Actions) != 2 || !strings.Contains(state.Actions[1], "b.go") || !strings.Contains(state.Actions[1], "missing fixture") {
 		t.Fatal(state, paths)
 	}

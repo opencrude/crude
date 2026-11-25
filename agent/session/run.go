@@ -1884,12 +1884,19 @@ func persistedToolStatus(message provider.ChatMessage, current string) string {
 	return "error"
 }
 
-// messagesForTurnLocked snapshots this turn's messages. Caller holds msgsMu.
+// messagesForTurnLocked snapshots this turn's messages for its memory mirror.
+// Caller holds msgsMu. Context copies carry no display text, so the human's
+// own words for a steering message come from its transcript metadata, not
+// from its wrapped prompt.
 func (s *Session) messagesForTurnLocked(turn int) []provider.ChatMessage {
 	var out []provider.ChatMessage
 	for i, msgTurn := range s.msgTurns {
 		if msgTurn == turn && i < len(s.msgs) {
-			out = append(out, s.msgs[i])
+			message := s.msgs[i]
+			if message.DisplayContent == "" && i < len(s.displayMetas) {
+				message.DisplayContent = s.displayMetas[i].DisplayContent
+			}
+			out = append(out, message)
 		}
 	}
 	return out
@@ -2025,22 +2032,26 @@ func (s *Session) prepareInput(ctx context.Context, input provider.UserInput, cf
 		return result, nil
 	}
 	parts := append([]string(nil), input.ContextParts...)
-	if input.EffectiveOrigin() == provider.OriginHuman {
-		currentPlan, err := s.activePlanTurnContext(ctx)
-		if err != nil {
-			return result, fmt.Errorf("prepare current plan: %w", err)
+	if origin := input.EffectiveOrigin(); origin == provider.OriginHuman || origin == provider.OriginHumanSteering {
+		if origin == provider.OriginHuman {
+			currentPlan, err := s.activePlanTurnContext(ctx)
+			if err != nil {
+				return result, fmt.Errorf("prepare current plan: %w", err)
+			}
+			if currentPlan != "" {
+				parts = append(parts, currentPlan)
+			}
 		}
-		if currentPlan != "" {
-			parts = append(parts, currentPlan)
-		}
-		recalled, err := s.recallMemoryContext(ctx, input.Text, input.ActivePaths)
+		// Steering is new human input too: a correction or a stated fact
+		// recalls what the workspace already knows about it.
+		recalled, err := s.recallMemoryContext(ctx, input.Text, input.ActivePaths, shownMemories(retained))
 		if err != nil {
 			return result, err
 		}
 		if recalled != "" {
 			parts = append(parts, recalled)
 		}
-		if !s.prevContextInjected.Load() {
+		if origin == provider.OriginHuman && !s.prevContextInjected.Load() {
 			previous, err := s.previousSessionContext(ctx)
 			if err != nil {
 				return result, err

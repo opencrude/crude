@@ -746,6 +746,22 @@ Decision checks have a two-second deadline. Chat allows eight seconds for text
 generation, which also bounds an Automatic model-list lookup (cached per
 account). Neither mode falls back to another model or endpoint.
 
+- **Every human message reaches memory.** Steering sent while a turn runs is
+  stored with that turn's number, like the request that started it. The turn
+  mirror keeps each human message of the turn as the human typed it, and each
+  is a human statement the curator can cite; the steering prompt's delivery
+  instructions are not. Until 2026-11-25 steering was stored at turn 0, so no
+  turn mirror, curator request or history search saw it: 233 of 533 human
+  messages in one workspace, including a keyboard fact the user gave in five
+  sessions. `TestHumanSteeringReachesMemoryCurator` covers the journey.
+- **Every human message recalls.** The request and each steering message
+  recall memories for their own words. Revisions already in the agent's context
+  are not sent again. The action ranker's task is the latest human message as
+  typed (from the transcript), not the first bytes of its provider text.
+- **A scope ranks; it never hides.** A memory's paths raise its rank when a
+  context path lies inside them. A memory scoped to another file, a moved file
+  or `.` stays available to recall by its words
+  (`TestScopedMemoriesRankHigherInScopeAndStayVisibleElsewhere`).
 - **The curator sees each turn's outcome.** A long turn states its subject
   first and its result last, so no stage of the memory pipeline keeps only the
   beginning. The turn mirror keeps the human text and the final report whole up
