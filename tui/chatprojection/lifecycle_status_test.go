@@ -109,33 +109,32 @@ func TestLifecycleStatusProjectionTransformsInPlaceToTool(t *testing.T) {
 	}
 }
 
-func TestCompactionLifecycleUsesRetainedBoundaryTable(t *testing.T) {
-	renderer := NewRenderer(theme.DefaultDark())
-	renderer.SetSize(100, 20)
-	renderer.SetChatAreaBounds(0, 12)
-	msg := conversation.ChatMessage{
-		InternalID: "compact", Role: conversation.RoleStatus, LifecyclePhase: "compaction_extracting",
-		LifecycleOperationID: "compact-1", LifecycleStageName: "Capturing state", LifecycleTrigger: "manual",
-		LifecycleStageIndex: 3, LifecycleCompleted: 2, LifecycleStageCount: 4,
-		LifecycleBeforeTokens: 420000, Time: time.Now().Add(-2 * time.Second),
-	}
-	renderer.SyncMessages([]conversation.ChatMessage{msg}, 1, 0)
-	rows, _, _ := renderer.ExportMessageRows(100)
-	joined := strings.Join(rows[0].Lines, "\n")
-	if len(rows[0].Lines) != 7 || !rows[0].ContextBoundary || rows[0].ContextBoundaryStart != 1 ||
-		!strings.Contains(joined, "Crude Errand") || !strings.Contains(joined, "Compaction") ||
-		!strings.Contains(joined, "Capturing state") ||
-		!strings.Contains(joined, "■ ■ ● □") || !strings.Contains(joined, "420K") || !strings.Contains(joined, "esc cancel") {
-		t.Fatalf("compaction lifecycle = %q", joined)
-	}
-	if strings.Contains(joined, "●  Compaction") || strings.Contains(joined, "Context       ") || strings.Contains(joined, "Stage         ") {
-		t.Fatalf("compaction retained obsolete labels or two-column marker gap: %q", joined)
-	}
-	direct := renderCompactionMessage(msg, renderContext{innerW: 92, contentWidth: 76, spinFrame: 1})
-	for index := 1; index < len(direct.native)-1; index++ {
-		if got := direct.native[index].VisibleWidth(); got != 92 {
-			t.Fatalf("row %d width=%d want right column aligned with 92-column header", index, got)
-		}
+func TestLiveManualAndRequestedCompactionUseOrdinaryToolGeometry(t *testing.T) {
+	for _, trigger := range []string{"manual", "requested"} {
+		t.Run(trigger, func(t *testing.T) {
+			r := NewRenderer(theme.DefaultDark())
+			r.SetSize(80, 24)
+			r.SetChatAreaBounds(0, 12)
+			msg := conversation.ChatMessage{
+				InternalID: "compact", Role: conversation.RoleStatus, LifecyclePhase: "compaction_extracting",
+				LifecycleOperationID: "one-checkpoint", LifecycleStageName: "Capturing state", LifecycleTrigger: trigger,
+				LifecycleStageIndex: 3, LifecycleCompleted: 2, LifecycleStageCount: 4,
+				LifecycleBeforeTokens: 420000, ModelID: "errand/model",
+			}
+			r.SyncMessages([]conversation.ChatMessage{msg}, 1, 0)
+			rows, _, _ := r.ExportMessageRows(80)
+			want := "│ ● Compacting context (Manual) 420K · Capturing state"
+			if len(rows) != 1 || rows[0].ID != "compact" || rows[0].ContextBoundary || len(rows[0].Lines) != 2 || rows[0].Lines[0] != "" || rows[0].Lines[1] != want {
+				t.Fatalf("want one ordinary tool row, got %v", rows)
+			}
+			msg.LifecyclePhase = "compaction_completed"
+			msg.LifecycleAfterTokens = 12000
+			r.SyncMessages([]conversation.ChatMessage{msg}, 2, 0)
+			rows, _, _ = r.ExportMessageRows(80)
+			if len(rows) != 1 || rows[0].ID != "compact" || rows[0].ContextBoundary || len(rows[0].Lines) != 2 || !rows[0].Toggle || !strings.Contains(rows[0].Lines[1], "Compacted context (Manual)") {
+				t.Fatalf("completion changed identity, lost disclosure or restored a card: %v", rows)
+			}
+		})
 	}
 }
 
@@ -154,7 +153,7 @@ func TestCompactionTerminalFormsStayCompactAndDiscloseEvidence(t *testing.T) {
 		}
 		msg.ModelID = "errand/model"
 		rendered := renderCompactionMessage(msg, renderContext{contentWidth: 76, innerW: 92})
-		if len(rendered.native) != 1 || !strings.Contains(rendered.lines[0], "▸") {
+		if len(rendered.native) != 1 || !strings.Contains(rendered.lines[0], "(Manual)") || !strings.Contains(rendered.lines[0], "▸") {
 			t.Fatalf("%s is not compact with disclosure: %q", phase, rendered.lines)
 		}
 		expanded := renderCompactionMessage(msg, renderContext{contentWidth: 76, innerW: 92, disclosure: DisclosureExpanded})
@@ -177,19 +176,19 @@ func TestAutomaticCompactionPaintsAsOneToolRow(t *testing.T) {
 		want                          string
 		animate                       bool
 	}{
-		{phase: "compaction_preparing", want: "│ ● Compacting context", animate: true},
-		{phase: "compaction_extracting", stage: "Distilling work", before: 420000, want: "│ ● Compacting context 420K — Distilling work", animate: true},
-		{phase: "compaction_retrying", stage: "Distilling work", want: "│ ● Compacting context — retry 2/3", animate: true},
-		{phase: "compaction_committing", stage: "Preparing continuation", want: "│ ● Compacting context — saving checkpoint", animate: true},
-		{phase: "compaction_cancelling", want: "│ ● Stopping compaction", animate: true},
-		{phase: "compaction_completed", before: 155955, after: 10476, want: "│ ● Compacted context 156.0K → ~10.5K"},
-		{phase: "compaction_completed", trigger: "background", before: 155955, after: 10476, want: "│ ● Compacted context 156.0K → ~10.5K — prepared in background"},
-		{phase: "compaction_completed", trigger: "decay", before: 155955, after: 90000, want: "│ ● Compacted context 156.0K → ~90K — older tool output trimmed"},
-		{phase: "compaction_completed", want: "│ ● Compacted context"},
-		{phase: "compaction_cancelled", want: "│ ○ Compaction cancelled — original context kept"},
-		{phase: "compaction_failed", reason: "download stalled", want: "│ × Compaction failed — download stalled"},
-		{phase: "compaction_failed", want: "│ × Compaction failed — original context kept"},
-		{phase: "compaction_interrupted", want: "│ ○ Compaction interrupted — original context kept"},
+		{phase: "compaction_preparing", want: "│ ● Compacting context (Auto)", animate: true},
+		{phase: "compaction_extracting", stage: "Distilling work", before: 420000, want: "│ ● Compacting context (Auto) 420K · Distilling work", animate: true},
+		{phase: "compaction_retrying", stage: "Distilling work", want: "│ ● Compacting context (Auto) · retry 2/3", animate: true},
+		{phase: "compaction_committing", stage: "Preparing continuation", want: "│ ● Compacting context (Auto) · saving checkpoint", animate: true},
+		{phase: "compaction_cancelling", want: "│ ● Stopping compaction (Auto)", animate: true},
+		{phase: "compaction_completed", before: 155955, after: 10476, want: "│ ● Compacted context (Auto) 156.0K → ~10.5K"},
+		{phase: "compaction_completed", trigger: "background", before: 155955, after: 10476, want: "│ ● Compacted context (Auto) 156.0K → ~10.5K · prepared in background"},
+		{phase: "compaction_completed", trigger: "decay", before: 155955, after: 90000, want: "│ ● Compacted context (Auto) 156.0K → ~90K · older tool output trimmed"},
+		{phase: "compaction_completed", want: "│ ● Compacted context (Auto)"},
+		{phase: "compaction_cancelled", want: "│ ○ Compaction cancelled (Auto) · original context kept"},
+		{phase: "compaction_failed", reason: "download stalled", want: "│ × Compaction failed (Auto) · download stalled"},
+		{phase: "compaction_failed", want: "│ × Compaction failed (Auto) · original context kept"},
+		{phase: "compaction_interrupted", want: "│ ○ Compaction interrupted (Auto) · original context kept"},
 	}
 	for _, test := range cases {
 		trigger := test.trigger
@@ -234,7 +233,7 @@ func TestAutomaticCompactionRowHasNoContextBoundaryRules(t *testing.T) {
 	if len(rows) != 1 || rows[0].ContextBoundary || len(rows[0].Lines) != 2 || strings.TrimSpace(rows[0].Lines[0]) != "" {
 		t.Fatalf("automatic compaction rows = %+v", rows)
 	}
-	if got := rows[0].Lines[1]; got != "│ ● Compacted context 156.0K → ~10.5K ▸" {
+	if got := rows[0].Lines[1]; got != "│ ● Compacted context (Auto) 156.0K → ~10.5K ▸" {
 		t.Fatalf("automatic compaction line = %q", got)
 	}
 	spans := rows[0].Native[1].Spans

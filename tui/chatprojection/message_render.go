@@ -786,19 +786,6 @@ func lifecycleMessageFrameSensitive(msg conversation.ChatMessage) bool {
 	}
 }
 
-// renderCompactionMessage projects one context-compaction boundary. A manual
-// /compact keeps its detailed operation table because the human asked for that
-// work and watches it run. Automatic, background-prepared and decay compactions
-// are maintenance the agent does on its own: each paints as one ordinary tool
-// row. Live events and resumed records carry the same trigger, so both paths
-// paint the same form.
-func renderCompactionMessage(msg conversation.ChatMessage, ctx renderContext) messageLines {
-	if !isManualCompaction(msg) || settledCompaction(msg) {
-		return renderAutomaticCompactionMessage(msg, ctx)
-	}
-	return renderManualCompactionMessage(msg, ctx)
-}
-
 func settledCompaction(msg conversation.ChatMessage) bool {
 	switch msg.LifecyclePhase {
 	case "compaction_completed", "compaction_cancelled", "compaction_interrupted", "compaction_failed":
@@ -807,14 +794,9 @@ func settledCompaction(msg conversation.ChatMessage) bool {
 	return false
 }
 
-func isManualCompaction(msg conversation.ChatMessage) bool {
-	return strings.HasPrefix(msg.LifecyclePhase, "compaction_") && msg.LifecycleTrigger == "manual"
-}
-
-// renderAutomaticCompactionMessage paints an automatic compaction through the
-// shared tool title, so it reads like any other tool call: verb, token result
-// as the operand, and the stage, retry or reason as metadata.
-func renderAutomaticCompactionMessage(msg conversation.ChatMessage, ctx renderContext) messageLines {
+// renderCompactionMessage paints the same tool row for live events and restored
+// checkpoints. The recorded trigger changes the label, never the row geometry.
+func renderCompactionMessage(msg conversation.ChatMessage, ctx renderContext) messageLines {
 	title := tools.ToolTitle{Action: "Compacting context"}
 	status, active, detail := conversation.ToolStatusStreaming, true, ""
 	switch msg.LifecyclePhase {
@@ -826,8 +808,6 @@ func renderAutomaticCompactionMessage(msg conversation.ChatMessage, ctx renderCo
 			detail = "prepared in background"
 		case "decay":
 			detail = "older tool output trimmed"
-		case "requested":
-			detail = "requested with /compact"
 		case "loop_end":
 			detail = "after the work finished"
 		}
@@ -847,11 +827,13 @@ func renderAutomaticCompactionMessage(msg conversation.ChatMessage, ctx renderCo
 	case "compaction_cancelling":
 		title.Action = "Stopping compaction"
 	case "compaction_retrying":
-		limit := msg.LifecycleRetryLimit
-		if limit <= 0 {
-			limit = 3
+		detail = "retrying"
+		if attempt := msg.LifecycleRetryAttempt; attempt > 0 {
+			detail = fmt.Sprintf("retry %d", attempt)
+			if limit := msg.LifecycleRetryLimit; limit > 0 {
+				detail += fmt.Sprintf("/%d", limit)
+			}
 		}
-		detail = fmt.Sprintf("retry %d/%d", msg.LifecycleRetryAttempt, limit)
 	case "compaction_committing":
 		detail = "saving checkpoint"
 	default: // preparing, extracting
@@ -860,8 +842,14 @@ func renderAutomaticCompactionMessage(msg conversation.ChatMessage, ctx renderCo
 		}
 		detail = strings.TrimSpace(msg.LifecycleStageName)
 	}
+	switch msg.LifecycleTrigger {
+	case "manual", "requested":
+		title.Action += " (Manual)"
+	case "automatic", "background", "loop_end", "decay":
+		title.Action += " (Auto)"
+	}
 	if detail != "" {
-		title.Metadata = "— " + detail
+		title.Metadata = "· " + detail
 	}
 	if active && !msg.Time.IsZero() {
 		if elapsed := time.Since(msg.Time); elapsed >= time.Second {
@@ -878,10 +866,12 @@ func renderAutomaticCompactionMessage(msg conversation.ChatMessage, ctx renderCo
 		}
 		suffix = []RowSpan{{Text: glyph, Role: ui.ColorMuted}}
 	}
-	lines := wrapCompactToolTitle(header, ctx.innerW, suffix)
+	var lines []PaintLine
 	if active || ctx.disclosure == DisclosureExpanded {
 		header.Spans = append(header.Spans, suffix...)
 		lines = wrapToolTitle(header, ctx.innerW)
+	} else {
+		lines = wrapCompactToolTitle(header, ctx.innerW, suffix)
 	}
 	for _, line := range lines {
 		out.lines = append(out.lines, line.PlainText())
@@ -913,119 +903,6 @@ func compactionTokenSummary(msg conversation.ChatMessage) string {
 	return tokens
 }
 
-// renderManualCompactionMessage is the /compact operation table.
-func renderManualCompactionMessage(msg conversation.ChatMessage, ctx renderContext) messageLines {
-	active := true
-	state, marker, stateRole := "Compaction", ui.ActivityDot(ctx.spinFrame), ui.ColorAccent2
-	stateMeta := "active"
-	stage := strings.TrimSpace(msg.LifecycleStageName)
-	if stage == "" {
-		stage = "Preparing"
-	}
-	switch msg.LifecyclePhase {
-	case "compaction_retrying":
-		stateMeta = "recovering"
-	case "compaction_committing":
-		stage = "Saving checkpoint"
-		stateMeta = "committing"
-	case "compaction_cancelling":
-		stage = "Stopping safely"
-		stateMeta = "cancelling"
-		stateRole = ui.ColorWarning
-	case "compaction_completed":
-		active = false
-		state, marker, stateRole, stateMeta = "Compacted", "✓", ui.ColorSuccess, "complete"
-	case "compaction_cancelled":
-		active = false
-		state, marker, stateRole, stateMeta = "Cancelled", "■", ui.ColorMuted, "stopped"
-	case "compaction_failed":
-		active = false
-		state, marker, stateRole, stateMeta = "Failed", "✕", ui.ColorError, "stopped"
-	case "compaction_interrupted":
-		active = false
-		state, marker, stateRole, stateMeta = "Interrupted", "⚠", ui.ColorWarning, "restart"
-	}
-	if msg.LifecycleTrigger != "" {
-		stateMeta += " · " + msg.LifecycleTrigger
-	}
-
-	stageCount := msg.LifecycleStageCount
-	if stageCount <= 0 {
-		stageCount = 4
-	}
-	completed := max(0, min(stageCount, msg.LifecycleCompleted))
-	bar := compactionProgressBar(completed, stageCount, active && msg.LifecycleStageIndex > 0 && msg.LifecyclePhase != "compaction_committing")
-	progress := fmt.Sprintf("%s  %d / %d", bar, completed, stageCount)
-
-	elapsed := ""
-	if active && !msg.Time.IsZero() {
-		if duration := time.Since(msg.Time); duration >= time.Second {
-			elapsed = fmt.Sprintf("%ds", int(duration.Seconds()))
-		}
-	}
-	modelName := msg.ModelID
-	if modelName == "" {
-		modelName = "Errand"
-	}
-	header := buildAssistantHeader(modelName, false, rendering.FormatTimeLabel(msg.Time), ctx.innerW, false)
-	rows := []PaintLine{{}, header}
-	rows = append(rows, lifecycleBoundaryLine(ctx.innerW, marker+" "+state, stateMeta, stateRole))
-	if active {
-		stagePosition := msg.LifecycleStageIndex
-		if stagePosition == 0 {
-			stagePosition = completed
-		}
-		rows = append(rows, lifecycleBoundaryLine(ctx.innerW, stage, fmt.Sprintf("%s  %d / %d", bar, stagePosition, stageCount), ui.ColorFg))
-		trailer := "esc cancel"
-		if elapsed != "" {
-			trailer = elapsed + " · " + trailer
-		}
-		if msg.LifecyclePhase == "compaction_retrying" {
-			retryLimit := msg.LifecycleRetryLimit
-			if retryLimit <= 0 {
-				retryLimit = 3
-			}
-			trailer = fmt.Sprintf("retry %d / %d · %s", msg.LifecycleRetryAttempt, retryLimit, trailer)
-		}
-		source := "Calculating"
-		if msg.LifecycleBeforeTokens > 0 {
-			source = rendering.FormatTokens(msg.LifecycleBeforeTokens) + " tokens"
-		}
-		rows = append(rows, lifecycleBoundaryLine(ctx.innerW, source, trailer, ui.ColorMuted))
-	} else if msg.LifecyclePhase == "compaction_completed" {
-		tokens := rendering.FormatTokens(msg.LifecycleBeforeTokens)
-		if msg.LifecycleAfterTokens > 0 {
-			tokens += " → ~" + rendering.FormatTokens(msg.LifecycleAfterTokens)
-		}
-		rows = append(rows, lifecycleBoundaryLine(ctx.innerW, "Active context ready", progress, ui.ColorFg))
-		trailer := "checkpoint active"
-		if msg.LifecycleTrigger == "manual" {
-			trailer = "ready to continue"
-		}
-		rows = append(rows, lifecycleBoundaryLine(ctx.innerW, tokens+" active · transcript archived", trailer, ui.ColorMuted))
-	} else {
-		rows = append(rows, lifecycleBoundaryLine(ctx.innerW, stage, progress, ui.ColorFg))
-		detail := "Stopped before context commit"
-		switch msg.LifecyclePhase {
-		case "compaction_failed":
-			if strings.TrimSpace(msg.Content) != "" {
-				detail = msg.Content
-			} else {
-				detail = "Recovery attempts exhausted"
-			}
-		case "compaction_interrupted":
-			detail = "App stopped before atomic commit"
-		}
-		rows = append(rows, lifecycleBoundaryLine(ctx.innerW, detail, "original context kept", ui.ColorMuted))
-	}
-	rows = append(rows, PaintLine{})
-	lines := make([]string, len(rows))
-	for i := range rows {
-		lines[i] = rows[i].PlainText()
-	}
-	return messageLines{lines: lines, native: rows, frameSensitive: active}
-}
-
 func lifecycleBoundaryLine(width int, value, trailer string, valueRole ui.SemanticColor) PaintLine {
 	if width < 1 {
 		return PaintLine{}
@@ -1049,24 +926,6 @@ func lifecycleBoundaryLine(width int, value, trailer string, valueRole ui.Semant
 		spans = append(spans, RowSpan{Text: strings.Repeat(" ", gap) + trailer, Role: ui.ColorMuted})
 	}
 	return PaintLine{Spans: spans}
-}
-
-func compactionProgressBar(completed, total int, current bool) string {
-	if total <= 0 {
-		return ""
-	}
-	parts := make([]string, total)
-	for index := range parts {
-		switch {
-		case index < completed:
-			parts[index] = "■"
-		case current && index == completed:
-			parts[index] = "●"
-		default:
-			parts[index] = "□"
-		}
-	}
-	return strings.Join(parts, " ")
 }
 
 func renderMessageContent(msg conversation.ChatMessage, ctx renderContext, suppressHeader bool) messageLines {

@@ -1290,7 +1290,7 @@ func (r *Renderer) messageRow(item *renderItem) MessageRow {
 	} else if msg, ok := item.Data.(*conversation.ChatMessage); ok && msg != nil {
 		subPaneID = msg.SubPaneID
 		executionID = msg.ExecutionID
-		contextBoundary = msg.LifecyclePhase == "history_restored" || isManualCompaction(*msg) && !settledCompaction(*msg)
+		contextBoundary = msg.LifecyclePhase == "history_restored"
 		if r.hasDisclosure(msg) {
 			toggleLine = 0
 			toggleAny = r.disclosureState(msg) == DisclosureExpanded
