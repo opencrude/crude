@@ -1015,13 +1015,9 @@ func (c *Client) backoff(ctx context.Context, attempt int, resp *http.Response, 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	delay := serverHintedDelay(resp, attempt, c.dial)
 	// Some APIs advise the delay in the error body (google.rpc.RetryInfo),
 	// which readStatusError already consumed into the typed error.
-	var status *StatusError
-	if errors.As(cause, &status) && status.RetryAfter > delay {
-		delay = retry.Clamp(status.RetryAfter)
-	}
+	delay := max(serverHintedDelay(resp, attempt, c.dial), AdvisedRetryDelay(cause))
 	logIf(func(lg *logger.Logger) {
 		lg.Warn("RETRY", "attempt", "protocol", c.proto.Info().ID, "attempt", attempt,
 			"backoff_ms", delay.Milliseconds(), "error", cause.Error())

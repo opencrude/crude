@@ -8,6 +8,9 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
+
+	"crude/internal/retry"
 )
 
 // StreamInterruptionKind identifies typed evidence that an accepted streaming
@@ -279,4 +282,16 @@ func ErrorSummary(err error) string {
 		return "Connection to the provider was interrupted"
 	}
 	return "Provider request failed"
+}
+
+// AdvisedRetryDelay is the wait a provider error carries from the server
+// (Retry-After, retry-after-ms or google.rpc.RetryInfo) within the retry
+// ceiling, or zero when the server advised none. Every automatic retry waits
+// at least this long.
+func AdvisedRetryDelay(err error) time.Duration {
+	var status *StatusError
+	if errors.As(err, &status) {
+		return retry.Clamp(status.RetryAfter)
+	}
+	return 0
 }

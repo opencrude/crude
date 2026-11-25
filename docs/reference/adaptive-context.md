@@ -6,6 +6,37 @@ Prompt ownership, guidance budgets and development rules are defined in
 [model prompts and project guidance](prompt-architecture.md). This reference owns
 context admission, extraction and recovery, not a second set of prompt templates.
 
+## Product rules
+
+These are the user's decisions. Every change in this area keeps them; the
+sections below describe how.
+
+1. **Native first, then the whole history.** Crude tries the provider's
+   [native compaction](#native-compaction-on-custom-connections) on the
+   selected account. When it is not available or fails, Crude writes a portable
+   checkpoint of the whole history, as manual `/compact` does. It never trims
+   or drops history to fit.
+2. **A running agent keeps its momentum.** Automatic compaction happens at a
+   safe request boundary and does not stop the run. After the checkpoint the
+   agent continues the same step: the turn in progress, its steering, running
+   commands and children stay current, and answered requests are marked as
+   answered.
+3. **The continuation keeps its contract.** Every request after a checkpoint
+   carries the current system prompt and all tool definitions. Only the
+   history is replaced.
+4. **No raw history behind a checkpoint.** A checkpoint written by Errand or by
+   the serving model replaces the old history. Crude does not attach earlier
+   raw messages or tool output behind it: that costs money, and the checkpoint
+   already carries the state.
+5. **Manual compaction is authoritative.** A compact order from the user or the
+   main agent runs at the next loop boundary, also while the agent is running.
+   Running work never makes Crude refuse it, and the user always sees the
+   outcome.
+6. **Recover instead of stopping.** A recoverable failure (rate limit,
+   transient outage, rejected native artifact, output ceiling) is retried or
+   adapted inside the loop. Only a run-level fault stops the run, and the run
+   stays recoverable. User authority and short, plain messages stay intact.
+
 ## Failure and ownership
 
 The reported manual-compaction failure sent about 498K estimated input tokens to

@@ -101,9 +101,10 @@ and confirmed billing or quota failures distinct from temporary throttling.
 See [run recovery](../reference/run-recovery.md#one-supervisor-separate-budgets).
 
 Normal requests already share the classification across wires. Test the
-compaction paths separately: the portable extractor retries a typed transient
-429 but currently computes its stage delay without the server hint. Native
-discovery records a cooldown and must not learn "unsupported" from a 429.
+compaction paths separately. The portable extractor, the transport backoff and
+the run supervisor now take the server hint from one owner,
+`provider.AdvisedRetryDelay`. Native discovery records a cooldown and must not
+learn "unsupported" from a 429.
 Check both an HTTP 429 and a typed rate-limit error inside a stream.
 Cover 429 followed by success in discovery, portable extraction and required
 compaction. Check both Auto fallback and Provider only recovery. A confirmed
