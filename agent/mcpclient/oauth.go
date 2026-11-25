@@ -37,32 +37,32 @@ var errNeedsSignIn = errors.New("MCP needs sign-in; use explicit Sign in")
 func validateOAuth(config captypes.ConnectionConfig) error {
 	if config.Auth != "oauth" {
 		if config.OAuthClientID != "" || config.OAuthMetadataURL != "" || config.OAuthIssuer != "" || config.CredentialRef != "" || len(config.OAuthScopes) != 0 {
-			return errors.New("Select OAuth to save OAuth settings.")
+			return errors.New("OAuth is not selected; select OAuth to save these settings")
 		}
 		return nil
 	}
 	if config.Transport != "http" {
-		return errors.New("OAuth requires a Streamable HTTP connection.")
+		return errors.New("OAuth requires a Streamable HTTP connection")
 	}
 	if config.OAuthMetadataURL != "" {
 		u, err := url.Parse(config.OAuthMetadataURL)
 		if err != nil || !oauthURL(u) || u.Scheme != "https" || u.Path == "" || u.Path == "/" || u.ForceQuery || u.RawQuery != "" {
-			return errors.New("Enter a public HTTPS URL for the OAuth client metadata document.")
+			return errors.New("OAuth client metadata URL must be a public HTTPS URL")
 		}
 		if config.OAuthClientID != "" {
-			return errors.New("Enter an OAuth client ID or a metadata URL, not both.")
+			return errors.New("enter an OAuth client ID or a metadata URL, not both")
 		}
 	}
 	if config.OAuthIssuer != "" {
 		u, err := url.Parse(config.OAuthIssuer)
 		if err != nil || !oauthURL(u) || u.ForceQuery || u.RawQuery != "" || config.OAuthClientID == "" {
-			return errors.New("Enter a valid issuer URL and a registered OAuth client ID.")
+			return errors.New("set a valid OAuth issuer URL and a registered OAuth client ID")
 		}
 	}
 	if config.CredentialRef != "" {
 		name, stored := strings.CutPrefix(config.CredentialRef, "secret:")
 		if !stored || !ValidSecretName(name) || config.OAuthIssuer == "" {
-			return errors.New("A client secret needs a secret:NAME reference, a registered client ID and its issuer URL.")
+			return errors.New("OAuth client secrets need a secret:NAME reference, a registered client ID and its issuer URL")
 		}
 	}
 	return nil
@@ -219,12 +219,12 @@ func (manager *Manager) persistToken(ctx context.Context, epoch uint64, saved cr
 	return nil
 }
 
-func (entry *connection) rememberToken(token oauth2.Token) {
-	if entry.secrets == nil {
-		entry.secrets = make(map[string]struct{})
+func (c *connection) rememberToken(token oauth2.Token) {
+	if c.secrets == nil {
+		c.secrets = make(map[string]struct{})
 	}
-	entry.secrets[token.AccessToken] = struct{}{}
-	entry.secrets[token.RefreshToken] = struct{}{}
+	c.secrets[token.AccessToken] = struct{}{}
+	c.secrets[token.RefreshToken] = struct{}{}
 }
 
 func (manager *Manager) loadCredential(config captypes.ConnectionConfig) (*credential, error) {
@@ -260,7 +260,7 @@ type oauthTransport struct {
 func (transport oauthTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	if transport.tokenURL != "" && request.Method == http.MethodPost && request.Header.Get("Content-Type") == "application/x-www-form-urlencoded" && request.URL.String() != transport.tokenURL {
 		_ = request.Body.Close()
-		return nil, errors.New("The OAuth token endpoint changed. Check MCP settings before you use Sign in.")
+		return nil, errors.New("OAuth token endpoint changed; check MCP settings before you use Sign in")
 	}
 	clientID, secret, basic := request.BasicAuth()
 	if basic && clientID == transport.clientID && secret == "" && request.Method == http.MethodPost && request.Header.Get("Content-Type") == "application/x-www-form-urlencoded" {
@@ -360,7 +360,7 @@ func (access *oauthAccess) Authorize(ctx context.Context, request *http.Request,
 		}
 	}
 	if response.StatusCode == http.StatusForbidden && !stepUp {
-		return errors.New("The MCP server denied access.")
+		return errors.New("MCP server denied access")
 	}
 	return errNeedsSignIn
 }
@@ -410,7 +410,7 @@ func (manager *Manager) retainScopeChallenge(access *oauthAccess, endpoint oauth
 		}
 	}
 	if len(union) == len(previous) {
-		return errors.New("The MCP server denied access with the current OAuth scopes.")
+		return errors.New("MCP server denied access with the current OAuth scopes")
 	}
 	if entry.scopeChallenge == nil {
 		entry.scopeChallenge = &scopeChallenge{scopes: union, authEndpoint: endpoint.AuthURL, tokenEndpoint: endpoint.TokenURL, resourceHint: hint}
@@ -436,10 +436,10 @@ func (manager *Manager) confidentialTokenEndpoint(ctx context.Context, config ca
 	defer client.CloseIdleConnections()
 	metadata, err := auth.GetAuthServerMetadata(ctx, config.OAuthIssuer, client)
 	if err != nil || metadata == nil {
-		return "", errors.New("Could not check the OAuth issuer. Check its URL in MCP settings.")
+		return "", errors.New("could not check the OAuth issuer; check its URL in MCP settings")
 	}
 	if !trustedTokenEndpoint(config, metadata.TokenEndpoint) {
-		return "", errors.New("The OAuth token endpoint must belong to the configured issuer, not the MCP resource.")
+		return "", errors.New("OAuth token endpoint must belong to the configured issuer, not the MCP resource")
 	}
 	return metadata.TokenEndpoint, nil
 }
@@ -449,7 +449,7 @@ func trustedTokenEndpoint(config captypes.ConnectionConfig, raw string) bool {
 	resource, _ := url.Parse(config.URL)
 	token, err := url.Parse(raw)
 	return err == nil && oauthURL(token) && token.Scheme == issuer.Scheme && strings.EqualFold(token.Host, issuer.Host) &&
-		!(strings.EqualFold(token.Host, resource.Host) && token.Scheme == resource.Scheme && token.Path == resource.Path)
+		(!strings.EqualFold(token.Host, resource.Host) || token.Scheme != resource.Scheme || token.Path != resource.Path)
 }
 
 func sameAuthorizationEndpoint(browserURL, previous string) bool {
@@ -465,7 +465,7 @@ func (manager *Manager) oauthHandler(ctx context.Context, config captypes.Connec
 	if config.CredentialRef != "" {
 		var err error
 		if secret, err = manager.resolveSecret(config.CredentialRef); err != nil {
-			return nil, cleanup, errors.New("The OAuth client secret is not set. Check its reference in MCP settings.")
+			return nil, cleanup, errors.New("OAuth client secret is not set; check its reference in MCP settings")
 		}
 	}
 	if !interactive {
@@ -505,7 +505,7 @@ func (manager *Manager) oauthHandler(ctx context.Context, config captypes.Connec
 		}
 	}
 	if challenge != nil && tokenURL != "" && challenge.tokenEndpoint != tokenURL {
-		return nil, cleanup, errors.New("The OAuth token endpoint changed. Select Sign out, then Sign in in MCP settings.")
+		return nil, cleanup, errors.New("OAuth token endpoint changed; select Sign out, then Sign in in MCP settings")
 	}
 	if challenge != nil {
 		tokenURL = challenge.tokenEndpoint
@@ -577,7 +577,7 @@ func (manager *Manager) oauthHandler(ctx context.Context, config captypes.Connec
 		AuthorizationCodeFetcher: func(ctx context.Context, arguments *auth.AuthorizationArgs) (*auth.AuthorizationResult, error) {
 			defer cleanup()
 			if challenge != nil && !sameAuthorizationEndpoint(arguments.URL, challenge.authEndpoint) {
-				return nil, errors.New("The authorization server changed. Select Sign out, then Sign in in MCP settings.")
+				return nil, errors.New("authorization server changed; select Sign out, then Sign in in MCP settings")
 			}
 			manager.mu.Lock()
 			entry := manager.connections[config.ID]
@@ -599,7 +599,7 @@ func (manager *Manager) oauthHandler(ctx context.Context, config captypes.Connec
 					return nil, ctx.Err()
 				}
 				if parsed.Query().Get("error") != "" || parsed.Query().Get("code") == "" {
-					return nil, errors.New("MCP authorization was declined.")
+					return nil, errors.New("MCP authorization was declined")
 				}
 				return &auth.AuthorizationResult{Code: parsed.Query().Get("code"), State: parsed.Query().Get("state"), Iss: parsed.Query().Get("iss")}, nil
 			}
@@ -651,13 +651,13 @@ func (manager *Manager) oauthHandler(ctx context.Context, config captypes.Connec
 	access.start = func(ctx context.Context, request *http.Request, response *http.Response) error {
 		if challenge != nil && bearerChallenge(response)["resource_metadata"] != challenge.resourceHint {
 			_ = response.Body.Close()
-			return errors.New("The OAuth resource details changed. Select Sign out, then Sign in in MCP settings.")
+			return errors.New("OAuth resource details changed; select Sign out, then Sign in in MCP settings")
 		}
 		err := handler.Authorize(ctx, request, response)
 		// A token response can echo access credentials. Never publish its text.
 		var rejected *oauth2.RetrieveError
 		if errors.As(err, &rejected) {
-			return errors.New("The OAuth token request was rejected. Check MCP settings and use Sign in again.")
+			return errors.New("OAuth token request was rejected; check MCP settings and use Sign in again")
 		}
 		return err
 	}
@@ -688,7 +688,7 @@ func (manager *Manager) submitAuthorization(id string, flow *authorizationFlow, 
 	defer manager.mu.RUnlock()
 	entry := manager.connections[id]
 	if entry == nil || entry.epoch != flow.epoch || !entry.state.AuthPending || manager.authCallbacks[id] != flow {
-		return errors.New("No active authorization flow for this connection.")
+		return errors.New("no active sign-in for this connection; use Sign in in MCP settings")
 	}
 	select {
 	case flow.callback <- callbackURL:

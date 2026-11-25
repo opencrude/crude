@@ -232,9 +232,16 @@ func syntheticIssuer(ctx context.Context, endpoint string) (string, error) {
 // the manager, which owns the expected callback, state and token exchange.
 func signIn(parent context.Context, m *mcpclient.Manager) error {
 	ctx, cancel := context.WithCancel(parent)
-	done := make(chan error, 1)
-	go func() { done <- m.SignIn(ctx, id); close(done) }()
-	defer func() { cancel(); <-done }()
+	done := make(chan struct{})
+	var signInErr error
+	go func() {
+		signInErr = m.SignIn(ctx, id)
+		close(done)
+	}()
+	defer func() {
+		cancel()
+		<-done // Join on early return without replacing the original error.
+	}()
 	client := network.NewClient(5 * time.Second)
 	defer client.CloseIdleConnections()
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
@@ -242,8 +249,8 @@ func signIn(parent context.Context, m *mcpclient.Manager) error {
 	defer ticks.Stop()
 	for {
 		select {
-		case err := <-done:
-			return err
+		case <-done:
+			return signInErr
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticks.C:
@@ -270,7 +277,8 @@ func signIn(parent context.Context, m *mcpclient.Manager) error {
 			if err = m.SubmitAuthorization(id, loc); err != nil {
 				return err
 			}
-			return <-done
+			<-done
+			return signInErr
 		}
 	}
 }

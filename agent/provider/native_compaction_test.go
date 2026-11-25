@@ -80,11 +80,11 @@ func TestNativeCheckpointDiscoveryAndReplay(t *testing.T) {
 				}
 				answer := "portable"
 				if strings.Contains(body, "what was the code?") {
-					if !(strings.Contains(string(effective), "blue-91") || anth && strings.Contains(body, "probe summary")) {
+					if !strings.Contains(string(effective), "blue-91") && (!anth || !strings.Contains(body, "probe summary")) {
 						t.Error("probe read-back did not recover its window")
 					}
 					answer = "blue-91"
-				} else if !strings.Contains(string(effective), "real-history-secret") && !(anth && strings.Contains(body, "portable")) {
+				} else if !strings.Contains(string(effective), "real-history-secret") && (!anth || !strings.Contains(body, "portable")) {
 					t.Error("real read-back did not recover its window")
 				}
 				return providersim.Text(answer).WithUsage(providersim.Usage{Input: 16, Output: 3})

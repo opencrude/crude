@@ -105,9 +105,10 @@ func TestMCPFormThroughToolQuestionLane(t *testing.T) {
 			}
 			answer := <-received
 			want := "cancel"
-			if mode == "human" {
+			switch mode {
+			case "human":
 				want = "accept"
-			} else if mode == "decline" {
+			case "decline":
 				want = "decline"
 			}
 			if answer.Action != want || want == "accept" && answer.Content["name"] != text || want != "accept" && len(answer.Content) != 0 {

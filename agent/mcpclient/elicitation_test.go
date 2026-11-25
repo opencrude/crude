@@ -19,7 +19,14 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func formPeer(calls *atomic.Int32) *mcp.Server {
+func formPeer(t *testing.T, calls *atomic.Int32) *mcp.Server {
+	t.Helper()
+	// Keep exercising sampling requests from servers while they remain valid
+	// on the wire, without using the deprecated Go type.
+	var sampling mcp.InputRequestMap
+	if err := json.Unmarshal([]byte(`{"other":{"method":"sampling/createMessage","params":{"maxTokens":1,"messages":[{"role":"user","content":{"type":"text","text":"Hello"}}]}}}`), &sampling); err != nil {
+		t.Fatalf("invalid sampling fixture: %v", err)
+	}
 	s := mcp.NewServer(&mcp.Implementation{Name: "form peer", Version: "1"}, nil)
 	s.AddTool(&mcp.Tool{Name: "form", InputSchema: map[string]any{"type": "object"}}, func(_ context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		calls.Add(1)
@@ -53,7 +60,7 @@ func formPeer(calls *atomic.Int32) *mcp.Server {
 		case "private":
 			request.Message = "Please enter an API key."
 		case "sampling":
-			input["other"] = &mcp.CreateMessageWithToolsParams{}
+			input["other"] = sampling["other"]
 		case "busy":
 			input = mcp.InputRequestMap{}
 		}
@@ -66,7 +73,7 @@ func TestFormStdioHelper(t *testing.T) {
 	if os.Getenv("CRUDE_FORM_PEER") != "enabled" {
 		return
 	}
-	if err := formPeer(new(atomic.Int32)).Run(context.Background(), &mcp.StdioTransport{}); err != nil {
+	if err := formPeer(t, new(atomic.Int32)).Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 		os.Exit(1)
 	}
 	os.Exit(0)
@@ -85,7 +92,7 @@ func formFixture(t *testing.T, stdio bool) (*Manager, captypes.ConnectionConfig,
 		cfg.Args = []string{"-test.run=^TestFormStdioHelper$"}
 		cfg.Environment = map[string]string{"CRUDE_FORM_PEER": "enabled"}
 	} else {
-		s := formPeer(calls)
+		s := formPeer(t, calls)
 		endpoint := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return s }, &mcp.StreamableHTTPOptions{Stateless: true}))
 		t.Cleanup(endpoint.Close)
 		cfg.Transport, cfg.URL = "http", endpoint.URL
@@ -264,6 +271,9 @@ func TestFormCannotBorrowAuthorityOrRepeatMutation(t *testing.T) {
 			r, err := m.Call(ctx, tool, map[string]any{"kind": mode})
 			if err == nil || !r.IsError || calls.Load() != 1 || strings.Contains(err.Error(), "private-input") {
 				t.Fatalf("unexpected replay, disclosure or success: calls=%d result=%+v error=%v", calls.Load(), r, err)
+			}
+			if mode == "sampling" && !strings.Contains(err.Error(), "requested unsupported input") {
+				t.Fatalf("mixed sampling and form request did not reach the unsupported-input check: %v", err)
 			}
 			shouldAsk := mode == "disabled" || mode == "cancelled" || mode == "replaced" || mode == "revoked" || mode == "invalid" || mode == "credentials"
 			if asked != shouldAsk {

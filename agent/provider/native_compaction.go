@@ -383,19 +383,19 @@ func (p *Provider) NativeCheckpoint(ctx context.Context, r NativeCheckpointReque
 	return op.export(ctx, w, verified, fail, record)
 }
 
-func (op *compactExchange) export(ctx context.Context, w nativeWindow, verified bool, fail func(error, bool) (NativeCheckpointResult, error), record func(string, error) error) (NativeCheckpointResult, error) {
-	r, p := op.request, op.provider
+func (x *compactExchange) export(ctx context.Context, w nativeWindow, verified bool, fail func(error, bool) (NativeCheckpointResult, error), record func(string, error) error) (NativeCheckpointResult, error) {
+	r, p := x.request, x.provider
 	var err error
 	var zero NativeCheckpointResult
 	text := w.text
 	if text == "" || !verified || r.ValidatePortable(text) != nil {
-		op.stage("Reading the provider checkpoint")
-		text, err = op.follow(ctx, w, r.Verify, r.Limit, "native_checkpoint_replay")
+		x.stage("Reading the provider checkpoint")
+		text, err = x.follow(ctx, w, r.Verify, r.Limit, "native_checkpoint_replay")
 		if errors.Is(err, errCheckpointOutputLimit) && r.Shorter != "" {
 			// The window is already paid for; reading it again costs far less
 			// than writing a portable checkpoint from the whole source.
-			op.stage("Shortening the provider checkpoint")
-			text, err = op.follow(ctx, w, r.Shorter, r.Limit, "native_checkpoint_replay")
+			x.stage("Shortening the provider checkpoint")
+			text, err = x.follow(ctx, w, r.Shorter, r.Limit, "native_checkpoint_replay")
 		}
 		if err != nil {
 			return fail(err, false)
