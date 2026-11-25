@@ -581,6 +581,45 @@ function Get-VirtualKey {
     return [pscustomobject]@{ Key = [UInt16]($scan -band 0xFF); Modifiers = $modifiers }
 }
 
+$script:KeyRemapSources = $null
+
+# A key step names the key the application must receive. PowerToys Keyboard
+# Manager also remaps injected input, so a user who swapped Esc and Caps Lock
+# would otherwise turn key:Escape into Caps Lock. Inject the key that the
+# active single-key remaps turn into the requested one.
+function Get-KeyRemapSources {
+    $sources = @{}
+    if (-not (Get-Process -Name "PowerToys.KeyboardManagerEngine" -ErrorAction SilentlyContinue)) {
+        return $sources
+    }
+    $path = Join-Path $env:LOCALAPPDATA "Microsoft\PowerToys\Keyboard Manager\default.json"
+    if (-not (Test-Path -LiteralPath $path)) {
+        return $sources
+    }
+    $config = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+    foreach ($remap in @($config.remapKeys.inProcess)) {
+        $from, $to = "$($remap.originalKeys)", "$($remap.newRemapKeys)"
+        if ($from -match '^\d+$' -and $to -match '^\d+$') {
+            $sources[[UInt16]$to] = [UInt16]$from
+        }
+    }
+    foreach ($to in @($sources.Keys)) {
+        Write-Host ("key remap: virtual key 0x{0:X2} is sent as 0x{1:X2} (PowerToys Keyboard Manager)" -f $to, $sources[$to])
+    }
+    return $sources
+}
+
+function Resolve-InjectedKey {
+    param([UInt16]$Key)
+    if ($null -eq $script:KeyRemapSources) {
+        $script:KeyRemapSources = Get-KeyRemapSources
+    }
+    if ($script:KeyRemapSources.ContainsKey($Key)) {
+        return $script:KeyRemapSources[$Key]
+    }
+    return $Key
+}
+
 function Send-KeySpec {
     param([string]$Spec)
     Focus-CaptureWindow
@@ -610,7 +649,8 @@ function Send-KeySpec {
             $modifiers += $implicit
         }
     }
-    [CrudeShot.Native]::SendChord([UInt16[]]$modifiers, [UInt16]$resolved.Key)
+    $modifiers = @($modifiers | ForEach-Object { Resolve-InjectedKey $_ })
+    [CrudeShot.Native]::SendChord([UInt16[]]$modifiers, (Resolve-InjectedKey ([UInt16]$resolved.Key)))
 }
 
 function Split-Numbers {

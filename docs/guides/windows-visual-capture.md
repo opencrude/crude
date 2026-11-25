@@ -96,11 +96,12 @@ Shift+arrow acceptance. Rendered App/component journeys cover the intended
 modifier, while real pointer captures cover native selection; do not report the
 Shift screenshots as a pass or infer Shift inside individual text controls.
 
-Key names identify the injected Windows virtual key, not the action after the
-user's keyboard remapping. The 2026-10-18 environment swaps Caps Lock and Esc:
-inject `key:capslock` to exercise the application's Escape action there. An
-earlier standalone probe received no Escape from `key:Escape`; that was not a
-product failure or a general capture-driver limitation. Do not change the user's
+Key names identify the key the application receives. PowerToys Keyboard Manager
+also remaps injected input, so the script reads its active single-key remaps and
+injects the key that produces the requested one. On a machine that swaps Caps
+Lock and Esc, `key:Escape` therefore sends Caps Lock and the application receives
+Escape; the log names each remap it applies. Before this, an injected Escape
+arrived as Caps Lock; that was not a product failure. Do not change the user's
 mapping to run acceptance. The same probe decoded Ctrl+Alt+Enter as Ctrl+Alt+J;
 that injected chord does not establish replace-all acceptance. Use the pointer
 replace-all control and real App key-event journeys rather than inferring that
