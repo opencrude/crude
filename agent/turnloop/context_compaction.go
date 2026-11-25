@@ -304,9 +304,13 @@ func (a *Agent) compactSource(ctx context.Context, msgs, source []provider.ChatM
 	if explicit {
 		a.checkpointRoute.clear(main)
 	}
-	errand := errandCheckpoint(main, targetModel, msgs, explicit)
+	// The user's /compact is Errand's in every agent state and with every
+	// setting. When Errand cannot run it follows the automatic rule, which
+	// tries the provider only while it holds the conversation in its cache.
+	errandUnavailable := explicit && a.CompactionConfigError != nil
+	warm := (!explicit || errandUnavailable) && ProviderCompactionWorthwhile(main, targetModel, msgs)
 	rejection := a.checkpointRoute.current(main)
-	if main != nil && main.UsesNativeCompaction() && rejection == nil && !errand {
+	if main != nil && main.UsesNativeCompaction() && rejection == nil && warm {
 		owner := NewAgent(main, targetModel, a.logger)
 		owner.MaxOutputTokens = a.CompactionTargetOutput
 		// Reading the checkpoint back is a normal request of the serving model,
@@ -321,6 +325,9 @@ func (a *Agent) compactSource(ctx context.Context, msgs, source []provider.ChatM
 			emit(AgentEvent{Type: "context_compaction_stage", Data: data})
 		}
 		emit(AgentEvent{Type: "context_compaction_started", Data: owner.compactionEventData(requestID, trigger, role, 0, 0, beforeTokens, 0, ctxWindow)})
+		if errandUnavailable {
+			emit(AgentEvent{Type: "compaction_route_notice", Data: map[string]any{"reason": errandUnavailableProviderNotice}})
+		}
 		ticket := provider.NewMessageID()
 		probe, question := rootprompt.CompactionChallenge(ticket)
 		common := rootprompt.CompactionCommon(role, compactionHumanManifest(msgs[1:], role, targetModel, 1024), continuity.ContentString())
@@ -346,7 +353,7 @@ func (a *Agent) compactSource(ctx context.Context, msgs, source []provider.ChatM
 			checkpoint, e = validateContextCheckpoint(xml, role, checkpointBudget)
 			return e
 		}
-		r, e := main.NativeCheckpoint(ctx, provider.NativeCheckpointRequest{InputTokens: beforeTokens, Boundary: a.boundaryTurn, Receipt: a.thresholdReceipt, ValidatePortable: validate, Owner: string(a.AgentID), Explicit: explicit, Model: targetModel, Messages: msgs, Tools: tools, Limit: limit, Directive: directive, Verify: directive, Shorter: instructions(max(1, textBudget/2)), ProbeAnswer: ticket, ProbeSource: probe, ProbeQuestion: question, Stage: stage, Usage: func(kind string, u provider.TokenUsage, ok bool) {
+		r, e := main.NativeCheckpoint(ctx, provider.NativeCheckpointRequest{InputTokens: beforeTokens, Boundary: a.boundaryTurn, Receipt: a.thresholdReceipt, ValidatePortable: validate, Owner: string(a.AgentID), Model: targetModel, Messages: msgs, Tools: tools, Limit: limit, Directive: directive, Verify: directive, Shorter: instructions(max(1, textBudget/2)), ProbeAnswer: ticket, ProbeSource: probe, ProbeQuestion: question, Stage: stage, Usage: func(kind string, u provider.TokenUsage, ok bool) {
 			usage = usage.Add(u)
 			owner.emitCompactionUsage(emit, u, provider.NewMessageID(), requestID, trigger, role, kind, false, ok)
 		}}, opts...)
@@ -390,10 +397,10 @@ func (a *Agent) compactSource(ctx context.Context, msgs, source []provider.ChatM
 				outcomeErr = &nativeCheckpointError{rejection}
 			}
 		}()
-	} else if writer := a.servingWriter(main, targetModel, beforeTokens, min(8192, checkpointBudget), transient || errand); writer != nil {
+	} else if writer := a.servingWriter(main, targetModel, beforeTokens, min(8192, checkpointBudget), transient, servedContext(msgs, main, targetModel), explicit); writer != nil {
 		if fallbackChanged {
 			emit(AgentEvent{Type: "compaction_route_notice", Data: map[string]any{"reason": fallback + " The agent's model writes the checkpoint."}})
-		} else if a.CompactionConfigError != nil && main.CompactionMethod() != provider.CompactionProviderOnly {
+		} else if a.CompactionConfigError != nil && (explicit || main.CompactionMethod() != provider.CompactionProviderOnly) {
 			emit(AgentEvent{Type: "compaction_route_notice", Data: map[string]any{"reason": errandUnavailableNotice}})
 		}
 		return writer.compactSource(ctx, msgs, source, tools, requestID, beforeTokens, trigger, emit)
@@ -551,19 +558,23 @@ func (a *Agent) compactSource(ctx context.Context, msgs, source []provider.ChatM
 	return a.finishCheckpoint(ctx, msgs, tools, checkpointMsg, targetModel, continuationLimit, fixed, compactOutcome{Usage: aggregate, SourceTokens: beforeTokens, ContextWindow: ctxWindow, RequestID: requestID, Role: role, Trigger: trigger, AccountID: a.Provider.AccountID, ProviderID: a.Provider.ID, ModelID: a.Model})
 }
 
-const errandUnavailableNotice = "Errand cannot compact with its current settings. The agent's model writes the checkpoint."
+const (
+	errandUnavailableNotice         = "Errand cannot compact with its current settings. The agent's model writes the checkpoint."
+	errandUnavailableProviderNotice = "Errand cannot compact with its current settings. The provider compacts the conversation."
+)
 
-// errandCheckpoint reports that Errand, not the serving connection, writes
-// this checkpoint. The serving connection is worth asking only while it holds
-// the context in its cache. A human request always uses Errand: it often
-// follows a model change, and a native or self-written checkpoint would send
-// the whole history to that model at full price. Provider only is the user's
-// explicit choice of the native route.
-func errandCheckpoint(main *provider.Provider, model string, msgs []provider.ChatMessage, human bool) bool {
-	if main == nil || main.CompactionMethod() == provider.CompactionProviderOnly {
+// ProviderCompactionWorthwhile reports whether an automatic checkpoint of
+// msgs tries the provider's own compaction. It is worth its price only while
+// the provider holds the conversation in its cache. After a change of model
+// or connection, or before any output, the cache is empty: a cold native
+// request sent 491,798 uncached tokens to a new model. Then the cheaper
+// portable writer, usually Errand, writes the checkpoint. Provider only is
+// the user's explicit choice of the native route. A /compact never asks.
+func ProviderCompactionWorthwhile(main *provider.Provider, model string, msgs []provider.ChatMessage) bool {
+	if main == nil {
 		return false
 	}
-	return human || !servedContext(msgs, main, model)
+	return main.CompactionMethod() == provider.CompactionProviderOnly || servedContext(msgs, main, model)
 }
 
 // servedContext reports whether connection and model wrote the latest model
@@ -582,13 +593,17 @@ func servedContext(msgs []provider.ChatMessage, connection *provider.Provider, m
 }
 
 // servingWriter returns the serving model as the portable checkpoint writer,
-// or nil when the configured compaction model writes it. Provider only never
-// charges another model. Auto uses the serving model when Errand cannot run,
-// or when its cached context makes the checkpoint cheaper. It does not use it
-// right after an outage of that route, for a human request or when the model
-// does not hold the context (skip).
-func (a *Agent) servingWriter(main *provider.Provider, model string, source, output int, skip bool) *Agent {
+// or nil when the configured compaction model writes it. The user's /compact
+// (human) is Errand's; the serving model writes it only when Errand cannot
+// run. Otherwise Provider only never charges another model, and Auto uses the
+// serving model when Errand cannot run or when it is cheaper: with its
+// observed cache share when it wrote this context (warm), with no cached input
+// otherwise. It does not use it right after an outage of that route.
+func (a *Agent) servingWriter(main *provider.Provider, model string, source, output int, afterOutage, warm, human bool) *Agent {
 	if main == nil || a.portableOnly || provider.SameConnection(main, a.Provider) && a.Model == model {
+		return nil
+	}
+	if human && a.CompactionConfigError == nil {
 		return nil
 	}
 	switch main.CompactionMethod() {
@@ -598,7 +613,11 @@ func (a *Agent) servingWriter(main *provider.Provider, model string, source, out
 	default:
 		window := main.ContextWindow(model)
 		fits := window > 0 && source+output < window-contextSafetyReserve(window)
-		if a.CompactionConfigError == nil && (skip || !fits || !servingCheckpointCheaper(model, a.Model, source, output, a.servingCacheRatio)) {
+		cached := 0.0
+		if warm {
+			cached = a.servingCacheRatio
+		}
+		if a.CompactionConfigError == nil && (afterOutage || !fits || !servingCheckpointCheaper(model, a.Model, source, output, cached)) {
 			return nil
 		}
 	}

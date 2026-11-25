@@ -84,9 +84,10 @@ any native boundary: two synthetic checks (233 and 380 input tokens), then the
 real native compaction with 491,798 input tokens, none cached, $2.04 by the
 catalog price. The new model had never read this context, so no cache could
 help. The user stopped the read-back. Errand, a cheap model on the same account,
-was configured and could have written it. Now Errand writes every `/compact` in Auto, and every
-checkpoint of a context the serving model did not write. Provider only keeps
-the native route.
+was configured and could have written it. Now Errand writes every `/compact`,
+with every Compaction setting. Automatic compaction skips the provider for a
+context the serving model did not write, and lets Errand or the cheaper model
+write it.
 
 **2026-11-25: a cut Responses stream re-uploaded the whole history.** At 12:09
 a stream ended with `stream closed before response.completed` after partial

@@ -39,7 +39,6 @@ type ThresholdReceipt struct {
 type thresholdEdits struct {
 	declared           bool
 	ordinary, boundary any
-	minimum            int // A planning hint, never proof an edit will fire.
 }
 
 func (p *Provider) configuredThreshold(directive string) *thresholdEdits {
@@ -80,25 +79,13 @@ func (p *Provider) configuredThreshold(directive string) *thresholdEdits {
 			continue
 		}
 		found = true
-		n, _ := edit["compact_threshold"].(json.Number)
-		floor := int64(1000)
-		if wire == "anthropic" {
-			floor = 50_000
-			trigger, _ := edit["trigger"].(map[string]any)
-			n, _ = trigger["value"].(json.Number)
-			if directive != "" {
-				edit["pause_after_compaction"] = true
-				instruction, _ := edit["instructions"].(string)
-				if instruction != "" {
-					instruction += "\n\n"
-				}
-				edit["instructions"] = instruction + directive
+		if wire == "anthropic" && directive != "" {
+			edit["pause_after_compaction"] = true
+			instruction, _ := edit["instructions"].(string)
+			if instruction != "" {
+				instruction += "\n\n"
 			}
-		}
-		count, _ := n.Int64()
-		hint := int(max(floor, count))
-		if result.minimum == 0 || hint < result.minimum {
-			result.minimum = hint
+			edit["instructions"] = instruction + directive
 		}
 	}
 	if !found {
@@ -109,7 +96,6 @@ func (p *Provider) configuredThreshold(directive string) *thresholdEdits {
 			return nil
 		}
 		result.ordinary = value
-		result.minimum = 50_000
 		if directive != "" {
 			boundary := maps.Clone(outer)
 			boundary["edits"] = append(all, defaultThresholdEdit(directive))
@@ -229,13 +215,6 @@ func (x *compactExchange) threshold(ctx context.Context, attempt attemptKey, cac
 	if r.Boundary == nil {
 		return NativeCheckpointResult{Fallback: "No model request is pending for native compaction."}, nil
 	}
-	minimum := 50_000
-	if edits := x.provider.configuredThreshold(""); edits != nil {
-		minimum = edits.minimum
-	}
-	if r.Explicit && r.InputTokens < minimum {
-		return NativeCheckpointResult{Fallback: "The conversation is below the provider threshold."}, nil
-	}
 	if x.provider.ProtocolID() == "anthropic" {
 		for _, m := range FilterReplayMessages(r.Messages, x.provider) {
 			if nativeItem(m, "anthropic") != nil {
@@ -243,7 +222,7 @@ func (x *compactExchange) threshold(ctx context.Context, attempt attemptKey, cac
 			}
 		}
 	}
-	if err := cache.guardAttempt(ctx, attempt, flight, r.Explicit, true); err != nil {
+	if err := cache.guardAttempt(ctx, attempt, flight, true); err != nil {
 		return NativeCheckpointResult{}, err
 	}
 	x.stage("Compacting with the provider")
@@ -280,7 +259,7 @@ func (x *compactExchange) threshold(ctx context.Context, attempt attemptKey, cac
 	}
 	ordinary := func(settle bool) (NativeCheckpointResult, error) {
 		result := NativeCheckpointResult{Turn: true}
-		if settle || r.Explicit {
+		if settle {
 			result.Receipt = &ThresholdReceipt{generation: flight.generation, scope: attempt.scope, index: len(r.Messages)}
 		}
 		return result, nil

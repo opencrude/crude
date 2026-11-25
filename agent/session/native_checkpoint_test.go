@@ -86,16 +86,27 @@ func TestManualNativeCheckpointWithoutErrand(t *testing.T) {
 // The user switched a session to another model on the same Responses account,
 // stopped the turn and typed /compact. On 2026-11-25 Crude probed the new
 // model, then sent it the whole history for native compaction at full price.
-// A human /compact in Auto uses Errand. Neither the history nor a capability
-// check reaches the serving model, whichever model wrote the context.
+// The user's /compact is Errand's in every state and with every Compaction
+// setting: neither a capability check nor the history reaches the serving
+// model, whichever model wrote the context.
 func TestManualCompactionUsesErrandAfterModelChange(t *testing.T) {
 	const errand = "adaptive-errand-model"
-	for _, writtenBy := range []string{"previous-model", "adaptive-main-model"} {
-		t.Run(writtenBy, func(t *testing.T) {
-			var writes atomic.Int32
+	for _, test := range []struct {
+		name, writtenBy, method string
+	}{
+		{name: "after a model change", writtenBy: "previous-model"},
+		{name: "same model", writtenBy: "adaptive-main-model"},
+		{name: "provider only", writtenBy: "adaptive-main-model", method: provider.CompactionProviderOnly},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var writes, native atomic.Int32
 			sim := providersim.New(t)
 			sim.Respond(func(request providersim.Request) providersim.Turn {
-				if request.Model != errand || strings.HasSuffix(request.Path, "/compact") || bytes.Contains(request.Raw, []byte("compaction_trigger")) {
+				if strings.HasSuffix(request.Path, "/compact") || bytes.Contains(request.Raw, []byte("compaction_trigger")) {
+					native.Add(1)
+					return providersim.HTTPError(providersim.InvalidRequest).WithFaultMessage("unsupported compaction trigger")
+				}
+				if request.Model != errand {
 					t.Errorf("/compact sent %s to model %q", request.Path, request.Model)
 					return providersim.HTTPError(providersim.InvalidRequest)
 				}
@@ -109,16 +120,19 @@ func TestManualCompactionUsesErrandAfterModelChange(t *testing.T) {
 				s, _ := newAdaptiveCompactionSession(t, sim.BaseURL(providersim.Responses), 200_000, history)
 				account := s.cfg.Accounts["account"]
 				account.Connection.APIStandard = "openai-responses"
+				if test.method != "" {
+					account.Connection.Protocol = &provider.ProtocolSettings{Compaction: test.method}
+				}
 				s.cfg.Accounts["account"] = account
 				main, err := s.cfg.providerForCategory(s.cfg.ActiveDefaultCategory())
-				if err != nil || !main.UsesNativeCompaction() || main.CompactionMethod() != "" {
-					t.Fatalf("fixture is not an Auto account on a native wire: %v", err)
+				if err != nil || !main.UsesNativeCompaction() || main.CompactionMethod() != test.method {
+					t.Fatalf("fixture is not a native wire with Compaction %q: %v", test.method, err)
 				}
 				return s, main
 			}
 			_, main := responses(nil)
 			answer := provider.NewTextMessage("assistant", strings.Repeat("raw tool body ", 3000)+"build-evidence-27")
-			answer.ReplayScope, answer.ReplaySourceModel = main.ReplayScope(), writtenBy
+			answer.ReplayScope, answer.ReplaySourceModel = main.ReplayScope(), test.writtenBy
 			s, _ := responses([]provider.ChatMessage{provider.NewTextMessage("user", "Fix the build"), answer, provider.NewTextMessage("user", "Continue")})
 			prepared, result := s.PrepareCompaction(s.sessionID)
 			if prepared.Run == nil || prepared.ModelID != errand {
@@ -126,6 +140,9 @@ func TestManualCompactionUsesErrandAfterModelChange(t *testing.T) {
 			}
 			if r := prepared.Run(); r.Error != "" || r.Cancelled || writes.Load() == 0 {
 				t.Fatalf("compaction=%+v writes=%d", r, writes.Load())
+			}
+			if native.Load() != 0 {
+				t.Fatalf("/compact sent %d native compaction requests", native.Load())
 			}
 			records := s.CompactionRecords(s.sessionID)
 			if len(records) != 1 || records[0].ModelID != errand || records[0].State != sessiondb.CompactionCompleted {

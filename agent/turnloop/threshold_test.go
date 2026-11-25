@@ -198,6 +198,9 @@ func TestThresholdResponsesSettlesMixedRound(t *testing.T) {
 	}
 }
 
+// A /compact is Errand's checkpoint, also on a Provider only account whose
+// threshold edit could fire: it never sends the provider's compaction edit.
+// Here Errand is the agent's own connection and model.
 func TestThresholdManualNeedsACheckpoint(t *testing.T) {
 	for _, mode := range []string{"idle", "below", "eligible", "miss"} {
 		t.Run(mode, func(t *testing.T) {
@@ -225,9 +228,6 @@ func TestThresholdManualNeedsACheckpoint(t *testing.T) {
 					writers++
 					if !strings.Contains(conversationText(r.Conversation), "source history") {
 						t.Error("portable writer did not get the full history")
-					}
-					if mode == "miss" && !strings.Contains(conversationText(r.Conversation), "Already answered") {
-						t.Error("lost accepted response before switching writers")
 					}
 					return providersim.Text(thresholdHandoff)
 				default:
@@ -265,12 +265,7 @@ func TestThresholdManualNeedsACheckpoint(t *testing.T) {
 				}
 			}
 			wantEdits, wantWriters, wantNormal := 0, 1, 1
-			switch mode {
-			case "eligible":
-				wantEdits, wantWriters = 1, 0
-			case "miss":
-				wantEdits, wantNormal = 1, 0
-			case "idle":
+			if mode == "idle" {
 				wantNormal = 0
 			}
 			if edits != wantEdits || writers != wantWriters || normal != wantNormal || len(committed) == 0 {

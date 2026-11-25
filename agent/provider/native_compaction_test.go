@@ -337,20 +337,6 @@ func TestNativePolicyAndUncertainSpend(t *testing.T) {
 	if e != nil || r.Fallback == "" || r.Transient || real.Load() != 1 || probe.Load() != 1 {
 		t.Fatalf("provider-only resent or stopped: %+v %v", r, e)
 	}
-	var status *StatusError
-	// An explicit /compact may resend once the route cooldown has passed.
-	c := currentSupport()
-	k := p.compactionScope(p.Model)
-	c.mu.Lock()
-	f := c.facts[k]
-	f.retryAt = 0
-	c.facts[k] = f
-	c.mu.Unlock()
-	explicit := compactFixture(p)
-	explicit.Explicit = true
-	if _, e = p.NativeCheckpoint(t.Context(), explicit); !errors.As(e, &status) || status.StatusCode != http.StatusServiceUnavailable || real.Load() != 2 || probe.Load() != 2 {
-		t.Fatalf("explicit retry: real=%d probe=%d %v", real.Load(), probe.Load(), e)
-	}
 }
 
 // A definite refusal in Provider only is the route's answer, not an outage:
@@ -473,7 +459,7 @@ func TestCompactionAttemptGuardSurvivesRestartAndForget(t *testing.T) {
 	}
 	key := attemptKey{"route", "source", "account"}
 	f, _ := c.compaction.begin(t.Context(), key.scope, key.account)
-	if err = c.compaction.guardAttempt(t.Context(), key, f, false, true); err != nil {
+	if err = c.compaction.guardAttempt(t.Context(), key, f, true); err != nil {
 		t.Fatal(err)
 	}
 	c.compaction.end(key.scope, f)
@@ -491,16 +477,13 @@ func TestCompactionAttemptGuardSurvivesRestartAndForget(t *testing.T) {
 	f, _ = c.compaction.begin(t.Context(), key.scope, key.account)
 	defer c.compaction.end(key.scope, f)
 	var earlier *earlierAttemptError
-	if err = c.compaction.guardAttempt(t.Context(), key, f, false, false); !errors.As(err, &earlier) || time.Until(earlier.until) > attemptHold || time.Until(earlier.until) <= 0 {
+	if err = c.compaction.guardAttempt(t.Context(), key, f, false); !errors.As(err, &earlier) || time.Until(earlier.until) > attemptHold || time.Until(earlier.until) <= 0 {
 		t.Fatalf("auto repeated an uncertain post: %v", err)
-	}
-	if err = c.compaction.guardAttempt(t.Context(), key, f, true, true); err != nil {
-		t.Fatalf("explicit retry refused: %v", err)
 	}
 	if err = c.compaction.releaseRejected(key, f); err != nil {
 		t.Fatal(err)
 	}
-	if err = c.compaction.guardAttempt(t.Context(), key, f, false, false); err != nil {
+	if err = c.compaction.guardAttempt(t.Context(), key, f, false); err != nil {
 		t.Fatal("a confirmed rejection was treated as billable uncertainty")
 	}
 }
@@ -618,7 +601,7 @@ func TestAccountRemovalClearsCompactionEvidence(t *testing.T) {
 		if err := c.compaction.record(key, f, p, "m", supportVerified, "responses/compact"); err != nil {
 			t.Fatal(err)
 		}
-		if err := c.compaction.guardAttempt(t.Context(), attemptKey{key, "source", account.ID}, f, false, true); err != nil {
+		if err := c.compaction.guardAttempt(t.Context(), attemptKey{key, "source", account.ID}, f, true); err != nil {
 			t.Fatal(err)
 		}
 	}

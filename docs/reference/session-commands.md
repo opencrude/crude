@@ -47,10 +47,12 @@ shows:
   the exclusive operation above and runs before any other turn. If the turn is
   stopped or fails first, the request settles as a cancelled compaction row; it
   never disappears.
-- **Who writes it.** In Auto, Errand writes every `/compact` checkpoint from the
-  complete source, also right after a model change. The serving model is not
-  probed and does not receive the history. Provider only uses the native route.
-  If Errand cannot run, the agent's model writes it and Notices say why. See
+- **Who writes it.** Errand writes every `/compact` checkpoint from the complete
+  context, in any agent state and with every Compaction setting, also right
+  after a model change. The agent's model is not probed and does not receive the
+  history. The agent then continues from the checkpoint where it was. If Errand
+  cannot run, the automatic rule chooses the writer and Notices say why.
+  Automatic compaction chooses by cost; see
   [native compaction](adaptive-context.md#native-compaction-on-custom-connections).
 - **Nothing to compact, or already compacting.** A short footer notice says so.
 - **Real refusals** are only a closing session, a session reserved for core
