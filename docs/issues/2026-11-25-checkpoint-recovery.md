@@ -7,11 +7,11 @@
 | Failure | Fix and evidence |
 |---|---|
 | Automatic extraction sent chunks that fit the history estimate but not the real request. | `0ee97c8f` budgets the system prompt and tool declarations before partitioning the source. |
-| The provider completed a native compact, but Crude discarded it after a capped read-back. | `2a973258` sizes the read-back for the serving model. A shorter second read can use the same paid artifact without resending the original conversation. See the [incident](../issues/2026-11-25-native-checkpoint-read-back.md). |
-| A repeated checkpoint lost earlier human requests. | `ebee319a` keeps answered prompts verbatim up to the retention budget, distinct from the active instruction. The session test closes and reopens a real database. |
+| The provider completed a native compact, but Crude discarded it after a capped read-back. | `655c51a0` sizes the read-back for the serving model. A shorter second read can use the same paid artifact without resending the original conversation. See the [incident](../issues/2026-11-25-native-checkpoint-read-back.md). |
+| A repeated checkpoint lost earlier human requests. | `e86ba98c` keeps answered prompts verbatim up to the retention budget, distinct from the active instruction. The session test closes and reopens a real database. |
 | A settings change or misleading cache header obscured a real cache loss. | `9ca845fb` preserves the root prefix and tool set; `a7a16a5f` distinguishes a measured miss from an unreported counter. |
-| Throttling could discard native evidence, and quota/veto could fall back to the same rejected route. | `e5b39ca3` distinguishes temporary and permanent evidence, honors retry advice, and retains the source and possibly paid write. |
-| A threshold-only route could not compact at the boundary, including after both stored-prefix on-demand operations refused. | The actual running turn can carry the edit; see `d29a9256` and the persisted session test below. The default stored and stateless variants both verify one settled tool round, one checkpoint, passive reopen with no requests, and the first continuation. |
+| Throttling could discard native evidence, and quota/veto could fall back to the same rejected route. | `19105411` distinguishes temporary and permanent evidence, honors retry advice, and retains the source and possibly paid write. |
+| A threshold-only route could not compact at the boundary, including after both stored-prefix on-demand operations refused. | The actual running turn can carry the edit; see `efd9359e` and the persisted session test below. The default stored and stateless variants both verify one settled tool round, one checkpoint, passive reopen with no requests, and the first continuation. |
 
 Manual `/compact` still takes precedence at the next safe request boundary, even
 mid-run. The continuation keeps the system prompt, tools and pending human

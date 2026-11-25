@@ -54,7 +54,8 @@ that call for the next iteration are outside the timer.
 | Offscreen result and blink, through parent export | 55,227,250–75,997,500 | 17,786,965–17,793,604; 37,281–37,288 | 497,640–722,070 | 264,355–264,880; 164 |
 
 Native Windows/amd64, Go 1.27.4, i7-9850H, `GOMAXPROCS=2`, five runs of ten
-updates per case. Both cohorts ran in the shared checkout based on `8bd24c58`;
+updates per case. Both cohorts ran in the shared checkout based on development commit `8bd24c58`
+(published counterpart `4796fa33`);
 the after cohort had the per-message cache but not the later pending-syntax
 notification. All diffs in this fixture fit the synchronous lexer budget.
 Other builds ran on the workstation. The gate limits bytes and allocations,
