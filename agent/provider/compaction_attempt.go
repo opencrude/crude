@@ -33,7 +33,7 @@ func checkpointSource(owner string, msgs []ChatMessage) string {
 	}
 	return h.value()
 }
-func (c *supportCache) guardAttempt(ctx context.Context, key attemptKey, flight *supportFlight, explicit, send bool) error {
+func (c *supportCache) guardAttempt(ctx context.Context, key attemptKey, flight *supportFlight, send bool) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.flights[key.scope] != flight {
@@ -43,7 +43,7 @@ func (c *supportCache) guardAttempt(ctx context.Context, key attemptKey, flight 
 		return err
 	}
 	now := time.Now().Unix()
-	if until := c.attempts[key]; !explicit && until > now {
+	if until := c.attempts[key]; until > now {
 		return &earlierAttemptError{until: time.Unix(until, 0)}
 	}
 	if !send {

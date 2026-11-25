@@ -148,8 +148,9 @@ func (s *Session) registerCompaction(agentID, operationID, trigger string) (Prep
 }
 
 // compactionIdentity is the connection expected to write a checkpoint with
-// trigger. A human request uses Errand unless the account is Provider only;
-// the loop-end checkpoint of Errand itself may use its native route.
+// trigger: Errand for the user's /compact; for other triggers the provider
+// while it holds the conversation in its cache, otherwise Errand. The record
+// names the writer that actually finished.
 func (s *Session) compactionIdentity(agentID, trigger string) (providerID, accountID, modelID string) {
 	if s.cfg == nil {
 		return "", "", ""
@@ -159,9 +160,13 @@ func (s *Session) compactionIdentity(agentID, trigger string) (providerID, accou
 		effectiveCfg = s.runtimeProfile.EffectiveConfig(agentID)
 	}
 	main := effectiveCfg.ActiveDefaultCategory()
-	if p, err := effectiveCfg.providerForCategory(main); err == nil && p.UsesNativeCompaction() &&
-		(trigger != turnloop.CompactionTriggerManual || p.CompactionMethod() == provider.CompactionProviderOnly) {
-		return p.ID, p.AccountID, main.Model
+	if p, err := effectiveCfg.providerForCategory(main); err == nil && p.UsesNativeCompaction() && trigger != turnloop.CompactionTriggerManual {
+		s.msgsMu.Lock()
+		warm := turnloop.ProviderCompactionWorthwhile(p, main.Model, s.activeContext)
+		s.msgsMu.Unlock()
+		if warm {
+			return p.ID, p.AccountID, main.Model
+		}
 	}
 	compactionCfg := effectiveCfg.CategoryConfig(CategoryErrand)
 	return effectiveCfg.providerIDForAccount(compactionCfg.AccountID), compactionCfg.AccountID, compactionCfg.Model

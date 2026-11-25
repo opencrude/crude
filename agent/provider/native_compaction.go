@@ -17,7 +17,6 @@ type NativeCheckpointRequest struct {
 	Boundary                                                   BoundaryTurn
 	Receipt                                                    *ThresholdReceipt
 	Owner                                                      string
-	Explicit                                                   bool
 	Model                                                      string
 	Messages                                                   []ChatMessage
 	Tools                                                      []ToolDef
@@ -190,7 +189,7 @@ func (p *Provider) NativeCheckpoint(ctx context.Context, r NativeCheckpointReque
 		return cache.recordWithDelay(key, flight, p, r.Model, state, op.path, AdvisedRetryDelay(cause))
 	}
 	attempt := attemptKey{scope: key, source: checkpointSource(r.Owner, r.Messages), account: p.AccountID}
-	if err := cache.guardAttempt(ctx, attempt, flight, r.Explicit, false); err != nil {
+	if err := cache.guardAttempt(ctx, attempt, flight, false); err != nil {
 		return p.earlierAttempt(err, fallback, cache.fact(key).failures == 0)
 	}
 	// initial is the evidence before this call; a probe below may refresh fact.
@@ -279,7 +278,7 @@ func (p *Provider) NativeCheckpoint(ctx context.Context, r NativeCheckpointReque
 			if e != nil {
 				return fallback("The provider checkpoint no longer matches this conversation.", true)
 			}
-			if e := cache.guardAttempt(ctx, attempt, flight, false, true); e != nil {
+			if e := cache.guardAttempt(ctx, attempt, flight, true); e != nil {
 				return p.earlierAttempt(e, fallback, false)
 			}
 			return op.export(ctx, w, false, fail, record)
@@ -355,7 +354,7 @@ func (p *Provider) NativeCheckpoint(ctx context.Context, r NativeCheckpointReque
 		}
 	}
 	op.stage("Compacting with the provider")
-	if err := cache.guardAttempt(ctx, attempt, flight, r.Explicit, true); err != nil {
+	if err := cache.guardAttempt(ctx, attempt, flight, true); err != nil {
 		return p.earlierAttempt(err, fallback, cache.fact(key).failures == 0)
 	}
 	w, err := op.post(ctx, req, r.Directive, "native_compaction")

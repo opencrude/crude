@@ -286,12 +286,13 @@ func TestAutoUncertainNativeCheckpointUsesErrandAndContinues(t *testing.T) {
 }
 
 // Wires without a native compaction operation still have the serving
-// model. Provider only never charges another model, Auto uses the serving
-// model when its cached context is cheaper or Errand cannot run, and Errand
-// only always uses Errand. A serving checkpoint declares the conversation's
-// tools (forbidden), so it reads the conversation's cached prefix. In Auto a
-// human /compact, or a context another model wrote, has no such prefix:
-// Errand writes it even when the serving model's cache reports were cheap.
+// model. For automatic checkpoints Provider only never charges another model,
+// Auto uses the serving model when it is cheaper or Errand cannot run, and
+// Errand only always uses Errand. A serving checkpoint declares the
+// conversation's tools (forbidden), so it reads the conversation's cached
+// prefix; a context another model wrote has none, so the comparison counts no
+// cached input for it. The user's /compact is Errand's with every setting;
+// the serving model writes it only when Errand cannot run.
 func TestServingModelWritesCheckpointOnWiresWithoutNativeCompaction(t *testing.T) {
 	const handoff = "<<<intent>>>\nKeep the build passing\n<<<work>>>\nChecked inputs\n<<<state>>>\nTarget is blue\n<<<continuation>>>\nCheck the target"
 	serve := func(t *testing.T) *providersim.Server {
@@ -302,6 +303,7 @@ func TestServingModelWritesCheckpointOnWiresWithoutNativeCompaction(t *testing.T
 	provider.SetModelPrice("serving-cheap-cached", provider.ModelPrice{InputPricePerToken: 3e-6, OutputPricePerToken: 1.5e-5, InputCachedPricePerToken: 3e-7})
 	provider.SetModelPrice("errand-flat", provider.ModelPrice{InputPricePerToken: 1e-6, OutputPricePerToken: 4e-6})
 	provider.SetModelPrice("errand-cheap", provider.ModelPrice{InputPricePerToken: 1e-7, OutputPricePerToken: 4e-7})
+	provider.SetModelPrice("errand-costly", provider.ModelPrice{InputPricePerToken: 5e-6, OutputPricePerToken: 2e-5})
 	tools := []provider.ToolDef{{Type: "function", Function: provider.FunctionDef{Name: "read_file", Description: "Read a file.", Parameters: json.RawMessage(`{"type":"object"}`)}}}
 	for _, test := range []struct {
 		name, method, errandModel string
@@ -311,11 +313,14 @@ func TestServingModelWritesCheckpointOnWiresWithoutNativeCompaction(t *testing.T
 		serving                   bool
 	}{
 		{name: "provider only", method: provider.CompactionProviderOnly, errandModel: "errand-cheap", serving: true},
-		{name: "provider only human request", method: provider.CompactionProviderOnly, errandModel: "errand-cheap", trigger: CompactionTriggerManual, serving: true},
+		{name: "provider only human request", method: provider.CompactionProviderOnly, errandModel: "errand-cheap", trigger: CompactionTriggerManual},
+		{name: "provider only human request errand cannot run", method: provider.CompactionProviderOnly, errandModel: "errand-cheap", trigger: CompactionTriggerManual, broken: true, serving: true},
 		{name: "auto cached serving is cheaper", errandModel: "errand-flat", ratio: 0.95, serving: true},
 		{name: "auto human request", errandModel: "errand-flat", ratio: 0.95, trigger: CompactionTriggerManual},
 		{name: "auto in-run human request", errandModel: "errand-flat", ratio: 0.95, trigger: "requested"},
 		{name: "auto after a model change", errandModel: "errand-flat", ratio: 0.95, writtenBy: "previous-model"},
+		{name: "auto human request after a model change", errandModel: "errand-flat", ratio: 0.95, trigger: CompactionTriggerManual, writtenBy: "previous-model"},
+		{name: "auto after a model change uncached serving is cheaper", errandModel: "errand-costly", ratio: 0.95, writtenBy: "previous-model", serving: true},
 		{name: "auto errand is cheaper", errandModel: "errand-cheap", ratio: 0.95},
 		{name: "auto errand cannot run", errandModel: "errand-cheap", broken: true, serving: true},
 		{name: "auto human request errand cannot run", errandModel: "errand-cheap", trigger: CompactionTriggerManual, broken: true, serving: true},
@@ -412,8 +417,9 @@ func hasSimulatedCheckpoint(c providersim.Conversation) bool {
 // same Responses gateway, stopped the turn and compacted. Crude sent the
 // whole history (491,798 input tokens, none cached) to the new model's native
 // compaction. A model that did not write the context has none of it in cache,
-// so Errand writes that checkpoint, and a human request always uses Errand.
-// Only a context the serving model wrote may go to its native route.
+// so the provider's compaction is not tried and Errand writes the checkpoint.
+// An automatic checkpoint of a context the serving model wrote may use its
+// native route. The user's /compact is always Errand's.
 func TestCheckpointAfterModelChangeUsesErrand(t *testing.T) {
 	for _, test := range []struct {
 		name, writtenBy string

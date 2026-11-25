@@ -11,9 +11,10 @@ context admission, extraction and recovery, not a second set of prompt templates
 These are the user's decisions. Every change in this area keeps them; the
 sections below describe how.
 
-1. **Native first, then the whole history.** Crude tries the provider's
-   [native compaction](#native-compaction-on-custom-connections) on the
-   selected account. When it is not available or fails, Crude writes a portable
+1. **Native first, then the whole history.** For automatic compaction, Crude
+   tries the provider's [native compaction](#native-compaction-on-custom-connections)
+   on the selected account while the provider holds the conversation in its
+   cache. When it is not available, not worth it or fails, Crude writes a portable
    checkpoint of the whole history, as manual `/compact` does. It never trims
    or drops history to fit. If the provider confirms a quota limit or asks
    Crude not to retry, only a different connection can write that checkpoint.
@@ -44,7 +45,8 @@ sections below describe how.
 6. **Manual compaction is authoritative.** A compact order from the user or the
    main agent runs at the next loop boundary, also while the agent is running.
    Running work never makes Crude refuse it, and the user always sees the
-   outcome.
+   outcome. Errand writes it from the complete context, with every Compaction
+   setting, and the agent continues from the checkpoint where it was.
 7. **Recover instead of stopping.** A recoverable failure (rate limit,
    transient outage, rejected native artifact, output ceiling) is retried or
    adapted inside the loop. Only a run-level fault stops the run, and the run
@@ -465,27 +467,32 @@ its wire has a native candidate. Native work uses the serving connection, not th
 extractor's credentials. Errand only keeps the portable path, including background
 preparation. Provider only never charges an Errand fallback.
 
-**Who writes the checkpoint in Auto.** A provider checkpoint is worth its price
-only while the provider has the conversation in its cache. So Auto asks the
-serving connection (native or its own portable checkpoint) only for an automatic,
-child or Errand loop-end checkpoint of a context that this connection and model
-wrote: the latest message with replay provenance carries its replay scope and
-model. Errand writes every other checkpoint:
+**Who writes the checkpoint.** The user's `/compact` is Errand's, in every
+agent state and with every Compaction setting. Errand writes it from the
+complete context; the serving model is not probed and does not receive the
+history. Only when Errand cannot run with its settings does the automatic rule
+below choose the writer, and Notices say why.
 
-- every human `/compact`, idle or in a running turn;
-- the first checkpoint after a model or connection change, before the new model
-  has answered in this context, including a stop, model change and `/compact`;
-- a context with no model output yet.
+Automatic, child and loop-end checkpoints choose by cost. A provider checkpoint
+is worth its price only while the provider has the conversation in its cache:
+the serving connection and model wrote it (the latest message with replay
+provenance carries its replay scope and model). Then Auto tries the native route
+first. Otherwise the cache is empty: after a model or connection change, before
+the new model has answered, or before any model output. Then Auto does not try
+the native route and writes a portable checkpoint. Errand writes it unless the
+serving model is cheaper with no cached input or Errand cannot run (see
+**Recovery**). Errand is the default writer, not a rule for every checkpoint. For
+such a context Errand can prepare in the background, as it does when the route
+is known to refuse or is in a cooldown. Otherwise the native attempt needs the
+exact boundary source. Provider only keeps the native route for automatic
+checkpoints.
 
-For an automatic checkpoint in those cases Errand can prepare in the background,
-as it does when the route is known to refuse or is in a cooldown. Otherwise the
-native attempt needs the exact boundary source. On 2026-11-25 a user changed models on one Responses gateway,
-stopped the turn and typed `/compact`. Crude probed the new model, then sent it
-the whole history (491,798 input tokens, none cached) for native compaction.
-`TestCheckpointAfterModelChangeUsesErrand` and
-`TestManualCompactionUsesErrandAfterModelChange` reproduce that request path.
-If Errand cannot run with its settings, the serving model writes the checkpoint
-and Notices say why. Provider only keeps the native route for every trigger.
+On 2026-11-25 a user changed models on one Responses gateway, stopped the turn
+and typed `/compact`. Crude probed the new model, then sent it the whole history
+(491,798 input tokens, none cached) for native compaction.
+`TestManualCompactionUsesErrandAfterModelChange` covers `/compact` after a model
+change, on the same model and with Provider only;
+`TestCheckpointAfterModelChangeUsesErrand` covers the automatic cases.
 
 | Wire | First-use decision |
 |---|---|
@@ -523,11 +530,9 @@ uses the `compact-2026-01-12` beta, a 50,000-token trigger, the portable checkpo
 instructions and `pause_after_compaction`. A valid unsigned block becomes a
 portable checkpoint; replaying the unsigned block would require leaving the edit on.
 An empty block is not an answer. When the provider actually answers, keep the answer
-or tool calls, not just the checkpoint. On a Provider only account, an explicit in-run
-`/compact` that misses the wire trigger still writes a complete checkpoint, including
-any newly accepted work.
-Below the wire minimum, without a pending turn, or when an ordinary request cannot
-fit, use on-demand or full-history extraction instead of generating an unsolicited turn.
+or tool calls, not just the checkpoint.
+Without a pending turn, or when an ordinary request cannot fit, use on-demand or
+full-history extraction instead of generating an unsolicited turn.
 
 A combined Responses reply settles under the original input prefix. Finish and
 publish its tool round before reading the checkpoint. The latest encrypted seal and
@@ -584,7 +589,7 @@ not send the history back to the rejected connection as a last resort.
 The decision lasts for the current run attempt. A successful main request on
 that connection clears it. A provider's stated retry time permits a new check;
 without one, Crude does not guess a time. A new attempt after **Continue run**
-also checks again, and so does an explicit `/compact` on a Provider only account. None of these rules turns an
+also checks again. None of these rules turns an
 uncertain native submission into a confirmed rejection.
 
 Only a refused synthetic check, or a second definite failure in a row, is negative
@@ -597,8 +602,7 @@ A native POST has no idempotency contract. A write-ahead fingerprint of the owne
 route and source stops automatic resubmission of that source for five minutes (the
 shared retry ceiling), including after a crash. While the marker is active, use
 portable compaction instead of repeating the native POST. A confirmed input
-rejection releases the marker. An explicit `/compact` on a Provider only account
-can send again. Forgetting
+rejection releases the marker. Forgetting
 a check does not clear it. If the core cannot open the catalog, skip the native
 POST. Do not use an in-memory substitute for the billing guard.
 
@@ -670,7 +674,7 @@ particular request paths; they are not a total billing guarantee.
   live and after the session reopens. Stage, retry, token counts and failures
   use the same [chat activity](chat-activity.md) presentation. Turn cleanup
   never consumes the durable operation row.
-- Manual compaction is written by Errand in Auto (see
+- Manual compaction is written by Errand (see
   [who writes the checkpoint](#native-compaction-on-custom-connections)). It is a separate exact-ID operation that owns the turn gate
   exclusively, never permission to reactivate old output. A human `/compact` is
   never refused for apparent busyness: during a running turn it is taken at the
