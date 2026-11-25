@@ -476,17 +476,16 @@ boundaries and cancelled recovery notices remain canonical evidence but are
 excluded before grouping, spacers and height calculation. Internal
 actor generations still include stopped/unbilled work for cancellation and
 recovery, but are not the displayed successful-call count.
-**Automatic compaction paints as one ordinary tool row, never the operation
-table.** Automatic, background-prepared and previously recorded decay boundaries use the shared tool
-title (`paintToolTitle`) with no context-boundary rules and no blank rows beyond
-the item's single leading spacer: `Compacting context <before> — <stage>` while
-it works (`— retry n/m` and `— saving checkpoint` name those phases), `Compacted
-context <before> → ~<after>` when it commits (`— prepared in background` or
-`— older tool output trimmed` for those triggers), and `Compaction
-cancelled/failed/interrupted — …` when it does not. Live events and resumed
-records carry the same trigger, stage and token facts, so hydration paints the
-identical row. Only a manual `/compact` keeps the ruled operation table, because
-the human invoked it and watches it run.
+**Manual and automatic compaction use the same ordinary tool row.** An idle
+`/compact` and a request accepted mid-turn both show **(Manual)**. An automatic,
+background-prepared, end-of-work or recorded decay checkpoint shows **(Auto)**.
+The action, operand, marker and optional disclosure use the normal tool title.
+For example: `Compacting context (Manual) 420K · Capturing state`. A completed
+row shows the token result; a failed or stopped row shows its own outcome. There
+is no extra assistant header, progress grid, or border for manual compaction.
+The live event and the restored operation record supply the same trigger and
+state to the same renderer. Opening settled details shows the retained evidence.
+
 Manual compaction owns the activity strip while its boundary is current:
 preparing, extraction, retry, and commit show operation progress without
 rotating an unrelated plan. Completion reports "Context compacted · Ready to
@@ -603,10 +602,9 @@ not change table widths, wrapping, selection text, or the painted transcript.
   requests and receipts. Long closed titles use at most two terminal rows;
   expansion restores the full title and evidence. Unknown effects stay visible
   while closed. Pending approvals/questions and recovery controls stay usable.
-- Run errors and settled manual/automatic compaction use that same compact
-  outcome anatomy, not separate failure cards. Active manual compaction keeps
-  its stage view. Notifications route to the transcript instead of repeating
-  the same full diagnostic.
+- Run errors and checkpoint outcomes use that same compact title and disclosure,
+  not separate failure cards. Notifications route to the transcript instead
+  of repeating the same full diagnostic.
 - Activity groups and parallel batches share one staged tool-leaf projection.
   Expansion reveals hidden branches in place; it never replaces the tree with
   standalone legacy rows. Execution events carry exact tool arguments, not

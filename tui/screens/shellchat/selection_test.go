@@ -54,14 +54,16 @@ func TestShellChatTextSelectionCopy(t *testing.T) {
 	}
 }
 
-func TestContextBoundariesUseSharedDragSelectionAndCopy(t *testing.T) {
+func TestCheckpointAndRestoreUseSharedDragSelectionAndCopy(t *testing.T) {
 	for _, test := range []struct {
-		name  string
-		lines []string
-		want  string
+		name       string
+		lines      []string
+		start, end int
+		ruled      bool
+		want       string
 	}{
-		{name: "compaction", lines: []string{"", "", "Context compacted", "Source 420K", "Continuation installed", ""}, want: "Source 420K"},
-		{name: "restore", lines: []string{"", "", "Workspace restored", "2 files restored", "Conversation retained", ""}, want: "2 files restored"},
+		{name: "compaction", lines: []string{"", "│ ● Compacted context (Manual) 420K ▸"}, start: 1, end: 1, want: "Compacted context (Manual)"},
+		{name: "restore", lines: []string{"", "", "Workspace restored", "2 files restored", "Conversation retained", ""}, start: 2, end: 4, ruled: true, want: "2 files restored"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			th := theme.DefaultDark()
@@ -70,15 +72,15 @@ func TestContextBoundariesUseSharedDragSelectionAndCopy(t *testing.T) {
 			for i, line := range test.lines {
 				native[i] = chatprojection.PaintLine{Spans: []chatprojection.RowSpan{{Text: line, Role: ui.ColorFg}}}
 			}
-			s.SetMessages([]chatprojection.MessageRow{{ID: test.name, Lines: test.lines, Native: native, ContextBoundary: true, ContextBoundaryStart: 1}}, PaintParams{
+			s.SetMessages([]chatprojection.MessageRow{{ID: test.name, Lines: test.lines, Native: native, ContextBoundary: test.ruled, ContextBoundaryStart: 1}}, PaintParams{
 				Compose: ComposeParams{InnerW: 40, PadLR: th.Spacing.PadLR, Theme: th},
 			})
 			s.SyncScrollMetrics(len(test.lines), len(test.lines))
 			s.Layout(ui.LayoutContext{}, ui.Rect{W: 40 + th.Spacing.PadLR*2, H: len(test.lines)})
-			ctx := ui.EventContext{LocalX: th.Spacing.PadLR, LocalY: 2}
+			ctx := ui.EventContext{LocalX: th.Spacing.PadLR, LocalY: test.start}
 			_ = s.Handle(ctx, ui.MouseClickEvent(tea.MouseClickMsg{X: ctx.LocalX, Y: ctx.LocalY, Button: tea.MouseLeft}))
 			ctx.LocalX = th.Spacing.PadLR + 40
-			ctx.LocalY = 4
+			ctx.LocalY = test.end
 			_ = s.Handle(ctx, ui.MouseMotionEvent(tea.MouseMotionMsg{X: ctx.LocalX, Y: ctx.LocalY, Button: tea.MouseLeft}))
 			if selected := s.SelectedText(); !strings.Contains(selected, test.want) {
 				t.Fatalf("selected text=%q want %q", selected, test.want)

@@ -36,9 +36,9 @@ shows:
   queued.
 - **A turn is running.** The turn accepts the request and the footer says
   "Compaction will start after the current step." The run compacts before its
-  next model request (trigger `requested`, shown as an ordinary compaction row
-  marked "requested with /compact"), also when automatic compaction is off or
-  deferred, and then continues the same work. A `wait` or `agent_wait` in
+  next model request. The ordinary tool row says **(Manual)**, just as it does
+  for an idle `/compact`. This also works when automatic compaction is off or
+  deferred. The turn then continues the same work. A `wait` or `agent_wait` in
   progress ends at once, and a slow command continues as a background handle,
   so the next step comes now rather than after their timeouts. The checkpoint
   always covers the complete current context: a checkpoint prepared earlier in

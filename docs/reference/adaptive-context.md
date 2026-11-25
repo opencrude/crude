@@ -639,14 +639,11 @@ particular request paths; they are not a total billing guarantee.
   generation: a manual compaction or any replaced context voids it.
   Only provider context-overflow evidence or reaching the hard
   limit makes a compaction failure stop the run.
-- Manual compaction presentation is one retained, operation-ID-keyed
-  context-boundary table on the normal chat background with full-bleed
-  top/bottom rules using the active-rail accent color. Automatic and background
-  compactions keep the same operation-ID-keyed row but paint it as one
-  ordinary tool row (see [chat activity](chat-activity.md)). The table shows
-  real stage units, never fabricated completion percentages. Active, retrying,
-  completed, cancelled, failed, and resumed-interrupted forms share geometry;
-  generic turn cleanup must never consume these durable operation rows.
+- Every compaction is one retained, operation-ID-keyed tool row. It shows
+  **(Manual)** for an explicit request and **(Auto)** for automatic work, both
+  live and after the session reopens. Stage, retry, token counts and failures
+  use the same [chat activity](chat-activity.md) presentation. Turn cleanup
+  never consumes the durable operation row.
 - Manual compaction is a separate exact-ID operation that owns the turn gate
   exclusively, never permission to reactivate old output. A human `/compact` is
   never refused for apparent busyness: during a running turn it is taken at the
@@ -657,10 +654,9 @@ particular request paths; they are not a total billing guarantee.
   passive, and queue-only sessions are not empty. Core capacity/receipt checks
   precede owner preparation; shutdown cancels extraction before joining workers
   and mirrors final session metadata without reading a closed SQL handle.
-- Context-boundary tables are ordinary chat content for interaction: native
-  rows, full-bleed rules, and body cells all participate in drag selection,
-  clipboard copy, hover/hit testing, and row context menus. Their distinct
-  visual treatment must never create a second opaque interaction path.
+- Checkpoint rows use normal transcript selection, copy, disclosure and row
+  menus. A Local History restore remains a separate operation with its own
+  boundary rules.
 
 ## Continuity handoff
 

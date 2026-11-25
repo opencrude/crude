@@ -255,15 +255,15 @@ func TestMessageAtLocalYResolvesBottomGravityAndScroll(t *testing.T) {
 	}
 }
 
-func TestContextBoundaryPaintsAccentRulesOnChatBackground(t *testing.T) {
+func TestHistoryRestorePaintsAccentRulesOnChatBackground(t *testing.T) {
 	th := theme.DefaultDark()
 	s := shellchat.New(th)
-	lines := []string{"", "Context  Compaction", "Stage  Capturing state", "Source  420K", ""}
+	lines := []string{"", "Workspace restored", "2 files restored", "Conversation retained", ""}
 	native := make([]chatprojection.PaintLine, len(lines))
 	for i, line := range lines {
 		native[i] = chatprojection.PaintLine{Spans: []chatprojection.RowSpan{{Text: line, Role: ui.ColorFg}}}
 	}
-	row := chatprojection.MessageRow{ID: "compact", Lines: lines, Native: native, ContextBoundary: true}
+	row := chatprojection.MessageRow{ID: "restore", Lines: lines, Native: native, ContextBoundary: true}
 	s.SetMessages([]chatprojection.MessageRow{row}, shellchat.PaintParams{Compose: shellchat.ComposeParams{InnerW: 36, PadLR: 2, Theme: th}})
 	s.SyncScrollMetrics(5, 5)
 	buf := s.PaintTestBuffer(40, 5)
