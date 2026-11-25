@@ -18,7 +18,10 @@ make layout-check   # only the folder, package, file and name rules
 
 `make design-audit` and the Conventions CI workflow also run these checks.
 On Windows, use `mingw32-make hooks` if that is the name of your GNU Make
-executable. The hook runs the same `conventions` target with either name.
+executable. The hook runs the same `conventions` target with either name. Local
+lint has no elapsed-time cutoff: a cold package load can take over five minutes
+before analysis starts. Stop the push to cancel it. A lint finding still blocks
+the push; CI has its own job deadline.
 
 <a id="allow-unused"></a>
 A reviewed exception goes in `tools/layoutcheck/allow.txt` as
