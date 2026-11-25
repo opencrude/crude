@@ -22,6 +22,8 @@ func TestRecoveryDiagnosticHidesCredentialsButKeepsTheStatus(t *testing.T) {
 			"API 400. " + hiddenDiagnostic},
 		{"free-form code", &provider.StatusError{StatusCode: 403, APICode: key, Message: "api_key=" + key},
 			"API 403. " + hiddenDiagnostic},
+		{"lowercase credential in code", &provider.StatusError{StatusCode: 403, APICode: strings.ToLower(key), Message: "api_key=" + strings.ToLower(key)},
+			"API 403. " + hiddenDiagnostic},
 		{"not a status", errors.New("dial: password=" + key), hiddenDiagnostic},
 		{"ordinary", &provider.StatusError{StatusCode: 503, Message: "overloaded"}, "API 503: overloaded"},
 	} {
