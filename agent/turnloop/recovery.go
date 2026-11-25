@@ -519,10 +519,8 @@ func newRecoveryID() string {
 
 const hiddenDiagnostic = "The message can contain a credential, so Crude hides it. See the local session log."
 
-// recoveryDiagnostic hides a provider message that looks like it carries a
-// credential. The HTTP status and the provider's error code are protocol
-// tokens, not free text, so they stay: "API 401 (invalid_api_key)" tells the
-// user what to fix even when the message itself is hidden.
+// recoveryDiagnostic keeps the HTTP status when a provider echoes credentials.
+// The provider controls all strings, including fields named "code" and "type".
 func recoveryDiagnostic(err error) string {
 	if err == nil {
 		return ""
@@ -541,8 +539,8 @@ func recoveryDiagnostic(err error) string {
 	}
 	head := fmt.Sprintf("API %d", status.StatusCode)
 	for _, code := range []string{status.APICode, status.Code, status.APIType} {
-		if protocolToken(code) {
-			head += " (" + code + ")"
+		if code == "invalid_api_key" {
+			head += " (invalid_api_key)"
 			break
 		}
 	}
@@ -560,21 +558,6 @@ func credentialLike(text string) bool {
 		}
 	}
 	return false
-}
-
-// protocolToken accepts a short lowercase error code such as
-// "invalid_api_key". Mixed case, long or free-form values are not shown,
-// because a credential can look like that.
-func protocolToken(code string) bool {
-	if code == "" || len(code) > 48 || code[0] < 'a' || code[0] > 'z' {
-		return false
-	}
-	for _, r := range code {
-		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '_' && r != '.' && r != '-' {
-			return false
-		}
-	}
-	return true
 }
 
 // classifyRecoveryError owns recovery for a provider request outcome. Only
