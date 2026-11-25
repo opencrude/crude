@@ -907,79 +907,37 @@ func (s *TerminalRenderer) transformLine(newbuf *RenderBuffer, y int) {
 			s.putRange(newbuf, oldLine, newLine, y, firstCell, n)
 		}
 	} else {
-		nLastNonBlank := nLastCell
-		oLastNonBlank := oLastCell
-
-		// Find the last cells that really differ.
-		// Can be -1 if no cells differ.
-		for cellEqual(newLine.At(nLastCell), oldLine.At(oLastCell)) {
-			if !cellEqual(newLine.At(nLastCell-1), oldLine.At(oLastCell-1)) {
-				break
-			}
-			nLastCell--
-			oLastCell--
-			if nLastCell == -1 || oLastCell == -1 {
-				break
-			}
+		// Shift only a complete, unchanged suffix. Writing even the first
+		// cell of the suffix before ICH/IRM or DCH changes what the terminal
+		// will move. A range ending inside a wide glyph writes the entire
+		// glyph, so adjusting the boundary *after* that write is too late.
+		shift := nLastCell - oLastCell
+		oStart, nStart := firstCell, firstCell
+		if shift > 0 {
+			nStart += shift
+		} else {
+			oStart -= shift
 		}
-		// The loop stops on the first equal cell after the last difference.
-		// When nothing shifted, rewriting that cell is pure waste, and it
-		// would erase external graphics an owner must then restore.
-		if nLastCell == oLastCell && nLastCell > firstCell &&
-			cellEqual(newLine.At(nLastCell), oldLine.At(oLastCell)) {
-			nLastCell--
-			oLastCell--
+		// Short suffixes (such as a single block caret) cost less to write
+		// than to shift. Compare physical cells, including continuations.
+		moveSuffix := shift != 0 && len(oldLine) == len(newLine) && oLastCell-oStart+1 > 3 &&
+			!oldLine.At(oStart).IsZero() && !newLine.At(nStart).IsZero()
+		for i := 0; moveSuffix && oStart+i <= oLastCell; i++ {
+			moveSuffix = cellEqual(oldLine.At(oStart+i), newLine.At(nStart+i))
 		}
-
-		n := min(oLastCell, nLastCell)
-		if n >= firstCell {
-			s.move(newbuf, firstCell, y)
-			s.putRange(newbuf, oldLine, newLine, y, firstCell, n)
-		}
-
-		if oLastCell < nLastCell {
-			m := max(nLastNonBlank, oLastNonBlank)
-			if n != 0 {
-				for n > 0 {
-					wide := newLine.At(n + 1)
-					if wide == nil || !wide.IsZero() {
-						break
-					}
-					n--
-					oLastCell--
-				}
-			} else if n >= firstCell && newLine.At(n) != nil && newLine.At(n).Width > 1 {
-				next := newLine.At(n + 1)
-				for next != nil && next.IsZero() {
-					n++
-					oLastCell++
-					next = newLine.At(n + 1)
-				}
+		s.move(newbuf, firstCell, y)
+		switch {
+		case moveSuffix && shift > 0:
+			s.insertCells(newbuf, newLine[firstCell:], shift)
+		case moveSuffix && shift < 0:
+			s.updatePen(blank)
+			s.deleteCells(-shift, newbuf.Width())
+		default:
+			last := max(nLastCell, oLastCell)
+			for last > firstCell && cellEqual(newLine.At(last), oldLine.At(last)) {
+				last--
 			}
-
-			// TODO: This can sometimes send unnecessary cursor movements with
-			// negative or zero ranges. This could happen on a screen resize
-			// where oLastCell < nLastCell and oLastCell is -1 or less.
-			// Investigate and fix.
-			s.move(newbuf, n+1, y)
-			ichCost := 3 + nLastCell - oLastCell
-			if s.caps.Contains(capICH) && (nLastCell < nLastNonBlank || ichCost > (m-n)) {
-				s.putRange(newbuf, oldLine, newLine, y, n+1, m)
-			} else {
-				s.insertCells(newbuf, newLine[n+1:], nLastCell-oLastCell)
-			}
-		} else if oLastCell > nLastCell {
-			s.move(newbuf, n+1, y)
-			dchCost := 3 + oLastCell - nLastCell
-			if dchCost > len(ansi.EraseLineRight)+nLastNonBlank-(n+1) {
-				if s.putRange(newbuf, oldLine, newLine, y, n+1, nLastNonBlank) {
-					s.move(newbuf, nLastNonBlank+1, y)
-				}
-				s.clearToEnd(newbuf, blank, false)
-			} else {
-				s.updatePen(blank)
-				s.deleteCells(oLastCell-nLastCell, newbuf.Width())
-			}
+			s.putRange(newbuf, oldLine, newLine, y, firstCell, last)
 		}
 	}
 

@@ -85,40 +85,15 @@ func (d *TerminalReader) serializeWin32InputRecords(records []xwindows.InputReco
 			kevent := record.KeyEvent()
 			// d.logf("key event: %s", keyEventString(kevent.VirtualKeyCode, kevent.VirtualScanCode, kevent.Char, kevent.KeyDown, kevent.ControlKeyState, kevent.RepeatCount))
 
-			var kd int
-			if kevent.KeyDown {
-				kd = 1
-			}
-			if d.vtInput { //nolint:nestif
-				// In VT Input Mode, we only capture the Unicode characters
-				// decoding them along the way.
-				// This is similar to [TerminalReader.storeGraphemeRune] except
-				// that we need to write the events directly to the buffer.
-				if d.utf16Half[kd] {
-					// We have a half pair that needs to be decoded.
-					d.utf16Half[kd] = false
-					d.utf16Buf[kd][1] = kevent.Char
-					r := utf16.DecodeRune(d.utf16Buf[kd][0], d.utf16Buf[kd][1])
-					buf.WriteRune(r)
-				} else if utf16.IsSurrogate(kevent.Char) {
-					// This is the first half of a UTF-16 surrogate pair.
-					d.utf16Half[kd] = true
-					d.utf16Buf[kd][0] = kevent.Char
-				} else if kevent.KeyDown {
-					if shouldEncodeWin32ControlChord(kevent) {
-						// Windows can report Ctrl shortcuts with a zero or
-						// already-translated UnicodeChar. Preserve the virtual
-						// key and modifier state so Ctrl+V reaches the app
-						// instead of becoming NUL, literal "v", or no-op.
-						writeWin32InputKeyEvent(buf, kevent)
-					} else {
-						// Just a regular key press character encoded in VT.
-						buf.WriteRune(kevent.Char)
-					}
-				}
+			if d.vtInput {
+				d.writeVTConsoleKey(buf, kevent)
 			} else {
 				// We encode the key to Win32 Input Mode if it is a known key.
 				if kevent.VirtualKeyCode == 0 {
+					var kd int
+					if kevent.KeyDown {
+						kd = 1
+					}
 					d.eventScanner.storeGraphemeRune(kd, kevent.Char)
 				} else {
 					buf.Write(d.eventScanner.encodeGraphemeBufs())
@@ -203,8 +178,41 @@ func (d *TerminalReader) serializeWin32InputRecords(records []xwindows.InputReco
 		}
 	}
 
-	// Flush any remaining grapheme buffers.
-	buf.Write(d.eventScanner.encodeGraphemeBufs())
+	if !d.vtInput {
+		// Only raw Win32 records collect graphemes here. On the VT path
+		// these buffers belong to the downstream event scanner.
+		buf.Write(d.eventScanner.encodeGraphemeBufs())
+	}
+}
+
+func (d *TerminalReader) writeVTConsoleKey(buf *bytes.Buffer, event xwindows.KeyEventRecord) {
+	// VT text comes from key presses. An Alt-code commit is the exception:
+	// ConPTY represents unmappable UTF-16 units as a bare Alt press followed
+	// by an Alt release carrying the character. The bare press is not NUL.
+	alt := event.VirtualKeyCode == xwindows.VK_MENU
+	if alt && event.Char == 0 || !event.KeyDown && !alt {
+		return
+	}
+	if high := d.vtHighSurrogate; high != 0 {
+		d.vtHighSurrogate = 0
+		if r := utf16.DecodeRune(high, event.Char); r != '\uFFFD' {
+			buf.WriteRune(r)
+			return
+		}
+		// A truncated pair must not consume the following input.
+		buf.WriteRune('\uFFFD')
+	}
+	if event.Char >= 0xd800 && event.Char <= 0xdbff {
+		d.vtHighSurrogate = event.Char
+		return
+	}
+	if event.KeyDown && shouldEncodeWin32ControlChord(event) {
+		writeWin32InputKeyEvent(buf, event)
+		return
+	}
+	for range max(1, event.RepeatCount) {
+		buf.WriteRune(event.Char)
+	}
 }
 
 func shouldEncodeWin32ControlChord(event xwindows.KeyEventRecord) bool {

@@ -171,6 +171,12 @@ written. `CellBuffer.Set`, `FillRect`, `Blit`, opaque blit, alpha blend, and
 merge all enforce this rule. Half-graphemes and orphan continuations must never
 reach compositor ANSI or UV; this is the floating-window-over-emoji artifact.
 
+An incremental terminal update must not write into a suffix and then shift
+that same suffix. Insertion and deletion move only unchanged, complete glyphs.
+Check the emitted VT with a terminal, not only the renderer's cached grid; the
+[Windows emoji incident](../issues/2026-11-25-windows-emoji-input.md) reproduced
+extra glyphs and a second caret while the cached frame was correct.
+
 ## Rules For Code
 
 1. Use `rendering.VisibleWidth`, `PlainWidth`, and `FirstGrapheme` for layout,
