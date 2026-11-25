@@ -39,15 +39,31 @@ func newResponseState(s *Server, wire Wire) *responseState {
 	return &responseState{server: s, wire: wire, key: []byte(rand.Text()), stored: map[string]storedResponse{}, artifacts: map[string]sealedWindow{}}
 }
 
-func (s *responseState) lookup(id string) (storedResponse, bool) {
+// ExpireResponse expires a stored public Responses ID on this server. It
+// returns false if the ID is unknown, was not stored, or already expired.
+func (s *Server) ExpireResponse(id string) bool {
+	state := s.responses
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	row, known := state.stored[id]
+	if !known {
+		return false
+	}
+	state.stored[id] = storedResponse{}
+	return time.Now().Before(row.expires)
+}
+
+// Only retain the ID after expiry, not the conversation. A nil body with
+// known=true means an expired row; a fabricated ID remains a fixture error.
+func (s *responseState) lookup(id string) (row storedResponse, known bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	row, ok := s.stored[id]
-	if ok && !time.Now().Before(row.expires) {
-		delete(s.stored, id)
-		return storedResponse{}, false
+	row, known = s.stored[id]
+	if row.body != nil && !time.Now().Before(row.expires) {
+		row = storedResponse{}
+		s.stored[id] = row
 	}
-	return row, ok
+	return row, known
 }
 
 func (s *responseState) save(id string, body responseObject, window []responseObject) {
@@ -96,7 +112,7 @@ func (s *responseState) resolve(items []responseObject) (responseWindow, error) 
 			s.mu.Unlock()
 		}
 		if item["type"] != "compaction" && !known {
-			if s.wire == Codex && item["type"] == "compaction_trigger" {
+			if item["type"] == "compaction_trigger" {
 				continue
 			}
 

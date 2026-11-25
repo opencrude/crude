@@ -20,7 +20,10 @@ func nativeRateFixture(t *testing.T, wire providersim.Wire, mode string) (*provi
 	case providersim.Codex:
 		standard = "codex"
 	}
-	sim := providersim.New(t)
+	// Exercise discovery on a custom connection that serves the model but
+	// has no model-detail declaration. An advertised Messages model skips
+	// the synthetic probe, which is a different route from this fixture.
+	sim := providersim.New(t, providersim.WithModelCatalog(providersim.Messages))
 	p := &Provider{ID: "custom", AccountID: t.Name(), StandardName: standard, Model: model, APIKey: "fixture", BaseURL: sim.BaseURL(wire)}
 	p.SetProtocolSettings(&ProtocolSettings{Compaction: mode})
 	req := compactFixture(p)

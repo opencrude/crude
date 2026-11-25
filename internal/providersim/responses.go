@@ -11,6 +11,7 @@ import (
 func init() {
 	registerWire(Responses, func(s *Server) http.Handler {
 		state := newResponseState(s, Responses)
+		s.responses = state
 		mux := http.NewServeMux()
 		mux.HandleFunc("POST /v1/responses", state.create)
 		mux.HandleFunc("POST /v1/responses/compact", state.create)
@@ -45,7 +46,7 @@ func (s *responseState) retrieve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.server.observe(req)
-	if row, ok := s.lookup(r.PathValue("id")); ok {
+	if row, _ := s.lookup(r.PathValue("id")); row.body != nil {
 		writeJSON(w, 200, row.body)
 		return
 	}
@@ -103,11 +104,31 @@ func (s *responseState) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	items := decodeResponse(&req, obj)
-	trigger := s.wire == Codex && len(items) > 0 && items[len(items)-1]["type"] == "compaction_trigger"
+	// https://developers.openai.com/api/docs/guides/compaction#request-compaction-with-an-explicit-trigger
+	// The marker is a final input on response creation, never transcript text.
+	trigger := false
+	for i, item := range items {
+		if item["type"] == "compaction_trigger" {
+			if compact || i != len(items)-1 {
+				s.reject(w, req, "input", "", fmt.Errorf("/input/%d: supply a compaction_trigger only as the last item of a Responses create request", i))
+				return
+			}
+			trigger = true
+		}
+	}
 	if _, hasPrevious := obj["previous_response_id"].(string); hasPrevious {
-		row, ok := s.lookup(req.PreviousResponseID)
-		if !ok {
-			s.reject(w, req, "previous_response_id", "previous_response_not_found", fmt.Errorf("/previous_response_id: previous response %q not found", req.PreviousResponseID))
+		row, known := s.lookup(req.PreviousResponseID)
+		if row.body == nil {
+			const field, code = "previous_response_id", "previous_response_not_found"
+			err := fmt.Errorf("/previous_response_id: previous response %q not found", req.PreviousResponseID)
+			if known {
+				// The provider expired a real stored ID. A well-formed client
+				// can encounter this state; no script or prefix is consumed.
+				s.server.observe(req)
+				writeJSON(w, 400, chatError("invalid_request_error", code, field, err.Error()))
+			} else {
+				s.reject(w, req, field, code, err)
+			}
 			return
 		}
 		items = slices.Concat(row.window, items)
@@ -336,6 +357,16 @@ func responseItems(req Request, obj responseObject, t Turn) []responseObject {
 		if id == "" {
 			id = fmt.Sprintf("call_sim_%d_%d", index, i)
 		}
+		// CustomToolCall (public OpenAPI) carries free-form input, not
+		// function arguments. A custom input can also happen to be JSON:
+		// dispatch on the declaration, never the name or input syntax.
+		if slices.ContainsFunc(jsonField[[]any](obj, "tools"), func(raw any) bool {
+			tool, _ := raw.(responseObject)
+			return tool["type"] == "custom" && tool["name"] == call.Name
+		}) {
+			out = append(out, responseObject{"type": "custom_tool_call", "id": fmt.Sprintf("ctc_sim_%d_%d", index, i), "call_id": id, "name": call.Name, "input": call.Arguments})
+			continue
+		}
 		out = append(out, responseObject{"type": "function_call", "status": status, "id": fmt.Sprintf("fc_sim_%d_%d", index, i), "call_id": id, "name": call.Name, "arguments": call.Arguments})
 	}
 	return out
@@ -370,27 +401,35 @@ func responseFrames(base responseObject, output []responseObject, textDeltas []s
 			}
 		}
 		delete(start, "encrypted_content")
-		if item["type"] == "function_call" {
+		switch item["type"] {
+		case "function_call":
 			start["arguments"] = ""
-		}
-		if item["type"] == "compaction" {
+		case "custom_tool_call":
+			start["input"] = ""
+		case "compaction":
 			start["encrypted_content"] = ""
 		}
 		emit("output_item.added", responseObject{"output_index": i, "item": start})
 		switch item["type"] {
 		case "compaction":
 			emit("compaction.compacting", fields())
-		case "function_call":
-			for _, part := range textChunks(toolDeltas[tool], item["arguments"].(string)) {
+		case "function_call", "custom_tool_call":
+			key, event := "arguments", "function_call_arguments"
+			if item["type"] == "custom_tool_call" {
+				key, event = "input", "custom_tool_call_input"
+			}
+			for _, part := range textChunks(toolDeltas[tool], item[key].(string)) {
 				f := fields()
 				f["delta"] = part
-				emit("function_call_arguments.delta", f)
+				emit(event+".delta", f)
 			}
 			tool++
 			f := fields()
-			f["arguments"] = item["arguments"]
-			f["name"] = item["name"]
-			emit("function_call_arguments.done", f)
+			f[key] = item[key]
+			if key == "arguments" {
+				f["name"] = item["name"]
+			}
+			emit(event+".done", f)
 		default:
 			for _, key := range []string{"summary", "content"} {
 				for j, raw := range jsonField[[]any](item, key) {
