@@ -206,6 +206,12 @@ func (l *Latency) ObserveLabeled(d time.Duration, label string) { l.ObserveStack
 // ObserveStack is ObserveLabeled with the stack captured while the observed
 // work was stalled (see EndUIWork). A stall event keeps it as evidence.
 func (l *Latency) ObserveStack(d time.Duration, label string, stack []string) {
+	l.ObserveUIStall(d, label, UIStallEvidence{Stack: stack})
+}
+
+// ObserveUIStall records the duration and, when it crosses the series' limit,
+// keeps the exact-phase evidence captured by the UI loop watchdog.
+func (l *Latency) ObserveUIStall(d time.Duration, label string, capture UIStallEvidence) {
 	if l == nil {
 		return
 	}
@@ -226,7 +232,8 @@ func (l *Latency) ObserveStack(d time.Duration, label string, stack []string) {
 	l.total++
 	l.mu.Unlock()
 	if stall := l.meta.stallMicros(); stall > 0 && micros >= stall {
-		recordEvent(Event{At: at, Group: l.meta.Group, Series: l.meta.Name, Title: l.meta.Title, Label: label, Micros: micros, Stack: stack})
+		recordEvent(Event{At: at, Group: l.meta.Group, Series: l.meta.Name, Title: l.meta.Title, Label: label, Micros: micros,
+			Stack: capture.Stack, WatchdogSampled: capture.WatchdogSampled, WatchdogDelayMicros: capture.WatchdogDelayMicros})
 	}
 }
 
@@ -441,7 +448,11 @@ type Event struct {
 	Severity string `json:"severity,omitempty"`
 	// Stack is the stalled goroutine's frames, innermost first, when they
 	// were captured during the stall. Frames name code, never user data.
-	Stack []string `json:"stack,omitempty"`
+	Stack               []string      `json:"stack,omitempty"`
+	BuildID             string        `json:"build_id,omitempty"`
+	Context             *StallContext `json:"stall_context,omitempty"`
+	WatchdogSampled     bool          `json:"watchdog_sampled,omitempty"`
+	WatchdogDelayMicros int64         `json:"watchdog_delay_us,omitempty"`
 }
 
 const maxEvents = 256
@@ -456,6 +467,9 @@ var events struct {
 }
 
 func recordEvent(event Event) {
+	if event.Series != "" {
+		event.attachStallContext()
+	}
 	if event.Severity == "" {
 		event.Severity = "crit"
 	}

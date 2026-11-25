@@ -119,6 +119,7 @@ fi
 echo "== TUI bench regression gate ($BENCH_GOOS) =="
 run_bench 'Benchmark(DemoGallery|Blit|WriteString|Flatten|FullRender|GenerateANSI)' ./tui/ui ./tui/surface ./tui/compositor
 run_bench '^BenchmarkDirectAnimationFrame$' ./tui/compositor
+run_bench '^BenchmarkFillRectDenseSpans$' ./tui/surface
 run_bench 'Benchmark(EditorPaint|EditorScrollRepaint)' ./tui/screens/shelleditor
 run_bench '^BenchmarkBuffer(DirtyCheckLargeFile|SavepointManualRoundTripLargeFile)$' ./tui/editor
 run_bench '^BenchmarkSyntax(LongPythonViewport|DocumentPreparation|MapInlineDecorations)$' ./tui/editor
@@ -159,6 +160,7 @@ run_bench '^Benchmark(ProjectInsightsCached10kDiagnostics|UsageSummaryCached1000
 # Scenario benches: steady-state work budgets (see scripts/perf_ceilings.txt).
 run_bench 'Benchmark(IdleTick|IdlePresentedFrame|AnimatedPresentedFrame|TickHiddenNotices|TabRederive|PointerMotionCoalesced|AgentSwitchWarm|SidebarResizePresentedFrame_500Msgs|SidebarResizeMutation_500Msgs|DenseChatSingleRowChange_500Msgs|DenseChatWidthCommit_500HeavyMsgs)' ./tui/viewmodel
 run_bench '^BenchmarkMainPane$' ./tui/viewmodel
+run_bench '^BenchmarkDenseChildPane(Sync|Paint)$' ./tui/viewmodel
 
 if [[ $fail -ne 0 ]]; then
   echo "== BENCH GATE FAILED =="

@@ -69,6 +69,43 @@ func TestCellBuffer_FillAndFillRect(t *testing.T) {
 	b.FillRect(Rect{X: 100, Y: 100, W: 1, H: 1}, red)
 }
 
+func TestFillRectClearsOnlyIntersectedSpansOutsideItsEdges(t *testing.T) {
+	b := NewCellBuffer(12, 3)
+	bg := cell.Blue
+	wide := cell.Cell{Char: '界', Content: "界", Width: 2, FG: cell.Red, BG: bg, Attr: cell.AttrBold, Link: cell.NewLink("https://example.test", "")}
+	for y := range b.Height() {
+		for x := 0; x < b.Width(); x += 2 {
+			b.SetSpan(x, y, wide)
+		}
+	}
+	fill := cell.BlankCell(cell.Green)
+	b.FillRect(Rect{X: 3, Y: 1, W: 6, H: 2}, fill)
+	outside := cell.Cell{Char: ' ', Content: " ", Width: 1, FG: cell.Red, BG: bg, Attr: cell.AttrBold}
+	for y := range b.Height() {
+		for x := range b.Width() {
+			c := b.Get(x, y)
+			switch {
+			case y >= 1 && x >= 3 && x < 9:
+				if !c.Equal(fill) {
+					t.Fatalf("%d,%d: fill got %+v", x, y, c)
+				}
+			case y >= 1 && (x == 2 || x == 9):
+				if !c.Equal(outside) {
+					t.Fatalf("%d,%d: outside span should be a styled blank without a link, got %+v", x, y, c)
+				}
+			case x%2 == 0:
+				if !c.Equal(wide) {
+					t.Fatalf("%d,%d: disjoint glyph changed: %+v", x, y, c)
+				}
+			default:
+				if c.Width != 0 || c.Link != wide.Link || c.BG != wide.BG {
+					t.Fatalf("%d,%d: disjoint continuation changed: %+v", x, y, c)
+				}
+			}
+		}
+	}
+}
+
 func TestCellBuffer_ResizePreserves(t *testing.T) {
 	b := NewCellBuffer(3, 3)
 	c := cell.NewCell('A', cell.Green, cell.NoColor, 0)

@@ -128,11 +128,30 @@ func (b *CellBuffer) FillRect(r Rect, c cell.Cell) {
 	if r.Empty() {
 		return
 	}
+	// The fill overwrites every interior cell, so only a span crossing an
+	// edge needs clearing. Keep the span's style on uncovered columns.
+	end := r.X + r.W
+	var filled []cell.Cell
 	for y := r.Y; y < r.Y+r.H; y++ {
-		clearIntersectingSpans(b, r.X, y, r.W)
-		rowStart := y * b.width
-		for x := r.X; x < r.X+r.W; x++ {
-			b.cells[rowStart+x] = c
+		row := b.Row(y)
+		if r.X > 0 && row[r.X].Width == 0 {
+			start, primary, _ := destinationSpanAt(b, r.X, y)
+			blankSpan(row[start:r.X], primary)
+		}
+		if end < len(row) && row[end-1].Width != 1 {
+			start, primary, ok := destinationSpanAt(b, end-1, y)
+			if outside := min(len(row), start+int(primary.Width)); ok && outside > end {
+				blankSpan(row[end:outside], primary)
+			}
+		}
+		target := row[r.X:end]
+		if filled == nil {
+			for i := range target {
+				target[i] = c
+			}
+			filled = target
+		} else {
+			copy(target, filled)
 		}
 	}
 }

@@ -37,6 +37,35 @@ workload. Tighten the allocation ceilings when all three have headroom. Use
 actual reference hardware for latency and dropped-frame claims; GOMAXPROCS=2
 on a faster processor is a useful contention test, not T470 certification.
 
+## Dense child panes and retained surface fills (2026-11-25)
+
+`BenchmarkDenseChildPaneSync` uses the tick's unchanged-source sync entry point
+with four warm children, 2,000 messages plus one active tool per child. It
+retains its zero-byte, zero-allocation path; it does not measure initial
+hydration, applying a new delta, or a presented frame. The live stack was
+sampled at the source-version check, so it does not establish transcript work.
+
+`BenchmarkDenseChildPanePaint` alternates the activity phase on the same four
+compact panes. The header now reads the last retained row instead of exporting
+the transcript. A compact pane retains settled tool rows and the alternate
+ink for active rows. Phase changes keep row positions and settled spans; a
+source or geometry change rebuilds the affected projection. The dense
+regression requires both dot shapes, retained settled rows, and the new source
+at the bottom after a transcript update. Three native Windows samples
+went from 10.93–12.72 ms, about 11.82 MB and 71,536–71,538 allocations to
+16.4–20.4 µs, 11,967 B and 92 allocations. The allocation gate adds only
+limited headroom; existing ceilings remain unchanged.
+
+`BenchmarkFillRectDenseSpans` clears a retained 160×48 grid across both edges
+of wide cells. Restoring the prior grid is outside the timer. The old scan
+blanked each complete grapheme before immediately overwriting its cells.
+`FillRect` now clears only the uncovered columns of crossing spans and copies
+from its first filled row, without scratch allocation. Three Windows runs
+measured 115.6–118.6 µs before and 15.0–16.5 µs after. A regression checks
+wide-span integrity, styles and link removal at both edges. These are paint
+stages, not terminal write or screen latency. No earlier ceiling was raised.
+See the [investigation](../issues/2026-11-25-ui-stalls.md) for profiles and limits.
+
 ## Whole-file search previews (2026-11-24)
 
 `BenchmarkWholeFilePreviewViewport` paints a mounted 120×40 search window with
@@ -1283,7 +1312,16 @@ Only the phase sampled during the stall carries the frames in `stack`;
 combined input latency and RPC round trips do not borrow a UI stack.
 `performance.shell` events and the archived stall evidence return the frames.
 Captures are limited to one per second; the archive prioritizes traced stalls
-when a window has more stall events than it can keep.
+when a window has more stall events than it can keep. A stall retains the
+producer build, the watchdog delay beyond its 50 ms threshold (when sampled),
+and the latest nearby one-hertz CPU/Go runtime interval if available. CPU is
+measured separately for the process and its host. Go's process-wide scheduler
+latency and GC pause are maximum bucket bounds; GC assist CPU is a sum, not
+elapsed UI time. The sample interval may end before the stall. A stack marks
+where the UI was sampled; none of these readings assigns cause by itself.
+Only the existing off-UI runtime sampler reads CPU counters or histograms.
+Observations attach an immutable sample without allocating or making OS calls.
+Save report displays the same bounded evidence without private stall labels.
 A continuous execution trace (`runtime/trace.FlightRecorder`, Go 1.25+) would
 also show scheduling, GC and syscalls, but it costs CPU on every event, so it is
 not enabled. `internal/metrics/stall_test.go` proves that a blocked UI goroutine
@@ -1295,11 +1333,15 @@ memory and CPU of the shell, the core and every process they started
 when Linux boot identity and process creation time prove equivalence), the machine's memory and CPU, and Crude's data folder
 by part and by saved workspace (sessions, Local History, worktrees), with the
 workspaces whose project folder no longer exists. The Overview's Memory and
-CPU tiles are these OS figures; Go heap and runtime CPU stay under Runtime.
+CPU tiles show the individual shell and core processes, not descendants.
+Resources labels totals as tree memory and tree CPU. Go heap and runtime CPU
+stay under Runtime.
 Low disk space (under 10% free, critical under 5%) and memory pressure are
-findings. Process and machine figures come from gopsutil and are read only
-inside demand snapshot collection (`internal/metrics/resources.go`), so a hidden surface
-starts no periodic sampler; an explicit diagnostic read may request them. Each platform builds the process tree in one pass
+findings. Process and machine figures come from gopsutil. Demand snapshot
+collection (`internal/metrics/resources.go`) owns the process
+lists, memory, disks, and attributable tree CPU. The runtime worker's separate
+CPU-only stall sample does not start any resource-tree or disk scans when the
+surface is hidden; an explicit diagnostic read can request full resources. Each platform builds the process tree in one pass
 (`/proc`, one Toolhelp snapshot, or the OS process list). Disk usage walks
 every saved file, so the core's `workspace.DataUsage` measures in the
 background at most once a minute, only when a snapshot asks, and `Take`

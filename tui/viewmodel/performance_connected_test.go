@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -15,6 +16,7 @@ import (
 	"crude/internal/buildinfo"
 	"crude/internal/metrics"
 	"crude/internal/perfdata"
+	"crude/tui/perf"
 	"crude/tui/rendering"
 	"crude/tui/screens/perfdash"
 	"crude/tui/screens/shellfooter"
@@ -230,14 +232,14 @@ func TestConnectedPerformanceSnapshotLifecycle(t *testing.T) {
 		if views[0].Memory != memory {
 			t.Fatalf("merged memory %d differs from deduplicated process total %d", views[0].Memory, memory)
 		}
-		if text := paint("Crude memory", "Processes"); strings.Contains(text, "Shell memory") || strings.Contains(text, "Core memory") {
+		if text := paint("Crude tree memory", "Processes"); strings.Contains(text, "Shell tree memory") || strings.Contains(text, "Core tree memory") {
 			t.Fatal("merged resource frame also displays split owners")
 		}
 	} else {
 		if len(views) != 2 || views[0].Label != "Shell" || views[1].Label != "Core" {
 			t.Fatalf("unqualified resource trees must stay split: %+v", views)
 		}
-		if text := paint("Shell memory", "Core memory", "Processes"); strings.Contains(text, "Crude memory") {
+		if text := paint("Shell tree memory", "Core tree memory", "Processes"); strings.Contains(text, "Crude tree memory") {
 			t.Fatal("unqualified resources displayed a combined total")
 		}
 	}
@@ -333,4 +335,88 @@ func TestConnectedPerformanceSnapshotLifecycle(t *testing.T) {
 	if app.ActiveSession != nil {
 		t.Fatal("application Performance journey created a session")
 	}
+}
+
+// TestPerformanceSaveReportNativeCapture drives the production App and loop
+// observer in the dedicated tuishot window, using an isolated Crude home.
+// F6 supplies a known slow Update, F7 opens Performance, F8 clicks Save
+// report at its actual mounted bounds, and F9 closes the test shell.
+func TestPerformanceSaveReportNativeCapture(t *testing.T) {
+	proof := os.Getenv("CRUDE_VISUAL_PERFORMANCE")
+	if proof == "" {
+		t.Skip("requires the native tuishot workflow")
+	}
+	home := t.TempDir()
+	t.Setenv(buildinfo.HomeEnv, home)
+	app, _ := newRealShellApp(t)
+	app.AddOrchestrator("performance-capture")
+	metrics.Start("shell")
+	v := &performanceCapture{App: app}
+	p := tea.NewProgram(v, tea.WithObserver(perf.NewLoopObserver()), tea.WithWidthMethod(ansi.GraphemeWidth))
+	app.SetProgram(p)
+	defer app.SetProgram(nil)
+	if _, err := p.Run(); err != nil {
+		t.Fatal(err)
+	}
+	app.StopAsyncIO()
+	if v.saveErr != nil || v.saved == "" {
+		t.Fatalf("the dashboard did not save a report: %v", v.saveErr)
+	}
+	data, err := os.ReadFile(v.saved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Build: " + buildinfo.ExecutableID(), "## Stall evidence", "Watchdog wake-up delay", "Nearby sample:", "Process CPU", "Host CPU", "Longest Go scheduling wait", "GC assist CPU time", "holdPerformanceCapture"} {
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("report is missing %q", want)
+		}
+	}
+	if strings.Contains(string(data), "PRIVATE-CAPTURE-CONTENT") {
+		t.Fatal("report contains private text")
+	}
+	if err := os.WriteFile(proof, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type performanceCapture struct {
+	*App
+	saved   string
+	saveErr error
+}
+
+func (v *performanceCapture) Init() tea.Cmd { return tickCmd() }
+
+//go:noinline
+func holdPerformanceCapture() { time.Sleep(150 * time.Millisecond) }
+
+func (v *performanceCapture) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if saved, ok := msg.(perfReportSavedMsg); ok {
+		v.saved, v.saveErr = saved.path, saved.err
+	}
+	if key, ok := msg.(tea.KeyPressMsg); ok {
+		switch key.Code {
+		case tea.KeyF6:
+			private := metrics.NewLatency(metrics.Meta{Name: "capture.fixture.files", Group: metrics.GroupFiles, Title: "File read", Stall: 10})
+			private.ObserveLabeled(time.Millisecond, "PRIVATE-CAPTURE-CONTENT")
+			holdPerformanceCapture()
+			return v, nil
+		case tea.KeyF7:
+			_, cmd := v.App.Update(shellfooter.ActionMsg{Action: "performance"})
+			return v, cmd
+		case tea.KeyF8:
+			r, mounted := v.rootHost.ScreenRect(perfdash.SaveID)
+			if !mounted || r.Empty() {
+				v.saveErr = fmt.Errorf("the Save report control did not mount")
+				return v, nil
+			}
+			_, press := v.App.Update(tea.MouseClickMsg{X: r.X + 1, Y: r.Y, Button: tea.MouseLeft})
+			_, release := v.App.Update(tea.MouseReleaseMsg{X: r.X + 1, Y: r.Y, Button: tea.MouseLeft})
+			return v, tea.Batch(press, release)
+		case tea.KeyF9:
+			return v, tea.Quit
+		}
+	}
+	_, cmd := v.App.Update(msg)
+	return v, cmd
 }

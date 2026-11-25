@@ -17,6 +17,10 @@ BenchmarkDemoGalleryPaint_80x24 1300 60
 BenchmarkDemoGalleryPaint_120x40 2000 60
 BenchmarkDemoGalleryHandleKeyEditCycle 80 3
 BenchmarkBlit_80x24 0 0
+# Four warm 2,001-row children; no render clock invalidates settled rows.
+BenchmarkDenseChildPaneSync 0 0
+BenchmarkDenseChildPanePaint 14400 111
+BenchmarkFillRectDenseSpans 8 0
 BenchmarkWriteString_Line 0 0
 # Every label passes the bidi check; right-to-left labels hit the arranged-line cache.
 BenchmarkWriteStringLeftToRight 0 0

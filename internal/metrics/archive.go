@@ -62,8 +62,11 @@ type ArchiveStall struct {
 	Severity string    `json:"severity"`
 	// Label names the cause for series with code-defined labels: a message
 	// type, request method, actor step or key chord (Meta.SaveLabels).
-	Label string   `json:"label,omitempty"`
-	Stack []string `json:"stack,omitempty"` // code locations only
+	Label               string        `json:"label,omitempty"`
+	Stack               []string      `json:"stack,omitempty"` // code locations only
+	Context             *StallContext `json:"stall_context,omitempty"`
+	WatchdogSampled     bool          `json:"watchdog_sampled,omitempty"`
+	WatchdogDelayMicros int64         `json:"watchdog_delay_us,omitempty"`
 }
 
 type ArchiveProcess struct {
@@ -160,7 +163,8 @@ func CaptureArchiveWindow(from, until int64) ArchiveWindow {
 	for i := range events.n {
 		event := events.ring[(events.next-events.n+i+maxEvents)%maxEvents]
 		if sec := event.At.Unix(); sec >= from && sec < until && event.Series != "" {
-			stall := ArchiveStall{At: event.At, Series: event.Series, Micros: event.Micros, Severity: event.Severity, Stack: event.Stack}
+			stall := ArchiveStall{At: event.At, Series: event.Series, Micros: event.Micros, Severity: event.Severity, Stack: event.Stack,
+				Context: event.Context, WatchdogSampled: event.WatchdogSampled, WatchdogDelayMicros: event.WatchdogDelayMicros}
 			if labeled[event.Series] {
 				stall.Label = event.Label
 			}

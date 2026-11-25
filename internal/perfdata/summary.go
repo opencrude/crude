@@ -88,8 +88,21 @@ func OverviewHeadlines(d Data) []Headline {
 	addLatency("Paint", ProcessShell, "ui.view")
 	addLatency("Terminal", ProcessShell, "render.flush")
 	addLatency("Core actor", ProcessCore, "core.actor")
-	for _, v := range ResourceViews(d) {
-		out = append(out, ResourceHeadlines(v)[:2]...)
+	for _, p := range d.Processes() {
+		if res := d.Snapshot(p).Resources; res != nil {
+			memory := Headline{p.Label() + " memory", "unknown", SeverityUnknown}
+			cpu := Headline{p.Label() + " CPU", "unknown / warming up", SeverityUnknown}
+			if len(res.Processes) > 0 {
+				self := res.Processes[0] // The sampler always lists its own process first.
+				if self.Memory >= 0 {
+					memory.Value, memory.Severity = FormatBytes(float64(self.Memory)), SeverityOK
+				}
+				if self.CPU >= 0 {
+					cpu.Value, cpu.Severity = FormatValue(self.CPU, "%"), SeverityOK
+				}
+			}
+			out = append(out, memory, cpu)
+		}
 	}
 	if streams, ok := d.Gauge(ProcessCore, "agent.streams"); ok && LastSet(streams) > 0 {
 		out = append(out, Headline{Label: "Model streams", Value: FormatCount(float64(LastSet(streams)))})
@@ -117,7 +130,7 @@ func ResourceHeadlines(v ResourceView) []Headline {
 			cpuSev = SeverityUnknown
 		}
 	}
-	out := []Headline{{v.Label + " memory", memory, memorySev}, {v.Label + " CPU", cpu, cpuSev}}
+	out := []Headline{{v.Label + " tree memory", memory, memorySev}, {v.Label + " tree CPU", cpu, cpuSev}}
 	if s := v.System; s.MemoryTotal > 0 && s.Error == "" {
 		out = append(out, Headline{v.Label + " host memory", fmt.Sprintf("%s of %s", FormatBytes(float64(s.MemoryTotal-s.MemoryAvailable)), FormatBytes(float64(s.MemoryTotal))), MemorySeverity(s)})
 	}

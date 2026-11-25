@@ -17,11 +17,11 @@ func uiLoopForTest(release <-chan struct{}, quick, stalled chan<- []string) {
 	MarkUIGoroutine()
 	BeginUIWork()
 	_, stack := EndUIWork()
-	quick <- stack
+	quick <- stack.Stack
 	BeginUIWork()
 	stalledUIWorkForTest(release)
 	_, stack = EndUIWork()
-	stalled <- stack
+	stalled <- stack.Stack
 }
 
 func TestUIStallRecordsTheStalledStackAndArchivesIt(t *testing.T) {
@@ -40,7 +40,7 @@ func TestUIStallRecordsTheStalledStackAndArchivesIt(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		uiWork.mu.Lock()
-		captured := uiWork.stack != nil
+		captured := uiWork.evidence.Stack != nil
 		uiWork.mu.Unlock()
 		if captured || time.Now().After(deadline) {
 			break
@@ -84,5 +84,32 @@ func TestUIStackPicksTheGoroutineSharingTheLoopFrames(t *testing.T) {
 	tied := append([]byte("1 @ 0x6\n#\t0x6\tmain.main+0x50\tC:/src/main.go:12\n\n"), profile...)
 	if got := uiStack(tied, map[string]struct{}{"main.main": {}}); got != nil {
 		t.Fatalf("an ambiguous match returned %q", got)
+	}
+}
+
+// A stall reads only the sampler's published evidence. It must keep the
+// original interval when more samples arrive and before archival takes place.
+func TestStallContextIsRetainedWithoutObservationAllocations(t *testing.T) {
+	wall := time.Unix(1_800_000_000, 0)
+	clock := fixedClock(t, wall)
+	prior := latestStallContext.Load()
+	t.Cleanup(func() { latestStallContext.Store(prior) })
+	context := &StallContext{From: wall.Add(-time.Second), Until: wall.Add(-10 * time.Millisecond),
+		ProcessCPUPercent: 80, HostCPUPercent: 76, SchedulerMaxMicros: 10_000, GCPauseMaxMicros: 4_000, GCAssistCPUMicros: 2_000}
+	latestStallContext.Store(context)
+	series := NewLatency(Meta{Name: "test.stall.context", Crit: 50_000})
+	if got := testing.AllocsPerRun(100, func() { series.Observe(70 * time.Millisecond) }); got != 0 {
+		t.Fatalf("stall observation allocated %.1f times", got)
+	}
+	latestStallContext.Store(&StallContext{From: wall, Until: wall.Add(time.Second)})
+	window := CaptureArchiveWindow(wall.Unix(), wall.Unix()+1)
+	if len(window.Stalls) == 0 || window.Stalls[0].Context == nil || *window.Stalls[0].Context != *context {
+		t.Fatal("archive lost or replaced the stall's contemporaneous context")
+	}
+	latestStallContext.Store(context)
+	*clock = wall.Add(4 * time.Second)
+	series.Observe(70 * time.Millisecond)
+	if ev := EventsSince(*clock); len(ev) != 1 || ev[0].Context != nil {
+		t.Fatalf("stale sample fabricated for a new stall: %+v", ev)
 	}
 }

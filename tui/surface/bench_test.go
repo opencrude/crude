@@ -44,3 +44,24 @@ func BenchmarkFlattenZOrder_Nested(b *testing.B) {
 		_ = root.FlattenZOrder()
 	}
 }
+
+// BenchmarkFillRectDenseSpans clears a retained 160x48 pane through both edges
+// of wide cells. Restoring the previously painted grid is outside the timer.
+func BenchmarkFillRectDenseSpans(b *testing.B) {
+	const w, h = 160, 48
+	buf, source := NewCellBuffer(w, h), NewCellBuffer(w, h)
+	for y := range h {
+		for x := 0; x < w; x += 2 {
+			source.SetSpan(x, y, cell.Cell{Char: '界', Content: "界", Width: 2})
+		}
+	}
+	r := Rect{X: 1, W: w - 2, H: h}
+	fill := cell.BlankCell(cell.Blue)
+	b.ReportAllocs()
+	for b.Loop() {
+		b.StopTimer()
+		copy(buf.Cells(), source.Cells())
+		b.StartTimer()
+		buf.FillRect(r, fill)
+	}
+}

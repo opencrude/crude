@@ -236,17 +236,19 @@ func clearIntersectingSpans(dst *CellBuffer, x, y, width int) {
 	end := min(dst.Width(), x+width)
 	for column := max(0, x); column < end; column++ {
 		start, primary, ok := destinationSpanAt(dst, column, y)
-		if !ok {
+		if !ok || primary.Width <= 1 {
 			continue
 		}
-		blank := primary
-		blank.Char = ' '
-		blank.Content = " "
-		blank.Width = 1
-		blank.Link = nil
-		for offset := 0; offset < int(primary.Width); offset++ {
-			dst.setRaw(start+offset, y, blank)
-		}
+		row := dst.Row(y)
+		blankSpan(row[start:min(len(row), start+int(primary.Width))], primary)
+	}
+}
+
+// blankSpan removes content and links while retaining unaffected paint style.
+func blankSpan(row []cell.Cell, primary cell.Cell) {
+	primary.Char, primary.Content, primary.Width, primary.Link = ' ', " ", 1, nil
+	for i := range row {
+		row[i] = primary
 	}
 }
 

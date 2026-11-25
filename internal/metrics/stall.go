@@ -30,16 +30,24 @@ const (
 	maxFrameText    = 200
 )
 
+// UIStallEvidence is the exact-phase sample from the UI watchdog. A late
+// timer can indicate process-wide pressure; it does not identify the cause.
+type UIStallEvidence struct {
+	Stack               []string
+	WatchdogSampled     bool
+	WatchdogDelayMicros int64
+}
+
 var uiWork struct {
-	mu         sync.Mutex
-	timer      *time.Timer
-	seq        uint64 // current iteration
-	busy       bool
-	stack      []string // captured during iteration stackSeq
-	stackPhase uint32
-	phase      atomic.Uint32
-	started    time.Time
-	last       time.Time
+	mu            sync.Mutex
+	timer         *time.Timer
+	seq           uint64 // current iteration
+	busy          bool
+	evidence      UIStallEvidence
+	evidencePhase uint32
+	phase         atomic.Uint32
+	started       time.Time
+	last          time.Time
 	// Functions on the UI goroutine's stack when it was bound. They identify
 	// it among all goroutines; a stalled UI stack shares its loop frames.
 	signature map[string]struct{}
@@ -50,7 +58,7 @@ var uiWork struct {
 func BeginUIWork() {
 	uiWork.mu.Lock()
 	uiWork.seq++
-	uiWork.busy, uiWork.stack = true, nil
+	uiWork.busy, uiWork.evidence = true, UIStallEvidence{}
 	uiWork.started = time.Now()
 	uiWork.phase.Store(0)
 	if uiWork.signature != nil {
@@ -63,18 +71,17 @@ func BeginUIWork() {
 	uiWork.mu.Unlock()
 }
 
-// EndUIWork ends the iteration. It returns the UI goroutine's stack captured
-// while the iteration was stalled, or nil.
-func EndUIWork() (uint32, []string) {
+// EndUIWork ends the iteration and returns any exact-phase watchdog sample.
+func EndUIWork() (uint32, UIStallEvidence) {
 	uiWork.mu.Lock()
 	defer uiWork.mu.Unlock()
 	uiWork.busy = false
 	if uiWork.timer != nil {
 		uiWork.timer.Stop()
 	}
-	stack := uiWork.stack
-	uiWork.stack = nil
-	return uiWork.stackPhase, stack
+	evidence := uiWork.evidence
+	uiWork.evidence = UIStallEvidence{}
+	return uiWork.evidencePhase, evidence
 }
 
 // SetUIWorkPhase marks the current phase of the watched iteration.
@@ -109,13 +116,16 @@ func captureUIStall() {
 	}
 	// A callback already queued at Stop can run in the next iteration.
 	// Never record that iteration before it reaches the capture threshold.
-	if remaining := uiStallCapture - time.Since(uiWork.started); remaining > 0 {
-		uiWork.timer.Reset(remaining)
+	wakeDelay := time.Since(uiWork.started) - uiStallCapture
+	if wakeDelay < 0 {
+		uiWork.timer.Reset(-wakeDelay)
 		uiWork.mu.Unlock()
 		return
 	}
 	seq, phase, signature := uiWork.seq, uiWork.phase.Load(), uiWork.signature
 	uiWork.last = at
+	uiWork.evidence = UIStallEvidence{WatchdogSampled: true, WatchdogDelayMicros: wakeDelay.Microseconds()}
+	uiWork.evidencePhase = phase
 	uiWork.mu.Unlock()
 
 	var profile bytes.Buffer
@@ -127,7 +137,7 @@ func captureUIStall() {
 
 	uiWork.mu.Lock()
 	if uiWork.busy && uiWork.seq == seq && uiWork.phase.Load() == phase && stack != nil {
-		uiWork.stack, uiWork.stackPhase = stack, phase
+		uiWork.evidence.Stack = stack
 	}
 	uiWork.mu.Unlock()
 }

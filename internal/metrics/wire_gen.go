@@ -350,8 +350,8 @@ func (z *DiskUsage) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *Event) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 9
-	o = append(o, 0x99)
+	// array header, size 13
+	o = append(o, 0x9d)
 	o = msgp.AppendTime(o, z.At)
 	o = msgp.AppendString(o, z.Group)
 	o = msgp.AppendString(o, z.Series)
@@ -368,6 +368,18 @@ func (z *Event) MarshalMsg(b []byte) (o []byte, err error) {
 			o = msgp.AppendString(o, z.Stack[za0001])
 		}
 	}
+	o = msgp.AppendString(o, z.BuildID)
+	if z.Context == nil {
+		o = msgp.AppendNil(o)
+	} else {
+		o, err = z.Context.MarshalMsg(o)
+		if err != nil {
+			err = msgp.WrapError(err, "Context")
+			return
+		}
+	}
+	o = msgp.AppendBool(o, z.WatchdogSampled)
+	o = msgp.AppendInt64(o, z.WatchdogDelayMicros)
 	return
 }
 
@@ -383,8 +395,8 @@ func (z *Event) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 9 {
-		err = msgp.ArrayError{Wanted: 9, Got: zb0001}
+	if zb0001 != 13 {
+		err = msgp.ArrayError{Wanted: 13, Got: zb0001}
 		return
 	}
 	z.At, bts, err = msgp.ReadTimeBytes(bts)
@@ -454,6 +466,37 @@ func (z *Event) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			}
 		}
 	}
+	z.BuildID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "BuildID")
+		return
+	}
+	if msgp.IsNil(bts) {
+		bts, err = msgp.ReadNilBytes(bts)
+		if err != nil {
+			return
+		}
+		z.Context = nil
+	} else {
+		if z.Context == nil {
+			z.Context = new(StallContext)
+		}
+		bts, err = z.Context.UnmarshalMsg(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "Context")
+			return
+		}
+	}
+	z.WatchdogSampled, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "WatchdogSampled")
+		return
+	}
+	z.WatchdogDelayMicros, bts, err = msgp.ReadInt64Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "WatchdogDelayMicros")
+		return
+	}
 	o = bts
 	return
 }
@@ -464,6 +507,13 @@ func (z *Event) Msgsize() (s int) {
 	for za0001 := range z.Stack {
 		s += msgp.StringPrefixSize + len(z.Stack[za0001])
 	}
+	s += msgp.StringPrefixSize + len(z.BuildID)
+	if z.Context == nil {
+		s += msgp.NilSize
+	} else {
+		s += z.Context.Msgsize()
+	}
+	s += msgp.BoolSize + msgp.Int64Size
 	return
 }
 
@@ -1692,6 +1742,82 @@ func (z *Snapshot) Msgsize() (s int) {
 		s += z.Resources.Msgsize()
 	}
 	s += msgp.Float64Size
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z *StallContext) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 7
+	o = append(o, 0x97)
+	o = msgp.AppendTime(o, z.From)
+	o = msgp.AppendTime(o, z.Until)
+	o = msgp.AppendFloat64(o, z.ProcessCPUPercent)
+	o = msgp.AppendFloat64(o, z.HostCPUPercent)
+	o = msgp.AppendInt64(o, z.SchedulerMaxMicros)
+	o = msgp.AppendInt64(o, z.GCPauseMaxMicros)
+	o = msgp.AppendInt64(o, z.GCAssistCPUMicros)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *StallContext) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 7 {
+		err = msgp.ArrayError{Wanted: 7, Got: zb0001}
+		return
+	}
+	z.From, bts, err = msgp.ReadTimeBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "From")
+		return
+	}
+	z.Until, bts, err = msgp.ReadTimeBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Until")
+		return
+	}
+	z.ProcessCPUPercent, bts, err = msgp.ReadFloat64Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "ProcessCPUPercent")
+		return
+	}
+	z.HostCPUPercent, bts, err = msgp.ReadFloat64Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "HostCPUPercent")
+		return
+	}
+	z.SchedulerMaxMicros, bts, err = msgp.ReadInt64Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "SchedulerMaxMicros")
+		return
+	}
+	z.GCPauseMaxMicros, bts, err = msgp.ReadInt64Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "GCPauseMaxMicros")
+		return
+	}
+	z.GCAssistCPUMicros, bts, err = msgp.ReadInt64Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "GCAssistCPUMicros")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *StallContext) Msgsize() (s int) {
+	s = 1 + msgp.TimeSize + msgp.TimeSize + msgp.Float64Size + msgp.Float64Size + msgp.Int64Size + msgp.Int64Size + msgp.Int64Size
 	return
 }
 

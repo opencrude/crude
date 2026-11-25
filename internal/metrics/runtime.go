@@ -1,7 +1,6 @@
 package metrics
 
 import (
-	"math"
 	"runtime"
 	"runtime/metrics"
 	"slices"
@@ -75,6 +74,8 @@ var runtimeSamples = []metrics.Sample{
 	{Name: "/gc/cycles/total:gc-cycles"},
 	{Name: "/gc/heap/allocs:bytes"},
 	{Name: "/sched/pauses/total/gc:seconds"},
+	{Name: "/sched/latencies:seconds"},
+	{Name: "/cpu/classes/gc/mark/assist:cpu-seconds"},
 }
 
 func sampleLoop() {
@@ -82,11 +83,15 @@ func sampleLoop() {
 	defer tick.Stop()
 	samples := slices.Clone(runtimeSamples)
 	var lastCPU, lastIdle, lastCycles, lastAllocs float64
-	var lastPauses []uint64
-	lastAt := time.Now()
-	first := true
-	for at := range tick.C {
+	var lastPauses, lastScheduler []uint64
+	var lastAssist float64
+	var lastAt time.Time
+	cpuContext := newCPUContextSampler()
+	initEventBuildID()
+	for range tick.C {
+		processCPU, hostCPU := cpuContext.read()
 		metrics.Read(samples)
+		at := time.Now()
 		value := func(i int) float64 {
 			switch samples[i].Value.Kind() {
 			case metrics.KindUint64:
@@ -100,24 +105,16 @@ func sampleLoop() {
 		runtimeHeap.Set(int64(value(1)))
 		runtimeMemory.Set(int64(value(2)))
 		cpu, idle, cycles, allocs := value(3), value(4), value(5), value(6)
-		var pause int64
-		if samples[7].Value.Kind() == metrics.KindFloat64Histogram {
-			h := samples[7].Value.Float64Histogram()
-			if lastPauses != nil && len(lastPauses) == len(h.Counts) {
-				for i := len(h.Counts) - 1; i >= 0; i-- {
-					if h.Counts[i] > lastPauses[i] {
-						upper := h.Buckets[i+1]
-						if math.IsInf(upper, 1) {
-							upper = h.Buckets[i]
-						}
-						pause = int64(upper * 1e6)
-						break
-					}
-				}
+		pause := histogramIntervalMax(samples[7].Value, &lastPauses)
+		scheduler := histogramIntervalMax(samples[8].Value, &lastScheduler)
+		assist := value(9)
+		if !lastAt.IsZero() {
+			assistMicros := int64(-1)
+			if samples[9].Value.Kind() == metrics.KindFloat64 && assist >= lastAssist {
+				assistMicros = int64((assist - lastAssist) * 1e6)
 			}
-			lastPauses = slices.Clone(h.Counts)
-		}
-		if !first {
+			latestStallContext.Store(&StallContext{From: lastAt, Until: at, ProcessCPUPercent: processCPU,
+				HostCPUPercent: hostCPU, SchedulerMaxMicros: scheduler, GCPauseMaxMicros: pause, GCAssistCPUMicros: assistMicros})
 			wall := at.Sub(lastAt).Seconds()
 			if wall > 0 {
 				busy := (cpu - lastCPU) - (idle - lastIdle)
@@ -127,9 +124,11 @@ func sampleLoop() {
 			if delta := cycles - lastCycles; delta > 0 {
 				runtimeGCCycles.Add(uint64(delta))
 			}
-			runtimeGCPause.Set(pause)
+			if pause >= 0 {
+				runtimeGCPause.Set(pause)
+			}
 		}
-		first = false
+		lastAssist = assist
 		lastCPU, lastIdle, lastCycles, lastAllocs, lastAt = cpu, idle, cycles, allocs, at
 		sampleGauges()
 	}
