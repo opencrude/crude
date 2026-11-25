@@ -1042,7 +1042,7 @@ func (s *Session) collaborationDefinitions(actorID string) []tools.ToolDef {
 	definitions := append([]tools.ToolDef(nil), tools.CollaborationTools...)
 	participant, err := store.Agent(context.Background(), actorID)
 	leaf := err == nil && participant.ParentID != ""
-	if leaf || s.runtimeProfile != nil && !s.runtimeProfile.EffectiveConfig(actorID).IsMultiAgentEnabled() {
+	if leaf {
 		filtered := definitions[:0]
 		for _, definition := range definitions {
 			if definition.Function.Name != "agent_start" && definition.Function.Name != "agent_configure" {
@@ -1081,15 +1081,15 @@ func (s *Session) executeCollaborationTool(ctx context.Context, actorID, name st
 	if store == nil {
 		return tools.ToolResult{}, false, nil
 	}
+	if (name == "agent_start" || name == "agent_configure") && s.runtimeProfile != nil && !s.runtimeProfile.EffectiveConfig(actorID).IsMultiAgentEnabled() {
+		return delegationDisabledResult(), true, nil
+	}
 	switch name {
 	case "agent_start":
 		if participant, err := store.Agent(ctx, actorID); err != nil {
 			return tools.ToolResult{}, true, err
 		} else if participant.ParentID != "" {
 			return tools.ToolResult{}, true, fmt.Errorf("bounded leaf agents cannot launch children; request independent work from the parent or an existing peer")
-		}
-		if s.runtimeProfile != nil && !s.runtimeProfile.EffectiveConfig(actorID).IsMultiAgentEnabled() {
-			return delegationDisabledResult(), true, nil
 		}
 		if !s.initSubAgentRunner() {
 			return delegationDisabledResult(), true, nil

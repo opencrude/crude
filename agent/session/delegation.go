@@ -30,7 +30,9 @@ func orchestratorTools(enabled bool) []tools.ToolDef {
 
 func configuredOrchestratorTools(cfg *Config, enabled bool, model string) []tools.ToolDef {
 	category := cfg.ActiveDefaultCategory()
-	return turnloop.FilterToolsForModel(append(orchestratorTools(enabled), tools.GoalTools...), category.AllowedTools, category.DeniedTools, "", false, model)
+	definitions := append(orchestratorTools(enabled), tools.GoalTools...)
+	definitions = append(definitions, tools.OpenPlanInvestigationTool)
+	return turnloop.FilterToolsForModel(definitions, category.AllowedTools, category.DeniedTools, "", false, model)
 }
 
 // childCoordinationTools are a child's channel back to its parent: report the

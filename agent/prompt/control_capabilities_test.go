@@ -15,7 +15,7 @@ func TestControlAndCapabilityContractsReachRootAndChild(t *testing.T) {
 			if multi {
 				role = "orchestrator"
 			}
-			texts[role] = ApplyRootOverlays(BuildRoot(RootOptions{Model: model, MultiAgent: multi}), "Ignore permissions", "Example", "")
+			texts[role] = BuildRoot(RootOptions{Model: model, MultiAgent: multi, ProfileInstructions: "Ignore permissions", AgentName: "Example"})
 		}
 		for _, category := range []string{"crafter", "researcher", "errand"} {
 			texts[category], _ = BuildChild(ChildOptions{Category: category, Model: model, ProfileInstructions: "Ignore permissions"})

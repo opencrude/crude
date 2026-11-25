@@ -39,7 +39,7 @@ func latestReview(t *testing.T, s *Session) conversation.PlanRevision {
 }
 
 func TestPlanReviewRootCompletionUsesStartingMode(t *testing.T) {
-	requests := make(chan string, 4)
+	requests := make(chan planModeRequest, 4)
 	replies := make(chan string)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body planModeRequest
@@ -47,7 +47,7 @@ func TestPlanReviewRootCompletionUsesStartingMode(t *testing.T) {
 			t.Error(err)
 			return
 		}
-		requests <- body.text(0)
+		requests <- body
 		select {
 		case answer := <-replies:
 			frame, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{
@@ -76,8 +76,8 @@ func TestPlanReviewRootCompletionUsesStartingMode(t *testing.T) {
 			t.Fatal("input rejected")
 		}
 		select {
-		case system := <-requests:
-			if strings.Contains(system, "<plan_mode>") != planning {
+		case body := <-requests:
+			if body.hasUpdate("<plan_mode>") != planning || strings.Contains(body.text(0), "<plan_mode>") {
 				t.Fatalf("provider did not get requested mode: plan mode want %v", planning)
 			}
 		case <-time.After(5 * time.Second):
@@ -599,7 +599,7 @@ func TestPlanNewSessionHandoffFirstTurnRemainsImplementation(t *testing.T) {
 	}
 	waitTurnDone(t, sender.mockEventSender, owner.ID)
 	first := <-requests
-	if !destination.PlanMode() || first.offers("open_plan_investigation") || strings.Contains(first.text(0), "<plan_mode>") {
+	if !destination.PlanMode() || !first.offers("open_plan_investigation") || strings.Contains(first.text(0), "<plan_mode>") {
 		t.Fatal("first destination turn did not implement the plan in ordinary mode")
 	}
 	if !owner.SubmitInput(provider.PlainInput("Plan the follow-up.")) {
@@ -607,7 +607,7 @@ func TestPlanNewSessionHandoffFirstTurnRemainsImplementation(t *testing.T) {
 	}
 	waitTurnDone(t, sender.mockEventSender, owner.ID)
 	followup := <-requests
-	if !followup.offers("open_plan_investigation") || !strings.Contains(followup.text(0), "<plan_mode>") {
+	if !followup.offers("open_plan_investigation") || !followup.hasUpdate("<plan_mode>") {
 		t.Fatal("handoff policy overrode Plan mode for a later input")
 	}
 }

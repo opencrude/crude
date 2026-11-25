@@ -231,6 +231,11 @@ protocol responses and bounded evidence still apply.
   border, never a fill that swallows text. MCP facts are observed only; switching
   never starts a transport or grants access.
 
+A root Plan mode turn declares the same capability tools as a normal turn. Its
+request preparation reads the connected catalog without starting a host,
+reconnecting a server or refreshing discovery. Declaration grants no permission;
+Plan mode refuses activation and external tool calls before execution.
+
 ## Lifecycle
 
 - Capability snapshot contexts cancel before workspace teardown. Workspace

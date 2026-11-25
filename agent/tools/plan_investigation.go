@@ -2,7 +2,7 @@ package tools
 
 import "encoding/json"
 
-// OpenPlanInvestigationTool is offered only on root Plan mode turns.
+// OpenPlanInvestigationTool is declared on root turns and can run only in Plan mode.
 var OpenPlanInvestigationTool = ToolDef{
 	Type: "function",
 	Function: ToolFuncDef{

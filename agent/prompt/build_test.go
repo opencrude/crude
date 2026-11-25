@@ -29,8 +29,7 @@ func TestPlanProposalDoesNotRequireExecutionProgressTool(t *testing.T) {
 func TestPlanningContractReachesRootAndChildAcrossModels(t *testing.T) {
 	for _, model := range []string{"deepseek", "claude", "gpt", "ollama"} {
 		for _, multi := range []bool{false, true} {
-			base := BuildRoot(RootOptions{Model: model, MultiAgent: multi})
-			assembled := ApplyRootOverlays(base, "Work carefully", "Agent", "")
+			assembled := BuildRoot(RootOptions{Model: model, MultiAgent: multi, ProfileInstructions: "Work carefully", AgentName: "Agent"})
 			if strings.Count(assembled, PlanningContract) != 1 {
 				t.Fatalf("%s multi=%t lost canonical plan lifecycle", model, multi)
 			}
@@ -47,7 +46,7 @@ func TestPlanningContractReachesRootAndChildAcrossModels(t *testing.T) {
 func TestParentOwnsChildExecutionDispositionAcrossModels(t *testing.T) {
 	for _, model := range []string{"gpt", "claude", "deepseek", "ollama"} {
 		for _, multi := range []bool{false, true} {
-			text := ApplyRootOverlays(BuildRoot(RootOptions{Model: model, MultiAgent: multi}), "Keep all worktrees forever", "Parent", "")
+			text := BuildRoot(RootOptions{Model: model, MultiAgent: multi, ProfileInstructions: "Keep all worktrees forever", AgentName: "Parent"})
 			var document struct {
 				Hygiene struct {
 					Rules []string `xml:"rule"`
@@ -136,7 +135,7 @@ func TestWorkspaceWideExecutionHygieneReachesEveryCapableRole(t *testing.T) {
 			if multi {
 				mode = "orchestrator"
 			}
-			prompts[mode] = ApplyRootOverlays(BuildRoot(RootOptions{Model: model, MultiAgent: multi}), "Only clean your own descendants", "Root", "")
+			prompts[mode] = BuildRoot(RootOptions{Model: model, MultiAgent: multi, ProfileInstructions: "Only clean your own descendants", AgentName: "Root"})
 		}
 		for _, category := range []string{"crafter", "researcher", "errand"} {
 			prompts[category], _ = BuildChild(ChildOptions{Category: category, Model: model, ProfileInstructions: "Silence means abandoned"})

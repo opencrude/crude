@@ -2278,8 +2278,9 @@ func (z *Result) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *RuntimeActor) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 14
-	o = append(o, 0x9e)
+	// array header, size 15
+	o = append(o, 0x9f)
+	o = msgp.AppendBool(o, z.CatalogOnly)
 	o = msgp.AppendString(o, z.ID)
 	o = msgp.AppendString(o, z.RunID)
 	o = msgp.AppendUint64(o, z.RuntimeEpoch)
@@ -2353,8 +2354,13 @@ func (z *RuntimeActor) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 14 {
-		err = msgp.ArrayError{Wanted: 14, Got: zb0001}
+	if zb0001 != 15 {
+		err = msgp.ArrayError{Wanted: 15, Got: zb0001}
+		return
+	}
+	z.CatalogOnly, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "CatalogOnly")
 		return
 	}
 	z.ID, bts, err = msgp.ReadStringBytes(bts)
@@ -2569,7 +2575,7 @@ func (z *RuntimeActor) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *RuntimeActor) Msgsize() (s int) {
-	s = 1 + msgp.StringPrefixSize + len(z.ID) + msgp.StringPrefixSize + len(z.RunID) + msgp.Uint64Size + msgp.Uint64Size + msgp.StringPrefixSize + len(z.WorkspaceID)
+	s = 1 + msgp.BoolSize + msgp.StringPrefixSize + len(z.ID) + msgp.StringPrefixSize + len(z.RunID) + msgp.Uint64Size + msgp.Uint64Size + msgp.StringPrefixSize + len(z.WorkspaceID)
 	if z.ShellOwner == nil {
 		s += msgp.NilSize
 	} else {

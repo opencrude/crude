@@ -128,7 +128,8 @@ func (s *Session) bindCodeIntelligence(live *turnloop.Agent) {
 			return s.executeLSPTool(ctx, live.WorkDir, params)
 		}
 		var edited []string
-		if isEditTool(name) {
+		// Investigation edits must not start a language server or probe source files.
+		if live.PlanInvestigation == nil && isEditTool(name) {
 			edited = editedPaths(live.WorkDir, name, params)
 		}
 		result, err := previousFn(ctx, name, params)
