@@ -331,11 +331,23 @@ the Home launcher card reads **New Workspace**; the Recent Workspaces row and
 its context menu read **New workspace**. Pick one casing for buttons and cards
 and record it in `docs/reference/user-language.md`.
 
-**H4. Independent review in progress.** Child researcher Rowan
-(`agent-8e30a32bcee05770c70789529ea63f37`, read-only) reviews this workspace
-entry change for regressions and restrictive assumptions (path edge cases,
-second shells, watcher scope, protocol fields, docs drift). Read its report
-before H1 and H2, and fix what it proves.
+**H4. Independent review findings (code-path review, not reproduced).**
+Child researcher Rowan (`agent-8e30a32bcee05770c70789529ea63f37`, report
+`artifact_cba8de4c9daaac6130d9b847717d932c7e363a507542ec4fb5b816342bc02ca2`)
+read the change without running it. Reproduce each item with a failing test
+before the fix.
+
+| # | Severity | Finding | Where | Intended fix |
+|---|---|---|---|---|
+| R1 | High | A drive root or UNC workspace attaches, but its file tree cannot list the root: `CanonicalClientPath` uses POSIX `path.Clean`, so `C:/` becomes `C:` (joined to `C:\C:`) and `\\server\share` loses its volume. | `core/shellport/remote/client_files.go`, `core/files.go` | Keep host-absolute forms (drive root separator, UNC prefix) across the port; test `BrowseDirectory` on the attached root and lexical UNC cases. |
+| R2 | High | Delete skips the Local History safety copy when History is on but its store failed to open (`HistoryService` is nil, `FilesDelete` only checks nil). The open failure is no longer logged. | `workspace/workspace.go`, `core/files.go` | Fail the delete before it touches disk when a required copy cannot be made; publish the store failure as distinct from "off"; test that the bytes survive. |
+| R3 | High | The scoped watcher can promote a replaced Windows directory as the original, because it compares path-based `os.Stat` results (file ID is read late). | `core/file_watch_scope.go` | Pin a handle-derived directory identity before the watch and compare it at promotion, as `workspace/localhistory/store.go` does. |
+| R4 | High | The first content query retires the working scoped watch and starts a whole-drive walk that retries forever on a persistent access-denied subtree; the index never builds. | `core/file_watch_scope.go`, `core/file_watch.go` | Keep scoped observation until the replacement has coverage; treat durable unreadable subtrees as excluded, report partial coverage, do not rescan the same prefix. |
+| R5 | Medium | After a reconnect, nested folders that are loaded but collapsed lose their watch: resync re-browses only visible nodes, and re-expanding uses cached children. | `tui/viewmodel/client_files.go`, `tui/filetree/tree.go` | Renew or invalidate every loaded listing on resync; test collapse, reconnect, external create, re-expand. |
+| R6 | Medium | A checkpoint handover restart turns a file-only shell into a project shell, because the manifest does not record the entry intent. | `app/core_restart.go`, `app/shell_client.go` | Store the entry intent in the verified handover and restore it. |
+| R7 | Medium | `crude ./not-created/` (trailing separator, missing folder) is accepted as a new file named `not-created`. | `app/shell_client.go`, `core/startup.go` | Keep directory intent before cleaning the path; refuse the missing-file fallback for it. |
+| R8 | Medium | `launchFileMissing` stays set for the whole attachment, so a later open of a real `note.png` at that path bypasses the image viewer. | `tui/viewmodel/pane_file_open.go` | Apply the missing-file exception only to the first open request. |
+| R9 | Low | An explicit extended-length path over 4096 bytes is dropped silently by the saved-view path limit. | `tui/viewmodel/client_view_memory*.go` | Add the validated launch file after that filter, or report a real limit. |
 
 **H5. Linux acceptance.** Run `scripts/startup_acceptance.py` on Linux. Its
 scenario 3 now expects explicit opening of a top-level folder.
