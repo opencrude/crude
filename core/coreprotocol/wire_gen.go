@@ -2642,8 +2642,8 @@ func (z *CapabilityPreviewResult) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *CapabilityResult) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 4
-	o = append(o, 0x94)
+	// array header, size 5
+	o = append(o, 0x95)
 	o = msgp.AppendString(o, z.Revision)
 	o, err = z.Snapshot.MarshalMsg(o)
 	if err != nil {
@@ -2663,6 +2663,19 @@ func (z *CapabilityResult) MarshalMsg(b []byte) (o []byte, err error) {
 		}
 	}
 	o = msgp.AppendString(o, z.Content)
+	if z.ConnectionSecretFields == nil { // allownil: if nil
+		o = msgp.AppendNil(o)
+	} else {
+		o = msgp.AppendMapHeader(o, uint32(len(z.ConnectionSecretFields)))
+		for za0002, za0003 := range z.ConnectionSecretFields {
+			o = msgp.AppendString(o, za0002)
+			o, err = za0003.MarshalMsg(o)
+			if err != nil {
+				err = msgp.WrapError(err, "ConnectionSecretFields", za0002)
+				return
+			}
+		}
+	}
 	return
 }
 
@@ -2678,8 +2691,8 @@ func (z *CapabilityResult) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 4 {
-		err = msgp.ArrayError{Wanted: 4, Got: zb0001}
+	if zb0001 != 5 {
+		err = msgp.ArrayError{Wanted: 5, Got: zb0001}
 		return
 	}
 	z.Revision, bts, err = msgp.ReadStringBytes(bts)
@@ -2724,6 +2737,44 @@ func (z *CapabilityResult) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.WrapError(err, "Content")
 		return
 	}
+	if msgp.IsNil(bts) {
+		bts = bts[1:]
+		z.ConnectionSecretFields = nil
+	} else {
+		var zb0003 uint32
+		zb0003, bts, err = msgp.ReadMapHeaderBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "ConnectionSecretFields")
+			return
+		}
+		if uint64(zb0003)*2 > uint64(len(bts)) {
+			err = msgp.ErrShortBytes
+			return
+		}
+		if z.ConnectionSecretFields == nil {
+			z.ConnectionSecretFields = make(map[string]ConnectionSecretPresence, zb0003)
+		} else if len(z.ConnectionSecretFields) > 0 {
+			clear(z.ConnectionSecretFields)
+		}
+		var field []byte
+		_ = field
+		for zb0003 > 0 {
+			var za0003 ConnectionSecretPresence
+			zb0003--
+			var za0002 string
+			za0002, bts, err = msgp.ReadStringBytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "ConnectionSecretFields")
+				return
+			}
+			bts, err = za0003.UnmarshalMsg(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "ConnectionSecretFields", za0002)
+				return
+			}
+			z.ConnectionSecretFields[za0002] = za0003
+		}
+	}
 	o = bts
 	return
 }
@@ -2734,7 +2785,13 @@ func (z *CapabilityResult) Msgsize() (s int) {
 	for za0001 := range z.Entries {
 		s += z.Entries[za0001].Msgsize()
 	}
-	s += msgp.StringPrefixSize + len(z.Content)
+	s += msgp.StringPrefixSize + len(z.Content) + msgp.MapHeaderSize
+	if z.ConnectionSecretFields != nil {
+		for za0002, za0003 := range z.ConnectionSecretFields {
+			_ = za0003
+			s += msgp.StringPrefixSize + len(za0002) + za0003.Msgsize()
+		}
+	}
 	return
 }
 
@@ -17536,8 +17593,8 @@ func (z SessionSnapshotList) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *SettingsFetchResult) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 13
-	o = append(o, 0x9d)
+	// array header, size 14
+	o = append(o, 0x9e)
 	if z.CompactionChecks == nil { // allownil: if nil
 		o = msgp.AppendNil(o)
 	} else {
@@ -17591,15 +17648,28 @@ func (z *SettingsFetchResult) MarshalMsg(b []byte) (o []byte, err error) {
 			o = msgp.AppendBool(o, za0005)
 		}
 	}
+	if z.ApplicationConnectionSecretFields == nil { // allownil: if nil
+		o = msgp.AppendNil(o)
+	} else {
+		o = msgp.AppendMapHeader(o, uint32(len(z.ApplicationConnectionSecretFields)))
+		for za0006, za0007 := range z.ApplicationConnectionSecretFields {
+			o = msgp.AppendString(o, za0006)
+			o, err = za0007.MarshalMsg(o)
+			if err != nil {
+				err = msgp.WrapError(err, "ApplicationConnectionSecretFields", za0006)
+				return
+			}
+		}
+	}
 	if z.ConnectionSecretFields == nil { // allownil: if nil
 		o = msgp.AppendNil(o)
 	} else {
 		o = msgp.AppendMapHeader(o, uint32(len(z.ConnectionSecretFields)))
-		for za0006, za0007 := range z.ConnectionSecretFields {
-			o = msgp.AppendString(o, za0006)
-			o, err = za0007.MarshalMsg(o)
+		for za0008, za0009 := range z.ConnectionSecretFields {
+			o = msgp.AppendString(o, za0008)
+			o, err = za0009.MarshalMsg(o)
 			if err != nil {
-				err = msgp.WrapError(err, "ConnectionSecretFields", za0006)
+				err = msgp.WrapError(err, "ConnectionSecretFields", za0008)
 				return
 			}
 		}
@@ -17608,10 +17678,10 @@ func (z *SettingsFetchResult) MarshalMsg(b []byte) (o []byte, err error) {
 		o = msgp.AppendNil(o)
 	} else {
 		o = msgp.AppendArrayHeader(o, uint32(len(z.TerminalShells)))
-		for za0008 := range z.TerminalShells {
-			o, err = z.TerminalShells[za0008].MarshalMsg(o)
+		for za0010 := range z.TerminalShells {
+			o, err = z.TerminalShells[za0010].MarshalMsg(o)
 			if err != nil {
-				err = msgp.WrapError(err, "TerminalShells", za0008)
+				err = msgp.WrapError(err, "TerminalShells", za0010)
 				return
 			}
 		}
@@ -17620,10 +17690,10 @@ func (z *SettingsFetchResult) MarshalMsg(b []byte) (o []byte, err error) {
 		o = msgp.AppendNil(o)
 	} else {
 		o = msgp.AppendArrayHeader(o, uint32(len(z.AgentShells)))
-		for za0009 := range z.AgentShells {
-			o, err = z.AgentShells[za0009].MarshalMsg(o)
+		for za0011 := range z.AgentShells {
+			o, err = z.AgentShells[za0011].MarshalMsg(o)
 			if err != nil {
-				err = msgp.WrapError(err, "AgentShells", za0009)
+				err = msgp.WrapError(err, "AgentShells", za0011)
 				return
 			}
 		}
@@ -17643,8 +17713,8 @@ func (z *SettingsFetchResult) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 13 {
-		err = msgp.ArrayError{Wanted: 13, Got: zb0001}
+	if zb0001 != 14 {
+		err = msgp.ArrayError{Wanted: 14, Got: zb0001}
 		return
 	}
 	if msgp.IsNil(bts) {
@@ -17785,22 +17855,22 @@ func (z *SettingsFetchResult) UnmarshalMsg(bts []byte) (o []byte, err error) {
 	}
 	if msgp.IsNil(bts) {
 		bts = bts[1:]
-		z.ConnectionSecretFields = nil
+		z.ApplicationConnectionSecretFields = nil
 	} else {
 		var zb0005 uint32
 		zb0005, bts, err = msgp.ReadMapHeaderBytes(bts)
 		if err != nil {
-			err = msgp.WrapError(err, "ConnectionSecretFields")
+			err = msgp.WrapError(err, "ApplicationConnectionSecretFields")
 			return
 		}
 		if uint64(zb0005)*2 > uint64(len(bts)) {
 			err = msgp.ErrShortBytes
 			return
 		}
-		if z.ConnectionSecretFields == nil {
-			z.ConnectionSecretFields = make(map[string]ConnectionSecretPresence, zb0005)
-		} else if len(z.ConnectionSecretFields) > 0 {
-			clear(z.ConnectionSecretFields)
+		if z.ApplicationConnectionSecretFields == nil {
+			z.ApplicationConnectionSecretFields = make(map[string]ConnectionSecretPresence, zb0005)
+		} else if len(z.ApplicationConnectionSecretFields) > 0 {
+			clear(z.ApplicationConnectionSecretFields)
 		}
 		for zb0005 > 0 {
 			var za0007 ConnectionSecretPresence
@@ -17808,40 +17878,76 @@ func (z *SettingsFetchResult) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			var za0006 string
 			za0006, bts, err = msgp.ReadStringBytes(bts)
 			if err != nil {
-				err = msgp.WrapError(err, "ConnectionSecretFields")
+				err = msgp.WrapError(err, "ApplicationConnectionSecretFields")
 				return
 			}
 			bts, err = za0007.UnmarshalMsg(bts)
 			if err != nil {
-				err = msgp.WrapError(err, "ConnectionSecretFields", za0006)
+				err = msgp.WrapError(err, "ApplicationConnectionSecretFields", za0006)
 				return
 			}
-			z.ConnectionSecretFields[za0006] = za0007
+			z.ApplicationConnectionSecretFields[za0006] = za0007
+		}
+	}
+	if msgp.IsNil(bts) {
+		bts = bts[1:]
+		z.ConnectionSecretFields = nil
+	} else {
+		var zb0006 uint32
+		zb0006, bts, err = msgp.ReadMapHeaderBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "ConnectionSecretFields")
+			return
+		}
+		if uint64(zb0006)*2 > uint64(len(bts)) {
+			err = msgp.ErrShortBytes
+			return
+		}
+		if z.ConnectionSecretFields == nil {
+			z.ConnectionSecretFields = make(map[string]ConnectionSecretPresence, zb0006)
+		} else if len(z.ConnectionSecretFields) > 0 {
+			clear(z.ConnectionSecretFields)
+		}
+		for zb0006 > 0 {
+			var za0009 ConnectionSecretPresence
+			zb0006--
+			var za0008 string
+			za0008, bts, err = msgp.ReadStringBytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "ConnectionSecretFields")
+				return
+			}
+			bts, err = za0009.UnmarshalMsg(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "ConnectionSecretFields", za0008)
+				return
+			}
+			z.ConnectionSecretFields[za0008] = za0009
 		}
 	}
 	if msgp.IsNil(bts) {
 		bts = bts[1:]
 		z.TerminalShells = nil
 	} else {
-		var zb0006 uint32
-		zb0006, bts, err = msgp.ReadArrayHeaderBytes(bts)
+		var zb0007 uint32
+		zb0007, bts, err = msgp.ReadArrayHeaderBytes(bts)
 		if err != nil {
 			err = msgp.WrapError(err, "TerminalShells")
 			return
 		}
-		if uint64(zb0006)*1 > uint64(len(bts)) {
+		if uint64(zb0007)*1 > uint64(len(bts)) {
 			err = msgp.ErrShortBytes
 			return
 		}
-		if z.TerminalShells != nil && cap(z.TerminalShells) >= int(zb0006) {
-			z.TerminalShells = (z.TerminalShells)[:zb0006]
+		if z.TerminalShells != nil && cap(z.TerminalShells) >= int(zb0007) {
+			z.TerminalShells = (z.TerminalShells)[:zb0007]
 		} else {
-			z.TerminalShells = make([]setting.TerminalShell, zb0006)
+			z.TerminalShells = make([]setting.TerminalShell, zb0007)
 		}
-		for za0008 := range z.TerminalShells {
-			bts, err = z.TerminalShells[za0008].UnmarshalMsg(bts)
+		for za0010 := range z.TerminalShells {
+			bts, err = z.TerminalShells[za0010].UnmarshalMsg(bts)
 			if err != nil {
-				err = msgp.WrapError(err, "TerminalShells", za0008)
+				err = msgp.WrapError(err, "TerminalShells", za0010)
 				return
 			}
 		}
@@ -17850,25 +17956,25 @@ func (z *SettingsFetchResult) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		bts = bts[1:]
 		z.AgentShells = nil
 	} else {
-		var zb0007 uint32
-		zb0007, bts, err = msgp.ReadArrayHeaderBytes(bts)
+		var zb0008 uint32
+		zb0008, bts, err = msgp.ReadArrayHeaderBytes(bts)
 		if err != nil {
 			err = msgp.WrapError(err, "AgentShells")
 			return
 		}
-		if uint64(zb0007)*1 > uint64(len(bts)) {
+		if uint64(zb0008)*1 > uint64(len(bts)) {
 			err = msgp.ErrShortBytes
 			return
 		}
-		if z.AgentShells != nil && cap(z.AgentShells) >= int(zb0007) {
-			z.AgentShells = (z.AgentShells)[:zb0007]
+		if z.AgentShells != nil && cap(z.AgentShells) >= int(zb0008) {
+			z.AgentShells = (z.AgentShells)[:zb0008]
 		} else {
-			z.AgentShells = make([]setting.TerminalShell, zb0007)
+			z.AgentShells = make([]setting.TerminalShell, zb0008)
 		}
-		for za0009 := range z.AgentShells {
-			bts, err = z.AgentShells[za0009].UnmarshalMsg(bts)
+		for za0011 := range z.AgentShells {
+			bts, err = z.AgentShells[za0011].UnmarshalMsg(bts)
 			if err != nil {
-				err = msgp.WrapError(err, "AgentShells", za0009)
+				err = msgp.WrapError(err, "AgentShells", za0011)
 				return
 			}
 		}
@@ -17898,19 +18004,26 @@ func (z *SettingsFetchResult) Msgsize() (s int) {
 		}
 	}
 	s += msgp.MapHeaderSize
-	if z.ConnectionSecretFields != nil {
-		for za0006, za0007 := range z.ConnectionSecretFields {
+	if z.ApplicationConnectionSecretFields != nil {
+		for za0006, za0007 := range z.ApplicationConnectionSecretFields {
 			_ = za0007
 			s += msgp.StringPrefixSize + len(za0006) + za0007.Msgsize()
 		}
 	}
-	s += msgp.ArrayHeaderSize
-	for za0008 := range z.TerminalShells {
-		s += z.TerminalShells[za0008].Msgsize()
+	s += msgp.MapHeaderSize
+	if z.ConnectionSecretFields != nil {
+		for za0008, za0009 := range z.ConnectionSecretFields {
+			_ = za0009
+			s += msgp.StringPrefixSize + len(za0008) + za0009.Msgsize()
+		}
 	}
 	s += msgp.ArrayHeaderSize
-	for za0009 := range z.AgentShells {
-		s += z.AgentShells[za0009].Msgsize()
+	for za0010 := range z.TerminalShells {
+		s += z.TerminalShells[za0010].Msgsize()
+	}
+	s += msgp.ArrayHeaderSize
+	for za0011 := range z.AgentShells {
+		s += z.AgentShells[za0011].Msgsize()
 	}
 	return
 }

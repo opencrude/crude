@@ -987,6 +987,11 @@ authenticate a network caller. See [remote access](network.md#remote-core-access
 
 Unsolicited workspace snapshots exclude credentials. Explicit settings reads
 redact account/connection secrets and return presence/precondition data.
+Application and effective settings report connection field presence separately.
+Capability snapshot, runtime and action replies carry presence from the exact
+snapshot they return. A shell never needs to join two reads to show **Stored**.
+Keeping an OAuth client secret reference requires the same issuer and client ID
+at the core; changing either requires an explicit replacement or clear.
 Secret updates are write-only with explicit keep/replace/clear semantics; no raw
 API keys, OAuth tokens, proxy passwords, credential headers or secret-bearing
 extra bodies belong in read models or documentation examples. Client-local

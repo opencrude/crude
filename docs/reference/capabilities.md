@@ -198,14 +198,13 @@ protocol responses and bounded evidence still apply.
 ## Transports and recovery
 
 - MCP OAuth uses the existing **Sign in** and **Open browser** controls. In
-  **Edit connection**, select OAuth and enter either the public HTTPS **OAuth
-  client metadata URL** or a pre-registered **OAuth client ID**. A metadata
+  **Edit connection**, select OAuth and enter either the public HTTPS **Metadata URL** or a pre-registered **OAuth client ID**. A metadata
   document must describe the same public client and allow the native loopback
   return path `/callback` on `127.0.0.1` with an ephemeral port. If the server
   does not advertise metadata support, Crude can use dynamic registration when
   the server supports it.
 - For a registered client that needs a secret, set **OAuth issuer URL** and use
-  `secret:NAME` in **OAuth client secret reference**. Store the value in the
+  `secret:NAME` in **Secret reference**. Store the value in the
   existing application secret store; do not put it in a resource header.
   Settings only shows that the reference is stored. An unchanged reference
   cannot follow an issuer or client-ID edit in the editor. The SDK checks the
