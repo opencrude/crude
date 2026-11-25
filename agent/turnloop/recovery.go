@@ -515,21 +515,60 @@ func newRecoveryID() string {
 	return "recovery-" + hex.EncodeToString(raw[:])
 }
 
+const hiddenDiagnostic = "The message can contain a credential, so Crude hides it. See the local session log."
+
+// recoveryDiagnostic hides a provider message that looks like it carries a
+// credential. The HTTP status and the provider's error code are protocol
+// tokens, not free text, so they stay: "API 401 (invalid_api_key)" tells the
+// user what to fix even when the message itself is hidden.
 func recoveryDiagnostic(err error) string {
 	if err == nil {
 		return ""
 	}
 	text := err.Error()
+	if !credentialLike(text) {
+		return text
+	}
+	var status *provider.StatusError
+	if !errors.As(err, &status) || status.StatusCode <= 0 {
+		return hiddenDiagnostic
+	}
+	head := fmt.Sprintf("API %d", status.StatusCode)
+	for _, code := range []string{status.APICode, status.Code, status.APIType} {
+		if protocolToken(code) {
+			head += " (" + code + ")"
+			break
+		}
+	}
+	return head + ". " + hiddenDiagnostic
+}
+
+func credentialLike(text string) bool {
 	lower := strings.ToLower(text)
 	for _, marker := range []string{
 		"authorization:", "bearer ", "api_key", "api-key", "apikey",
 		"access_token", "refresh_token", "password", "private key", "secret=",
 	} {
 		if strings.Contains(lower, marker) {
-			return "Diagnostic contained credential-like data and was redacted. Consult the local session log."
+			return true
 		}
 	}
-	return text
+	return false
+}
+
+// protocolToken accepts a short lowercase error code such as
+// "invalid_api_key". Mixed case, long or free-form values are not shown,
+// because a credential can look like that.
+func protocolToken(code string) bool {
+	if code == "" || len(code) > 48 || code[0] < 'a' || code[0] > 'z' {
+		return false
+	}
+	for _, r := range code {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '_' && r != '.' && r != '-' {
+			return false
+		}
+	}
+	return true
 }
 
 // classifyRecoveryError owns recovery for a provider request outcome. Only
