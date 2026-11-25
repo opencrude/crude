@@ -114,9 +114,9 @@ func (m *Model) protocolFieldsFor(providerID string, cfg provider.Template, pref
 		if settings != nil && settings.Compaction != "" {
 			method = settings.Compaction
 		}
-		hint := "Auto checks the model at first use. Errand is the fallback."
+		hint := "Auto tries the provider first, then Errand or this model."
 		if options.NativeCompaction == "" {
-			hint = "Auto uses Errand. This wire has no bounded native check."
+			hint = "No native compaction here. Auto uses Errand or this model."
 		}
 		add(ui.SelectFieldState(fieldCompactionMethod, "Compaction", method, []ui.FormOption{{ID: "auto", Label: "Auto"}, {ID: provider.CompactionProviderOnly, Label: "Provider only"}, {ID: provider.CompactionErrandOnly, Label: "Errand only"}}, hint))
 	}
@@ -275,7 +275,7 @@ func (m *Model) compactionHint(account, model string) string {
 		case "verified":
 			return "Native compaction verified."
 		case "unavailable":
-			return "No native compaction; Auto uses Errand."
+			return "No native compaction; Auto uses Errand or this model."
 		default:
 			return "Native check failed; retrying later."
 		}

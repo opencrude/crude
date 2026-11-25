@@ -104,9 +104,10 @@ account edits do not require a configuration revision. Credential rotation still
 cannot revive a removed/reconnected account. Accounts remain application-only.
 
 **Compaction** in the account editor selects **Auto** (default), **Provider only**, or
-**Errand only**. Auto checks the selected wire and model at first need and uses
-Errand for any checkpoint the provider cannot finish. Provider only does not
-substitute another model. Errand only makes no native discovery
+**Errand only**. Auto checks the selected wire and model at first need. For any
+checkpoint the provider cannot finish, Errand writes it, or the agent's own model
+does when Errand cannot run or its cached context makes that cheaper. Provider
+only does not substitute another model. Errand only makes no native discovery
 requests. The agent's **Compact context at** help shows the selected model's
 observed support. **Forget compaction checks**, when offered, takes effect on
 Save; Cancel changes nothing. The next eligible compaction discovers again.

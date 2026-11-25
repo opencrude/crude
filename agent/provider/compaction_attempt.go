@@ -12,7 +12,7 @@ import (
 type attemptKey struct{ scope, source, account string }
 
 // attemptHold spaces automatic resubmission of one possibly paid request by
-// the shared retry ceiling. Auto uses Errand meanwhile; /compact may retry.
+// the shared retry ceiling. Auto writes a portable checkpoint meanwhile; /compact may retry.
 const attemptHold = retry.MaxCooldown
 
 type earlierAttemptError struct{ until time.Time }
