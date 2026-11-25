@@ -17,12 +17,17 @@ const (
 )
 
 type StartupInspectRequest struct {
-	Root string `json:"root"`
+	Explicit  bool   `json:"explicit,omitempty"`
+	AllowFile bool   `json:"allow_file,omitempty"`
+	Root      string `json:"root"`
 }
 
 // StartupSnapshot contains detached metadata only. An empty error-free FolderKind
 // identifies a project candidate; no project services have been constructed.
 type StartupSnapshot struct {
+	FileMissing      bool                          `json:"file_missing,omitempty"`
+	FilePath         string                        `json:"file_path,omitempty"`
+	ChooseWorkspace  bool                          `json:"choose_workspace,omitempty"`
 	Root             string                        `json:"root"`
 	FolderKind       string                        `json:"folder_kind,omitempty"`
 	PathError        string                        `json:"path_error,omitempty"`

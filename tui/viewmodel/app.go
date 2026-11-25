@@ -64,14 +64,17 @@ const (
 )
 
 type App struct {
-	ws                   shellport.Workspace
-	hostBidi             hostBidi // host terminal BiDi mode (text_direction.go)
-	tuiBuildID           string
-	tuiStartedAt         time.Time
-	shellControlRevision uint64
-	shellControlStamp    [32]byte
-	shellControlPending  int
-	diagnosticReads      inspect.Store
+	launchFile              string
+	launchFileMissing       bool
+	rememberedSidebarHidden *bool // A launch collapse does not replace this client's explicit choice.
+	ws                      shellport.Workspace
+	hostBidi                hostBidi // host terminal BiDi mode (text_direction.go)
+	tuiBuildID              string
+	tuiStartedAt            time.Time
+	shellControlRevision    uint64
+	shellControlStamp       [32]byte
+	shellControlPending     int
+	diagnosticReads         inspect.Store
 
 	// Focus belongs to this shell, never to the workspace runtime. A second
 	// shell must not observe or reset another shell's navigation stack.
@@ -770,6 +773,7 @@ func (m *App) Init() tea.Cmd {
 	}
 	m.requestWorkspaceErrandEnsure()
 	m.reportViewMemoryLoadError()
+	m.showEntryFolderNotice()
 	return tea.Batch(m.hostBidiStartCmd(), m.refreshRemotes(), m.beginClientFileTreeLoad(), draftCmd, tickCmd(), statusCmd, m.refreshSourceControl(), m.capabilitySnapshotCmd(), m.loadRemotePromptHistory(), m.onboardingCmd(), m.desktopNoticeEventsCmd())
 }
 

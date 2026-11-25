@@ -57,13 +57,20 @@ func (m *Model) collectLSP(cfg *setting.LSP) {
 
 func (m *Model) buildLSPForm(lsp setting.LSP) *ui.FormModel {
 	lsp = setting.NormalizeLSP(lsp)
+	description := "Use language servers for open files. Check closed files covers the rest."
+	if folder := m.layerBase.Entry.FolderSummary(); folder != "" {
+		description = folder + " Language servers are off by default here."
+	}
+	if m.layerBase.Entry.FileOnly {
+		description = "You opened one file. Open its folder to use language servers."
+	}
 	severity := ui.SegmentedFieldState("min-severity", "Show diagnostics from", []ui.FormOption{
 		{ID: "error", Label: "Errors"}, {ID: "warning", Label: "Warnings"}, {ID: "info", Label: "Info"}, {ID: "hint", Label: "Hints"},
 	}, lsp.MinSeverity, "Lowest level shown: Hints includes all; Errors includes errors only.")
 	fields := []*ui.FieldState{
 		m.analysisTrustField(m.layerBase.Analysis),
 		ui.SeparatorFieldState("language-intelligence", "General"),
-		ui.BoolFieldState("enabled", "Code intelligence", lsp.Enabled, "Use language servers for open files. Check closed files covers the rest."),
+		ui.BoolFieldState("enabled", "Code intelligence", lsp.Enabled, description),
 		ui.BoolFieldState("auto-detect", "Detect servers", lsp.AutoDetect, "Choose configured servers by file type; install their executables separately."),
 		ui.BoolFieldState("start-on-open", "Start on open", lsp.StartOnOpen, "Start a language server when its first document opens, not at startup."),
 		lspNumberField("debounce", "Update delay", "ms", lsp.UpdateDebounceMS, 60000, "Pause after typing before the server re-analyzes the document."),

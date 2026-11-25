@@ -5,16 +5,11 @@
 ## Implemented scope
 
 The first-use introduction, detached project selection, and native AI setup are implemented.
-OS-known home, personal folders, and filesystem roots are navigation locations only.
-The admission check runs before the workspace factory, including for explicit paths.
-No Open anyway action or trust database was added.
-
-> **Decision change (2026-11-25).** The user reversed the navigation-only rule
-> for explicit choices. A launch in a top-level folder still shows the welcome
-> page, but an explicit selection opens it with Local History and language
-> servers off, and the button reads **New workspace**. Direct file launches
-> are added too. See
-> [the open immediate actions](../issues/2026-11-25-composer-entry-and-errand-setup.md).
+**Decision change (2026-11-25).** A plain launch in a home, personal or root
+folder keeps the welcome page. **New workspace** opens the picker. An explicit
+choice opens the top-level folder with Local History and language servers off
+by default. `crude PATH` can also open one file in its parent workspace with the
+file tree closed. See [workspace entry](../issues/2026-11-25-composer-entry-and-errand-setup.md).
 
 Established project launches keep the current project experience.
 The Crude repository, empty folders, and non-Git projects remain valid projects.
@@ -58,12 +53,12 @@ Setup created no session and sent no inference request.
 
 1. Fresh introduction, folder selection, direct Add Account, and cancellation.
 2. Established project restart and persistent reminder suppression.
-3. Explicit home and Desktop refusal, invalid paths, and valid child-project recovery.
+3. Implicit chooser, explicit home and Desktop opening, invalid directory recovery, direct file opening and missing-file Save.
 4. Malformed configuration, byte preservation, issue dismissal, and file-editor access.
 5. Exact test-core termination during browsing, followed by explicit navigation and reconnection.
 6. Exact shell termination, profile-lock recovery, and reopening the same project file.
 
-All six scenarios passed with no owned process survivors.
+The original six scenarios passed with no owned process survivors before the November 25 entry change. The revised entry scenario needs separate Linux evidence.
 The script retains bounded text captures and structured results.
 Text captures are not screenshots.
 Use the repository capture workflow for visual acceptance.
@@ -89,11 +84,25 @@ Verify that classification, browsing, setup, and resume use the selected core's 
 Test disconnection during selection and explicit recovery without replaying a save.
 Verify host path handling, including shells and cores with different operating systems.
 
+### Native broad-folder resource check (2026-11-25)
+
+With an isolated profile, native Windows opened the real user's home (182
+immediate entries) without Local History or LSP. Before demand-driven startup,
+attach took 94 ms; recursive watch setup and the text-index build were still
+running after one minute. At that point the process used 297 MB RSS and the Go
+heap held 175 MB. With directory watches and indexing on demand, attach took
+45 ms; the initial watch was ready within 48 ms of the request and there was
+no index build. At one minute RSS was 46 MB and the Go heap held 8.4 MB.
+The shell prepared the root listing off Update in 5.41 ms. Installing it on
+Update took 1.14 ms. A 160 × 40 resize took 0.61 ms in Update and 1.61 ms
+to paint. At 80 × 24, Update was below clock resolution and paint took
+0.54 ms. These are individual observations from this host, not performance limits.
+
 ### Reported memory incident
 
 Reproduce the reported 4 GB workload separately.
 Measure startup, retained services, and dense resumed-session behavior before changing service internals.
-Do not claim that navigation-only top-level folders fix unrelated project memory growth.
+Top-level service defaults do not establish a fix for unrelated project memory growth.
 Keep resource-monitor work, broad Settings changes, and general LSP changes outside this task.
 
 Remove this handoff and its index entry after these remaining checks have recorded evidence.

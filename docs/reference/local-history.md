@@ -2,6 +2,11 @@
 
 > Status: Current reference — immutable workspace snapshots, operation-scoped agent undo and precondition-checked restore.
 
+Top-level folders default to no Local History. Opening one does not create a
+history store or a baseline. An explicit Workspace settings choice can enable
+capture if the profile is outside the workspace. The existing store containment
+and mandatory safety checks still apply. See [workspace entry defaults](settings.md#workspace-entry-defaults).
+
 ## Storage and recovery
 
 - Atomic publication has one shared low-level owner: `fileio.CommitAtomicFile`.

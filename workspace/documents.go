@@ -71,6 +71,7 @@ type DocumentService struct {
 	docs              map[string]*liveDocument
 	epochs            map[string]uint64
 	detached          map[document.Owner]bool
+	fileOnlyOwners    map[document.Owner]bool
 	closed            bool
 	idleFenced        bool
 	watch             *documentWatch
@@ -225,11 +226,7 @@ func (s *DocumentService) attachDocumentOwnerLocked(owner document.Owner, d *liv
 	s.epochs[owner.ClientID] = owner.Epoch
 	d.owners[owner] = true
 	s.ownerMu.Unlock()
-	source := s.analysisIdentityLocked(d)
-	if d.snapshot.Path != "" && !d.lspOpen && s.lsp != nil {
-		s.lsp.OpenFile(context.Background(), source, string(d.snapshot.Text))
-		d.lspOpen = true
-	}
+	s.openLanguageView(d)
 	s.Insight.observeLocked(d)
 	return nil
 }
@@ -754,6 +751,7 @@ func (s *DocumentService) Detach(owner document.Owner) {
 // ReleaseDetached performs ordered final LSP release off the core actor. It may
 // wait for an already accepted save; Detach itself never does.
 func (s *DocumentService) ReleaseDetached(owner document.Owner) {
+	defer func() { s.ownerMu.Lock(); delete(s.fileOnlyOwners, owner); s.ownerMu.Unlock() }()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.closeCodeActionsLocked(owner, "")
@@ -853,6 +851,36 @@ func (s *DocumentService) CloseView(owner document.Owner, id string) error {
 	return nil
 }
 
+// SetFileOnlyOwner records that this attachment does not request language views.
+func (s *DocumentService) SetFileOnlyOwner(owner document.Owner) {
+	s.ownerMu.Lock()
+	defer s.ownerMu.Unlock()
+	if s.fileOnlyOwners == nil {
+		s.fileOnlyOwners = make(map[document.Owner]bool)
+	}
+	s.fileOnlyOwners[owner] = true
+}
+
+func (s *DocumentService) languageViewNeeded(d *liveDocument) bool {
+	s.ownerMu.Lock()
+	defer s.ownerMu.Unlock()
+	for owner := range d.owners {
+		if !s.fileOnlyOwners[owner] && !s.detached[owner] {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *DocumentService) openLanguageView(d *liveDocument) {
+	// Shared source identity also serves native syntax and editor navigation.
+	source := s.analysisIdentityLocked(d)
+	if d.snapshot.Path != "" && !d.lspOpen && s.lsp != nil && s.languageViewNeeded(d) {
+		s.lsp.OpenFile(context.Background(), source, string(d.snapshot.Text))
+		d.lspOpen = true
+	}
+}
+
 func (s *DocumentService) closeLanguageView(d *liveDocument) {
 	s.ownerMu.Lock()
 	for owner := range d.owners {
@@ -861,7 +889,7 @@ func (s *DocumentService) closeLanguageView(d *liveDocument) {
 		}
 	}
 	s.ownerMu.Unlock()
-	if len(d.owners) == 0 && d.lspOpen && s.lsp != nil {
+	if d.lspOpen && s.lsp != nil && !s.languageViewNeeded(d) {
 		s.lsp.CloseFile(context.Background(), d.snapshot.Path)
 		d.lspOpen = false
 	}

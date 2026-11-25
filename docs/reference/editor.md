@@ -7,6 +7,12 @@ Live text in connected shells is owned by the core's shared document service
 editor PieceTables are optimistic projections of it. This page covers the editor
 engine and its invariants.
 
+`crude PATH` opens an existing file directly in the editor and uses its parent
+as the workspace. A missing leaf opens as a named draft until manual Save.
+The file tree starts collapsed for this launch, not as a saved preference.
+The user can show it again. The shell does not request language servers for
+this view. See [startup](core-client-protocol.md#startup-before-workspace-attachment).
+
 ## Shared document publication
 
 A named editor open requests the project indentation settings with the initial

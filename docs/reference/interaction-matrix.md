@@ -444,7 +444,7 @@ Startup and in-project workspace selection use the same native picker and moveme
 The current picker appearance and file attachment behavior remain unchanged.
 
 Detached startup is fully keyboard navigable. Enter/Space activates **Let's go!**.
-On the workspace chooser, Up/Down traverses Open Workspace, previous-workspace
+On the workspace chooser, Up/Down traverses New workspace, previous-workspace
 rows, and Quit; Home/End and PageUp/PageDown remain list-owned. Tab/Shift+Tab
 visits controls in either direction, skipping the empty list and disabled
 **More folders**. Inside the picker, **Open Workspace**, **New Folder**, and
@@ -472,7 +472,7 @@ Owner, open-epoch, and intent checks prevent late results from restoring obsolet
 
 Startup folder confirmation has no workspace-switch prompt because no workspace is attached.
 In-project confirmation still uses the exact-destination confirmation and existing dirty-file and draft checks.
-See [startup admission](core-client-protocol.md#startup-before-workspace-attachment) for navigation-only locations.
+See [startup admission](core-client-protocol.md#startup-before-workspace-attachment) for implicit startup and explicit top-level folder choices.
 
 ### Workspace home
 

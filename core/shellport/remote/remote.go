@@ -33,6 +33,7 @@ type Dialer func(ctx context.Context, clientID string) (*coreclient.Client, erro
 
 // Options configures one attachment.
 type Options struct {
+	Entry  coreprotocol.EntryIntent
 	Root   string
 	Dial   Dialer
 	Logger workspace.Logger
@@ -45,6 +46,7 @@ type Options struct {
 
 // Workspace is one shell's attachment to a retained core workspace.
 type Workspace struct {
+	entry      coreprotocol.EntryIntent
 	dial       Dialer
 	logger     workspace.Logger
 	namespace  string
@@ -148,7 +150,7 @@ func attachWithClient(ctx context.Context, opts Options, client *coreclient.Clie
 		}
 	}
 	clientID := client.Owner().ClientID
-	attached, err := attach(ctx, client, opts.Root)
+	attached, err := attach(ctx, client, opts.Root, opts.Entry)
 	if err != nil {
 		_ = client.Close()
 		return nil, err
@@ -161,7 +163,7 @@ func attachWithClient(ctx context.Context, opts Options, client *coreclient.Clie
 	view.Logger = opts.Logger
 	lifeCtx, lifeCancel := context.WithCancel(context.Background())
 	w := &Workspace{
-		dial: opts.Dial, logger: opts.Logger, namespace: opts.Namespace,
+		entry: opts.Entry, dial: opts.Dial, logger: opts.Logger, namespace: opts.Namespace,
 		client: client, id: attached.WorkspaceID, root: attached.View.Root,
 		clientID: clientID, ctx: lifeCtx, cancel: lifeCancel,
 		profileID: opts.ClientID,
@@ -245,9 +247,9 @@ func (w *Workspace) loadInitialState(ctx context.Context) error {
 	return nil
 }
 
-func attach(ctx context.Context, client *coreclient.Client, root string) (coreprotocol.AttachResult, error) {
+func attach(ctx context.Context, client *coreclient.Client, root string, entry coreprotocol.EntryIntent) (coreprotocol.AttachResult, error) {
 	var result coreprotocol.AttachResult
-	request := coreprotocol.AttachRequest{Root: root}
+	request := coreprotocol.AttachRequest{Root: root, Entry: entry}
 	// LocalHost is negotiated by the transport owner. SSH relays and remote
 	// network sessions must not send this computer's paths or credentials.
 	if client.LocalHost() {
@@ -411,7 +413,7 @@ func (w *Workspace) reconnect() (*coreclient.Client, bool) {
 		client, err := w.dial(ctx, w.clientID)
 		if err == nil {
 			var attached coreprotocol.AttachResult
-			attached, err = attach(ctx, client, w.root)
+			attached, err = attach(ctx, client, w.root, w.entry)
 			if err == nil {
 				cancel()
 				w.connMu.Lock()

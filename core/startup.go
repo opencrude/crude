@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"crude/core/coreprotocol"
@@ -11,6 +12,7 @@ import (
 	"crude/types/setting"
 	"crude/types/statuscenter"
 	"crude/workspace"
+	"crude/workspace/folderkind"
 )
 
 // StartupOwner belongs to the application. It reads and writes only profile
@@ -118,7 +120,11 @@ func (c *Connection) startupCall(ctx context.Context, request coreprotocol.Reque
 				return bad(err)
 			}
 		}
-		location, err := projectpath.Inspect(in.Root)
+		location, file, missing, err := inspectLaunchPath(in)
+		out.FilePath, out.FileMissing = file, missing
+		if in.Explicit {
+			out.ShowIntroduction = false
+		}
 		if err != nil {
 			out.Root = in.Root
 			out.PathError = err.Error()
@@ -129,7 +135,8 @@ func (c *Connection) startupCall(ctx context.Context, request coreprotocol.Reque
 			}
 		}
 		// Established project launches need no previous-workspace scan.
-		if out.ShowIntroduction || out.FolderKind != "" || out.PathError != "" {
+		out.ChooseWorkspace = out.PathError != "" || !in.Explicit && (out.ShowIntroduction || out.FolderKind != "")
+		if out.ChooseWorkspace {
 			infos, listErr := workspace.ListWorkspaceInfosContext(ctx)
 			if listErr != nil {
 				out.WorkspacesError = listErr.Error()
@@ -161,7 +168,7 @@ func (c *Connection) startupCall(ctx context.Context, request coreprotocol.Reque
 		if err := decodeRequest(request, &in); err != nil {
 			return fault(request, "invalid_request", err.Error())
 		}
-		location, err := projectpath.Inspect(in.Root)
+		location, err := folderkind.Inspect(in.Root)
 		if err != nil {
 			return bad(err)
 		}
@@ -217,13 +224,51 @@ func validateStartupEdits(edits []setting.Edit) error {
 }
 
 // inspectProject is the sole admission check, shared by every attachment route.
-func inspectProject(root string) (string, error) {
-	location, err := projectpath.Inspect(root)
+func inspectProject(root string, explicit bool) (string, error) {
+	location, err := folderkind.Inspect(root)
 	if err != nil {
 		return "", err
 	}
-	if location.Kind != "" {
-		return "", fmt.Errorf("%s is a %s folder. Select a project folder. Crude does not start project services here", filepath.Clean(location.Path), location.Kind)
+	if location.Kind != "" && !explicit {
+		return "", fmt.Errorf("choose a workspace to open %s", location.Path)
 	}
 	return location.Path, nil
+}
+
+// inspectLaunchPath treats only an explicit positional path as a possible file.
+// The core owns the filesystem. A missing leaf is a new named editor buffer,
+// never a request to create directories or overwrite a dangling symlink.
+func inspectLaunchPath(in coreprotocol.StartupInspectRequest) (folderkind.Location, string, bool, error) {
+	root, name := in.Root, ""
+	missing := false
+	if in.AllowFile && in.Explicit {
+		info, err := os.Stat(root)
+		switch {
+		case err == nil && info.IsDir():
+		case err == nil && info.Mode().IsRegular():
+			resolved, err := filepath.EvalSymlinks(root)
+			if err != nil {
+				return folderkind.Location{}, "", false, err
+			}
+			root, name = filepath.Dir(resolved), filepath.Base(resolved)
+		case errors.Is(err, os.ErrNotExist):
+			missing = true
+			if _, linkErr := os.Lstat(root); !errors.Is(linkErr, os.ErrNotExist) {
+				return folderkind.Location{}, "", false, fmt.Errorf("cannot open %s; check the link target", root)
+			}
+			root, name = filepath.Dir(root), filepath.Base(root)
+			if err := projectpath.ValidateFileName(name); err != nil {
+				return folderkind.Location{}, "", false, err
+			}
+		case err != nil:
+			return folderkind.Location{}, "", false, err
+		default:
+			return folderkind.Location{}, "", false, fmt.Errorf("cannot open %s; choose a file or folder", root)
+		}
+	}
+	location, err := folderkind.Inspect(root)
+	if err != nil || name == "" {
+		return location, "", false, err
+	}
+	return location, filepath.Join(location.Path, name), missing, nil
 }

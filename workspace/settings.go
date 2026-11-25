@@ -49,7 +49,9 @@ func (w *Workspace) AppDefaults() setting.App {
 
 // EffectiveAppSettings merges application defaults with workspace overrides.
 func (w *Workspace) EffectiveAppSettings() setting.App {
-	effective := boundWorkspaceSettings(w.AppDefaults(), w.LoadWorkspaceOverrides(), w.analysisRootIdentity)
+	defaults := w.AppDefaults()
+	defaults.Entry = w.entry
+	effective := boundWorkspaceSettings(defaults, w.LoadWorkspaceOverrides(), w.analysisRootIdentity)
 	if effective.Analysis.Trusted() && w.LSPMgr != nil {
 		effective.Analysis = w.LSPMgr.AnalysisPolicy()
 	}
@@ -185,6 +187,9 @@ func (w *Workspace) applySettingsProjection(effective setting.App) {
 	if w.LSPMgr != nil {
 		w.publishAnalysisPolicy()
 		w.LSPMgr.SetSettings(effective.LSP)
+		if w.deferredAnalysis != nil {
+			w.startAnalysisWhenNeeded(effective.LSP.Enabled)
+		}
 	}
 	if w.sessionCfg != nil && len(effective.Agents.Categories) > 0 {
 		session.ApplyWorkspaceAgentDefaults(w.sessionCfg, effective.Agents)
@@ -211,4 +216,21 @@ func (w *Workspace) applySettingsProjection(effective setting.App) {
 		})
 		frontendSession.installSettings(frontendSession.backend.SettingsSnapshots())
 	}
+}
+
+// SetFileOnly changes the retained language-service demand. The factory sets it
+// before analysis starts. A project attachment can promote the same actor.
+func (w *Workspace) SetFileOnly(only bool) bool {
+	if w.entry.FileOnly == only {
+		return false
+	}
+	w.entry.FileOnly = only
+	if w.LSPMgr != nil {
+		effective := w.EffectiveAppSettings()
+		w.LSPMgr.SetSettings(effective.LSP)
+		if w.deferredAnalysis != nil {
+			w.startAnalysisWhenNeeded(effective.LSP.Enabled)
+		}
+	}
+	return true
 }

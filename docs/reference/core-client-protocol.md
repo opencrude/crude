@@ -32,27 +32,49 @@ The application owns profile metadata and saves through the existing settings ow
 `tui/startup/` owns the detached introduction and project-selection screen.
 The current project layout, settings, and services remain unchanged.
 
-`core/projectpath/` resolves the candidate on the core host before the workspace factory runs.
-OS-known home and personal folders, filesystem roots, and volume roots are navigation locations only.
-The check uses directory identity, not a folder name or project-tree scan.
-Children of these locations, empty folders, and non-Git folders remain valid projects.
-Optional personal-folder configuration failures produce a warning, not a block on unrelated projects.
+`workspace/folderkind` identifies the native home, personal and volume-root
+folders by directory identity, not name. `startup.inspect` resolves the launch
+path on the selected core. An implicit launch there shows the chooser. Detached
+browsing does not construct an actor, services, database, session or terminal.
+**New workspace** opens the picker. The picker confirms its highlighted folder,
+or its current folder without a highlight. Its confirmation is **Open Workspace**;
+it opens an existing folder, including when switching from an attached shell.
 
-Every attachment uses this admission check, including explicit paths, control clients, resume, and SSH.
-A refused attachment returns `project_folder_required` with an instruction to select a project folder.
-Interactive startup keeps path entry, breadcrumbs, previous projects, and bounded folder browsing available.
-An unavailable previous-project list does not block folder selection.
-Startup rechecks the selected path before attachment.
+`workspace.attach` rechecks the folder before the factory runs. A top-level root
+requires `entry.explicit`; a plain working-directory attach receives
+`project_folder_required`. Picker confirmation, a previous workspace, `--workspace`
+and a positional path are explicit. Invalid directories remain errors. Optional
+personal-folder metadata failures do not block unrelated folders. A different
+choice cancels an original startup resume. SSH uses the selected host's paths.
 
-A navigation location creates no workspace actor or database, Local History, LSP manager, project watcher, search catalog, Git work, session, or terminal.
-It also starts no memory job or workspace capability initialization.
-Saved top-level sessions and history remain unchanged and do not resume automatically.
-Selecting another project cancels the original startup resume intent.
-Previously attached work and peer shells remain unchanged.
+For `crude PATH`, `startup.inspect` also accepts a regular file or a missing leaf
+under an existing parent. It returns the canonical parent and the selected file.
+`--workspace` remains directory-only. A missing leaf opens as a named, unwritten
+buffer; manual Save checks the absent preimage and creates the file. A dangling
+link, special file or missing parent is not a new file.
+
+`entry.file_only` describes demand, not a new workspace identity. The core uses
+one actor per canonical parent. If only a file has requested it, language
+servers stay off. A project attachment promotes that actor in place and restores
+its effective project settings without restarting the core. Project demand
+lasts for the retained actor, including work that outlives its shells. A file
+attachment to that actor never stops or starts project services for its own
+open document. A project view of the same document can use them as usual. A
+reconnect keeps the original entry intent; an explicit workspace switch opens
+in project mode. See [workspace settings](settings.md#workspace-entry-defaults).
+
+A top-level actor first watches the root and each directory for which a shell
+loads a listing. This includes cached collapsed rows; detach releases that
+shell's directory interests. Open documents keep their own outside-edit watch.
+Find in Files and Go to File scan on explicit requests, not at attach. No
+project-wide language discovery, recursive watch setup or text-index build
+runs by default. An explicit request for indexed content or enabling language
+servers starts complete observation; only a content query starts the text
+index. Language-server project coverage stays fenced until observation is ready.
 
 | Operation | Contract |
 |---|---|
-| `startup.inspect` | Return path classification, introduction eligibility, theme, profile choices, issues, and relevant previous-workspace metadata. No workspace creation. |
+| `startup.inspect` | Return the resolved folder, optional positional file, chooser requirement, introduction eligibility, theme, profile choices, issues, and relevant previous-workspace metadata. No workspace creation. |
 | `startup.browse` | Read directory-only pages from a requested path. Offsets count raw entries, including files. |
 | `startup.catalog` | Discover directories for an explicit, non-empty picker query. Request-owned work reads no file contents. |
 | `startup.create_folder` | Create exactly one named child of an existing browsed directory on the core host, without attaching a workspace. The opened parent anchors the operation; names cannot escape it, existing entries are never overwritten, and the request has a durable receipt. An uncertain outcome is not replayed. |

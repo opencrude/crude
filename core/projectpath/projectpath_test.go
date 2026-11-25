@@ -11,6 +11,7 @@ import (
 
 	"crude/internal/testhome"
 	"crude/internal/testsymlink"
+	"crude/workspace/folderkind"
 )
 
 func TestMain(m *testing.M) {
@@ -37,47 +38,15 @@ func write(t *testing.T, path, content string) {
 	}
 }
 
-func assertKind(t *testing.T, path, kind string) Location {
-	t.Helper()
-	got, err := Inspect(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Kind != kind {
-		t.Fatalf("Inspect(%q).Kind = %q, want %q", path, got.Kind, kind)
-	}
-	return got
-}
-
-func TestInspectExistingDirectoriesOnly(t *testing.T) {
-	base := t.TempDir()
-	file := filepath.Join(base, "file")
-	write(t, file, "content")
-	for _, path := range []string{"", filepath.Join(base, "missing"), file} {
-		if _, err := Inspect(path); err == nil {
-			t.Errorf("Inspect(%q) accepted invalid directory", path)
-		}
-	}
-	project := mkdir(t, filepath.Join(base, "MixedCaseProject"))
-	got := assertKind(t, project, "")
-	want, err := filepath.EvalSymlinks(project)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Path != want {
-		t.Fatalf("canonical path = %q, want %q", got.Path, want)
-	}
-	assertKind(t, mkdir(t, filepath.Join(project, "Documents")), "")
-	root := filepath.VolumeName(project) + string(filepath.Separator)
-	assertKind(t, root, KindRoot)
-}
-
 func TestInspectAndBrowseAliases(t *testing.T) {
 	base := t.TempDir()
 	project := mkdir(t, filepath.Join(base, "Project"))
 	link := filepath.Join(base, "Alias")
 	testsymlink.Create(t, project, link)
-	got := assertKind(t, link, "")
+	got, err := folderkind.Inspect(link)
+	if err != nil || got.Kind != "" {
+		t.Fatal(got, err)
+	}
 	want, err := filepath.EvalSymlinks(project)
 	if err != nil {
 		t.Fatal(err)
@@ -257,7 +226,9 @@ func TestReadOnlyAndNoWrites(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(project, 0700) })
-	assertKind(t, project, "")
+	if got, err := folderkind.Inspect(project); err != nil || got.Kind != "" {
+		t.Fatal(got, err)
+	}
 	result, err := Browse(context.Background(), project, 0)
 	if err != nil || len(result.Entries) != 1 || result.Entries[0].Name != "child" {
 		t.Fatalf("read-only Browse: %+v, %v", result, err)

@@ -1,7 +1,6 @@
 package startup
 
 import (
-	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -14,6 +13,7 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
+	"crude/types/setting"
 	"crude/types/statuscenter"
 	"crude/workspace"
 )
@@ -76,7 +76,7 @@ func newScreen(th *theme.Theme, picker *filepicker.Screen, initial coreprotocol.
 		s.mode = introduction
 	}
 	s.goButton = ui.NewButton(goID, "Let's go!", "startup.go")
-	s.open = ui.NewButton(openID, "Open Workspace", "startup.open")
+	s.open = ui.NewButton(openID, "New workspace", "startup.open")
 	s.quit = ui.NewButton(quitID, "Quit", "startup.quit")
 	s.pathGo = ui.NewButton(pathGoID, "Go", "startup.path")
 	s.more = ui.NewButton(moreID, "More folders", "startup.more")
@@ -261,18 +261,10 @@ func selectionReason(v coreprotocol.StartupSnapshot) string {
 	if v.PathError != "" {
 		return v.PathError
 	}
-	switch v.FolderKind {
-	case "root":
-		return "This is a filesystem root. Crude does not start project services here. Choose a project folder."
-	case "home":
-		return "This is your home folder. Crude does not start project services here. Choose a project folder."
-	case "personal":
-		return "This is a personal folder. Crude does not start project services here. Choose a project folder."
-	case "":
-		return "Open a project folder to get started."
-	default:
-		return fmt.Sprintf("Choose a project folder inside this %s folder.", v.FolderKind)
+	if folder := (setting.Entry{FolderKind: v.FolderKind}).FolderSummary(); folder != "" {
+		return folder + " Local History and language servers default to off here."
 	}
+	return "Open a project folder to get started."
 }
 func (s *screen) Handle(_ ui.EventContext, e ui.Event) ui.EventResult {
 	if e.IsKey() && e.Key.Code == tea.KeyEsc {

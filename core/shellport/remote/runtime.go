@@ -7,6 +7,7 @@ import (
 
 	"crude/agent/session"
 	"crude/agent/sessiondb"
+	"crude/core/coreprotocol"
 	"crude/core/shellport"
 	"crude/types/setting"
 	"crude/types/statuscenter"
@@ -50,7 +51,7 @@ func (w *Workspace) SwitchProject(string) error {
 func (w *Workspace) AttachWorkspace(ctx context.Context, root string) (shellport.Workspace, error) {
 	// Distinct root-qualified profile identities permit destination preparation
 	// while the old connection is still live, without losing author undo on return.
-	next, err := Attach(ctx, Options{Root: root, Dial: w.dial, Logger: w.logger, Namespace: w.namespace, ClientID: w.profileID})
+	next, err := Attach(ctx, Options{Root: root, Entry: coreprotocol.EntryIntent{Explicit: true}, Dial: w.dial, Logger: w.logger, Namespace: w.namespace, ClientID: w.profileID})
 	if err != nil {
 		return nil, err
 	}

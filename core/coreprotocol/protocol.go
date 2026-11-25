@@ -104,8 +104,15 @@ const (
 	MaxAttachEnvironmentBytes   = 1 << 20
 )
 
+// EntryIntent distinguishes an explicit selection from startup in the current directory.
+type EntryIntent struct {
+	Explicit bool `json:"explicit,omitempty"`
+	FileOnly bool `json:"file_only,omitempty"`
+}
+
 type AttachRequest struct {
-	Root string `json:"root"`
+	Entry EntryIntent `json:"entry,omitempty"`
+	Root  string      `json:"root"`
 	// Environment is the same-host shell's initialized environment. Nil means
 	// absent; an empty, non-nil slice is an explicitly empty environment. Only
 	// authenticated local IPC may supply it. The core keeps it in memory for

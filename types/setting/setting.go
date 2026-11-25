@@ -235,8 +235,32 @@ func SessionPreferencesOf(s Settings) SessionPreferences {
 		CodeIntelligence: s.SessionCodeIntelligence, MaxSubAgents: s.SessionMaxSubAgents, TurnLogs: s.SessionTurnLogs}
 }
 
+// Entry describes runtime defaults, not preferences. A file-only actor has not
+// yet been opened as a project. This observation is never stored.
+type Entry struct {
+	FolderKind string `json:"folder_kind,omitempty"`
+	FileOnly   bool   `json:"file_only,omitempty"`
+}
+
+// FolderSummary identifies why the workspace has different service defaults.
+func (e Entry) FolderSummary() string {
+	switch e.FolderKind {
+	case "home":
+		return "This is your home folder."
+	case "root":
+		return "This is a filesystem root."
+	case "personal":
+		return "This is a personal folder."
+	}
+	return ""
+}
+
+// DeferProjectScan keeps broad folders quiet until a service needs the whole tree.
+func (e Entry) DeferProjectScan() bool { return e.FolderKind != "" }
+
 // App is the application settings that the shell loads and saves.
 type App struct {
+	Entry      Entry      `json:"-"`
 	Onboarding Onboarding `json:"onboarding,omitempty"`
 	Theme      Theme      `json:"theme,omitempty"`
 	Editor     Editor     `json:"editor,omitempty"`

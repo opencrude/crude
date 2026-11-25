@@ -156,7 +156,7 @@ func TestStartupTransfersOnlyTheSelectedRootSession(t *testing.T) {
 			if _, err = nav.Inspect(t.Context(), root); err != nil {
 				t.Fatal(err)
 			}
-			workspace, err := nav.AttachWorkspace(t.Context(), selected)
+			workspace, err := nav.AttachWorkspace(t.Context(), selected, coreprotocol.EntryIntent{Explicit: true})
 			if err != nil {
 				t.Fatal(err)
 			}

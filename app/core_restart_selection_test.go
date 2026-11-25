@@ -15,11 +15,11 @@ func TestCoreRestartFailedAttachmentNeverOpensChooserOrAlternateWorkspace(t *tes
 	selection := coreprotocol.StartupSnapshot{Root: root}
 	fail := errors.New("exact destination became unavailable after inspection")
 	attaches, choices := 0, 0
-	chosen, ws, _, err := attachStartupSelection(t.Context(), root, true, selection,
+	chosen, ws, _, err := attachStartupSelection(t.Context(), root, true, true, selection,
 		func(context.Context, coreprotocol.StartupSnapshot) (startuptui.Selection, error) {
 			choices++
 			return startuptui.Selection{Root: t.TempDir()}, nil
-		}, func(_ context.Context, candidate string) (*remote.Workspace, error) {
+		}, func(_ context.Context, candidate string, _ coreprotocol.EntryIntent) (*remote.Workspace, error) {
 			attaches++
 			if candidate != root {
 				t.Fatal("private startup attached a replacement workspace")
@@ -36,14 +36,14 @@ func TestCoreRestartOrdinaryAttachmentFailureRetainsRepairChooser(t *testing.T) 
 	selection := coreprotocol.StartupSnapshot{Root: root}
 	attaches, choices := 0, 0
 	expected := new(remote.Workspace)
-	chosen, ws, _, err := attachStartupSelection(t.Context(), root, false, selection,
+	chosen, ws, _, err := attachStartupSelection(t.Context(), root, false, false, selection,
 		func(_ context.Context, observed coreprotocol.StartupSnapshot) (startuptui.Selection, error) {
 			choices++
 			if observed.PathError == "" || observed.Root != root {
 				t.Fatal("ordinary recovery lost its failure owner")
 			}
 			return startuptui.Selection{Root: alternative}, nil
-		}, func(_ context.Context, candidate string) (*remote.Workspace, error) {
+		}, func(_ context.Context, candidate string, _ coreprotocol.EntryIntent) (*remote.Workspace, error) {
 			attaches++
 			if attaches == 1 {
 				return nil, errors.New("initial root failed")

@@ -60,7 +60,7 @@ func TestLiveLSPDiagnosticsRecoverAfterWatchGap(t *testing.T) {
 	wire := newResourceWire(t, r, "watch-recovery-editor")
 	var attached coreprotocol.AttachResult
 	wire.call(t, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &attached)
-	a, err := r.workspace(t.Context(), attached.WorkspaceID, root)
+	a, err := r.workspaceForEntry(t.Context(), attached.WorkspaceID, root, false)
 	if err != nil {
 		t.Fatal(err)
 	}

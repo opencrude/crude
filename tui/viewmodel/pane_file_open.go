@@ -39,6 +39,7 @@ type paneFilePrepared struct {
 }
 
 type paneFilesOpenedMsg struct {
+	entryFile        string
 	clickedSource    bool
 	seq, generation  uint64
 	configGeneration uint64
@@ -95,11 +96,19 @@ func (m *App) openPaneFilesChecked(ctx context.Context, paths []string, group wi
 	live, connected := m.ws.(shellport.LiveDocuments)
 	files, remoteFiles := m.ws.(shellport.ClientFiles)
 	root := m.ws.RootPath()
+	// The inspected missing leaf is a new text document even when its name
+	// happens to have an image extension. The document writer still checks
+	// whether a file appeared before Save.
+	newFile := ""
+	if m.launchFileMissing {
+		newFile = m.launchFile
+	}
+	isImage := func(path string) bool { return path != newFile && imagepreview.SupportedPath(path) }
 	existingImages := make(map[string]window.TabID)
 	var imageStore *paneImageStore
 	var imageLane chan struct{}
 	for _, path := range paths {
-		if imagepreview.SupportedPath(path) {
+		if isImage(path) {
 			imageStore, imageLane = m.imageResidency.snapshotOwner()
 			for _, tab := range m.Win.GroupTabs(group) {
 				if isImageTab(&tab) {
@@ -121,7 +130,7 @@ func (m *App) openPaneFilesChecked(ctx context.Context, paths []string, group wi
 		defer cancel()
 		prepared := editor.NewBufferManager()
 		for _, path := range paths {
-			if imagepreview.SupportedPath(path) {
+			if isImage(path) {
 				file := paneFilePrepared{path: path, requested: path, imageFile: true}
 				if remoteFiles {
 					file.path = files.CanonicalClientPath(path)
@@ -271,7 +280,7 @@ func (m *App) applyPaneFilesOpened(msg paneFilesOpenedMsg) tea.Cmd {
 				}
 			}
 			if file.err != nil {
-				if !msg.restoring {
+				if !msg.restoring || msg.entryFile == file.requested {
 					m.Feedback.NotifyError("Could not open image. Check the file and try again.")
 				}
 				continue
@@ -283,13 +292,13 @@ func (m *App) applyPaneFilesOpened(msg paneFilesOpenedMsg) tea.Cmd {
 		}
 		if file.snapshot != nil {
 			if file.err != nil {
-				if !msg.restoring {
+				if !msg.restoring || msg.entryFile == file.requested {
 					m.Feedback.NotifyError(fmt.Sprintf("Cannot open document: %v", file.err))
 				}
 				continue
 			}
 			if err := m.installLiveEditor(*file.snapshot); err != nil {
-				if !msg.restoring {
+				if !msg.restoring || msg.entryFile == file.requested {
 					m.Feedback.NotifyError(err.Error())
 				}
 				m.editorCommands = append(m.editorCommands, msg.refs.releaseCmd(file.snapshot.ID))
@@ -330,7 +339,7 @@ func (m *App) applyPaneFilesOpened(msg paneFilesOpenedMsg) tea.Cmd {
 			continue
 		}
 		if buf == nil && file.err != nil {
-			if !msg.restoring {
+			if !msg.restoring || msg.entryFile == file.requested {
 				m.Feedback.NotifyError(fmt.Sprintf("Cannot open %s: %v", file.path, file.err))
 			}
 			continue
@@ -371,6 +380,9 @@ func (m *App) applyPaneFilesOpened(msg paneFilesOpenedMsg) tea.Cmd {
 			tab = m.Win.GroupTabByTitle(msg.group, imageTabTitle(activePath))
 		}
 		if tab != nil {
+			if msg.entryFile == msg.activePath {
+				m.showFileEntryNotice(msg.entryFile)
+			}
 			if foreground {
 				m.Win.SwitchTo(m.Win.IndexOf(tab.ID))
 			} else {

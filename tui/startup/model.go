@@ -435,22 +435,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.addIssues(v.snapshot.Issues...)
-		if v.snapshot.PathError != "" || v.snapshot.FolderKind != "" {
-			reason := selectionReason(v.snapshot)
-			m.root.notice = reason
-			m.root.pickerNotice = reason
-			if v.snapshot.PathError == "" && strings.TrimSpace(v.snapshot.Root) != "" {
-				if v.target != nil {
-					return m, m.browse(v.snapshot.Root, 0, false, v.intent)
-				}
-				m.browseRoot = v.snapshot.Root
-				m.root.initial.Root = v.snapshot.Root
-				m.root.initial.FolderKind = v.snapshot.FolderKind
-				m.root.initial.PathError = ""
-				cmd := m.openPicker()
-				m.root.pickerNotice = reason
-				return m, cmd
-			}
+		if v.snapshot.PathError != "" {
+			m.root.notice, m.root.pickerNotice = v.snapshot.PathError, v.snapshot.PathError
 			return m, nil
 		}
 		if strings.TrimSpace(v.snapshot.Root) == "" {

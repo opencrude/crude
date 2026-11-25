@@ -63,9 +63,11 @@ func ConnectStartup(ctx context.Context, opts Options) (*StartupClient, error) {
 	return &StartupClient{Client: c, ClientID: id, Dial: opts.Dial, options: opts}, nil
 }
 
-func (s *StartupClient) AttachWorkspace(ctx context.Context, root string) (*Workspace, error) {
+// AttachWorkspace opens root with the user's entry intent. The core decides
+// admission; an explicit top-level choice or a file launch only states intent.
+func (s *StartupClient) AttachWorkspace(ctx context.Context, root string, entry coreprotocol.EntryIntent) (*Workspace, error) {
 	opts := s.options
-	opts.Root = root
+	opts.Root, opts.Entry = root, entry
 	s.mu.Lock()
 	var c *coreclient.Client
 	if s.Client != nil && s.Client.Err() == nil && root == s.options.Root {
@@ -87,8 +89,13 @@ func (s *StartupClient) Close() error {
 }
 
 func (s *StartupClient) Inspect(ctx context.Context, root string) (coreprotocol.StartupSnapshot, error) {
+	return s.InspectLaunch(ctx, coreprotocol.StartupInspectRequest{Root: root})
+}
+
+// InspectLaunch resolves the CLI path on the selected core before attachment.
+func (s *StartupClient) InspectLaunch(ctx context.Context, input coreprotocol.StartupInspectRequest) (coreprotocol.StartupSnapshot, error) {
 	var out coreprotocol.StartupSnapshot
-	err := s.call(ctx, coreprotocol.StartupInspect, coreprotocol.StartupInspectRequest{Root: root}, &out)
+	err := s.call(ctx, coreprotocol.StartupInspect, input, &out)
 	return out, err
 }
 

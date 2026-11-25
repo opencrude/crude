@@ -37,7 +37,7 @@ them, are in [code layout](../reference/code-layout.md).
 | `internal/crashlog/` | Process-local synchronous fatal output and recovered TUI panic reports; no event-loop or normal-log dependency. |
 | `core/` | Retained workspace actors, serialized ingress lanes, snapshot/subscription admission, mutation receipts. `core/attention.go` sends the workspace Errand one notice per Investigate issue; `core/presence.go` elects the shell that shows desktop notifications. |
 | `core/coreprotocol/` | Versioned, presentation-neutral core API types. |
-| `core/projectpath/` | Core-host directory identity and navigation-only home, personal-folder, and volume-root classification. Bounded directory browsing creates no project state. |
+| `core/projectpath/` | Bounded directory browsing and folder creation before attachment. `workspace/folderkind` owns native directory identity and home, personal-folder and volume-root classification for admission and service defaults. |
 | `core/corewire/` | Bounded framed transport (local socket, SSH stdio bridge). |
 | `core/coreclient/` | Client multiplexer and detached read mirrors (`WorkspaceView`). |
 | `core/shellport/` | The `shellport.Workspace` seam the TUI consumes; `core/shellport/remote` is the CLI runtime path. |

@@ -1,6 +1,6 @@
 //go:build windows
 
-package projectpath
+package folderkind
 
 import (
 	"os"

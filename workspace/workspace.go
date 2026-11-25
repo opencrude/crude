@@ -19,6 +19,7 @@ import (
 	captypes "crude/types/capability"
 	"crude/types/setting"
 	"crude/types/statuscenter"
+	"crude/workspace/folderkind"
 	"crude/workspace/localhistory"
 )
 
@@ -65,7 +66,10 @@ type Workspace struct {
 	// RootPath is the absolute path to the project directory this workspace
 	// is rooted at. The file tree, LSP manager, and file watcher all key
 	// off this path.
-	RootPath string
+	RootPath         string
+	entry            setting.Entry
+	deferredAnalysis chan struct{} // Closed once a top-level actor needs project analysis.
+	analysisActive   bool
 
 	// Workspace-level persistence            ─
 	//
@@ -302,10 +306,7 @@ func NewWorkspace(
 	if wsDB != nil {
 		errandSessionID = wsDB.Setting(workspaceErrandSessionKey)
 	}
-	historyStore, historyErr := openLocalHistory(rootPath, wsDir)
-	if historyErr != nil {
-		lg.Warn("WORKSPACE", "local_history_open_failed", "error", historyErr.Error())
-	}
+	location, classificationErr := folderkind.Inspect(rootPath)
 
 	instanceID := collaboration.NewInstanceID()
 	var collaborationStore *collaboration.Store
@@ -323,8 +324,7 @@ func NewWorkspace(
 		RootPath:           rootPath,
 		WorkspaceDir:       wsDir,
 		WorkspaceDB:        wsDB,
-		LocalHistory:       historyStore,
-		localHistoryErr:    historyErr,
+		entry:              setting.Entry{FolderKind: location.Kind},
 		AgentMgr:           NewAgentManager(),
 		PaneMgr:            NewPaneManager(),
 		LSPMgr:             lspMgr,
@@ -350,8 +350,13 @@ func NewWorkspace(
 		StartTime:          time.Now(),
 		workspaceDBErr:     dbErr,
 	}
-	if historyStore != nil {
-		ws.HistoryService = NewLocalHistoryService(rootPath, historyStore, lg)
+	if classificationErr != nil {
+		ws.localHistoryErr = classificationErr
+	} else if location.Kind == "" || ws.EffectiveAppSettings().LocalHistory.EnabledValue() {
+		ws.LocalHistory, ws.localHistoryErr = openLocalHistory(rootPath, wsDir)
+		if ws.LocalHistory != nil {
+			ws.HistoryService = NewLocalHistoryService(rootPath, ws.LocalHistory, lg)
+		}
 	}
 	ws.Terminals, _ = NewTerminalService(ws.TermMgr) // newly allocated, empty manager
 	if ws.Terminals != nil && wsDir != "" {
@@ -717,7 +722,14 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 		_ = wsDB.Close()
 		return fmt.Errorf("switch project: prepare collaboration runtime for %q: %w", abs, err)
 	}
-	historyStore, err := openLocalHistory(abs, wsDir)
+	location, err := folderkind.Inspect(abs)
+	entry := setting.Entry{FolderKind: location.Kind}
+	var historyStore *localhistory.Store
+	defaults := w.AppDefaults()
+	defaults.Entry = entry
+	if err == nil && (entry.FolderKind == "" || setting.MergeAppWorkspace(defaults, (&Workspace{WorkspaceDB: wsDB}).LoadWorkspaceOverrides()).LocalHistory.EnabledValue()) {
+		historyStore, err = openLocalHistory(abs, wsDir)
+	}
 	if err != nil {
 		_ = collaborationStore.Close()
 		_ = wsDB.Close()
@@ -804,7 +816,11 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 	w.Collaboration = collaborationStore
 	w.collaborationErr = nil
 	w.LocalHistory = historyStore
-	w.HistoryService = NewLocalHistoryService(abs, historyStore, w.Logger)
+	w.entry = entry
+	w.deferredAnalysis, w.analysisActive = nil, false
+	if historyStore != nil {
+		w.HistoryService = NewLocalHistoryService(abs, historyStore, w.Logger)
+	}
 	w.localHistoryErr = nil
 	dbTransferred = true
 

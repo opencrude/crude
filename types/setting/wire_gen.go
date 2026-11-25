@@ -1988,6 +1988,52 @@ func (z EditorPredictionMode) Msgsize() (s int) {
 }
 
 // MarshalMsg implements msgp.Marshaler
+func (z Entry) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 2
+	o = append(o, 0x92)
+	o = msgp.AppendString(o, z.FolderKind)
+	o = msgp.AppendBool(o, z.FileOnly)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *Entry) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 2 {
+		err = msgp.ArrayError{Wanted: 2, Got: zb0001}
+		return
+	}
+	z.FolderKind, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "FolderKind")
+		return
+	}
+	z.FileOnly, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "FileOnly")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z Entry) Msgsize() (s int) {
+	s = 1 + msgp.StringPrefixSize + len(z.FolderKind) + msgp.BoolSize
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
 func (z FastMode) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
 	o = msgp.AppendString(o, string(z))

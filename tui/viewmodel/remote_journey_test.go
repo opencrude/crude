@@ -20,6 +20,7 @@ import (
 	"crude/agent/session"
 	"crude/core"
 	"crude/core/coreclient"
+	"crude/core/coreprotocol"
 	"crude/core/shellport"
 	"crude/core/shellport/remote"
 	"crude/internal/clientstate"
@@ -41,6 +42,11 @@ type remoteJourneyShell struct {
 // Each shell has a real remote port and a private FIFO. Only Update installs
 // subscription batches; neither the fixture nor the provider fabricates nodes.
 func newRemoteJourneyShell(t *testing.T, runtime *core.Runtime, root string) remoteJourneyShell {
+	t.Helper()
+	return newRemoteJourneyShellWithEntry(t, runtime, root, coreprotocol.EntryIntent{})
+}
+
+func newRemoteJourneyShellWithEntry(t *testing.T, runtime *core.Runtime, root string, entry coreprotocol.EntryIntent) remoteJourneyShell {
 	t.Helper()
 	serverContext, stopServers := context.WithCancel(context.Background())
 	var servers sync.WaitGroup
@@ -69,7 +75,7 @@ func newRemoteJourneyShell(t *testing.T, runtime *core.Runtime, root string) rem
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	port, err := remote.Attach(ctx, remote.Options{Root: root, Dial: dial})
+	port, err := remote.Attach(ctx, remote.Options{Root: root, Dial: dial, Entry: entry})
 	if err != nil {
 		t.Fatal(err)
 	}

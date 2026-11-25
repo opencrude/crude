@@ -361,7 +361,7 @@ func TestRetainedCoreRefreshesUnopenedDiagnosticAfterDiskReplacement(t *testing.
 			t.Error(err)
 		}
 	})
-	a, err := r.workspace(t.Context(), "watch-fixture", root)
+	a, err := r.workspaceForEntry(t.Context(), "watch-fixture", root, false)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,6 +1,5 @@
-// Package projectpath distinguishes project directories from navigation-only
-// locations on the core host, and supports explicit creation of project folders.
-package projectpath
+// Package folderkind identifies home, personal and volume folders on this host.
+package folderkind
 
 import (
 	"errors"
@@ -16,7 +15,7 @@ const (
 )
 
 // Location is an existing directory. An empty Kind admits a project, including
-// an empty or non-Git directory. Every nonempty Kind is navigation-only.
+// an empty or non-Git directory. A nonempty Kind identifies a top-level folder.
 type Location struct {
 	Path string
 	Kind string
@@ -28,7 +27,7 @@ type Location struct {
 // Inspect resolves links and preserves filesystem case. Classification uses
 // directory identity, not names: children of personal folders remain projects.
 func Inspect(path string) (Location, error) {
-	path, info, err := canonicalDirectory(path)
+	path, info, err := Directory(path)
 	if err != nil {
 		return Location{}, err
 	}
@@ -61,7 +60,8 @@ func Inspect(path string) (Location, error) {
 	return location, nil
 }
 
-func canonicalDirectory(path string) (string, os.FileInfo, error) {
+// Directory returns the resolved path and identity of an existing folder.
+func Directory(path string) (string, os.FileInfo, error) {
 	if path == "" {
 		return "", nil, fmt.Errorf("directory path is empty")
 	}

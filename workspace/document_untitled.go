@@ -100,9 +100,8 @@ func (s *DocumentService) SaveUntitled(ctx context.Context, owner document.Owner
 		return cloneDocument(d.snapshot), fmt.Errorf("%w: %v", ErrDocumentSaveUncertain, err)
 	}
 	*d = *trial
-	if result.Committed && s.lsp != nil && !d.lspOpen {
-		s.lsp.OpenFile(context.Background(), s.analysisIdentityLocked(d), string(d.snapshot.Text))
-		d.lspOpen = true
+	if result.Committed {
+		s.openLanguageView(d)
 	}
 	if result.Committed && result.Err != nil {
 		return cloneDocument(d.snapshot), fmt.Errorf("%w: %v", ErrDocumentSaveUncertain, result.Err)

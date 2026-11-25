@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"unicode"
+
+	"crude/workspace/folderkind"
 )
 
 // ErrParentMovedAfterCreate indicates that creation succeeded on the opened
@@ -45,7 +47,7 @@ func CreateFolder(ctx context.Context, parent, name string) (string, error) {
 	if !filepath.IsAbs(parent) {
 		return "", fmt.Errorf("parent folder must be an absolute path")
 	}
-	parent, before, err := canonicalDirectory(parent)
+	parent, before, err := folderkind.Directory(parent)
 	if err != nil {
 		return "", fmt.Errorf("open parent folder: %w", err)
 	}

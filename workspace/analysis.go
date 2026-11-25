@@ -23,7 +23,10 @@ func (w *Workspace) InitializeAnalysisRuntime(g *governor.Governor, workspaceID,
 		// Assemble the project's code intelligence. Listing file names runs
 		// no project code, so it does not wait for Trust; starting any
 		// server still does.
-		w.LSPMgr.RefreshAssembly()
+		if w.entry.DeferProjectScan() || w.entry.FileOnly {
+			w.deferredAnalysis = make(chan struct{})
+		}
+		w.startAnalysisWhenNeeded(w.EffectiveAppSettings().LSP.Enabled)
 	}
 	overrides := w.LoadWorkspaceOverrides()
 	if setting.MergeAppWorkspace(w.AppDefaults(), overrides).Analysis.Trusted() {
@@ -95,4 +98,19 @@ func prepareAnalysisBinding(root string, edits []setting.Edit) (string, bool, er
 		return "", true, fmt.Errorf("could not trust this folder. Check the folder path and permissions, then try again: %w", err)
 	}
 	return identity, true, nil
+}
+
+// AnalysisDemand is nil in ordinary projects. A deferred actor closes it when
+// its effective settings first request project-wide language analysis.
+func (w *Workspace) AnalysisDemand() <-chan struct{} { return w.deferredAnalysis }
+
+func (w *Workspace) startAnalysisWhenNeeded(enabled bool) {
+	if w.analysisActive || w.deferredAnalysis != nil && !enabled {
+		return
+	}
+	w.analysisActive = true
+	if w.deferredAnalysis != nil {
+		close(w.deferredAnalysis)
+	}
+	w.LSPMgr.RefreshAssembly()
 }

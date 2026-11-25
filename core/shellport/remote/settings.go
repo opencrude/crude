@@ -125,6 +125,7 @@ func (w *Workspace) LoadAppSettings() setting.App {
 	// This is already resolved by the core's workspace settings owner. Resolving
 	// it again as an application layer would erase workspace-only choices.
 	value := setting.CloneApp(w.settings.current.fetch.Effective)
+	value.Entry = w.settings.current.fetch.Entry
 	setting.ApplyAppDefaults(&value)
 	value.Accounts = w.settings.accounts()
 	markStoredConnections(value.Capabilities, w.settings.current.fetch.ConnectionSecretFields)

@@ -1892,8 +1892,12 @@ func (z *ApplicationPreferencesResult) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *AttachRequest) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
+	// array header, size 3
+	o = append(o, 0x93)
 	// array header, size 2
 	o = append(o, 0x92)
+	o = msgp.AppendBool(o, z.Entry.Explicit)
+	o = msgp.AppendBool(o, z.Entry.FileOnly)
 	o = msgp.AppendString(o, z.Root)
 	if z.Environment == nil { // allownil: if nil
 		o = msgp.AppendNil(o)
@@ -1918,8 +1922,32 @@ func (z *AttachRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 2 {
-		err = msgp.ArrayError{Wanted: 2, Got: zb0001}
+	if zb0001 != 3 {
+		err = msgp.ArrayError{Wanted: 3, Got: zb0001}
+		return
+	}
+	var zb0002 uint32
+	zb0002, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Entry")
+		return
+	}
+	if uint64(zb0002)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0002 != 2 {
+		err = msgp.ArrayError{Wanted: 2, Got: zb0002}
+		return
+	}
+	z.Entry.Explicit, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Entry", "Explicit")
+		return
+	}
+	z.Entry.FileOnly, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Entry", "FileOnly")
 		return
 	}
 	z.Root, bts, err = msgp.ReadStringBytes(bts)
@@ -1931,20 +1959,20 @@ func (z *AttachRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		bts = bts[1:]
 		z.Environment = nil
 	} else {
-		var zb0002 uint32
-		zb0002, bts, err = msgp.ReadArrayHeaderBytes(bts)
+		var zb0003 uint32
+		zb0003, bts, err = msgp.ReadArrayHeaderBytes(bts)
 		if err != nil {
 			err = msgp.WrapError(err, "Environment")
 			return
 		}
-		if uint64(zb0002)*1 > uint64(len(bts)) {
+		if uint64(zb0003)*1 > uint64(len(bts)) {
 			err = msgp.ErrShortBytes
 			return
 		}
-		if z.Environment != nil && cap(z.Environment) >= int(zb0002) {
-			z.Environment = (z.Environment)[:zb0002]
+		if z.Environment != nil && cap(z.Environment) >= int(zb0003) {
+			z.Environment = (z.Environment)[:zb0003]
 		} else {
-			z.Environment = make([]string, zb0002)
+			z.Environment = make([]string, zb0003)
 		}
 		for za0001 := range z.Environment {
 			z.Environment[za0001], bts, err = msgp.ReadStringBytes(bts)
@@ -1960,7 +1988,7 @@ func (z *AttachRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *AttachRequest) Msgsize() (s int) {
-	s = 1 + msgp.StringPrefixSize + len(z.Root) + msgp.ArrayHeaderSize
+	s = 1 + 1 + msgp.BoolSize + msgp.BoolSize + msgp.StringPrefixSize + len(z.Root) + msgp.ArrayHeaderSize
 	for za0001 := range z.Environment {
 		s += msgp.StringPrefixSize + len(z.Environment[za0001])
 	}
@@ -6843,6 +6871,52 @@ func (z *Empty) UnmarshalMsg(bts []byte) (o []byte, err error) {
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z Empty) Msgsize() (s int) {
 	s = 1
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z EntryIntent) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 2
+	o = append(o, 0x92)
+	o = msgp.AppendBool(o, z.Explicit)
+	o = msgp.AppendBool(o, z.FileOnly)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *EntryIntent) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 2 {
+		err = msgp.ArrayError{Wanted: 2, Got: zb0001}
+		return
+	}
+	z.Explicit, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Explicit")
+		return
+	}
+	z.FileOnly, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "FileOnly")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z EntryIntent) Msgsize() (s int) {
+	s = 1 + msgp.BoolSize + msgp.BoolSize
 	return
 }
 
@@ -17593,8 +17667,13 @@ func (z SessionSnapshotList) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *SettingsFetchResult) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 14
-	o = append(o, 0x9e)
+	// array header, size 15
+	o = append(o, 0x9f)
+	o, err = z.Entry.MarshalMsg(o)
+	if err != nil {
+		err = msgp.WrapError(err, "Entry")
+		return
+	}
 	if z.CompactionChecks == nil { // allownil: if nil
 		o = msgp.AppendNil(o)
 	} else {
@@ -17713,8 +17792,13 @@ func (z *SettingsFetchResult) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 14 {
-		err = msgp.ArrayError{Wanted: 14, Got: zb0001}
+	if zb0001 != 15 {
+		err = msgp.ArrayError{Wanted: 15, Got: zb0001}
+		return
+	}
+	bts, err = z.Entry.UnmarshalMsg(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Entry")
 		return
 	}
 	if msgp.IsNil(bts) {
@@ -17985,7 +18069,7 @@ func (z *SettingsFetchResult) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *SettingsFetchResult) Msgsize() (s int) {
-	s = 1 + msgp.ArrayHeaderSize
+	s = 1 + z.Entry.Msgsize() + msgp.ArrayHeaderSize
 	for za0001 := range z.CompactionChecks {
 		s += z.CompactionChecks[za0001].Msgsize()
 	}
@@ -18702,8 +18786,10 @@ func (z StartupCreateFolderResult) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z StartupInspectRequest) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 1
-	o = append(o, 0x91)
+	// array header, size 3
+	o = append(o, 0x93)
+	o = msgp.AppendBool(o, z.Explicit)
+	o = msgp.AppendBool(o, z.AllowFile)
 	o = msgp.AppendString(o, z.Root)
 	return
 }
@@ -18720,8 +18806,18 @@ func (z *StartupInspectRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 1 {
-		err = msgp.ArrayError{Wanted: 1, Got: zb0001}
+	if zb0001 != 3 {
+		err = msgp.ArrayError{Wanted: 3, Got: zb0001}
+		return
+	}
+	z.Explicit, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Explicit")
+		return
+	}
+	z.AllowFile, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "AllowFile")
 		return
 	}
 	z.Root, bts, err = msgp.ReadStringBytes(bts)
@@ -18735,7 +18831,7 @@ func (z *StartupInspectRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z StartupInspectRequest) Msgsize() (s int) {
-	s = 1 + msgp.StringPrefixSize + len(z.Root)
+	s = 1 + msgp.BoolSize + msgp.BoolSize + msgp.StringPrefixSize + len(z.Root)
 	return
 }
 
@@ -18901,8 +18997,11 @@ func (z *StartupSaveRequest) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *StartupSnapshot) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 9
-	o = append(o, 0x99)
+	// array header, size 12
+	o = append(o, 0x9c)
+	o = msgp.AppendBool(o, z.FileMissing)
+	o = msgp.AppendString(o, z.FilePath)
+	o = msgp.AppendBool(o, z.ChooseWorkspace)
 	o = msgp.AppendString(o, z.Root)
 	o = msgp.AppendString(o, z.FolderKind)
 	o = msgp.AppendString(o, z.PathError)
@@ -18957,8 +19056,23 @@ func (z *StartupSnapshot) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 9 {
-		err = msgp.ArrayError{Wanted: 9, Got: zb0001}
+	if zb0001 != 12 {
+		err = msgp.ArrayError{Wanted: 12, Got: zb0001}
+		return
+	}
+	z.FileMissing, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "FileMissing")
+		return
+	}
+	z.FilePath, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "FilePath")
+		return
+	}
+	z.ChooseWorkspace, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "ChooseWorkspace")
 		return
 	}
 	z.Root, bts, err = msgp.ReadStringBytes(bts)
@@ -19056,7 +19170,7 @@ func (z *StartupSnapshot) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *StartupSnapshot) Msgsize() (s int) {
-	s = 1 + msgp.StringPrefixSize + len(z.Root) + msgp.StringPrefixSize + len(z.FolderKind) + msgp.StringPrefixSize + len(z.PathError) + msgp.BoolSize + z.Onboarding.Msgsize() + z.Theme.Msgsize() + msgp.ArrayHeaderSize
+	s = 1 + msgp.BoolSize + msgp.StringPrefixSize + len(z.FilePath) + msgp.BoolSize + msgp.StringPrefixSize + len(z.Root) + msgp.StringPrefixSize + len(z.FolderKind) + msgp.StringPrefixSize + len(z.PathError) + msgp.BoolSize + z.Onboarding.Msgsize() + z.Theme.Msgsize() + msgp.ArrayHeaderSize
 	for za0001 := range z.Workspaces {
 		s += z.Workspaces[za0001].Msgsize()
 	}

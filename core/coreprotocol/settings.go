@@ -142,6 +142,7 @@ type AccountModelsResult struct {
 	Models []setting.ModelEntry `json:"models"`
 }
 type SettingsFetchResult struct {
+	Entry                    setting.Entry                    `json:"entry,omitempty"`
 	CompactionChecks         []provider.CompactionObservation `json:"compaction_checks,omitempty"`
 	ApplicationRevision      string                           `json:"application_revision"`
 	WorkspaceRevision        string                           `json:"workspace_revision"`

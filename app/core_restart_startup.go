@@ -23,7 +23,7 @@ func validateCoreRestartInvocation(flags CLIFlags) error {
 	}
 	if flags.Core || flags.CoreStdio || flags.CoreStatus || flags.CoreStop || flags.Server || flags.Force ||
 		flags.MCP || flags.ListSessions || flags.DeleteSession != "" || flags.Resume != "" ||
-		flags.ClientProfile != "" || flags.Workspace != "" || flags.SSHHost != "" || flags.SSHUser != "" ||
+		flags.Path != "" || flags.extraPaths || flags.ClientProfile != "" || flags.Workspace != "" || flags.SSHHost != "" || flags.SSHUser != "" ||
 		flags.SSHPort != 0 || flags.SSHIdentity != "" || flags.APIKey != "" || flags.Account != "" ||
 		flags.Model != "" || flags.Provider != "" || flags.SystemPrompt != "" ||
 		flags.MCPEffects != "" || flags.MCPShell != "" || flags.MCPShellEpoch != 0 {

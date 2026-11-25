@@ -312,6 +312,10 @@ func New(th *theme.Theme, current setting.App, presets []setting.ProviderPreset)
 func NewScoped(th *theme.Theme, current setting.App, presets []setting.ProviderPreset, scope setting.Scope, appDefaults setting.App, overrides setting.WorkspaceOverrides) *Model {
 	appDefaults = setting.CloneApp(appDefaults)
 	appDefaults.Prediction = setting.DefaultWorkspacePrediction()
+	if scope == setting.ScopeWorkspace {
+		appDefaults.Entry = current.Entry
+		appDefaults = setting.MergeAppWorkspace(appDefaults, setting.WorkspaceOverrides{})
+	}
 	current = setting.CloneApp(current)
 	setting.ApplyAppDefaults(&current)
 	if scope != setting.ScopeWorkspace {
@@ -575,11 +579,15 @@ func (m *Model) accountEditorDirty() bool {
 }
 
 func (m *Model) buildHistoryForm(settings setting.LocalHistory) *ui.FormModel {
+	description := "Keep restorable snapshots of the workspace and of each message boundary."
+	if folder := m.layerBase.Entry.FolderSummary(); folder != "" {
+		description = folder + " Local History is off by default here."
+	}
 	extra := ui.TextAreaFieldState(fieldHistoryIgnores, "Also ignore", strings.Join(settings.ExtraIgnorePatterns, "\n"), "One Git-style pattern per line. Stored history never enters the project tree.")
 	extra.Rows = 4
 	return formModel(
 		ui.SeparatorFieldState("history-capture", "Capture"),
-		ui.BoolFieldState(fieldHistoryEnabled, "Local history", settings.EnabledValue(), "Keep restorable snapshots of the workspace and of each message boundary."),
+		ui.BoolFieldState(fieldHistoryEnabled, "Local history", settings.EnabledValue(), description),
 		ui.BoolFieldState(fieldHistoryGitIgnore, "Honor .gitignore", settings.UseGitIgnoreValue(), "Skip files your Git ignore rules exclude, plus build output Crude knows about."),
 		ui.BoolFieldState(fieldHistoryExternal, "Capture outside edits", settings.CaptureExternalValue(), "Also snapshot changes made by shell commands, generators and other editors."),
 		ui.NumberFieldState(fieldHistoryMaxFile, "Skip files over", settings.MaxFileSizeMB, "MB", "Larger files are never read or stored."),
@@ -2362,6 +2370,7 @@ func (m *Model) rebased(application, effective setting.App, overrides setting.Wo
 		prepare(&draft)
 	}
 	// Edits patch persisted fields; the live inventory is observation metadata.
+	draft.Entry = base.Entry
 	draft.TerminalShells, draft.AgentShells = base.TerminalShells, base.AgentShells
 	next := NewScoped(m.th, draft, m.presets, m.Scope(), application, overrides)
 	next.collectedBase, next.layerBase, next.preferencesBase = baseline.collectedBase, baseline.layerBase, baseline.preferencesBase
