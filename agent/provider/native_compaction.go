@@ -100,10 +100,8 @@ func (c *Client) checkpointClient(req *ChatRequest) *Client {
 // a continuation from the exact returned artifact. There are no HTTP retries or
 // redirects on either billable call. The text is portable if the route changes.
 //
-// A run never stops here for a refusal: when the native route cannot finish
-// this checkpoint, it returns a Fallback and the caller writes a full portable
-// checkpoint (Provider only with the serving model itself). Only an outage in
-// Provider only is an error, so run recovery retries it like any request.
+// A capability refusal allows a portable checkpoint. An account rejection
+// returns its typed cause: the caller knows whether a distinct writer can run.
 func (p *Provider) NativeCheckpoint(ctx context.Context, r NativeCheckpointRequest, opts ...ClientOption) (NativeCheckpointResult, error) {
 	var zero NativeCheckpointResult
 	fallback := func(why string, changed bool) (NativeCheckpointResult, error) {
@@ -172,11 +170,11 @@ func (p *Provider) NativeCheckpoint(ctx context.Context, r NativeCheckpointReque
 	if err := p.nativeReady(ctx, r.Model); err != nil {
 		return zero, err
 	}
-	record := func(state string) error {
+	record := func(state string, cause error) error {
 		if err := p.nativeReady(ctx, r.Model); err != nil {
 			return err
 		}
-		return cache.record(key, flight, p, r.Model, state, op.path)
+		return cache.recordWithDelay(key, flight, p, r.Model, state, op.path, AdvisedRetryDelay(cause))
 	}
 	attempt := attemptKey{scope: key, source: checkpointSource(r.Owner, r.Messages), account: p.AccountID}
 	if err := cache.guardAttempt(ctx, attempt, flight, r.Explicit, false); err != nil {
@@ -206,11 +204,14 @@ func (p *Provider) NativeCheckpoint(ctx context.Context, r NativeCheckpointReque
 	if p.CompactionMethod() == CompactionErrandOnly {
 		return fallback("This connection uses Errand for compaction.", false)
 	}
-	if fact.retryAt > time.Now().Unix() || fact.fresh() && fact.state == supportUnavailable {
-		if fact.state == supportUnavailable && fact.retryAt <= time.Now().Unix() {
-			return fallback("This route did not support native compaction at its last check.", false)
+	if fact.retryAt > time.Now().Unix() {
+		if p.CompactionMethod() == CompactionProviderOnly {
+			return zero, &nativeCooldown{until: time.Unix(fact.retryAt, 0)}
 		}
-		return fallback("Native compaction could not be verified. Crude will check again later.", false)
+		return NativeCheckpointResult{Fallback: "Native compaction could not be verified. Crude will check again later.", Transient: true}, nil
+	}
+	if fact.fresh() && fact.state == supportUnavailable {
+		return fallback("This route did not support native compaction at its last check.", false)
 	}
 	req := &ChatRequest{Model: r.Model, Messages: FilterReplayMessages(r.Messages, p), Tools: r.Tools, MaxOutputTokens: r.Limit, ResponseContinuationScope: p.ResponseContinuationScope(r.Model)}
 	// A small proven delta is safe as the first real attempt. A stale anchor
@@ -232,12 +233,15 @@ func (p *Provider) NativeCheckpoint(ctx context.Context, r NativeCheckpointReque
 		if errors.Is(err, errAccountChanged) {
 			return zero, err
 		}
+		if rejection := RejectedAccount(err); rejection != nil {
+			return zero, rejection
+		}
 		definite := compactRejection(err) || errors.Is(err, errIgnoredCompaction) || errors.Is(err, errNoWindow) || errors.Is(err, errUnusableCheckpoint)
 		state := supportCooling
 		if probe && compactRejection(err) || definite && initial.failures > 0 {
 			state = supportUnavailable
 		}
-		if e := record(state); e != nil {
+		if e := record(state, err); e != nil {
 			return zero, e
 		}
 		failure := newNativeFailure(err)
@@ -259,7 +263,7 @@ func (p *Provider) NativeCheckpoint(ctx context.Context, r NativeCheckpointReque
 				return fail(e, true)
 			}
 			if known && !yes {
-				if e = record(supportUnavailable); e != nil {
+				if e = record(supportUnavailable, nil); e != nil {
 					return zero, e
 				}
 				return fallback("The model does not advertise native compaction support.", true)
@@ -271,7 +275,7 @@ func (p *Provider) NativeCheckpoint(ctx context.Context, r NativeCheckpointReque
 			w, e := op.post(probeCtx, probe, r.ProbeSource, "compaction_probe")
 			// A probe is synthetic, so a normal answer or an unusable item may
 			// also try the other operation without risk to the user's data.
-			if e != nil && (missing(e) || responses && (errors.Is(e, errNoWindow) || errors.Is(e, errIgnoredCompaction))) {
+			if e != nil && RejectedAccount(e) == nil && (missing(e) || responses && (errors.Is(e, errNoWindow) || errors.Is(e, errIgnoredCompaction))) {
 				switchOperation()
 				w, e = op.post(probeCtx, probe, r.ProbeSource, "compaction_probe")
 			}
@@ -285,7 +289,7 @@ func (p *Provider) NativeCheckpoint(ctx context.Context, r NativeCheckpointReque
 			if text != r.ProbeAnswer {
 				return fail(errIgnoredCompaction, true)
 			}
-			if e = record(supportVerified); e != nil {
+			if e = record(supportVerified, nil); e != nil {
 				return zero, e
 			}
 			verified = true
@@ -297,7 +301,7 @@ func (p *Provider) NativeCheckpoint(ctx context.Context, r NativeCheckpointReque
 		return p.earlierAttempt(err, fallback, cache.fact(key).failures == 0)
 	}
 	w, err := op.post(ctx, req, r.Directive, "native_compaction")
-	if err != nil && !verified && missing(err) {
+	if err != nil && !verified && RejectedAccount(err) == nil && missing(err) {
 		// An unverified anchored attempt reached a missing operation; resend
 		// the same small delta to the other one.
 		switchOperation()
@@ -305,7 +309,8 @@ func (p *Provider) NativeCheckpoint(ctx context.Context, r NativeCheckpointReque
 	}
 	if err != nil {
 		var rejection *StatusError
-		if errors.As(err, &rejection) && definiteRefusal(rejection.StatusCode) {
+		var first *firstEventRateLimit
+		if errors.As(err, &first) || errors.As(err, &rejection) && definiteRefusal(rejection.StatusCode) {
 			if e := cache.releaseRejected(attempt, flight); e != nil {
 				return zero, e
 			}
@@ -329,11 +334,21 @@ func (p *Provider) NativeCheckpoint(ctx context.Context, r NativeCheckpointReque
 	if err := r.ValidatePortable(text); err != nil {
 		return fail(fmt.Errorf("%w: %w", errUnusableCheckpoint, err), false)
 	}
-	if err = record(supportVerified); err != nil {
+	if err = record(supportVerified, nil); err != nil {
 		return zero, err
 	}
 	return NativeCheckpointResult{Message: nativeMessage(p, r.Model, w, text, r.Messages[0])}, nil
 }
+
+// nativeCooldown is a temporary provider-route failure, not a new HTTP
+// response. Run recovery can wait for this route without resending early.
+type nativeCooldown struct{ until time.Time }
+
+func (e *nativeCooldown) Error() string {
+	return "Provider compaction is not available now. Crude retries at " + e.until.Local().Format("15:04:05") + "."
+}
+func (*nativeCooldown) Timeout() bool   { return false }
+func (*nativeCooldown) Temporary() bool { return true }
 
 // earlierAttempt keeps a possibly paid request from being sent again
 // automatically; a portable checkpoint is written instead. A recorded failure
@@ -355,7 +370,7 @@ func (c *Client) advertisedCompaction(ctx context.Context, model string) (bool, 
 		return false, false, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode == 404 || resp.StatusCode == 405 {
+	if (resp.StatusCode == 404 || resp.StatusCode == 405) && !strings.EqualFold(resp.Header.Get("x-should-retry"), "false") {
 		return false, false, nil
 	}
 	if resp.StatusCode/100 != 2 {

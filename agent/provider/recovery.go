@@ -80,7 +80,85 @@ func permanentAPIError(code string) bool {
 
 func quotaAPIError(code string) bool {
 	code = strings.ToLower(code)
+	for _, token := range strings.Fields(code) {
+		// https://aistudio.google.com/docs/api-errors.md#api-error-codes
+		// Interactions distinguishes its daily quota from short throttling.
+		switch token {
+		case "quota_exceeded", "enforced_spend_limit_reached":
+			return true
+		}
+	}
 	return strings.Contains(code, "insufficient_quota") || strings.Contains(code, "billing") || strings.Contains(code, "credit_balance")
+}
+
+func rateLimitAPIError(codes string) bool {
+	for _, code := range strings.Fields(strings.ToLower(codes)) {
+		switch code {
+		case "429", "rate_limit", "rate_limit_error", "rate_limit_exceeded", "too_many_requests":
+			return true
+		}
+	}
+	return false
+}
+
+// AccountRejection identifies a quota limit or a provider instruction not
+// to retry. Neither verdict says whether the model supports compaction.
+type AccountRejection struct {
+	cause error
+	quota bool
+	// RecheckAt is zero unless the provider named a time to try again.
+	RecheckAt time.Time
+}
+
+func (e *AccountRejection) Error() string { return e.Reason() + " " + e.Action() }
+func (e *AccountRejection) Unwrap() error { return e.cause }
+
+// Reason states why the provider rejected the request.
+func (e *AccountRejection) Reason() string {
+	if e.quota {
+		return "The provider quota is used up."
+	}
+	return "The provider asked Crude not to retry this request."
+}
+
+// Action gives the user a next step when no other writer can finish.
+func (e *AccountRejection) Action() string {
+	if e.quota {
+		return "Add credit or change the account, then continue."
+	}
+	return "Check the request or change the account, then continue."
+}
+
+// RejectedAccount returns only positive quota or retry-veto evidence. It
+// retains the original error for recovery and diagnostics.
+func RejectedAccount(err error) *AccountRejection {
+	var prior *AccountRejection
+	if errors.As(err, &prior) {
+		return prior
+	}
+	if err == nil || errors.Is(err, context.Canceled) {
+		return nil
+	}
+	var s *StatusError
+	var a *APIError
+	var veto *streamRetryVetoError
+	vetoed := errors.As(err, &veto)
+	var codes string
+	var until time.Time
+	if errors.As(err, &s) {
+		codes, until = s.Code+" "+s.APIType+" "+s.APICode, s.recheckAt
+		vetoed = s.RetryHint == "false"
+	} else if errors.As(err, &a) {
+		codes = a.codes()
+		if a.details.RetryDelay > 0 {
+			until = time.Now().Add(a.details.RetryDelay)
+		}
+	}
+	quota := quotaAPIError(codes)
+	if !quota && !vetoed {
+		return nil
+	}
+	return &AccountRejection{cause: err, quota: quota, RecheckAt: until}
 }
 
 // retryableAPIStatus gives explicit HTTP/status evidence precedence over a
@@ -161,7 +239,7 @@ func Classify(err error) FailureClass {
 		if api.Param != "" {
 			return FailurePermanent
 		}
-		code := strings.ToLower(api.Type + " " + api.Code)
+		code := strings.ToLower(api.codes())
 		if status, err := strconv.Atoi(api.Code); err == nil {
 			if retryableAPIStatus(status, code, api.Param, "") {
 				return FailureTransient
@@ -171,7 +249,10 @@ func Classify(err error) FailureClass {
 		if permanentAPIError(code) {
 			return FailurePermanent
 		}
-		for _, kind := range []string{"overload", "rate_limit", "temporar", "api_error", "server_error", "internal_error", "timeout", "unavailable", "gateway_stream_terminated", "stream_error"} {
+		if rateLimitAPIError(code) {
+			return FailureTransient
+		}
+		for _, kind := range []string{"overload", "temporar", "api_error", "server_error", "internal_error", "timeout", "unavailable", "gateway_stream_terminated", "stream_error"} {
 			if strings.Contains(code, kind) {
 				return FailureTransient
 			}
@@ -225,6 +306,13 @@ func Retryable(err error) bool {
 // ErrorSummary is for quiet user-facing lifecycle chrome. The original error
 // remains available in diagnostic logs, including its provider request ID.
 func ErrorSummary(err error) string {
+	if rejection := RejectedAccount(err); rejection != nil {
+		var native *AccountRejection
+		if !rejection.quota || errors.As(err, &native) {
+			return rejection.Reason()
+		}
+		return "Provider quota or billing limit reached"
+	}
 	var exhausted *ExhaustedError
 	if errors.As(err, &exhausted) {
 		err = exhausted.Cause
@@ -232,9 +320,6 @@ func ErrorSummary(err error) string {
 	var status *StatusError
 	if errors.As(err, &status) {
 		codes := status.Code + " " + status.APIType + " " + status.APICode
-		if quotaAPIError(codes) && (status.StatusCode == 429 || status.StatusCode == 403) {
-			return "Provider quota or billing limit reached"
-		}
 		if strings.Contains(strings.ToLower(codes), "api_key_invalid") || strings.Contains(strings.ToLower(codes), "unauthenticated") {
 			return "Provider authentication failed"
 		}
@@ -265,8 +350,8 @@ func ErrorSummary(err error) string {
 	}
 	var api *APIError
 	if errors.As(err, &api) {
-		code := strings.ToLower(api.Type + " " + api.Code)
-		if strings.Contains(code, "rate_limit") {
+		code := api.codes()
+		if rateLimitAPIError(code) {
 			return "Provider rate limit reached"
 		}
 		if Retryable(api) {
@@ -292,6 +377,14 @@ func AdvisedRetryDelay(err error) time.Duration {
 	var status *StatusError
 	if errors.As(err, &status) {
 		return retry.Clamp(status.RetryAfter)
+	}
+	var cooldown *nativeCooldown
+	if errors.As(err, &cooldown) {
+		return retry.Clamp(time.Until(cooldown.until))
+	}
+	var api *APIError
+	if errors.As(err, &api) {
+		return retry.Clamp(api.details.RetryDelay)
 	}
 	return 0
 }

@@ -40,9 +40,9 @@ new human message or a replacement for permission policy.
 | The same verdict on a child, or a local configuration/trust/guidance fault before the request (for example steering media the protocol cannot carry) | Needs attention: the child parks for its parent; a root waits in place with its exact pending input until repaired, then Continue |
 | Persistence failure | Keep the owned snapshot/draft, block unsafe advancement, and allow a checked retry |
 | Native file-ownership rejection (outside scope, or another agent's claim) | Ordinary tool error: nothing changes, the run continues, the parent is notified and can replace the live child's scope with `agent_update_claims` |
-| Automatic compaction failure while the next request still fits | The run continues on the retained full context and retries compaction after the context grows by a bounded step; the boundary row records a deferred failure, nothing needs attention. Background preparation failures back off silently |
+| Automatic compaction failure while the next request still fits | The run continues on the retained full context and retries compaction after the context grows by a bounded step. Do not continue on a connection that confirmed a quota limit or asked Crude not to retry. |
 | Native compaction failure | Auto can fall back to a full portable checkpoint and reports the first method change in Notices. Provider only does not charge another model: after a native refusal the serving model can write the checkpoint, and a transient outage enters request recovery if the checkpoint is required. An uncertain native submission is held for five minutes rather than sent again. One failure is not permanent model evidence. See the [provider compaction handoff](../plans/provider-compaction-handoff.md) for open validation. |
-| Portable compaction model unavailable at capacity (Auto or Errand only) | After the extractor's own adaptation (chunking, staged sections, learned output ceilings, retries), the agent's own connection writes that checkpoint; if no model can, retain the original history and stop recoverably. Never replay a partly rewritten history as a successful checkpoint |
+| Portable compaction model unavailable at capacity (Auto or Errand only) | After the extractor's own adaptation, the agent's own connection can write the checkpoint unless it already confirmed a quota limit or refused a retry. If no writer can finish, retain the original history and stop recoverably. Never install a partly rewritten checkpoint. |
 | Compaction failure with no room left (at the hard limit, or after a provider context-overflow rejection) | Provider-originated failures recover like any provider request; a local fault (for example a checkpoint that still does not fit) needs attention with a compaction-specific action |
 | Faulty clipboard-image capture | Exclude only the missing/empty/invalid image, preserve the original text and reference evidence, report the exact exclusion and continue with usable attachments |
 | Tool panic (uncertain effects) | Tool error result telling the model to inspect affected state; later serial siblings of that batch are skipped; the run continues |
@@ -87,8 +87,10 @@ prose or non-streaming invalid requests retryable. Invalid parameters, specific
 permanent codes and the HTTP retry veto still take precedence.
 
 Vendor-native coverage is separate from gateway translations. Anthropic SSE
-`overloaded_error`, `api_error`, `timeout_error` and rate-limit errors remain
-transient; authentication/billing/permission/not-found/oversized/validation
+`overloaded_error`, `api_error`, `timeout_error` and ordinary rate-limit errors remain
+transient. A Messages `rate_limit_error` with
+[`error.details.error_code: enforced_spend_limit_reached`](https://platform.claude.com/docs/en/api/errors#error-codes)
+identifies a spend cap. A missing retry header alone does not. Authentication/billing/permission/not-found/oversized/validation
 evidence remains permanent even when wrapped in a transient status. Ollama's
 documented exact string-only model-execution failures are recoverable at the
 stream boundary; missing models, invalid input, insufficient-memory requirements
@@ -98,7 +100,9 @@ also survives a missing terminal event. References: [Anthropic errors](https://p
 and [Ollama errors](https://docs.ollama.com/api/errors). These tests simulate the
 documented wires locally, not live vendor availability.
 
-Google APIs (both Gemini protocols) return `google.rpc.Status` envelopes. The
+Gemini Interactions documents [`quota_exceeded`](https://aistudio.google.com/docs/api-errors.md#api-error-codes)
+for its daily quota. It distinguishes that code from `rate_limit_exceeded` and
+`too_many_requests`, which permit a retry. For `google.rpc.Status` envelopes, the
 `status` (`RESOURCE_EXHAUSTED`, `UNAVAILABLE`, `INVALID_ARGUMENT`, ...) becomes
 the error type; `RetryInfo.retryDelay` becomes the server-advised cooldown that
 both the request's own backoff and the supervisor honor; an `ErrorInfo` reason
@@ -123,6 +127,13 @@ server's retry delay when available, subject to the shared cooldown cap.
 Confirmed quota or billing limits and explicit retry vetoes still take
 precedence. A confirmed rate-limit rejection is not an uncertain execution:
 do not loosen the replay guard for an unconfirmed native compaction request.
+
+During native compaction, Auto can use Errand on a different connection after
+a quota limit or retry veto. It cannot use another model on the refused
+connection. If no writer can finish, keep the conversation and the provider's
+reason. Only a quota limit calls for credit; a retry veto does not. See
+[native compaction](adaptive-context.md#native-compaction-on-custom-connections)
+for when the next request may check the connection again.
 
 This distinction matters for gateways: an upstream stream disconnect can arrive
 as an HTTP 408 JSON response even when Crude is using Chat Completions. Typing
@@ -149,9 +160,9 @@ must not append the final response or its continuation suffix a second time. See
   end a root turn on a permanent provider verdict (`AttentionEndTurn`,
   `Supervisor.Fail`, incident state `failed`); park configuration, guidance,
   storage and unavoidable compaction failures with an actionable Needs attention
-  state. A compaction failure that leaves room for
-  the next request is deferred, never a stop: cheap or unstable compaction
-  models must not halt a run that can still make requests. Only natural finish or explicit user/parent
+  state. Defer a compaction failure that leaves room for the next request
+  unless the serving connection confirmed a quota limit or refused a retry.
+  Cheap or unstable compaction models must not halt a run that can still make requests. Only natural finish or explicit user/parent
   lifecycle may settle work. Preserve safe canonical boundaries; never replay
   accepted stochastic output, historical tool effects or existing commands.
 - **The agentic loop is sacred.** Tool-level failures never end a run: ownership

@@ -83,6 +83,8 @@ func (a *Agent) Run(
 	a.runFailure = nil
 	a.runFailureKind = ""
 	a.runRecoveryKind = ""
+	a.checkpointRoute = &checkpointRoute{}
+	defer func() { a.checkpointRoute = nil }()
 	a.lastActiveContext = append([]provider.ChatMessage(nil), sessionMessages...)
 	a.lastArchive = append([]provider.ChatMessage(nil), a.ContextArchive...)
 	if a.ContextArchive == nil {
@@ -705,8 +707,10 @@ steps:
 					}
 				}
 				atCapacity := overflowPressure || activeTokens >= hardLimit
+				sameWriter := provider.SameConnection(a.CompactionProvider, a.Provider)
 				if compactErr != nil && ctx.Err() == nil && atCapacity && compactionModelUnavailable(compactErr) &&
-					a.Provider.CompactionMethod() != provider.CompactionProviderOnly && a.CompactionProvider != nil && (a.CompactionProvider.Model != a.Model || !provider.SameConnection(a.CompactionProvider, a.Provider)) {
+					a.Provider.CompactionMethod() != provider.CompactionProviderOnly && a.CompactionProvider != nil &&
+					(!sameWriter || a.CompactionProvider.Model != a.Model && provider.RejectedAccount(compactErr) == nil) {
 					// Last resort: the next request cannot be sent and the
 					// configured compaction connection is unavailable (input
 					// limits are already adapted by the extractor). The
@@ -731,7 +735,9 @@ steps:
 					emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Cancelled.", "reason": "cancelled"}})
 					return returnMessages()
 				}
-				if !errors.As(compactErr, &storage) && deferCompaction(activeTokens) {
+				var native *nativeCheckpointError
+				blocked := errors.As(compactErr, &native) && provider.RejectedAccount(native) != nil
+				if !blocked && !errors.As(compactErr, &storage) && deferCompaction(activeTokens) {
 					data["deferred"] = true
 					data["error"] = compactErrorText(compactErr) + "; continuing with the full context and retrying later"
 					if trigger == "requested" {
@@ -1075,6 +1081,7 @@ steps:
 		totalCompletionTokens += completionTokens
 		lastPromptTokens = contextPromptTokens
 		contextUsage.observe(contextPromptTokens, completionTokens, len(requestMsgs), estimateCanonicalRequest(requestMsgs[:1], allTools, a.Model))
+		a.checkpointRoute.clear(a.Provider) // A completed serving request proves that the route works again.
 		planner.observe(a, completion.Usage, contextPromptTokens, postCompaction)
 
 		price, costKnown, costSource := a.Provider.RequestPriceKnown(a.Model, completion.Usage.ServiceTier)

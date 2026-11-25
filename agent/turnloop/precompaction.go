@@ -559,6 +559,7 @@ func (a *Agent) compactorFor(useMain bool, window, targetTokens int) *Agent {
 	}
 	if !useMain {
 		compactor.NativeCompactionProvider = a.Provider
+		compactor.checkpointRoute = a.checkpointRoute
 		compactor.CompactionTargetOutput = a.MaxOutputTokens
 		compactor.CompactionConfigError = a.CompactionConfigError
 		compactor.servingCacheRatio = a.servingCacheRatio
@@ -588,6 +589,9 @@ func compactionModelUnavailable(err error) bool {
 	var native *nativeCheckpointError
 	if errors.As(err, &native) {
 		return false
+	}
+	if provider.RejectedAccount(err) != nil {
+		return true
 	}
 	var status *provider.StatusError
 	if errors.As(err, &status) {

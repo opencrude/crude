@@ -2,7 +2,6 @@ package provider
 
 import (
 	"encoding/json"
-	"fmt"
 	"strings"
 )
 
@@ -33,13 +32,9 @@ func (d *streamErrorDecoder) Decode(event StreamEvent) (StreamUpdate, error) {
 		if json.Unmarshal(envelope.Error, &message) == nil && message != "" {
 			return StreamUpdate{}, classifyStreamError(d.protocol, envelope.Type, &APIError{Message: message})
 		}
-		var wire ChatAPIError
+		var wire wireError
 		if json.Unmarshal(envelope.Error, &wire) == nil && (wire.Message != "" || wire.Type != "" || wire.Code != nil || wire.Param != "") {
-			code := ""
-			if wire.Code != nil {
-				code = fmt.Sprint(wire.Code)
-			}
-			return StreamUpdate{}, classifyStreamError(d.protocol, envelope.Type, &APIError{Type: wire.Type, Code: code, Param: wire.Param, Message: wire.Message})
+			return StreamUpdate{}, classifyStreamError(d.protocol, envelope.Type, wire.decoded())
 		}
 	}
 	update, err := d.inner.Decode(event)
@@ -82,7 +77,7 @@ func streamDisconnectEvidence(api *APIError) bool {
 	if api == nil || api.Param != "" {
 		return false
 	}
-	for _, code := range strings.Fields(strings.ToLower(api.Type + " " + api.Code)) {
+	for _, code := range strings.Fields(strings.ToLower(api.codes())) {
 		if code != "invalid_request" && code != "invalid_request_error" && permanentAPIError(code) {
 			return false
 		}

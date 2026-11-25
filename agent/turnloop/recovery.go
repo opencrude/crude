@@ -113,13 +113,15 @@ func AttentionRecovery(kind RecoveryFailureKind, err error) RecoveryFailure {
 	case RecoveryFailureConfiguration:
 		failure.Summary = provider.ErrorSummary(err)
 		failure.Action = "Update the provider or agent settings, then Continue"
+		if rejection := provider.RejectedAccount(err); rejection != nil {
+			failure.Action = rejection.Action()
+			break
+		}
 		var status *provider.StatusError
 		if errors.As(err, &status) {
 			switch status.StatusCode {
 			case 401, 403:
 				failure.Action = "Reconnect or update the account in Settings → Accounts, then Continue"
-			case 429:
-				failure.Action = "Resolve this account's quota or billing, then Continue"
 			case 404:
 				failure.Action = "Update the account endpoint or model, then Continue"
 			}
@@ -525,6 +527,10 @@ func recoveryDiagnostic(err error) string {
 	if err == nil {
 		return ""
 	}
+	var rejection *provider.AccountRejection
+	if errors.As(err, &rejection) {
+		err = rejection.Unwrap() // The summary and action already describe the account decision.
+	}
 	text := err.Error()
 	if !credentialLike(text) {
 		return text
@@ -624,6 +630,14 @@ func classifyRecordedRecovery(kind RecoveryFailureKind, err error) RecoveryFailu
 		// Compaction already retried internally. A provider outage heals like
 		// any request; a local fault (for example a checkpoint that still does
 		// not fit) would only repeat an expensive multi-stage pipeline.
+		var rejection *provider.AccountRejection
+		if errors.As(err, &rejection) {
+			// The serving turn has not been answered. Keep the run repairable
+			// instead of ending it as a rejected ordinary model request.
+			failure := classifyRecoveryError(err)
+			failure.Kind = RecoveryFailureCompaction
+			return failure
+		}
 		if providerRequestFailure(err) {
 			return classifyRecoveryError(err)
 		}
