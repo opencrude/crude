@@ -57,6 +57,12 @@ func TestHTTPGatewayRecoveryContinuesBeyondMaximumCooldownForEveryProtocol(t *te
 				var waits []time.Duration
 				supervisor.Wait = func(_ context.Context, delay time.Duration) error {
 					waits = append(waits, delay)
+					// Three errors precede the scripted success. If the stream
+					// breaks again, report it instead of spinning on an empty
+					// simulator with a zero-time clock until the suite times out.
+					if len(waits) > 3 {
+						return fmt.Errorf("unexpected recovery after the scripted success")
+					}
 					return nil
 				}
 				var countdowns []recoverytypes.Status

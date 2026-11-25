@@ -1,10 +1,13 @@
 package perfdash
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	tea "charm.land/bubbletea/v2"
 
 	"crude/internal/metrics"
 	"crude/internal/perfdata"
@@ -110,41 +113,66 @@ func paintedText(buf *surface.CellBuffer) string {
 	return b.String()
 }
 
-func TestResourcesNeverPaintCrossHostAggregate(t *testing.T) {
-	for _, unknown := range []bool{false, true} {
-		for _, width := range []int{120, 44} {
-			d := resourceData()
-			// Identical hostnames and colliding PIDs must never establish identity.
-			d.Shell.Hostname = "same-name"
-			d.Core.Hostname = "same-name"
-			d.Core.HostBootID = "remote-boot"
-			if unknown {
-				d.Shell.HostIdentity = "unknown"
-				d.Core.HostIdentity = "unknown"
-				d.Shell.HostBootID = ""
-				d.Core.HostBootID = ""
-			}
-			d.Core.Resources.Processes[0].PID = 10
-			screen := New(theme.DefaultDark())
-			screen.SetData(d)
-			screen.SetSection(SectionResources)
-			host := ui.NewHost(theme.DefaultDark(), screen)
-			host.Resize(width, 50)
-			buf := surface.NewCellBuffer(width, 50)
-			host.Paint(buf)
-			text := paintedText(buf)
-			for _, want := range []string{"Shell tree memory", "Core tree memory", "Processes · Shell", "Processes · Core", "gopls"} {
-				if !strings.Contains(text, want) {
-					t.Fatalf("unknown=%v width=%d lacks %q:\n%s", unknown, width, want, text)
+func TestResourceOwnershipInDashboardAndReport(t *testing.T) {
+	for _, sample := range []string{"same boot", "different boot", "unknown boot", "incomplete tree"} {
+		for _, size := range [][2]int{{160, 45}, {60, 20}, {44, 50}} {
+			t.Run(fmt.Sprintf("%s/%dx%d", sample, size[0], size[1]), func(t *testing.T) {
+				d := resourceData()
+				// The trees have an overlapping (PID, creation time) in all cases.
+				d.Shell.Hostname, d.Core.Hostname = "same-name", "same-name"
+				switch sample {
+				case "different boot":
+					d.Core.HostBootID = "remote-boot"
+				case "unknown boot":
+					d.Core.HostIdentity, d.Core.HostBootID = "unknown", ""
+				case "incomplete tree":
+					d.Core.Resources.TreeComplete = false
 				}
-			}
-			if strings.Contains(text, "Crude tree memory") || strings.Contains(text, "Crude tree CPU") {
-				t.Fatalf("mixed machines painted aggregate:\n%s", text)
-			}
-			report := screen.Report()
-			if !strings.Contains(report, "| Shell memory | 80 MiB |") || !strings.Contains(report, "| Core memory | 120 MiB |") || !strings.Contains(report, "| Shell tree memory | 200 MiB |") || !strings.Contains(report, "| Core tree memory | 730 MiB |") || strings.Contains(report, "| Crude tree memory |") {
-				t.Fatalf("report mixed host totals:\n%s", report)
-			}
+				screen := New(theme.DefaultDark())
+				screen.SetData(d)
+				host := ui.NewHost(theme.DefaultDark(), screen)
+				host.Resize(size[0], size[1])
+				buf := surface.NewCellBuffer(size[0], size[1])
+				paint := func() string { host.Paint(buf); return paintedText(buf) }
+				overview := paint()
+				report := screen.Report()
+				for _, reading := range []struct{ name, value string }{{"Shell memory", "80 MiB"}, {"Core memory", "120 MiB"}} {
+					if !strings.Contains(overview, reading.name+" "+reading.value) || !strings.Contains(report, "| "+reading.name+" | "+reading.value+" |") {
+						t.Fatalf("missing per-process %s in Overview or report", reading.name)
+					}
+				}
+				if strings.Contains(overview, "Crude memory") || strings.Contains(report, "\n| Crude memory |") {
+					t.Fatal("Overview combined the process readings")
+				}
+				screen.SetSection(SectionResources)
+				text := paint()
+				// The core tree can be below the first page at the small size.
+				host.Focus(BodyID)
+				host.Handle(tea.KeyPressMsg{Code: tea.KeyPgDown})
+				text += paint()
+				if !strings.Contains(text, "gopls") {
+					t.Fatal("Resources did not list the measured child process")
+				}
+				coreValue := "730 MiB"
+				if sample == "incomplete tree" {
+					coreValue += " known (partial)"
+				}
+				for _, tree := range []struct{ owner, value string }{{"Crude", "810 MiB"}, {"Shell", "200 MiB"}, {"Core", coreValue}} {
+					want := (tree.owner == "Crude") == (sample == "same boot")
+					for _, marker := range []string{tree.owner + " tree memory", tree.owner + " tree CPU", "Processes · " + tree.owner} {
+						if strings.Contains(text, marker) != want {
+							t.Fatalf("Resources: want %q present=%v:\n%s", marker, want, text)
+						}
+					}
+					if want && !strings.Contains(text, tree.owner+" tree memory "+tree.value) {
+						t.Fatalf("Resources: missing %s tree total %q:\n%s", tree.owner, tree.value, text)
+					}
+					row := "\n| " + tree.owner + " tree memory |"
+					if strings.Contains(report, row) != want || want && !strings.Contains(report, row+" "+tree.value+" |") {
+						t.Fatalf("unexpected tree total for %s in report:\n%s", tree.owner, report)
+					}
+				}
+			})
 		}
 	}
 }

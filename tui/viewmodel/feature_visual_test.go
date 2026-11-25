@@ -378,21 +378,27 @@ func (m *featureVisualModel) journeyFeature(key, phase int) error {
 			})
 		}
 		err = m.await(func(v *controlVisualModel) error {
-			if v.perf.screen == nil || v.perf.inFlight || !strings.Contains(v.perf.screen.Report(), fmt.Sprintf("Core process (pid %d)", os.Getpid())) {
+			if v.perf.screen == nil || v.perf.inFlight {
+				return fmt.Errorf("waiting for the dashboard snapshot")
+			}
+			report := v.perf.screen.Report()
+			if !strings.Contains(report, fmt.Sprintf("Core process (pid %d)", os.Getpid())) {
 				return fmt.Errorf("framed core.metrics snapshot not installed")
 			}
 			if v.perf.screen.Section() != sections[phase-1] {
 				return fmt.Errorf("Performance pointer did not select %s (current=%s focus=%s):\n%s", sections[phase-1], v.perf.screen.Section(), v.rootHost.Focused(), ansi.Strip(v.View().RenderContent()))
 			}
 			if phase == 3 {
-				report := v.perf.screen.Report()
-				merged := strings.Contains(report, "Crude memory")
-				split := strings.Contains(report, "Shell memory") && strings.Contains(report, "Core memory")
-				if merged == split || (merged && (strings.Contains(report, "Shell memory") || strings.Contains(report, "Core memory"))) {
+				// Compare tree readings. The report also lists both individual
+				// processes, even when their trees qualify for one combined total.
+				merged := strings.Contains(report, "\n| Crude tree memory |")
+				shell := strings.Contains(report, "\n| Shell tree memory |")
+				core := strings.Contains(report, "\n| Core tree memory |")
+				if shell != core || merged == shell {
 					return fmt.Errorf("resource report mixes or lacks owners:\n%s", report)
 				}
 				markers := []string{"Crude tree memory"}
-				if split {
+				if !merged {
 					markers = []string{"Shell tree memory"}
 					if v.width >= 160 {
 						markers = append(markers, "Core tree memory")
@@ -403,18 +409,19 @@ func (m *featureVisualModel) journeyFeature(key, phase int) error {
 				}
 				paint := ansi.Strip(v.View().RenderContent())
 				if merged && (strings.Contains(paint, "Shell tree memory") || strings.Contains(paint, "Core tree memory")) ||
-					split && strings.Contains(paint, "Crude tree memory") {
+					!merged && strings.Contains(paint, "Crude tree memory") {
 					return fmt.Errorf("%dx%d frame mixes resource owners:\n%s", v.width, v.height, paint)
 				}
 				return nil
 			}
 			if phase == 1 {
-				// The Overview names its memory owner: one Crude process, or
-				// the shell and core apart. A footer pill is not the evidence.
-				if featureVisualPaint(v, "Crude memory") != nil {
-					return featureVisualPaint(v, "Shell memory")
+				if !strings.Contains(report, "\n| Shell memory |") || !strings.Contains(report, "\n| Core memory |") || strings.Contains(report, "\n| Crude memory |") {
+					return fmt.Errorf("overview report does not attribute memory to both processes:\n%s", report)
 				}
-				return nil
+				if v.width >= 160 {
+					return featureVisualPaint(v, "Shell memory", "Core memory")
+				}
+				return featureVisualPaint(v, "Shell memory")
 			}
 			return featureVisualPaint(v, "Workspace actor step")
 		})

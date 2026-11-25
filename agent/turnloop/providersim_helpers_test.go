@@ -45,6 +45,12 @@ func translatingGateway(t *testing.T, sim *providersim.Server, wire providersim.
 	path := upstream.Path
 	upstream.Path = ""
 	proxy := httputil.NewSingleHostReverseProxy(upstream)
+	// The upstream is a private, scripted server. Each request gets a new
+	// connection, independent of earlier timeouts, cut streams and fixtures.
+	// The real provider client still owns the connection to the gateway.
+	transport := &http.Transport{DisableKeepAlives: true}
+	proxy.Transport = transport
+	t.Cleanup(transport.CloseIdleConnections)
 	proxy.ModifyResponse = rewrite
 	gateway := httptest.NewServer(proxy)
 	t.Cleanup(gateway.Close)
