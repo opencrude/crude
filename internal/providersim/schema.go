@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -65,7 +66,9 @@ var schemaLoaders = sync.OnceValues(func() (map[string]func() (*bundle, error), 
 	}
 	loaders := make(map[string]func() (*bundle, error), len(manifest.Bundles))
 	for name, record := range manifest.Bundles {
-		loaders[name] = sync.OnceValues(func() (*bundle, error) { return loadBundle(name, record) })
+		// Bundles are named after their wire: responses.json serves Responses.
+		wire := strings.TrimSuffix(name, path.Ext(name))
+		loaders[wire] = sync.OnceValues(func() (*bundle, error) { return loadBundle(name, record) })
 	}
 	return loaders, nil
 })
@@ -75,7 +78,7 @@ func wireBundle(wire Wire) (*bundle, error) {
 	if err != nil {
 		return nil, err
 	}
-	load := loaders[string(wire)+".json"]
+	load := loaders[string(wire)]
 	if load == nil {
 		return nil, fmt.Errorf("no schema bundle for %s", wire)
 	}

@@ -62,13 +62,16 @@ if ! python3 scripts/md_links.py; then
 fi
 
 # ---------------------------------------------------------------------------
-# 4) Cross-references from code: docs/ paths cited in Go/sh/yml must exist
+# 4) Cross-references from code: docs/ paths cited in Go/sh/yml must exist.
+# External URLs (for example a provider's /docs/... page) are not repo paths.
 # ---------------------------------------------------------------------------
-code_doc_refs="$(grep -rhoE 'docs/[A-Za-z0-9_./-]+\.(md|json)' \
+code_doc_refs="$(grep -rhE 'docs/[A-Za-z0-9_./-]+\.(md|json)' \
   --include='*.go' --include='*.sh' --include='*.yml' --include='*.yaml' \
   --include='*.mod' . \
   --exclude-dir=.git --exclude-dir=third_party --exclude-dir=docs \
-  --exclude-dir=.commandcode 2>/dev/null | sort -u || true)"
+  --exclude-dir=.commandcode 2>/dev/null \
+  | sed -E 's#[A-Za-z][A-Za-z0-9+.-]*://[^[:space:]"`)>]+##g' \
+  | grep -oE 'docs/[A-Za-z0-9_./-]+\.(md|json)' | sort -u || true)"
 if [[ -n "$code_doc_refs" ]]; then
   while IFS= read -r ref; do
     if [[ ! -f "$ROOT/$ref" ]]; then

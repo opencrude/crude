@@ -67,7 +67,7 @@ func (s *interactionWire) save(req Request, reply interactionReply, current, win
 
 // Synthetic exact replay check for thought steps emitted at a known position.
 // The service documents verbatim replay but not the error for a mutated block.
-// https://aistudio.google.com/docs/thinking.md#stateless-mode
+// https://aistudio.google.com/docs/thinking#stateless-mode
 func (s *interactionWire) validateThoughts(window []interactionStep, from int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
