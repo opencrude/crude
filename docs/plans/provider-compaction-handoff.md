@@ -54,16 +54,58 @@ The running core must be rebuilt and restarted before it can use these changes.
    cancellation, and portable recovery. Check that a transient failure
    cools down rather than becoming a permanent refusal.
 3. Implement and verify threshold compaction separately from the on-demand
-   codecs. Anthropic on-demand should win when verified. For the alternate,
-   negotiate `context_management.compact_20260112` on the selected model and
-   account. A synthetic short request cannot prove a threshold operation.
-   Use a verified or advertised route at a real boundary and do not upload
-   the same large source to two billable operations. Keep the exact edit
-   required to replay the returned block. Do not silently turn on a second,
-   server-owned compaction schedule for normal requests. OpenAI Responses
-   documents `context_management` with `compact_threshold`; it is not enabled.
-   Resolve how its same-stream artifact would be verified, archived and
-   replayed before enabling it.
+   codecs. The design below is decided (2026-11-25); implement it as written.
+
+### Threshold compaction at Crude's boundary (decided)
+
+Threshold compaction is a native route for accounts where on-demand
+compaction is not available. On-demand stays first when it is verified, as
+[Anthropic recommends](https://platform.claude.com/docs/en/build-with-claude/compaction#choose-how-to-compact).
+
+- **Crude owns the schedule.** Ordinary requests never carry a compaction
+  edit, so the server never compacts on its own. Only when Crude reaches its
+  own compaction boundary (automatic, required or a manual `/compact`) does
+  the *next ordinary request* carry the edit. That request is the one Crude
+  sends anyway: same system prompt, tools, history and cache breakpoints. No
+  separate upload of the same source is made.
+- **Messages:** add `context_management.edits[{type: "compact_20260112",
+  trigger: {type: "input_tokens", value: V}, pause_after_compaction: true,
+  instructions: I}]` and the `compact-2026-01-12` beta header. `V` is the
+  documented minimum of 50,000 tokens, so the edit fires on any request at
+  Crude's boundary that is larger than that. `I` is Crude's portable
+  checkpoint instruction from `agent/prompt/`. It must say that the model
+  writes text only and calls no tools, because a request with tools can
+  return `content: null` ([current limitations](https://platform.claude.com/docs/en/build-with-claude/compaction-threshold#current-limitations)).
+- **Result handling.** Look for the `compaction` block, not the stop reason.
+  A block with text content is a portable checkpoint body. It goes through
+  `ValidatePortable` and the same install path as an on-demand read-back, so
+  answered prompts, the pending turn, the system prompt and the tools stay
+  exactly as they do today. Crude does not replay the provider block, so later
+  requests need no edit and no second schedule exists. A `null` block (no
+  summary, or a refusal) is a failed native attempt: Auto uses the portable
+  writer for the same source, Provider only reports it.
+- **No compaction happened.** If the request was below the trigger, the
+  response is an ordinary turn. Crude keeps it as the turn's answer. Nothing
+  was wasted, and the next boundary tries again.
+- **Discovery at a real boundary.** No synthetic probe. Model metadata that
+  advertises `context_management.compact_20260112` marks the route as
+  likely. A 400 that rejects the edit or the beta records "unsupported" for
+  the route. A returned compaction block records "verified". A 429 follows the
+  rate-limit rules above and is never "unsupported".
+- **Responses `compact_threshold`:** same rule, for gateways that have no
+  `/responses/compact`. The edit goes only on the boundary request. The
+  same-stream compaction item is an opaque artifact, so it goes through the
+  existing provider read-back with the serving model's allowance (the path
+  fixed in `2a973258`), and is archived like an on-demand artifact.
+- **Cost and notices.** Usage comes from `usage.iterations`; the compaction
+  iteration is reported as the checkpoint cost, the message iteration as the
+  turn. The user sees the same compaction notices as for on-demand.
+- **Tests** run against `internal/providersim`, which already models
+  `compact_20260112`, `pause_after_compaction`, the replay rule and Responses
+  `compact_threshold`. Cover: fired with text, fired with `null`, below the
+  trigger (ordinary answer kept), 400 unsupported, 429, manual `/compact`
+  mid-run, and the first continuation request (system prompt, tools, answered
+  prompts, no provider block, no edit).
 4. Update [adaptive context](../reference/adaptive-context.md#native-compaction-on-custom-connections),
    [Settings](../reference/settings.md), the account editor hints in
    `tui/screens/settingspages/account_connections.go`, and the
