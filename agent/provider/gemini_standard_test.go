@@ -10,10 +10,10 @@ import (
 	"net/url"
 	"reflect"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
+	"crude/internal/providersim"
 	"crude/types/reasoning"
 )
 
@@ -375,29 +375,18 @@ func TestGeminiRequestExtrasMergeIntoGenerationConfig(t *testing.T) {
 	}
 }
 
-// geminiRejectingServer answers 400 the way the Gemini API rejects thinking
-// options a model lacks, and records each request body.
-func geminiRejectingServer(t *testing.T, reject func(body map[string]any) string) (*httptest.Server, *[]map[string]any) {
+// geminiRejectingServer uses the native INVALID_ARGUMENT envelope when a model
+// rejects a thinking setting or another request option.
+func geminiRejectingServer(t *testing.T, reject func(providersim.Request) string) *providersim.Server {
 	t.Helper()
-	var mu sync.Mutex
-	var bodies []map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body map[string]any
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		mu.Lock()
-		bodies = append(bodies, body)
-		mu.Unlock()
-		if message := reject(body); message != "" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			_, _ = io.WriteString(w, `{"error":{"code":400,"message":"`+message+`","status":"INVALID_ARGUMENT"}}`)
-			return
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
+		if message := reject(request); message != "" {
+			return providersim.HTTPError(providersim.InvalidRequest).WithFaultMessage(message)
 		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = io.WriteString(w, "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"ok\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n")
-	}))
-	t.Cleanup(server.Close)
-	return server, &bodies
+		return providersim.Text("ok")
+	})
+	return server
 }
 
 func streamGeminiText(t *testing.T, p *Provider) string {
@@ -424,67 +413,72 @@ func streamGeminiText(t *testing.T, p *Provider) string {
 	}
 }
 
-func thinkingLevelOf(body map[string]any) any {
-	generation, _ := body["generationConfig"].(map[string]any)
-	thinking, _ := generation["thinkingConfig"].(map[string]any)
-	if thinking == nil {
-		return nil
+func thinkingLevelOf(request providersim.Request) string {
+	var thinking struct {
+		ThinkingLevel string `json:"thinkingLevel"`
 	}
-	return thinking["thinkingLevel"]
+	_ = json.Unmarshal(request.Reasoning, &thinking)
+	return thinking.ThinkingLevel
 }
 
 func TestGeminiLearnsRejectedThinkingLevelsAndKeepsThem(t *testing.T) {
 	// Gemma accepts MINIMAL and HIGH only, and names no level when it
 	// rejects one.
-	server, bodies := geminiRejectingServer(t, func(body map[string]any) string {
-		switch thinkingLevelOf(body) {
+	server := geminiRejectingServer(t, func(request providersim.Request) string {
+		switch thinkingLevelOf(request) {
 		case "MINIMAL", "HIGH":
 			return ""
 		}
 		return "Thinking level is not supported for this model."
 	})
-	p := FromPreset("google", "k", server.URL+"/v1beta")
+	p := FromPreset("google", "k", server.BaseURL(providersim.Gemini))
 	p.Model = "gemma-4-31b-it"
 	p.SetThinkingEffort("medium")
 	if got := streamGeminiText(t, p); got != "ok" {
 		t.Fatalf("text = %q", got)
 	}
-	var levels []any
-	for _, body := range *bodies {
-		levels = append(levels, thinkingLevelOf(body))
+	var levels []string
+	for _, request := range server.Requests() {
+		levels = append(levels, thinkingLevelOf(request))
 	}
 	// MEDIUM is rejected, the nearer lower LOW is rejected, then HIGH works.
-	if !reflect.DeepEqual(levels, []any{"MEDIUM", "LOW", "HIGH"}) {
+	if !reflect.DeepEqual(levels, []string{"MEDIUM", "LOW", "HIGH"}) {
 		t.Fatalf("levels sent = %v", levels)
 	}
-	*bodies = nil
-	if got := streamGeminiText(t, p); got != "ok" || len(*bodies) != 1 || thinkingLevelOf((*bodies)[0]) != "HIGH" {
-		t.Fatalf("learned request: text=%q bodies=%v", got, *bodies)
+	before := len(server.Requests())
+	got := streamGeminiText(t, p)
+	requests := server.Requests()[before:]
+	if got != "ok" || len(requests) != 1 || thinkingLevelOf(requests[0]) != "HIGH" {
+		t.Fatalf("learned request: text=%q requests=%v", got, requests)
 	}
 }
 
 func TestGeminiLearnsModelWithoutThinking(t *testing.T) {
-	server, bodies := geminiRejectingServer(t, func(body map[string]any) string {
-		if generation, ok := body["generationConfig"].(map[string]any); ok && generation["thinkingConfig"] != nil {
+	server := geminiRejectingServer(t, func(request providersim.Request) string {
+		if len(request.Reasoning) != 0 {
 			return "Thinking is not enabled for models/antigravity-preview-latest"
 		}
 		return ""
 	})
-	p := FromPreset("google", "k", server.URL+"/v1beta")
+	p := FromPreset("google", "k", server.BaseURL(providersim.Gemini))
 	p.Model = "antigravity-preview-latest"
-	if got := streamGeminiText(t, p); got != "ok" || len(*bodies) != 2 {
-		t.Fatalf("text=%q bodies=%v", got, *bodies)
+	got := streamGeminiText(t, p)
+	requests := server.Requests()
+	if got != "ok" || len(requests) != 2 {
+		t.Fatalf("text=%q requests=%v", got, requests)
 	}
-	if _, has := (*bodies)[1]["generationConfig"]; has {
-		t.Fatalf("retry still sends thinking: %v", (*bodies)[1])
+	var body map[string]json.RawMessage
+	_ = json.Unmarshal(requests[1].Raw, &body)
+	if _, has := body["generationConfig"]; has {
+		t.Fatalf("retry still sends thinking: %s", requests[1].Raw)
 	}
 }
 
 func TestGeminiUnrelatedRejectionIsNotRetried(t *testing.T) {
-	server, bodies := geminiRejectingServer(t, func(map[string]any) string {
+	server := geminiRejectingServer(t, func(providersim.Request) string {
 		return "Function call is missing a thought_signature in functionCall parts."
 	})
-	p := FromPreset("google", "k", server.URL+"/v1beta")
+	p := FromPreset("google", "k", server.BaseURL(providersim.Gemini))
 	p.Model = "gemini-3.5-flash"
 	client, err := p.Client()
 	if err != nil {
@@ -497,8 +491,8 @@ func TestGeminiUnrelatedRejectionIsNotRetried(t *testing.T) {
 	defer stream.Close()
 	_, err = stream.Next()
 	var status *StatusError
-	if !errors.As(err, &status) || status.StatusCode != 400 || !strings.Contains(status.Error(), "INVALID_ARGUMENT: Function call is missing") || len(*bodies) != 1 {
-		t.Fatalf("err = %v bodies = %d", err, len(*bodies))
+	if !errors.As(err, &status) || status.StatusCode != 400 || !strings.Contains(status.Error(), "INVALID_ARGUMENT: Function call is missing") || len(server.Requests()) != 1 {
+		t.Fatalf("err = %v bodies = %d", err, len(server.Requests()))
 	}
 }
 

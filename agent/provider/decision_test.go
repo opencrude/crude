@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"crude/internal/providersim"
 )
 
 func TestDecisionsRespectAccountRetention(t *testing.T) {
@@ -68,19 +70,18 @@ func TestDecisionContract(t *testing.T) {
 func TestExplicitChatRankerValidatesEveryScore(t *testing.T) {
 	for _, body := range []string{`{"m1":0,"m0":1}`, `{"m0":1}`, `{"m0":1,"m2":0}`, `{"m0":1,"m1":0,"m1":1}`, `{"m0":1,"m1":-1}`, `{"m0":1,"m1":"0"}`} {
 		t.Run(body, func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path != "/v1/chat/completions" {
-					t.Error(r.URL.Path)
+			srv := providersim.New(t)
+			srv.Respond(func(req providersim.Request) providersim.Turn {
+				if req.Path != "/v1/chat/completions" {
+					t.Error(req.Path)
 				}
-				var req ChatRequest
-				if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Model != "rank" || len(req.Tools) > 0 || len(req.Messages) != 2 {
+				if req.Model != "rank" || len(req.Tools) > 0 || len(req.System)+len(req.Messages) != 2 {
 					t.Error("invalid ranking request")
-					return
+					return providersim.HTTPError(providersim.InvalidRequest)
 				}
-				fmt.Fprintf(w, `{"choices":[{"message":{"role":"assistant","content":%q},"finish_reason":"stop"}]}`, body)
-			}))
-			defer srv.Close()
-			p := FromPreset("openai-chat", "test", srv.URL)
+				return providersim.Text(body).WithoutUsage()
+			})
+			p := FromPreset("openai-chat", "test", srv.BaseURL(providersim.Chat))
 			p.Model = "rank"
 			scores, err := p.ScoreChatRelevance(t.Context(), "rate", "data", 2)
 			if body == `{"m1":0,"m0":1}` {
