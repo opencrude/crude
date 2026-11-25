@@ -259,12 +259,7 @@ func (s *Supervisor) Await(ctx context.Context, failure RecoveryFailure) bool {
 	automatic := failure.AutomaticLimit < 0 ||
 		failure.AutomaticLimit > 0 && status.Attempt <= failure.AutomaticLimit
 	if automatic {
-		delay := retry.Exponential(status.Attempt, s.RetryBase, s.RetryCeiling)
-		var providerStatus *provider.StatusError
-		if errors.As(failure.Cause, &providerStatus) {
-			delay = max(delay, retry.Clamp(providerStatus.RetryAfter))
-		}
-		delay = retry.Clamp(delay)
+		delay := retry.Clamp(max(retry.Exponential(status.Attempt, s.RetryBase, s.RetryCeiling), provider.AdvisedRetryDelay(failure.Cause)))
 		status.State = recoverytypes.Recovering
 		status.RetryAt = s.now().Add(delay)
 		if !s.transition(*status) {

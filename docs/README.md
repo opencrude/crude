@@ -163,6 +163,9 @@ documents to read before changing each area.
 
 - [Provider compaction handoff](plans/provider-compaction-handoff.md) lists the
   pushed changes, failing checks, and remaining wire and retry work.
+- [Provider simulator](plans/provider-simulator.md) — one spec-validated,
+  in-process simulator for all seven provider wires that replaces hand-written
+  test fakes.
 - [Complete editor experience](plans/editor-parity.md) — audited gaps, one complete
   target UX, implementation owners and behavioral acceptance for later agents.
 

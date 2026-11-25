@@ -683,11 +683,13 @@ func addTokenUsage(a, b provider.TokenUsage) provider.TokenUsage {
 	return a
 }
 
-func (a *Agent) compactionRecoveryDelay(attempt int) time.Duration {
+// compactionRecoveryDelay waits at least as long as the server advised for
+// cause (Retry-After, retry-after-ms or RetryInfo), like every other retry.
+func (a *Agent) compactionRecoveryDelay(attempt int, cause error) time.Duration {
 	if a != nil && a.compactionRetryDelay != nil {
 		return retry.Clamp(a.compactionRetryDelay(attempt))
 	}
-	return retry.Exponential(attempt, time.Second, retry.MaxCooldown)
+	return max(retry.Exponential(attempt, time.Second, retry.MaxCooldown), provider.AdvisedRetryDelay(cause))
 }
 
 func waitCompactionRetry(ctx context.Context, delay time.Duration) error {

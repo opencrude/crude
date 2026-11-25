@@ -137,7 +137,7 @@ func (extractor *compactionExtractor) request(source []provider.ChatMessage, dir
 			break
 		}
 		extractor.retryAttempt = attempt + 1
-		delay := extractor.agent.compactionRecoveryDelay(attempt + 1)
+		delay := extractor.agent.compactionRecoveryDelay(attempt+1, err)
 		data := extractor.eventData()
 		data["retry"], data["retry_limit"], data["backoff"], data["error"] = attempt+1, compactionStageRecoveries, delay.Seconds(), compactErrorText(err)
 		extractor.emit(AgentEvent{Type: "context_compaction_retrying", Data: data})

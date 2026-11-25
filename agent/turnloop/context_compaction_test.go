@@ -612,3 +612,20 @@ func TestDiscardCancelsBackgroundPreparation(t *testing.T) {
 	var nilSlot *PrecompactionSlot
 	nilSlot.Discard()
 }
+
+// A rate-limited checkpoint request waits at least as long as the server
+// advised, like every other automatic retry; without advice the stage backoff
+// applies.
+func TestCompactionRecoveryWaitsForServerAdvisedDelay(t *testing.T) {
+	a := &Agent{}
+	limited := &provider.StatusError{StatusCode: http.StatusTooManyRequests, RetryAfter: 90 * time.Second}
+	if got := a.compactionRecoveryDelay(1, fmt.Errorf("intent stage: %w", limited)); got != 90*time.Second {
+		t.Fatalf("advised 90s, waited %s", got)
+	}
+	if got := a.compactionRecoveryDelay(1, &provider.StatusError{StatusCode: http.StatusTooManyRequests}); got != time.Second {
+		t.Fatalf("no advice: want the 1s stage backoff, got %s", got)
+	}
+	if got := a.compactionRecoveryDelay(3, &provider.APIError{Type: "rate_limit_error", Message: "slow down"}); got != 4*time.Second {
+		t.Fatalf("in-stream rate limit without advice: want 4s, got %s", got)
+	}
+}
