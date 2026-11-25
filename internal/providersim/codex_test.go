@@ -44,7 +44,7 @@ func TestCodexResponseStreamAndCompaction(t *testing.T) {
 func TestCodexRejectsNonHTTPClientShapes(t *testing.T) {
 	s := newServer(t, func(string, ...any) {}, nil)
 	base := codexInput(responseObject{"role": "user", "type": "message", "content": []any{responseObject{"type": "input_text", "text": "hello"}}})
-	for key, bad := range map[string]any{"previous_response_id": "resp_1", "store": true, "stream": false, "input": "string shorthand", "instructions": "not a Codex HTTP field", "tool_choice": responseObject{"type": "function"}, "client_metadata": responseObject{"x": 1}, "stream_options": responseObject{"reasoning_summary_delivery": "unknown"}} {
+	for key, bad := range map[string]any{"previous_response_id": "resp_1", "store": true, "stream": false, "input": "string shorthand", "instructions": responseObject{"text": "not text"}, "tool_choice": responseObject{"type": "function"}, "client_metadata": responseObject{"x": 1}, "stream_options": responseObject{"reasoning_summary_delivery": "unknown"}} {
 		req := maps.Clone(base)
 		req[key] = bad
 		e := responseJSON(t, postResponses(t, s, Codex, "/responses", req), 400, "ErrorResponse")["error"].(responseObject)

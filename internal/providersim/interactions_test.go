@@ -70,7 +70,7 @@ func TestInteractionsStreamStoreAndContinue(t *testing.T) {
 	if req.Model != testInteractModel || !req.Stream || req.Store != nil || req.OutputLimit != "32" || len(req.System) != 1 || req.System[0].Text != "First only" || req.Tools[0].Name != call.Name || req.Messages[0].Parts[1].ImageURL != "https://example.test/id" || string(req.ToolChoice) != `"auto"` || string(req.Reasoning) != `{"thinking_level":"high","thinking_summaries":"auto"}` {
 		t.Fatalf("wrong journal: %#v", req)
 	}
-	path := s.BaseURL(Interactions) + testInteractionsPath + "/" + id
+	path := mountURL(s, Interactions) + testInteractionsPath + "/" + id
 	row := googleJSON(t, Interactions, "Interaction", get(t, path), 200)
 	steps := googleArray(row["steps"])
 	if len(steps) != 4 || steps[0].(googleObject)["type"] != "user_input" || steps[1].(googleObject)["signature"] != "c2ln" || steps[3].(googleObject)["id"] != call.ID || row["status"] != "requires_action" {
@@ -97,7 +97,7 @@ func TestInteractionsStreamStoreAndContinue(t *testing.T) {
 	if len(req.Effective.Messages) != 7 || req.Effective.Messages[5].Parts[0].Text != "found" || req.Effective.Messages[6].Parts[0].Text != "next" {
 		t.Fatal(req.Effective)
 	}
-	missing := googleJSON(t, Interactions, "ErrorResponse", get(t, s.BaseURL(Interactions)+testInteractionsPath+"/"+third["id"].(string)), 404)
+	missing := googleJSON(t, Interactions, "ErrorResponse", get(t, mountURL(s, Interactions)+testInteractionsPath+"/"+third["id"].(string)), 404)
 	if googleObjectAt(missing, "error")["code"] != "not_found" {
 		t.Fatal(missing)
 	}
@@ -221,13 +221,13 @@ func TestInteractionsFaultsAndGate(t *testing.T) {
 		t.Fatal(events, done, err)
 	}
 	id := googleObjectAt(events[0].body, "interaction")["id"].(string)
-	googleJSON(t, Interactions, "ErrorResponse", get(t, s.BaseURL(Interactions)+testInteractionsPath+"/"+id), 404)
+	googleJSON(t, Interactions, "ErrorResponse", get(t, mountURL(s, Interactions)+testInteractionsPath+"/"+id), 404)
 	events, done, err = interactEvents(t, testInteractStream, s)
 	if !errors.Is(err, io.ErrUnexpectedEOF) || done || interactNames(events) != "interaction.created step.start step.delta" || googleObjectAt(events[2].body, "delta")["text"] != "cut" {
 		t.Fatal(events, done, err)
 	}
 	id = googleObjectAt(events[0].body, "interaction")["id"].(string)
-	googleJSON(t, Interactions, "ErrorResponse", get(t, s.BaseURL(Interactions)+testInteractionsPath+"/"+id), 404)
+	googleJSON(t, Interactions, "ErrorResponse", get(t, mountURL(s, Interactions)+testInteractionsPath+"/"+id), 404)
 	gate := NewGate()
 	defer gate.Release()
 	s.Script(Text("released").WithGate(gate), Text("concurrent"))

@@ -24,8 +24,12 @@ func init() {
 // public Responses: Codex replays output_text without a public message ID.
 // Synthetic transport policy: require model, input, stream:true, store:false;
 // reject unknown top-level fields. The Rust serializer is not a backend spec.
+// Observed, not pinned: the backend has answered a request without top-level
+// instructions with 400 "Instructions are required", and earlier Codex clients
+// sent them, so the field is accepted as optional text.
 const codexFields = `{
  "model":{"type":"string","minLength":1},"stream":{"const":true},"store":{"const":false},
+ "instructions":{"type":"string"},
  "input":{"type":"array"},"tools":{"type":"array"},"include":{"type":"array","items":{"type":"string"}},
  "service_tier":{"type":"string"},"tool_choice":{"type":"string"},"parallel_tool_calls":{"type":"boolean"},
  "reasoning":{"type":["object","null"],"properties":{

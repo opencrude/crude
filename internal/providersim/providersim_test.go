@@ -28,3 +28,7 @@ func TestWireRoutesShareOneServer(t *testing.T) {
 		}
 	}
 }
+
+// mountURL is where a wire is mounted; tests append the real API path, such
+// as /v1/messages, to it. Accounts use BaseURL, which includes the API root.
+func mountURL(s *Server, wire Wire) string { return s.http.URL + wireRoutes[wire].mount }

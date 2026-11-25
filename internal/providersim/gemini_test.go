@@ -17,7 +17,7 @@ import (
 
 func googlePOST(t *testing.T, s *Server, wire Wire, path, body string) *http.Response {
 	t.Helper()
-	r, err := http.NewRequestWithContext(t.Context(), http.MethodPost, s.BaseURL(wire)+path, strings.NewReader(body))
+	r, err := http.NewRequestWithContext(t.Context(), http.MethodPost, mountURL(s, wire)+path, strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +197,7 @@ func TestGeminiStreamAndSignatureReplay(t *testing.T) {
 func TestGeminiInventoryAndStrictRequests(t *testing.T) {
 	var reports atomic.Int32
 	s := newServer(t, func(string, ...any) { reports.Add(1) }, []Option{WithModels(Gemini, "custom")})
-	root := s.BaseURL(Gemini) + "/v1beta/models"
+	root := mountURL(s, Gemini) + "/v1beta/models"
 	listed := googleJSON(t, Gemini, "ListModelsResponse", get(t, root), 200)
 	entry := googleArray(listed["models"])[0].(googleObject)
 	model := googleJSON(t, Gemini, "Model", get(t, root+"/custom"), 200)
