@@ -393,6 +393,7 @@ var wireTypes = []any{
 	new(p6.Query),
 	new(p6.Resources),
 	new(p6.Snapshot),
+	new(p6.StallContext),
 	new(p6.Summary),
 	new(p6.SystemUsage),
 	new(p6.TableRow),
