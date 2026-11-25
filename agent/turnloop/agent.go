@@ -78,11 +78,7 @@ type Agent struct {
 	servingCacheRatio float64
 	// portableOnly marks the serving model writing a portable checkpoint
 	// after native negotiation already ended for this boundary.
-	portableOnly bool
-	// extractionTools are the conversation's tools, declared (but forbidden)
-	// on extraction requests only when the writer is the serving model, so
-	// they keep the conversation's cached prefix.
-	extractionTools        []provider.ToolDef
+	portableOnly           bool
 	CompactionTargetModel  string
 	CompactionTargetWindow int
 	CompactionTargetTokens int

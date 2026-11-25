@@ -243,7 +243,9 @@ func TestCompactionUsesFullRemainingGenerationCapacityWithReasoning(t *testing.T
 			t.Error(err)
 		}
 		if capturedOutput == 0 {
-			capturedInput = provider.EstimateMessagesTotal(body.Messages, body.Model)
+			// The serving model declares the conversation's tools; Crude budgets
+			// them with its own estimate of those definitions.
+			capturedInput = estimateCanonicalRequest(body.Messages, allToolDefs(), body.Model)
 			capturedOutput = max(body.MaxTokens, body.MaxCompletionTokens)
 		}
 		writeChatSSE(writer, "- preserved facts", "stop")
@@ -272,7 +274,7 @@ func TestCompactionUsesReportedInputToLeaveRoomForReasoning(t *testing.T) {
 		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
 			t.Error(err)
 		}
-		estimated := provider.EstimateMessagesTotal(body.Messages, body.Model)
+		estimated := estimateCanonicalRequest(body.Messages, allToolDefs(), body.Model)
 		measured := estimated * 2
 		measuredInputs = append(measuredInputs, estimated)
 		outputs = append(outputs, max(body.MaxTokens, body.MaxCompletionTokens))
@@ -308,6 +310,7 @@ func TestCompactionLearnsProviderOutputCeilingAcrossSessions(t *testing.T) {
 
 	var outputs []int
 	var retainedSource bool
+	var firstTools string
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		var body provider.ChatRequest
 		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
@@ -319,9 +322,19 @@ func TestCompactionLearnsProviderOutputCeilingAcrossSessions(t *testing.T) {
 		if len(body.Messages) > 1 && strings.Contains(body.Messages[1].ContentString(), "original evidence") {
 			retainedSource = true
 		}
-		if body.ToolChoice != "none" || len(body.Tools) != 0 || body.Model != "cmd/deepseek/deepseek-v4-flash" ||
+		// Only the output cap may change: the serving model keeps declaring the
+		// same tools, and tool use stays forbidden.
+		names := make([]string, 0, len(body.Tools))
+		for _, tool := range body.Tools {
+			names = append(names, tool.Function.Name)
+		}
+		declared := strings.Join(names, ",")
+		if firstTools == "" {
+			firstTools = declared
+		}
+		if body.ToolChoice != "none" || declared == "" || declared != firstTools || body.Model != "cmd/deepseek/deepseek-v4-flash" ||
 			string(body.Messages[len(body.Messages)-1].Content.String()) == "" {
-			t.Errorf("extraction request was changed instead of tuning its output cap: %+v", body)
+			t.Errorf("extraction request was changed instead of tuning its output cap: tool_choice=%v tools=%d model=%s", body.ToolChoice, len(body.Tools), body.Model)
 		}
 		if output > 393216 {
 			writer.WriteHeader(http.StatusBadRequest)

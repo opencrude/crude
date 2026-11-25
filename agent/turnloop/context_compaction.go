@@ -347,7 +347,7 @@ func (a *Agent) compactSource(ctx context.Context, msgs, source []provider.ChatM
 		}
 		fallback, fallbackChanged, transient = r.Fallback, r.Changed, r.Transient
 	}
-	if writer := a.servingWriter(main, targetModel, tools, beforeTokens, min(8192, checkpointBudget), transient); writer != nil {
+	if writer := a.servingWriter(main, targetModel, beforeTokens, min(8192, checkpointBudget), transient); writer != nil {
 		if fallbackChanged {
 			emit(AgentEvent{Type: "compaction_route_notice", Data: map[string]any{"reason": fallback + " The agent's model writes the checkpoint."}})
 		} else if a.CompactionConfigError != nil && main.CompactionMethod() != provider.CompactionProviderOnly {
@@ -374,8 +374,9 @@ func (a *Agent) compactSource(ctx context.Context, msgs, source []provider.ChatM
 			emit(AgentEvent{Type: "compaction_route_notice", Data: map[string]any{"reason": errandUnavailableNotice}})
 		}
 	}
+	var extractionTools []provider.ToolDef
 	if serving && a.Provider.Protocol().Info().ToolChoiceNone {
-		a.extractionTools = tools
+		extractionTools = tools
 	}
 	extractionWindow := a.Provider.ContextWindow(a.Model)
 	learnedLimit, err := provider.LearnedOutputLimit(a.CompactionAgentProfile, a.Provider, a.Model)
@@ -407,7 +408,7 @@ func (a *Agent) compactSource(ctx context.Context, msgs, source []provider.ChatM
 		extractor := compactionExtractor{
 			agent: a, ctx: ctx, emit: emit, requestID: requestID, trigger: trigger, role: role,
 			stage: combined, stageIndex: 0, beforeTokens: beforeTokens, targetWindow: ctxWindow,
-			system: msgs[0], common: common, inputBudget: inputBudget, outputBudget: checkpointBudget - 1,
+			system: msgs[0], common: common, tools: extractionTools, inputBudget: inputBudget, outputBudget: checkpointBudget - 1,
 			learnedOutputLimit: learnedLimit, usageRatio: usageRatio,
 			capacityBudget: extractionWindow - contextSafetyReserve(extractionWindow) - 1,
 		}
@@ -465,7 +466,7 @@ func (a *Agent) compactSource(ctx context.Context, msgs, source []provider.ChatM
 		extractor := compactionExtractor{
 			agent: a, ctx: ctx, emit: emit, requestID: requestID, trigger: trigger, role: role,
 			stage: stage, stageIndex: index, beforeTokens: beforeTokens, targetWindow: ctxWindow,
-			system: msgs[0], common: common, inputBudget: inputBudget, outputBudget: remaining,
+			system: msgs[0], common: common, tools: extractionTools, inputBudget: inputBudget, outputBudget: remaining,
 			learnedOutputLimit: learnedLimit, usageRatio: usageRatio,
 			capacityBudget: extractionWindow - contextSafetyReserve(extractionWindow) - 1,
 		}
@@ -510,7 +511,7 @@ const errandUnavailableNotice = "Errand cannot compact with its current settings
 // charges another model. Auto uses the serving model when Errand cannot run,
 // or when its cached context makes the checkpoint cheaper, but not right after
 // an outage of that route.
-func (a *Agent) servingWriter(main *provider.Provider, model string, tools []provider.ToolDef, source, output int, transient bool) *Agent {
+func (a *Agent) servingWriter(main *provider.Provider, model string, source, output int, transient bool) *Agent {
 	if main == nil || a.portableOnly || provider.SameConnection(main, a.Provider) && a.Model == model {
 		return nil
 	}
@@ -536,9 +537,6 @@ func (a *Agent) servingWriter(main *provider.Provider, model string, tools []pro
 	w.CompactionRetentionTokens, w.CompactionAgentProfile = a.CompactionRetentionTokens, a.CompactionAgentProfile
 	w.MaxOutputTokens = a.CompactionTargetOutput
 	w.portableOnly = true
-	if main.Protocol().Info().ToolChoiceNone {
-		w.extractionTools = tools
-	}
 	return w
 }
 
