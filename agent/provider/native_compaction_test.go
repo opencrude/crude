@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"crude/internal/providersim"
 )
 
 func compactFixture(p *Provider) NativeCheckpointRequest {
@@ -21,83 +23,88 @@ func compactFixture(p *Provider) NativeCheckpointRequest {
 func responsesText(w http.ResponseWriter, text string) {
 	fmt.Fprintf(w, `{"object":"response","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":%q}]}],"usage":{"input_tokens":16,"output_tokens":3}}`, text)
 }
+
 func TestNativeCheckpointDiscoveryAndReplay(t *testing.T) {
-	for _, mode := range []string{"standalone", "trigger", "messages", "advertised"} {
+	for _, mode := range []string{"standalone", "trigger", "codex-trigger", "messages", "advertised"} {
 		t.Run(mode, func(t *testing.T) {
-			var probe, real, checks, exports atomic.Int32
+			wire, standard, model := providersim.Responses, "openai-responses", "m"
 			anth := mode == "messages" || mode == "advertised"
-			wire := "openai-responses"
-			if anth {
-				wire = "anthropic"
+			if mode == "codex-trigger" {
+				wire, standard = providersim.Codex, "codex"
 			}
-			endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				b, _ := io.ReadAll(r.Body)
-				s := string(b)
-				if r.Header.Get("Authorization") != "Bearer k" && !anth || anth && (!strings.Contains(r.Header.Get("anthropic-beta"), compactBeta) || r.Header.Get("x-api-key") != "k") {
-					t.Error("wrong headers")
+			if anth {
+				wire, standard, model = providersim.Messages, "anthropic", "claude-sonnet-4-6"
+			}
+			var opts []providersim.Option
+			if mode == "messages" {
+				opts = append(opts, providersim.WithModels(wire))
+			}
+			sim := providersim.New(t, opts...)
+			base := sim.BaseURL(wire)
+			sim.Respond(func(r providersim.Request) providersim.Turn {
+				body := string(r.Raw)
+				if r.Wire != wire || r.Model != model || (!anth && r.Header.Get("Authorization") != "Bearer k") || (anth && (r.Header.Get("x-api-key") != "k" || !strings.Contains(r.Header.Get("anthropic-beta"), compactBeta))) {
+					t.Error("wrong model, wire or headers")
 				}
-				if r.Method == http.MethodGet {
-					if mode == "advertised" {
-						fmt.Fprint(w, `{"id":"m","capabilities":{"compaction":{"supported":true,"summarize":{"supported":true}}}}`)
-					} else {
-						http.NotFound(w, r)
-					}
-					return
+				if wire == providersim.Codex && (!r.Stream || r.Store == nil || *r.Store || !strings.Contains(body, `"instructions":`) || strings.Contains(body, `"role":"system"`)) {
+					t.Error("wrong Codex instructions, storage or stream")
 				}
-				if mode == "trigger" && strings.HasSuffix(r.URL.Path, "/compact") {
-					http.NotFound(w, r)
-					return
+				if mode == "trigger" && strings.HasSuffix(r.Path, "/compact") {
+					return providersim.HTTPError(providersim.ModelNotFound)
 				}
-				var body map[string]any
-				_ = json.Unmarshal(b, &body)
-				if strings.HasSuffix(r.URL.Path, "/compact") || strings.Contains(s, "compaction_trigger") || body["compaction"] != nil {
-					token := "opaque-verified"
-					if strings.Contains(s, "real-history-secret") {
-						real.Add(1)
-					} else {
-						probe.Add(1)
-						token = "opaque-probe"
-						if !strings.Contains(s, "blue-91") {
+				if strings.HasSuffix(r.Path, "/compact") || strings.Contains(body, `"type":"compaction_trigger"`) || (anth && strings.Contains(body, `"compaction":`)) {
+					answer := "portable"
+					if !strings.Contains(body, "real-history-secret") {
+						if !strings.Contains(body, "blue-91") {
 							t.Error("bad synthetic request")
 						}
+						answer = "probe summary"
 					}
-					if anth {
-						fmt.Fprintf(w, `{"type":"message","role":"assistant","stop_reason":"compaction","content":[{"type":"compaction","content":"portable","signature":%q}],"usage":{"iterations":[{"type":"compaction","input_tokens":17,"output_tokens":4}]}}`, token)
-					} else {
-						object := "response.compaction"
-						if mode == "trigger" {
-							object = "response"
-						}
-						fmt.Fprintf(w, `{"object":%q,"status":"completed","output":[{"type":"compaction","encrypted_content":%q}],"usage":{"input_tokens":17,"output_tokens":4}}`, object, token)
+					return providersim.Text(answer).WithUsage(providersim.Usage{Input: 17, Output: 4})
+				}
+				effective, err := json.Marshal(r.Effective.Messages)
+				if err != nil {
+					t.Error(err)
+				}
+				if strings.Contains(body, "real-history-secret") || strings.Contains(body, "blue-91") {
+					t.Error("source leaked into checkpoint continuation")
+				}
+				if strings.Contains(body, `"next"`) {
+					if !anth && !strings.Contains(string(effective), "new input 1") || anth && !strings.Contains(body, "portable") {
+						t.Error("resumed the wrong checkpoint")
 					}
-					return
+					return providersim.Text("continued")
 				}
-				if strings.Contains(s, "real-history-secret") || strings.Contains(s, "blue-91") {
-					t.Error("continuation received the source or probe answer")
+				if !anth && (r.Store == nil || *r.Store) {
+					t.Error("read-back requested storage")
 				}
-				text := "portable"
-				if strings.Contains(s, "opaque-probe") {
-					checks.Add(1)
-					text = "blue-91"
-				} else if strings.Contains(s, "opaque-verified") {
-					exports.Add(1)
-				} else {
-					t.Error("continuation lacked native artifact")
-				}
-				if anth {
-					fmt.Fprintf(w, `{"type":"message","role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":%q}],"usage":{"input_tokens":16,"output_tokens":3}}`, text)
-				} else {
-					if body["store"] != false {
-						t.Error("verification must not store")
+				answer := "portable"
+				if strings.Contains(body, "what was the code?") {
+					if !(strings.Contains(string(effective), "blue-91") || anth && strings.Contains(body, "probe summary")) {
+						t.Error("probe read-back did not recover its window")
 					}
-					responsesText(w, text)
+					answer = "blue-91"
+				} else if !strings.Contains(string(effective), "real-history-secret") && !(anth && strings.Contains(body, "portable")) {
+					t.Error("real read-back did not recover its window")
 				}
-			}))
-			defer endpoint.Close()
-			p := &Provider{ID: "custom", AccountID: mode, Model: "m", APIKey: "k", BaseURL: endpoint.URL, StandardName: wire}
+				return providersim.Text(answer).WithUsage(providersim.Usage{Input: 16, Output: 3})
+			})
+			p := &Provider{ID: "custom", AccountID: mode, Model: model, APIKey: "k", BaseURL: base, StandardName: standard}
 			req := compactFixture(p)
-			var usage []TokenUsage
-			req.Usage = func(_ string, u TokenUsage, _ bool) { usage = append(usage, u) }
+			var labels []string
+			req.Usage = func(label string, u TokenUsage, valid bool) {
+				labels = append(labels, label)
+				if !valid {
+					t.Errorf("unsuccessful exchange: %s", label)
+				}
+				wantIn, wantOut := 17, 4
+				if strings.Contains(label, "replay") {
+					wantIn, wantOut = 16, 3
+				}
+				if u.PromptTokens != wantIn || u.CompletionTokens != wantOut {
+					t.Errorf("%s usage: %+v", label, u)
+				}
+			}
 			var msg ChatMessage
 			for index := range 2 {
 				req.Messages = append(req.Messages, NewTextMessage("user", fmt.Sprintf("new input %d", index)))
@@ -107,16 +114,61 @@ func TestNativeCheckpointDiscoveryAndReplay(t *testing.T) {
 				}
 				msg = got.Message
 			}
-			if real.Load() != 2 || mode != "advertised" && (probe.Load() != 1 || checks.Load() != 1) || mode == "advertised" && (probe.Load() != 0 || exports.Load() != 1) {
-				t.Fatalf("calls probe %d real %d verify %d export %d", probe.Load(), real.Load(), checks.Load(), exports.Load())
+			want := "compaction_probe compaction_probe_replay native_compaction native_checkpoint_replay native_compaction native_checkpoint_replay"
+			if anth {
+				want = "compaction_probe compaction_probe_replay native_compaction native_compaction"
+				if mode == "advertised" {
+					want = "native_compaction native_checkpoint_replay native_compaction"
+				}
 			}
-			if len(usage) < 3 || usage[0].PromptTokens != 17 {
-				t.Fatalf("missing usage: %+v", usage)
+			journal := sim.Requests()
+			expectedCalls := len(labels)
+			if anth {
+				expectedCalls++
+				if len(journal) == 0 || journal[0].Method != "GET" || journal[0].Path != "/v1/models/"+model || journal[0].Header.Get("x-api-key") != "k" || !strings.Contains(journal[0].Header.Get("anthropic-beta"), compactBeta) {
+					t.Error("wrong discovery route or credential")
+				}
 			}
-			data, _ := json.Marshal(msg)
+			if mode == "trigger" {
+				expectedCalls++
+			}
+			if strings.Join(labels, " ") != want || len(journal) != expectedCalls {
+				t.Fatalf("paid operations: %v, want %s; HTTP requests=%d want %d", labels, want, len(journal), expectedCalls)
+			}
+			data, err := json.Marshal(msg)
+			if err != nil {
+				t.Fatal(err)
+			}
 			var resumed ChatMessage
 			if err := json.Unmarshal(data, &resumed); err != nil {
 				t.Fatal(err)
+			}
+			if len(resumed.ProviderItems) != 1 {
+				t.Fatalf("checkpoint artifacts %d", len(resumed.ProviderItems))
+			}
+			var seal string
+			if anth {
+				var block struct{ Signature string }
+				if err := json.Unmarshal(resumed.ProviderItems[0].Data, &block); err != nil {
+					t.Fatal(err)
+				}
+				seal = block.Signature
+			} else {
+				var items []struct {
+					Type      string
+					Encrypted string `json:"encrypted_content"`
+				}
+				if err := json.Unmarshal(resumed.ProviderItems[0].Data, &items); err != nil {
+					t.Fatal(err)
+				}
+				for _, item := range items {
+					if item.Type == "compaction" {
+						seal = item.Encrypted
+					}
+				}
+			}
+			if seal == "" {
+				t.Fatal("missing sealed checkpoint")
 			}
 			history := []ChatMessage{req.Messages[0], resumed, NewTextMessage("user", "next")}
 			encode := func(p *Provider) string {
@@ -127,19 +179,46 @@ func TestNativeCheckpointDiscoveryAndReplay(t *testing.T) {
 				}
 				return string(b)
 			}
-			if s := encode(p); !strings.Contains(s, "opaque-verified") || (!anth && strings.Contains(s, "portable")) {
+			if s := encode(p); !strings.Contains(s, seal) || (!anth && strings.Contains(s, "portable")) {
 				t.Fatal("native replay lost after cold resume")
 			}
-			other := &Provider{ID: "custom", AccountID: "other", Model: "m", APIKey: "k", BaseURL: endpoint.URL, StandardName: wire}
-			if s := encode(other); strings.Contains(s, "opaque-") || !strings.Contains(s, "portable") {
+			other := &Provider{ID: "custom", AccountID: "other", Model: model, APIKey: "k", BaseURL: base, StandardName: standard}
+			if s := encode(other); strings.Contains(s, seal) || !strings.Contains(s, "portable") {
 				t.Fatal("account switch leaked artifact or lost portable context")
 			}
 			if err := ForgetCompactionSupport(mode); err != nil {
 				t.Fatal(err)
 			}
-			if s := encode(p); !strings.Contains(s, "opaque-verified") {
+			if s := encode(p); !strings.Contains(s, seal) {
 				t.Fatal("forgetting a capability rewrote a working conversation prefix")
 			}
+			// A cold adapter can still emit a syntactically valid but unusable item.
+			// Ask the issuing server to verify the original seal after the forget.
+			client, err := p.Client()
+			if err != nil {
+				t.Fatal(err)
+			}
+			q := ChatRequest{Model: p.Model, Messages: FilterReplayMessages(history, p)}
+			stream, err := client.Stream(t.Context(), &q)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer stream.Close()
+			var text strings.Builder
+			for {
+				u, err := stream.Next()
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				text.WriteString(u.ContentDelta)
+			}
+			if text.String() != "continued" {
+				t.Fatalf("resumed reply %q", text.String())
+			}
+
 		})
 	}
 }
@@ -183,23 +262,16 @@ func TestNativeEvidenceSurvivesReopenAndExpires(t *testing.T) {
 	}
 }
 func TestForgetCancelsDiscoveryBeforeRealRequest(t *testing.T) {
-	entered := make(chan struct{})
-	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.ReadAll(r.Body)
-		if calls.Add(1) == 1 {
-			close(entered)
-		}
-		<-r.Context().Done()
-	}))
-	defer server.Close()
-	p := &Provider{ID: "custom", AccountID: "forget-flight", Model: "m", BaseURL: server.URL, StandardName: "openai-responses"}
+	gate := providersim.NewGate()
+	server := providersim.New(t)
+	server.Script(providersim.Turn{}.WithGate(gate))
+	p := &Provider{ID: "custom", AccountID: "forget-flight", Model: "m", BaseURL: server.BaseURL(providersim.Responses), StandardName: "openai-responses"}
 	done := make(chan error, 1)
 	go func() { _, e := p.NativeCheckpoint(t.Context(), compactFixture(p)); done <- e }()
-	select {
-	case <-entered:
-	case <-time.After(3 * time.Second):
-		t.Fatal("no check")
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	if err := gate.Wait(ctx); err != nil {
+		t.Fatal("no check:", err)
 	}
 	if err := ForgetCompactionSupport(p.AccountID); err != nil {
 		t.Fatal(err)
@@ -212,30 +284,30 @@ func TestForgetCancelsDiscoveryBeforeRealRequest(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("forget did not cancel request")
 	}
-	if calls.Load() != 1 || currentSupport().fact(p.compactionScope("m")).fresh() {
+	if err := gate.WaitCanceled(ctx); err != nil {
+		t.Fatal("forgotten request still open:", err)
+	}
+	if len(server.Requests()) != 1 || currentSupport().fact(p.compactionScope("m")).fresh() {
 		t.Fatal("stale discovery sent another request or published evidence")
 	}
 }
 func TestNativePolicyAndUncertainSpend(t *testing.T) {
+	server := providersim.New(t)
 	var real, probe atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
-		if strings.Contains(string(b), "real-history-secret") {
+	server.Respond(func(r providersim.Request) providersim.Turn {
+		if strings.Contains(string(r.Raw), "real-history-secret") {
 			real.Add(1)
-			http.Error(w, "outage", http.StatusServiceUnavailable)
-			return
+			return providersim.HTTPError(providersim.Overload)
 		}
-		if strings.HasSuffix(r.URL.Path, "/compact") {
+		if strings.HasSuffix(r.Path, "/compact") {
 			probe.Add(1)
-			fmt.Fprint(w, `{"object":"response.compaction","output":[{"type":"compaction","encrypted_content":"token"}]}`)
-			return
+			return providersim.Turn{}
 		}
-		responsesText(w, "blue-91")
-	}))
-	defer server.Close()
-	p := &Provider{ID: "custom", Model: "m", BaseURL: server.URL, StandardName: "openai-responses"}
+		return providersim.Text("blue-91")
+	})
+	p := &Provider{ID: "custom", Model: "m", BaseURL: server.BaseURL(providersim.Responses), StandardName: "openai-responses"}
 	p.SetProtocolSettings(&ProtocolSettings{Compaction: CompactionErrandOnly})
-	if r, e := p.NativeCheckpoint(context.Background(), compactFixture(p)); e != nil || r.Fallback == "" || probe.Load() != 0 {
+	if r, e := p.NativeCheckpoint(context.Background(), compactFixture(p)); e != nil || r.Fallback == "" || len(server.Requests()) != 0 {
 		t.Fatal("Errand only probed")
 	}
 	p.SetProtocolSettings(nil)
@@ -272,12 +344,11 @@ func TestNativePolicyAndUncertainSpend(t *testing.T) {
 // A definite refusal in Provider only is the route's answer, not an outage:
 // the serving model writes the portable checkpoint and the run continues.
 func TestProviderOnlyRefusalLetsTheServingModelWrite(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.ReadAll(r.Body)
-		http.Error(w, `{"error":{"message":"compaction is not supported for this model"}}`, http.StatusBadRequest)
-	}))
-	defer server.Close()
-	p := &Provider{ID: "custom", AccountID: "refusal", Model: "m", BaseURL: server.URL, StandardName: "openai-responses"}
+	server := providersim.New(t)
+	server.Respond(func(providersim.Request) providersim.Turn {
+		return providersim.HTTPError(providersim.InvalidRequest).WithFaultMessage("compaction is not supported for this model")
+	})
+	p := &Provider{ID: "custom", AccountID: "refusal", Model: "m", BaseURL: server.BaseURL(providersim.Responses), StandardName: "openai-responses"}
 	p.SetProtocolSettings(&ProtocolSettings{Compaction: CompactionProviderOnly})
 	r, err := p.NativeCheckpoint(t.Context(), compactFixture(p))
 	if err != nil || r.Transient || r.Fallback != "The provider rejected native compaction (HTTP 400)." {
@@ -291,70 +362,73 @@ func TestProviderOnlyRefusalLetsTheServingModelWrite(t *testing.T) {
 // An unverified anchored delta that reaches a missing standalone operation
 // is resent to the create operation, never as a full-history upload.
 func TestNativeAnchoredAttemptFindsTriggerOperation(t *testing.T) {
-	var compact, trigger atomic.Int32
-	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
-		s := string(b)
-		if strings.Contains(s, "real-history-secret") || strings.Contains(s, "blue-91") {
+	sim := providersim.New(t)
+	sim.Script(providersim.Text("done"), providersim.HTTPError(providersim.ModelNotFound), providersim.Turn{}, providersim.Text("portable summary"))
+	p := &Provider{ID: "custom", AccountID: "anchor-trigger", Model: "m", BaseURL: sim.BaseURL(providersim.Responses), StandardName: "openai-responses"}
+	r, anchor := anchoredCheckpoint(t, p)
+	got, err := p.NativeCheckpoint(t.Context(), r)
+	calls := sim.Requests()
+	if err != nil || got.Fallback != "" || len(calls) != 4 {
+		t.Fatalf("anchored operations=%d err=%v fallback=%q", len(calls), err, got.Fallback)
+	}
+	if calls[1].Path != "/v1/responses/compact" || calls[2].Path != "/v1/responses" || !strings.Contains(string(calls[2].Raw), `"type":"compaction_trigger"`) {
+		t.Error("wrong alternate operation")
+	}
+	for _, call := range calls[1:3] {
+		if call.PreviousResponseID != anchor || !strings.Contains(string(call.Raw), "next step") {
+			t.Error("anchor or suffix lost on alternate operation")
+		}
+	}
+	for _, call := range calls[1:] {
+		if strings.Contains(string(call.Raw), "real-history-secret") || strings.Contains(string(call.Raw), "blue-91") {
 			t.Error("sent full history or an unnecessary probe")
 		}
-		if strings.HasSuffix(r.URL.Path, "/compact") {
-			compact.Add(1)
-			http.Error(w, "404 page not found", http.StatusNotFound)
-			return
-		}
-		if strings.Contains(s, "compaction_trigger") {
-			trigger.Add(1)
-			if !strings.Contains(s, `"previous_response_id":"resp-old"`) || !strings.Contains(s, "next step") {
-				t.Error("trigger lost the anchor or suffix")
-			}
-			fmt.Fprint(w, `{"object":"response","status":"completed","output":[{"type":"compaction","encrypted_content":"anchor-token"}]}`)
-			return
-		}
-		responsesText(w, "portable summary")
-	}))
-	defer endpoint.Close()
-	p := &Provider{ID: "custom", AccountID: "anchor-trigger", Model: "m", BaseURL: endpoint.URL, StandardName: "openai-responses"}
-	r := compactFixture(p)
-	assistant := NewTextMessage("assistant", "done")
-	BindResponseReference(&assistant, &ResponseReference{ID: "resp-old", Scope: p.ResponseContinuationScope("m"), InputHash: MessagePrefixHash(r.Messages)})
-	r.Messages = append(r.Messages, assistant, NewTextMessage("user", "next step"))
-	got, err := p.NativeCheckpoint(t.Context(), r)
-	if err != nil || got.Fallback != "" || compact.Load() != 1 || trigger.Load() != 1 {
-		t.Fatalf("compact=%d trigger=%d err=%v fallback=%q", compact.Load(), trigger.Load(), err, got.Fallback)
 	}
 	if f := currentSupport().fact(p.compactionScope("m")); f.state != supportVerified || f.method != p.Protocol().Info().ChatPath {
 		t.Fatalf("working operation not learned: %+v", f)
 	}
 }
 
+func anchoredCheckpoint(t *testing.T, p *Provider) (NativeCheckpointRequest, string) {
+	t.Helper()
+	r := compactFixture(p)
+	client, err := p.Client()
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := client.Complete(t.Context(), &ChatRequest{Model: p.Model, Messages: r.Messages, ResponseContinuationScope: p.ResponseContinuationScope(p.Model)})
+	if err != nil || len(first.Choices) != 1 || first.Choices[0].Message.ResponseReference == nil {
+		t.Fatalf("no stored anchor: %+v %v", first, err)
+	}
+	anchor := first.Choices[0].Message.ResponseReference.ID
+	assistant := first.Choices[0].Message
+	// Stamp the accepted provider items, as the turn loop does before persistence.
+	assistant.ReplayScope = p.ReplayScope()
+	assistant.ReplayPrefixHash = MessagePrefixHash(r.Messages)
+	assistant.ReplaySourceModel = p.Model
+	assistant.ProviderItems = StampProviderItems(CanonicalizeProviderItems(assistant.ProviderItems), p, p.Model, assistant.ReplayPrefixHash)
+	BindResponseReference(&assistant, assistant.ResponseReference)
+	r.Messages = append(r.Messages, assistant, NewTextMessage("user", "next step"))
+	return r, anchor
+}
+
 func TestNativeStoredReferenceSkipsProbeAndHistory(t *testing.T) {
-	var calls atomic.Int32
-	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
-		s := string(b)
-		calls.Add(1)
-		if strings.Contains(s, "real-history-secret") || strings.Contains(s, "blue-91") {
+	endpoint := providersim.New(t)
+	endpoint.Script(providersim.Text("done"), providersim.Turn{}, providersim.Text("portable summary"))
+	p := &Provider{ID: "custom", AccountID: "anchor", Model: "m", BaseURL: endpoint.BaseURL(providersim.Responses), StandardName: "openai-responses"}
+	r, anchor := anchoredCheckpoint(t, p)
+	got, e := p.NativeCheckpoint(t.Context(), r)
+	calls := endpoint.Requests()
+	if e != nil || got.Fallback != "" || len(calls) != 3 {
+		t.Fatalf("anchored calls=%d err=%v fallback=%s", len(calls), e, got.Fallback)
+	}
+	for _, call := range calls[1:] {
+		if strings.Contains(string(call.Raw), "real-history-secret") || strings.Contains(string(call.Raw), "blue-91") {
 			t.Error("sent full history or paid for an unnecessary probe")
 		}
-		if strings.HasSuffix(r.URL.Path, "/compact") {
-			if !strings.Contains(s, `"previous_response_id":"resp-old"`) || !strings.Contains(s, "next step") {
-				t.Error("wrong anchor or suffix")
-			}
-			fmt.Fprint(w, `{"object":"response.compaction","output":[{"type":"compaction","encrypted_content":"anchor-token"}]}`)
-			return
-		}
-		responsesText(w, "portable summary")
-	}))
-	defer endpoint.Close()
-	p := &Provider{ID: "custom", AccountID: "anchor", Model: "m", BaseURL: endpoint.URL, StandardName: "openai-responses"}
-	r := compactFixture(p)
-	assistant := NewTextMessage("assistant", "done")
-	BindResponseReference(&assistant, &ResponseReference{ID: "resp-old", Scope: p.ResponseContinuationScope("m"), InputHash: MessagePrefixHash(r.Messages)})
-	r.Messages = append(r.Messages, assistant, NewTextMessage("user", "next step"))
-	got, e := p.NativeCheckpoint(t.Context(), r)
-	if e != nil || got.Fallback != "" || calls.Load() != 2 {
-		t.Fatalf("anchored calls=%d err=%v fallback=%s", calls.Load(), e, got.Fallback)
+	}
+	if calls[1].PreviousResponseID != anchor || calls[1].Path != "/v1/responses/compact" || !strings.Contains(string(calls[1].Raw), "next step") {
+		t.Error("wrong anchor or suffix")
 	}
 	history := []ChatMessage{r.Messages[0], got.Message}
 	projected := FilterReplayMessages(history, p)
@@ -444,6 +518,8 @@ func TestChangingCompactionPolicyDoesNotRevokeChatCredentials(t *testing.T) {
 	}
 }
 func TestIgnoredNativeOptionNeverSendsUserHistory(t *testing.T) {
+	// This gateway ignores both operations, including /compact, returning an
+	// ordinary message where CompactResource requires a compaction window.
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
@@ -564,10 +640,10 @@ func TestAccountRemovalClearsCompactionEvidence(t *testing.T) {
 	}
 }
 
-// The ChatGPT Codex backend only streams and requires top-level
-// instructions. Discovery tries the standalone operation, learns the
-// streamed trigger when it is missing, keeps only the compaction item, and
-// the next Codex request replays it.
+// Keep the gateway variants separate from the pinned Codex trigger above.
+// openai/codex@ebd0765 uses streamed create, not standalone /compact. This
+// gateway can also mount /compact, append a stray answer to the trigger, and
+// omit the items from the final envelope after sending output_item.done.
 func TestCodexNativeCompactionStreams(t *testing.T) {
 	for _, mode := range []string{"standalone", "trigger"} {
 		t.Run(mode, func(t *testing.T) {
