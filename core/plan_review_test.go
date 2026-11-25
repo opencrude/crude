@@ -2,18 +2,13 @@ package core
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"html"
 	"net"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,6 +18,7 @@ import (
 	"crude/core/coreclient"
 	"crude/core/shellport"
 	"crude/core/shellport/remote"
+	"crude/internal/providersim"
 	"crude/text/anchor"
 	"crude/types/conversation"
 	"crude/types/setting"
@@ -42,21 +38,16 @@ func TestCorePlanReviewMirrorsCompletionAndCanonicalEditorFeedback(t *testing.T)
 		planMode bool
 	}
 	modelRequests := make(chan wirePlanInput, 4)
-	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var input struct{ Messages []provider.ChatMessage }
-		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-			t.Error(err)
-			return
-		}
+	server := providersim.New(t)
+	server.Respond(func(input providersim.Request) providersim.Turn {
 		var captured wirePlanInput
+		for _, part := range input.System {
+			captured.planMode = captured.planMode || strings.Contains(part.Text, "<plan_mode>")
+		}
 		for _, message := range input.Messages {
-			text := message.ContentString()
-			switch message.Role {
-			case "user":
+			text := simMessageText(message)
+			if message.Role == "user" {
 				captured.users = append(captured.users, text)
-			case "system":
-				captured.planMode = strings.Contains(text, "<plan_mode>")
 			}
 			// The root prompt stays fixed until compaction; a later settings
 			// update replaces its planning section for the model.
@@ -67,17 +58,11 @@ func TestCorePlanReviewMirrorsCompletionAndCanonicalEditorFeedback(t *testing.T)
 		}
 		modelRequests <- captured
 		text := proposal
-		if calls.Add(1) == 2 {
+		if input.Index == 2 {
 			text = revised
 		}
-		frame, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{
-			"delta":         map[string]string{"content": "<proposed_plan>\n" + text + "\n</proposed_plan>"},
-			"finish_reason": "stop",
-		}}})
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", frame)
-	}))
-	t.Cleanup(server.Close)
+		return providersim.Text("<proposed_plan>\n" + text + "\n</proposed_plan>")
+	})
 	home := t.TempDir()
 	setCoreTestHome(t, home)
 	r, err := New(func(root string) (*workspace.Workspace, error) {
@@ -91,7 +76,7 @@ func TestCorePlanReviewMirrorsCompletionAndCanonicalEditorFeedback(t *testing.T)
 			},
 		}}}, Accounts: map[string]provider.Account{"test": {
 			ID: "test", ProviderID: "openai", APIKey: "test",
-			Connection: provider.Template{Name: "Test", ProviderURL: server.URL, APIStandard: "openai", AuthType: provider.AuthProtocol},
+			Connection: provider.Template{Name: "Test", ProviderURL: server.BaseURL(providersim.Chat), APIStandard: "openai", AuthType: provider.AuthProtocol},
 		}}}
 		w.SetBackendConfig(cfg, home)
 		return w, nil
@@ -246,7 +231,7 @@ func TestCorePlanReviewMirrorsCompletionAndCanonicalEditorFeedback(t *testing.T)
 	}
 	failed, _ := localRead().Latest()
 	if durable, err := sessiondb.LoadRuntimeState(t.Context(), backend.DB(), "queued_inputs"); err != nil || len(durable) != 0 ||
-		!failed.Open() || failed.PendingComments() != 1 || !backend.PlanMode() || calls.Load() != 1 {
+		!failed.Open() || failed.PendingComments() != 1 || !backend.PlanMode() || len(server.Requests()) != 1 {
 		t.Fatalf("failed admission consumed a review or dispatched a message: %+v, %v", failed, err)
 	}
 	if _, err := backend.DB().Exec(`DROP TRIGGER block_review_input`); err != nil {
