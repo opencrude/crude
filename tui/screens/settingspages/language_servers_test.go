@@ -41,6 +41,25 @@ func TestLSPSettingsRoundTripPreservesServersAndResources(t *testing.T) {
 	}
 }
 
+func TestFileOnlyCodeIntelligencePreservesProjectChoice(t *testing.T) {
+	app := setting.App{LSP: setting.DefaultLSP()}
+	stored := setting.WorkspaceOverrides{LSP: []byte(`{"enabled":true}`)}
+	effective := setting.MergeAppWorkspace(app, stored)
+	effective.Entry.FileOnly = true // Another shell already opened the project.
+	m := NewScoped(theme.DefaultDark(), effective, nil, setting.ScopeWorkspace, app, stored)
+	field := m.fieldAt(catLSP, "enabled")
+	if !field.ReadOnly || m.value(catLSP, "enabled") != "off" || !strings.Contains(field.Description, "Open folder as workspace") {
+		t.Fatal("file-only switch did not explain how to open the folder")
+	}
+	m.SetValueForTest(catLSP, "server-threads", "4")
+	if err := setting.ApplyEdits(&stored, m.Edits()); err != nil {
+		t.Fatal(err)
+	}
+	if cfg := setting.MergeAppWorkspace(app, stored).LSP; !cfg.Enabled || cfg.ServerThreads != 4 {
+		t.Fatal("saving another setting changed the project's code intelligence choice")
+	}
+}
+
 func TestLSPInvalidResourceBlocksSave(t *testing.T) {
 	for _, tc := range []struct{ id, value string }{{"max-servers", "33"}, {"server-threads", "-1"}, {"server-memory", "garbage"}} {
 		t.Run(tc.id+tc.value, func(t *testing.T) {

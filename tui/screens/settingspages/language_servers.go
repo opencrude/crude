@@ -61,16 +61,19 @@ func (m *Model) buildLSPForm(lsp setting.LSP) *ui.FormModel {
 	if folder := m.layerBase.Entry.FolderSummary(); folder != "" {
 		description = folder + " Language servers are off by default here."
 	}
-	if m.layerBase.Entry.FileOnly {
-		description = "You opened one file. Open its folder to use language servers."
+	fileOnly := m.Scope() == setting.ScopeWorkspace && m.layerBase.Entry.FileOnly
+	if fileOnly {
+		description = "You opened one file. In Notices, select Open folder as workspace to use its project settings."
 	}
+	enabled := ui.BoolFieldState("enabled", "Code intelligence", lsp.Enabled && !fileOnly, description)
+	enabled.ReadOnly = fileOnly
 	severity := ui.SegmentedFieldState("min-severity", "Show diagnostics from", []ui.FormOption{
 		{ID: "error", Label: "Errors"}, {ID: "warning", Label: "Warnings"}, {ID: "info", Label: "Info"}, {ID: "hint", Label: "Hints"},
 	}, lsp.MinSeverity, "Lowest level shown: Hints includes all; Errors includes errors only.")
 	fields := []*ui.FieldState{
 		m.analysisTrustField(m.layerBase.Analysis),
 		ui.SeparatorFieldState("language-intelligence", "General"),
-		ui.BoolFieldState("enabled", "Code intelligence", lsp.Enabled, description),
+		enabled,
 		ui.BoolFieldState("auto-detect", "Detect servers", lsp.AutoDetect, "Choose configured servers by file type; install their executables separately."),
 		ui.BoolFieldState("start-on-open", "Start on open", lsp.StartOnOpen, "Start a language server when its first document opens, not at startup."),
 		lspNumberField("debounce", "Update delay", "ms", lsp.UpdateDebounceMS, 60000, "Pause after typing before the server re-analyzes the document."),

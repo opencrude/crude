@@ -241,7 +241,7 @@ func inspectProject(root string, explicit bool) (string, error) {
 func inspectLaunchPath(in coreprotocol.StartupInspectRequest) (folderkind.Location, string, bool, error) {
 	root, name := in.Root, ""
 	missing := false
-	if in.AllowFile && in.Explicit {
+	if in.AllowFile && in.Explicit && root != "" && !os.IsPathSeparator(root[len(root)-1]) && filepath.Base(root) != "." && filepath.Base(root) != ".." {
 		info, err := os.Stat(root)
 		switch {
 		case err == nil && info.IsDir():

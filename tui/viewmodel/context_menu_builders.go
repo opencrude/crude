@@ -419,7 +419,7 @@ func (m *App) workspaceResourceMenu(entry launcher.WorkspaceEntry) *ui.ContextMe
 	owner, generation := m.ws, m.workspaceSwitchGen.Load()
 	valid := func() bool { return m.ws == owner && generation == m.workspaceSwitchGen.Load() }
 	st := ui.QuickMenu("",
-		ui.ContextMenuItem{Label: "Open", Disabled: m.workspaceRootMatches(entry.Path), Action: func() {
+		ui.ContextMenuItem{Label: "Open", Disabled: m.workspaceRootMatches(entry.Path) && !m.fileOnly(), Action: func() {
 			if valid() {
 				m.runDetachedAsyncCmd(m.launcherOpenFolder(entry.Path))
 			}

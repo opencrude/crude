@@ -8,7 +8,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-func newCoreWatcher(_ string) (*fsnotify.Watcher, error) {
+func newCoreWatcher(_ watchRoot) (*fsnotify.Watcher, error) {
 	return fsnotify.NewWatcher()
 }
 

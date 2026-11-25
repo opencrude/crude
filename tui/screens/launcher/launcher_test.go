@@ -50,7 +50,7 @@ func TestPaintGoldenCellBufferContract(t *testing.T) {
 	_, h, buf := testScreen(t, 110, 16, []workspace.Info{{ID: "alpha", ProjectName: "alpha", ProjectDir: "/projects/alpha", SessionCount: 2}})
 	h.Paint(buf)
 	text := bufferText(buf)
-	for _, label := range []string{"New Session", "New Workspace", "Recent workspaces", "alpha", "Skills", "MCP"} {
+	for _, label := range []string{"New Session", "New workspace", "Recent workspaces", "alpha", "Skills", "MCP"} {
 		if !strings.Contains(text, label) {
 			t.Fatalf("missing %q:\n%s", label, text)
 		}
@@ -61,7 +61,7 @@ func TestPaintGoldenCellBufferContract(t *testing.T) {
 func TestLauncherCompositionKeepsOriginalActionsAndRightPane(t *testing.T) {
 	s, _, buf := testScreen(t, 120, 32, manyWorkspaces(6))
 	if s.newSession.Bounds() != (ui.Rect{W: 118, H: 4}) || s.openWorkspace.Bounds() != (ui.Rect{Y: 5, W: 40, H: 4}) {
-		t.Fatal("wide action layout lost full-width New Session or left-column New Workspace")
+		t.Fatal("wide action layout lost full-width New Session or left-column New workspace")
 	}
 	text := bufferText(buf)
 	for _, absent := range []string{"WORKSPACE", "Start a fresh conversation", "Settings", "Command Palette", "Help", "SHORTCUTS", "0 sessions"} {

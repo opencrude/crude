@@ -16,15 +16,52 @@ var _ shellport.WorkspaceFolderCreator = (*Workspace)(nil)
 // CanonicalClientPath is lexical and uses the core root, never local Getwd/Abs.
 // Slash normalization also preserves drive-qualified core paths on Unix clients.
 func (w *Workspace) CanonicalClientPath(value string) string {
-	root := strings.ReplaceAll(w.root, "\\", "/")
-	value = strings.ReplaceAll(value, "\\", "/")
-	if value == "" {
-		return path.Clean(root)
+	// An attached root is host-absolute. A POSIX root can contain literal
+	// backslashes; do not convert any part of it (or its filenames).
+	root := w.root
+	if strings.HasPrefix(root, "/") && !strings.HasPrefix(root, "//") {
+		if path.IsAbs(value) {
+			return path.Clean(value)
+		}
+		return path.Join(root, value)
 	}
-	if strings.HasPrefix(value, "/") || (len(value) >= 3 && value[1] == ':' && value[2] == '/') {
-		return path.Clean(value)
+	root = strings.ReplaceAll(root, `\`, "/")
+	value = strings.ReplaceAll(value, `\`, "/")
+	vol := windowsVolume(root)
+	if v := windowsVolume(value); v != "" {
+		vol, value = v, value[len(v):]
+	} else if !path.IsAbs(value) {
+		value = path.Join("/", root[len(vol):], value)
 	}
-	return path.Join(root, value)
+	tail := path.Clean("/" + value)
+	if tail == "/" && !strings.HasSuffix(vol, ":") {
+		return vol
+	}
+	return vol + tail
+}
+
+// windowsVolume splits a slash-normalized host path at its drive or share.
+// Keep .. inside that volume, also for extended-length drive and UNC paths.
+func windowsVolume(s string) string {
+	if len(s) >= 3 && s[1:3] == ":/" {
+		return s[:2]
+	}
+	if !strings.HasPrefix(s, "//") {
+		return ""
+	}
+	start := 2
+	if len(s) >= 8 && strings.EqualFold(s[:8], "//?/UNC/") {
+		start = 8
+	}
+	server, rest, ok := strings.Cut(s[start:], "/")
+	if !ok || server == "" {
+		return ""
+	}
+	share, _, _ := strings.Cut(rest, "/")
+	if share == "" {
+		return ""
+	}
+	return s[:start+len(server)+1+len(share)]
 }
 
 func (w *Workspace) browseClientDirectory(ctx context.Context, value string, external bool) ([]coreprotocol.ClientDirectoryEntry, error) {

@@ -435,3 +435,23 @@ func TestRenamedDirectoryMovesItsFiles(t *testing.T) {
 		t.Fatalf("related after rename = %q", got)
 	}
 }
+
+func TestUnreadableDirectoryKeepsRankingButNotCompleteCoverage(t *testing.T) {
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{"blocked/one.txt": "blockedIdentifier", "visible.txt": "visibleIdentifier"})
+	blocked := filepath.Join(root, "blocked")
+	if err := os.Chmod(blocked, 0); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chmod(blocked, 0700) }()
+	if _, err := os.ReadDir(blocked); !os.IsPermission(err) {
+		t.Skip("fixture needs an enforced directory permission denial")
+	}
+	x := New(root, 0)
+	x.Start()
+	defer x.Close()
+	ready(t, x)
+	if x.Complete() || !x.Stats().Incomplete || len(x.Related("visibleIdentifier", 1, nil)) != 1 {
+		t.Fatalf("readable ranking must not imply complete coverage: %+v", x.Stats())
+	}
+}

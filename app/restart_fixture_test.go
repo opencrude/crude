@@ -98,7 +98,7 @@ var restartFixtureBehaviors = map[string]func() int{
 		if err != nil {
 			return 43
 		}
-		fmt.Printf(`{"build_id":"%s","cohort":"%s","schema":"new-schema","sha256":"%s","goos":"%s","goarch":"%s"}`, digest[:16], strings.Repeat("3", 64), digest, runtime.GOOS, runtime.GOARCH)
+		fmt.Printf(`{"manifest_version":%d,"build_id":"%s","cohort":"%s","schema":"new-schema","sha256":"%s","goos":"%s","goarch":"%s"}`, restartManifestVersion, digest[:16], strings.Repeat("3", 64), digest, runtime.GOOS, runtime.GOARCH)
 		return 0
 	},
 	"valid":            func() int { return fixtureIdentity("valid") },
@@ -148,7 +148,7 @@ func fixtureIdentity(kind string) int {
 	if len(os.Args) != 2 || os.Args[1] != "--core-handover-identity" {
 		return 41
 	}
-	valid := fmt.Sprintf(`{"build_id":"0123456789abcdef","cohort":"%s","schema":"schema","sha256":"%s","goos":"%s","goarch":"%s"}`, strings.Repeat("2", 64), strings.Repeat("1", 64), runtime.GOOS, runtime.GOARCH)
+	valid := fmt.Sprintf(`{"manifest_version":%d,"build_id":"0123456789abcdef","cohort":"%s","schema":"schema","sha256":"%s","goos":"%s","goarch":"%s"}`, restartManifestVersion, strings.Repeat("2", 64), strings.Repeat("1", 64), runtime.GOOS, runtime.GOARCH)
 	switch kind {
 	case "unknown-field":
 		valid = strings.TrimSuffix(valid, "}") + `,"unexpected":true}`

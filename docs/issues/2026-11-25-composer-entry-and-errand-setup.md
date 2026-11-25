@@ -1,10 +1,8 @@
 # Composer chips, slash parity, workspace entry and Errand setup
 
-> Status: OPEN. Sections 1, 2 and 5 are RESOLVED. Sections 3 and 4 are
-> implemented but have open follow-ups: the native captures show that the user
-> does not yet get a clear, lasting explanation, and file mode has no in-app
-> way to turn language servers on. Read [Handoff](#handoff-2026-11-25) first.
-> Mark a section RESOLVED only after its acceptance evidence is recorded here.
+> Status: RESOLVED for the five reported product behaviors. See the
+> [follow-up evidence](#follow-up-evidence) for the nine review findings,
+> Linux captures, platform coverage and host-specific housekeeping limit.
 
 The user reported five items in one request. They are separate owners, so each
 section stands alone. Do not merge their fixes into one shared workaround.
@@ -134,8 +132,8 @@ to explicit opening. Tests prove that no Local History store and no language
 server starts for the top-level workspace, and that a child project keeps both.
 Native captures show the welcome page and the notice.
 
-**Status: IMPLEMENTED, FOLLOW-UPS OPEN (2026-11-25).** See [Handoff](#handoff-2026-11-25)
-items H1 and H3. The typed attach request carries the entry
+**Status: RESOLVED (2026-11-25).** The lasting notice and caption are verified
+in the [follow-up evidence](#follow-up-evidence). The typed attach request carries the entry
 intent (`Entry{Explicit, FileOnly}`); core admission stays the only check. The
 folder classifier moved to `workspace/folderkind` so the workspace applies the
 folder defaults in `setting.MergeAppWorkspace`, below explicit workspace
@@ -158,9 +156,7 @@ Tests that failed on `812adcc3` include
 `TestFolderServicesFollowLocationAndExplicitChoices`,
 `TestExplicitSelectionOpensTopLevelButNotMissingFolder`,
 `TestVolumeRootWatchHasNoMissingParent` and
-`TestChooserBannerLeavesItsContentReadable`. The Linux-only
-`scripts/startup_acceptance.py` was updated and type-checked but not run: this
-host has no Linux libghostty build.
+`TestChooserBannerLeavesItsContentReadable`. The revised Linux startup acceptance passed all six scenarios.
 
 ## 4. Open one file directly
 
@@ -190,8 +186,9 @@ mode. Crude tells the user clearly what it did.
 attached root, the open editor tab, the collapsed tree and the absence of a
 language server. A native capture shows the layout and the notice.
 
-**Status: IMPLEMENTED, FOLLOW-UPS OPEN (2026-11-25).** See [Handoff](#handoff-2026-11-25)
-items H1 and H2. A file launch attaches its canonical parent
+**Status: RESOLVED (2026-11-25).** The file notice now offers **Open folder as
+workspace** without closing or saving the editor. See the [Linux captures and
+regressions](#follow-up-evidence). A file launch attaches its canonical parent
 as a file-only actor: language services stay off until a project attachment
 of the same root asks for them, and a file shell never stops another shell's
 servers. The tree starts hidden for this launch while the saved sidebar
@@ -231,10 +228,8 @@ code. Native captures at 160x40 and 80x24 show the full text.
 
 ## Handoff (2026-11-25)
 
-The lead (Charlotte) stopped here at the user's request. This section is the
-complete state for the next agent. Work the open items in order. Each item
-names the evidence, the owner and the intended fix. None of them blocks
-running Crude on its own repository (see [Run Crude on itself](#run-crude-on-itself)).
+The initial Windows implementation and capture history are below. The
+[follow-up evidence](#follow-up-evidence) supersedes the original open items.
 
 ### Commits of this request
 
@@ -250,15 +245,12 @@ kept locally under `refs/archive/crude/2026-11-25-development-final`.
 | `b5783f4f` | First AI setup asks for a Main Agent model and an Errand model, and explains why. |
 | `0e149b0c` | This issue file (the five actions). |
 
-### Verification at handoff
+### Initial Windows verification
 
 - Static gates on the integrated tree passed: `wiregen` and `wiregen -check`,
   `go build ./...`, `make conventions` (layoutcheck, golangci-lint 0 issues,
   names gate), `make design-audit`, `make docs-check` with
   `DOC_BASE=origin/master`.
-- `python scripts/test_go.py` (grouped repository suite) was still running
-  when the user had to leave. The result is recorded in the commit message of
-  this commit. If it says "not finished", run it first.
 - Native Windows Terminal captures (real product, isolated `CRUDE_HOME`):
   first-use page, folder picker, welcome page with **New workspace** and the
   home-folder reason, explicit home open, and a file launch, each at 160x40 and
@@ -268,101 +260,63 @@ kept locally under `refs/archive/crude/2026-11-25-development-final`.
 - Not run on this host: `scripts/startup_acceptance.py` (Linux tmux; no Linux
   libghostty build here) and the full benchmark sweep (the user runs it).
 
-### Open items
+### Follow-up evidence
 
-**H1. The entry explanation is a 5-second footer flash. (High.)**
-Owner: `tui/viewmodel/workspace_entry.go`.
-Evidence: captures `entry-shots.cpARum` (session temp). After an explicit home
-open, the footer shows "This is your home folder. Crude turned off Local
-History and language servers her…" at 160x40 and "…Crude turned o…" at 80x24,
-under a Trust prompt that has the focus. After a file launch, no explanation is
-visible at all 4 seconds later. Cause: `showEntryFolderNotice` and
-`showFileEntryNotice` call `Feedback.NotifyInfo`, which records a transient,
-already-read notice; `footerHelpSegments` shows transient notices for 5 s
-only (`LatestTransient(now, 5*time.Second)`), and the Notices list does not
-count them. The text also says "Crude turned off" even when the user turned a
-service off at application level.
-Fix: post one persistent, unread Info notice per workspace, the same pattern as
-`tui/viewmodel/project_tools.go` ("Code intelligence tools are available"):
-`Owner` = workspace root, `Source` = `workspace-entry`, `DedupKey` =
-`workspace-entry:<root>` (a repeat open marks it unread again), `Summary` =
-"Local History and language servers are off. This is your home folder."
-(services derived from effective settings, reason from
-`Entry.FolderSummary`), `Detail` = why (they watch and read many files in
-these folders) and how to change it, `Actions` =
-`{ID: "settings:workspace", Label: "Open Workspace Settings"}` (already handled
-in `handleStatusOverviewNavigate`). The file launch notice: Summary "Opened
-notes.txt in project.", Detail names the closed folder tree (Ctrl+B shows it)
-and the services that are off. Update `TestFileEntryCreatesNamedFileOnlyOnSave`
-(it reads `LatestTransient`) and add a home-folder notice test. Recapture both
-flows at 160x40 and 80x24 and check the Notices pill count and the panel text.
+**H1, H2, H3 and H7.** Explicit home and file launches create one persistent,
+unread notice per workspace. Reading, reopening and promoting update that
+record. The notice stops offering promotion to a project shell. The welcome
+page, Home and Recent Workspaces all use **New workspace**. Ctrl+Q
+closes the Trust or AI setup prompt without saving a decision, then follows
+the usual tab and quit rules. It does not bypass dirty-work checks.
 
-**H2. File mode has no in-app way to turn language servers on. (High.)**
-Owners: `types/setting/settings.go` (`MergeAppWorkspace`),
-`workspace/documents.go` (`fileOnlyOwners`, `languageViewNeeded`),
-`tui/viewmodel` workspace navigation.
-Evidence (code): `MergeAppWorkspace` forces `LSP.Enabled = false` for
-`Entry.FileOnly` after it applies workspace overrides, so the **Code
-intelligence** switch is saved but shows off again. Documents opened by a
-file-only owner never get a language view. The Settings text says "Open its
-folder to use language servers", but opening the same folder from the picker,
-Recent Workspaces or a context menu is a no-op: `workspaceRootMatches` returns
-early in `remote_lifecycle.go` (`attachRemoteWorkspace`),
-`workspace_open_prompt.go` (`requestWorkspaceOpen`) and
-`context_menu_builders.go` (Open disabled). Today only a second shell started
-with `crude <folder>` promotes the actor.
-Intended fix (recommended): let a file-only attachment reopen its own root as a
-project through the existing switch lifecycle. `remote.Workspace` already
-stores its `entry`; expose "this attachment is file-only" through the shell
-port, allow the same-root path in the three guards only in that case, and let
-`AttachWorkspace` (which attaches with `Explicit: true`) promote the actor via
-`SetFileOnly(false)` as `TestWireEntryAdmissionAndSharedLanguageDemand`
-already proves at the protocol level. Add a notice action "Open folder as
-workspace" for the file launch and make the Settings switch read-only with that
-next step while the attachment is file-only. Test with a connected journey
-(`newRemoteJourneyShellWithEntry`): file launch, promote, language view opens,
-dirty editor and composer draft survive, tree can be shown. An alternative
-(explicit workspace choice wins in file mode) also needs file-only owners to
-re-request language views; it is not recommended because it bypasses the
-attachment intent that `languageViewNeeded` relies on.
+Linux native captures used isolated profiles, Alacritty and `scripts/tuishot.sh`.
+At both **160×40** and **80×24**, the **1 Notice** pill survived the old
+five-second timeout. Expanding the home notice showed both services, the
+reason and the Settings action. The file notice offered both actions. Selecting
+**Open folder as workspace** kept the dirty editor and its text; Ctrl+B showed
+the tree. Disk bytes stayed unchanged. All four capture windows exited cleanly.
+[See the six before/after frames](../guides/validation.md#workspace-entry-captures).
 
-**H3. Caption consistency. (Low.)** The welcome button reads **New workspace**;
-the Home launcher card reads **New Workspace**; the Recent Workspaces row and
-its context menu read **New workspace**. Pick one casing for buttons and cards
-and record it in `docs/reference/user-language.md`.
+`TestHomeEntryNoticeSurvivesReadingAndReopen` checks the stable identity and
+unread renewal. `TestDockedNoticeDisclosesClippedHeadlineAndWrapsProse` checks
+that disclosure reveals the full clipped headline without repeating it when it
+fits. `TestFileEntryOpenFolderPreservesLiveWork` keeps the same dirty editor
+and composer draft. `TestFileOwnerPromotionAnalyzesItsUnsavedText` verifies the
+language manager receives that owner's current text, not the disk copy or a
+peer file-only document. `TestFileOnlyCodeIntelligencePreservesProjectChoice`
+checks that saving another setting does not overwrite the saved switch.
+`TestQuitClosesStartupPromptsWithoutChoosing` covers both startup prompts.
 
-**H4. Independent review findings (code-path review, not reproduced).**
-Child researcher Rowan (`agent-8e30a32bcee05770c70789529ea63f37`, report
-`artifact_cba8de4c9daaac6130d9b847717d932c7e363a507542ec4fb5b816342bc02ca2`)
-read the change without running it. Reproduce each item with a failing test
-before the fix.
+**H4. Review results.** These fixes use the same owners for UI and core access:
 
-| # | Severity | Finding | Where | Intended fix |
-|---|---|---|---|---|
-| R1 | High | A drive root or UNC workspace attaches, but its file tree cannot list the root: `CanonicalClientPath` uses POSIX `path.Clean`, so `C:/` becomes `C:` (joined to `C:\C:`) and `\\server\share` loses its volume. | `core/shellport/remote/client_files.go`, `core/files.go` | Keep host-absolute forms (drive root separator, UNC prefix) across the port; test `BrowseDirectory` on the attached root and lexical UNC cases. |
-| R2 | High | Delete skips the Local History safety copy when History is on but its store failed to open (`HistoryService` is nil, `FilesDelete` only checks nil). The open failure is no longer logged. | `workspace/workspace.go`, `core/files.go` | Fail the delete before it touches disk when a required copy cannot be made; publish the store failure as distinct from "off"; test that the bytes survive. |
-| R3 | High | The scoped watcher can promote a replaced Windows directory as the original, because it compares path-based `os.Stat` results (file ID is read late). | `core/file_watch_scope.go` | Pin a handle-derived directory identity before the watch and compare it at promotion, as `workspace/localhistory/store.go` does. |
-| R4 | High | The first content query retires the working scoped watch and starts a whole-drive walk that retries forever on a persistent access-denied subtree; the index never builds. | `core/file_watch_scope.go`, `core/file_watch.go` | Keep scoped observation until the replacement has coverage; treat durable unreadable subtrees as excluded, report partial coverage, do not rescan the same prefix. |
-| R5 | Medium | After a reconnect, nested folders that are loaded but collapsed lose their watch: resync re-browses only visible nodes, and re-expanding uses cached children. | `tui/viewmodel/client_files.go`, `tui/filetree/tree.go` | Renew or invalidate every loaded listing on resync; test collapse, reconnect, external create, re-expand. |
-| R6 | Medium | A checkpoint handover restart turns a file-only shell into a project shell, because the manifest does not record the entry intent. | `app/core_restart.go`, `app/shell_client.go` | Store the entry intent in the verified handover and restore it. |
-| R7 | Medium | `crude ./not-created/` (trailing separator, missing folder) is accepted as a new file named `not-created`. | `app/shell_client.go`, `core/startup.go` | Keep directory intent before cleaning the path; refuse the missing-file fallback for it. |
-| R8 | Medium | `launchFileMissing` stays set for the whole attachment, so a later open of a real `note.png` at that path bypasses the image viewer. | `tui/viewmodel/pane_file_open.go` | Apply the missing-file exception only to the first open request. |
-| R9 | Low | An explicit extended-length path over 4096 bytes is dropped silently by the saved-view path limit. | `tui/viewmodel/client_view_memory*.go` | Add the validated launch file after that filter, or report a real limit. |
+| Finding | Observed failure and verified correction |
+|---|---|
+| R1: volume-root listing | Cleaning lost the slash in `C:/` and the share in UNC paths. `TestCanonicalClientPathKeepsHostVolume` covers drive, UNC, extended and POSIX spelling. `TestBrowseDirectoryAtAttachedVolumeRoot` lists real children through the port on Linux and on the Windows target under Wine. |
+| R2: delete recovery | An unavailable mandatory store let delete remove the file. A managed delete also backed up the logical workspace instead of the actual checkout. `TestFilesDeleteKeepsBytesWhenHistoryCannotOpen`, `TestControlDeleteRestoresFromTargetCheckout` and `TestControlDeleteDoesNotFallBackToLogicalHistory` verify refusal and restoration of distinct bytes under the same relative name. |
+| R3: replaced root | Holding takeover while replacing the directory admitted the wrong identity. `TestScopeRejectsReplacementDuringRecursiveAdmission` keeps it fenced. `TestCoreWatchWindowsRejectsDifferentNativeRoot` checks the native handle on the Windows target under Wine. |
+| R4: access-denied subtree | Both query-first and analysis-first could prevent ranking indefinitely. `TestScopeObservesWhileRecursiveAdmissionPending` keeps scoped updates live. `TestScopeIndexesReadableSiblingsAfterDeniedFolder` checks both demand orders, readable results and permission recovery. `TestTopLevelWatchReportsAndResolvesDeniedCoverage` verifies the real warning and its resolution. `TestUnreadableDirectoryKeepsRankingButNotCompleteCoverage` prevents false completeness. |
+| R5: collapsed tree | Reconnect renewed only visible directories. `TestClientTreeCollapsedListingsSurviveReconnect` drops the connection, reconnects at a new epoch and verifies an outside edit in a collapsed, previously empty directory. It also checks that a peer event does not open an untouched subtree. |
+| R6: handover | The original directory-only resume lost file mode. `TestCoreRestartScheduleDurablePrivateAndIdempotent` checks the private manifest, `TestCoreRestartFailedAttachmentNeverOpensChooserOrAlternateWorkspace` checks exact routing, and `TestCoreRestartReadyRejectsExpiredTamperedAndRetargeted` rejects a stale entry after promotion. |
+| R7: missing directory | A positional missing directory with a separator became a new file. `TestPositionalDirectorySpellingNeverCreatesAFile` checks both a trailing separator and `/.` through startup inspection. |
+| R8: missing image | File-mode inspection of a missing `.png` used to affect later opens. `TestFileEntryCreatesNamedFileOnlyOnSave` verifies no creation before Save and the real image viewer after closing and reopening the saved path. |
+| R9: long launch path | A saved-layout limit hid an explicitly selected long file. `TestExplicitFileOpensBeyondSavedPanePathLimit` opens the admitted file and round-trips the other saved tabs without extending the profile limit. |
 
-**H5. Linux acceptance.** Run `scripts/startup_acceptance.py` on Linux. Its
-scenario 3 now expects explicit opening of a top-level folder.
+**H5.** All six `scripts/startup_acceptance.py` scenarios passed on Linux, with
+no surviving owned processes. The core-termination case initially timed out
+when Browse discovered the dead session before the connection monitor did.
+`TestStartupBrowseRecoversWhenNavigationDiscoversSessionLoss` covers that race;
+`TestStartupClientUncertainSaveIsNotReplayed` protects the mutation boundary.
 
-**H6. Housekeeping.** The managed worktrees of the integrated children Chipa
-(execution `e8802ba3e61f44345feb490f1e1dc398`) and Portia (execution
-`be6a245414b427a19122693aa4478ff7`) are integrated by patch and idle. Review
-and clean them with `execution.review` and `execution.cleanup`.
+**H6 (host-specific).** Executions `e8802ba3e61f44345feb490f1e1dc398` and
+`be6a245414b427a19122693aa4478ff7` were not registered on this Linux host.
+No cleanup is claimed for them and no other execution was removed in their
+place. Review and clean them on the host that owns their manifests.
 
-**H7. Ctrl+Q under a modal prompt. (Check.)** In all five product captures the
-final Ctrl+Q was sent while a modal prompt had the focus (Trust this folder, or
-Set up AI), and the product did not exit within 30 s. Find out if the modal
-consumes the global Quit binding by design (`docs/reference/interaction-matrix.md`
-lists Ctrl+Q as Quit application with no exception). If not, route it to the
-shell quit flow.
+**Platform limits.** The Windows test executable regenerated its launcher
+fixture under headless Wine only after the old caption matched the old golden.
+The 110×16 grids differed in one letter. Wine is not a native Windows Terminal
+or a live UNC share. Native filesystem/terminal and distinct-host SSH acceptance
+remain separate in the [first-use plan](../plans/broad-workspace-ux.md).
 
 ### Run Crude on itself
 

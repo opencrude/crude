@@ -162,6 +162,77 @@ func TestOverviewExpandedUnreadNoticeMarksRead(t *testing.T) {
 	}
 }
 
+func TestDockedNoticeDisclosesClippedHeadlineAndWrapsProse(t *testing.T) {
+	const headline = "Local History and language servers are off."
+	const explanation = "This is your home folder. Checking this folder can read many files."
+	const action = "Open Workspace Settings"
+	notice := Item{
+		ID: "notice:home", NotificationID: "home", Icon: "i", Label: headline, Summary: "● 12h",
+		Lines:   []DetailLine{{Value: explanation}},
+		Actions: []statuscenter.Action{{ID: "settings:workspace", Label: action, Enabled: true}},
+	}
+	screen := NewDocked(theme.DefaultDark(), Projection{Active: ViewNotifications, Views: map[ViewID][]Item{ViewNotifications: {notice}}})
+	host := ui.NewHost(theme.DefaultDark(), screen)
+	paint := func(width int) string {
+		host.Resize(width, 12)
+		host.Layout()
+		buf := surface.NewCellBuffer(width, 12)
+		host.Paint(buf)
+		return bufferText(buf, width, 12)
+	}
+	collapsed := paint(40)
+	if !strings.Contains(collapsed, "…") || strings.Contains(collapsed, "servers are off.") || strings.Contains(collapsed, "home folder") {
+		t.Fatalf("collapsed notice should be one clipped headline:\n%s", collapsed)
+	}
+	host.Focus(ListID)
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	// At 54 columns the headline fits the list, but not beside its icon and age.
+	// Widening and narrowing an open notice must update its disclosure in place.
+	for _, width := range []int{40, 54, 120, 40} {
+		painted := paint(width)
+		words := strings.Join(strings.Fields(painted), " ")
+		if !strings.Contains(words, headline) || !strings.Contains(words, explanation) || !strings.Contains(painted, "[ "+action+" ]") {
+			t.Errorf("width %d: the complete notice and action must be readable:\n%s", width, painted)
+		}
+		if width == 120 && strings.Count(painted, headline) != 1 {
+			t.Errorf("the wide notice must show the full headline only once:\n%s", painted)
+		}
+	}
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
+	result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if result.Cmd == nil {
+		t.Fatal("the disclosed settings action is not reachable")
+	}
+	if msg, ok := result.Cmd().(NavigateMsg); !ok || msg.Item.ID != notice.ID || msg.Action != "settings:workspace" {
+		t.Fatalf("wrong action: %#v", msg)
+	}
+}
+
+func TestDockedNoticePreservesDetailLinesAndLongIdentifiers(t *testing.T) {
+	const id = "capture_0123456789_abcdefghijklmnopqrstuvwxyz"
+	projection := testProjection()
+	projection.Active = ViewNotifications
+	projection.Views[ViewNotifications][0].Lines = []DetailLine{{Value: "First line.\n\nLast line.\n" + id}}
+	screen := NewDocked(theme.DefaultDark(), projection)
+	host := ui.NewHost(theme.DefaultDark(), screen)
+	host.Resize(32, 12)
+	host.Layout()
+	host.Focus(ListID)
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	host.Layout()
+	buf := surface.NewCellBuffer(32, 12)
+	host.Paint(buf)
+	rows := strings.Split(bufferText(buf, 32, 12), "\n")
+	for i := range rows {
+		rows[i] = strings.TrimSpace(rows[i])
+	}
+	got := strings.Join(rows, "\n")
+	_, tail, ok := strings.Cut(got, "\nFirst line.\n\nLast line.\n")
+	if !ok || strings.ReplaceAll(tail, "\n", "") != id {
+		t.Fatalf("explicit lines or long identifier lost:\n%s", got)
+	}
+}
+
 func TestExpandedAgentShowsAllUsageScopes(t *testing.T) {
 	projection := testProjection()
 	projection.Views[ViewTabs] = []Item{{

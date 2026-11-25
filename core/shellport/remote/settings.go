@@ -126,6 +126,9 @@ func (w *Workspace) LoadAppSettings() setting.App {
 	// it again as an application layer would erase workspace-only choices.
 	value := setting.CloneApp(w.settings.current.fetch.Effective)
 	value.Entry = w.settings.current.fetch.Entry
+	// Entry describes this shell. The effective settings still belong to the
+	// workspace: another shell may already use its language servers.
+	value.Entry.FileOnly = w.FileOnly()
 	setting.ApplyAppDefaults(&value)
 	value.Accounts = w.settings.accounts()
 	markStoredConnections(value.Capabilities, w.settings.current.fetch.ConnectionSecretFields)

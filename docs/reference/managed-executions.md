@@ -6,6 +6,9 @@
 
 `worktree.Service` owns current-format manifests and bounded checkout artifacts
 under the workspace data directory, disjoint from project and Git administration.
+If a top-level workspace contains its own profile, Crude does not create a
+managed checkout inside that workspace. Ordinary editing and sessions remain
+available; isolated work needs a disjoint store.
 `workspace.ExecutionService` borrows the logical workspace's accepted document and
 Local History owners; an artifact is not another settings/workspace authority.
 `agent/session/` captures the exact execution selection for new input and delegates via

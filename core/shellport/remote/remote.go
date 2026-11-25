@@ -11,6 +11,7 @@ import (
 	"os"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"crude/agent/provider"
@@ -46,7 +47,7 @@ type Options struct {
 
 // Workspace is one shell's attachment to a retained core workspace.
 type Workspace struct {
-	entry      coreprotocol.EntryIntent
+	entry      atomic.Pointer[coreprotocol.EntryIntent]
 	dial       Dialer
 	logger     workspace.Logger
 	namespace  string
@@ -163,7 +164,7 @@ func attachWithClient(ctx context.Context, opts Options, client *coreclient.Clie
 	view.Logger = opts.Logger
 	lifeCtx, lifeCancel := context.WithCancel(context.Background())
 	w := &Workspace{
-		entry: opts.Entry, dial: opts.Dial, logger: opts.Logger, namespace: opts.Namespace,
+		dial: opts.Dial, logger: opts.Logger, namespace: opts.Namespace,
 		client: client, id: attached.WorkspaceID, root: attached.View.Root,
 		clientID: clientID, ctx: lifeCtx, cancel: lifeCancel,
 		profileID: opts.ClientID,
@@ -171,6 +172,7 @@ func attachWithClient(ctx context.Context, opts Options, client *coreclient.Clie
 		stop: make(chan struct{}), topics: make(map[string]*replicaTopic),
 		topicClients: make(map[string]*coreclient.Client), topicCursors: make(map[string]uint64),
 	}
+	w.entry.Store(&opts.Entry)
 	w.status = newStatusReplica(w)
 	w.terminals = &terminalReplica{w: w}
 	w.settings = &settingsReplica{w: w}
@@ -413,10 +415,16 @@ func (w *Workspace) reconnect() (*coreclient.Client, bool) {
 		client, err := w.dial(ctx, w.clientID)
 		if err == nil {
 			var attached coreprotocol.AttachResult
-			attached, err = attach(ctx, client, w.root, w.entry)
+			entry := w.EntryIntent()
+			attached, err = attach(ctx, client, w.root, entry)
 			if err == nil {
 				cancel()
 				w.connMu.Lock()
+				if entry != w.EntryIntent() {
+					w.connMu.Unlock()
+					_ = client.Close()
+					continue // Promotion was acknowledged while this connection attached.
+				}
 				w.client, w.id = client, attached.WorkspaceID
 				w.startControlLocked(client, attached.WorkspaceID)
 				w.startCapabilityHostLocked(client, attached.WorkspaceID)

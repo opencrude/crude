@@ -27,6 +27,7 @@ const (
 	// CommandViewOpen creates a private terminal mirror; all subsequent
 	// operations use the existing terminal row, stream and lease contracts.
 	CommandViewOpen       = "command_view.open"
+	WorkspaceOpenFolder   = "workspace.open_folder"
 	WorkspaceStartup      = "workspace.startup"
 	WorkspaceOverrides    = "workspace.overrides"
 	WorkspaceOverridesSet = "workspace.overrides_save"

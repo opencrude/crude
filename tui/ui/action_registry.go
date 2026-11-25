@@ -756,7 +756,7 @@ var defaultActions = []*ActionDef{
 	{
 		ID:          "app.quit",
 		Label:       "Quit",
-		Description: "exit immediately",
+		Description: "close the active window or tab, then quit",
 		Icon:        "✖",
 		Category:    "App",
 		Bindings:    []KeyBinding{{Key: "ctrl+q"}},

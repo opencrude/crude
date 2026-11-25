@@ -22,6 +22,9 @@ import (
 	"crude/workspace/fileio"
 )
 
+// ErrOverlappingStore means that isolated checkouts cannot be kept outside this project.
+var ErrOverlappingStore = errors.New("managed store and logical checkout must be disjoint")
+
 type Service struct {
 	mu                     sync.Mutex
 	root, store            string
@@ -69,7 +72,7 @@ func Open(root, store string, options Options) (*Service, error) {
 		return nil, err
 	}
 	if within(r, a) || within(a, r) {
-		return nil, errors.New("managed store and logical checkout must be disjoint")
+		return nil, ErrOverlappingStore
 	}
 	if options.MaxFiles <= 0 {
 		options.MaxFiles = 20000

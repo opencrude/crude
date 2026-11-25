@@ -5,7 +5,7 @@
 
 ## Purpose
 
-Replace the flat directory list inside the existing New Workspace and Attach
+Replace the flat directory list inside the existing New workspace and Attach
 File windows with a shared, lightweight tree browser and bounded recursive path
 search. Preserve the current Open Workspace UI skeleton. Make Attach File use
 that same skeleton and window geometry, adapted for files and multi-selection.
@@ -25,7 +25,7 @@ acceptance contract below. Changes outside the scope require a new review.
 ### In scope
 
 - The persistent workspace file tree's recursive filename/path filtering.
-- The New Workspace folder browser.
+- The New workspace folder browser.
 - The Attach File browser.
 - A Crude-owned internal path-walking package derived from Fastwalk.
 - Lazy, asynchronous directory expansion.
@@ -59,13 +59,13 @@ in `agent/`, agent-facing tool definitions, or the existing grep/glob paths.
 
 ## Product Decisions
 
-1. New Workspace keeps its current visual design. Only its flat folder list is
+1. New workspace keeps its current visual design. Only its flat folder list is
    replaced by the new tree browser and its plain breadcrumb becomes
    interactive.
 2. Attach File adopts the same large window geometry, header structure,
    spacing, breadcrumb position, tree area, and action-bar arrangement as New
    Workspace.
-3. Attach File shows files and folders. New Workspace shows folders only.
+3. Attach File shows files and folders. New workspace shows folders only.
 4. Neither picker has a preview pane.
 5. Neither picker initializes Git, diagnostics, an LSP connection, or a
    filesystem watcher.
@@ -84,7 +84,7 @@ in `agent/`, agent-facing tool definitions, or the existing grep/glob paths.
 Keep the existing `OverlayFilePicker`, `OverlayHost`, `FloatingWindow`, and
 `WindowFrame` ownership.
 
-Both picker modes use the current New Workspace window contract:
+Both picker modes use the current New workspace window contract:
 
 - Preferred size: 96 columns by 28 rows.
 - Minimum size: 60 columns by 18 rows.
@@ -98,12 +98,12 @@ Both picker modes use the current New Workspace window contract:
 - Attach File continues to leave the chat composer mounted behind the modal.
 
 The small 68 by 20 Attach File dialog is retired. Attach File becomes the same
-large browser window as New Workspace so both workflows feel like one IDE
+large browser window as New workspace so both workflows feel like one IDE
 surface.
 
 ## Shared Visual Skeleton
 
-The current New Workspace body structure remains authoritative:
+The current New workspace body structure remains authoritative:
 
 ```text
 +----------------------------------------------------------------------------------------------+
@@ -215,14 +215,14 @@ ancestors. Truncation and hit geometry must use the repository's canonical
 terminal-width path from
 [`../reference/terminal-width.md`](../reference/terminal-width.md).
 
-## New Workspace Design
+## New workspace Design
 
-New Workspace remains visually the same product surface, with a real folder
+New workspace remains visually the same product surface, with a real folder
 tree replacing the flat folder list.
 
 ```text
 +----------------------------------------------------------------------------------------------+
-| New Workspace                                                                          [x]  |
+| New workspace                                                                          [x]  |
 +----------------------------------------------------------------------------------------------+
 | ◆ crude   OPEN WORKSPACE                                                                    |
 | Choose a project folder · fuzzy-search as you type                                           |
@@ -248,7 +248,7 @@ tree replacing the flat folder list.
 +----------------------------------------------------------------------------------------------+
 ```
 
-### New Workspace tree behavior
+### New workspace tree behavior
 
 - Render directories only.
 - Do not load file rows and then hide them; directory enumeration should avoid
@@ -266,7 +266,7 @@ tree replacing the flat folder list.
 - No picker watcher is created.
 - No repository detection is performed.
 
-### New Workspace selection behavior
+### New workspace selection behavior
 
 - A single click focuses and selects a folder.
 - Clicking the disclosure region expands or collapses the folder.
@@ -287,7 +287,7 @@ tree replacing the flat folder list.
 - Confirmation uses the existing workspace-switch lifecycle and generation
   boundary.
 
-### New Workspace folder search
+### New workspace folder search
 
 - Search folder names and normalized relative folder paths.
 - Never read file contents.
@@ -311,7 +311,7 @@ Example result presentation:
 
 ## Attach File Design
 
-Attach File uses the exact New Workspace window geometry and body skeleton,
+Attach File uses the exact New workspace window geometry and body skeleton,
 adapted for files, folders, and multi-selection.
 
 ```text
@@ -460,7 +460,7 @@ TreeOptions{
 	EnableWatcher:   true,
 }
 
-// New Workspace.
+// New workspace.
 TreeOptions{
 	ShowFiles:     false,
 	SelectFolders: true,
@@ -829,7 +829,7 @@ Preserve:
 
 - `OverlayFilePicker`.
 - Existing overlay modal policy.
-- Existing launcher New Workspace action.
+- Existing launcher New workspace action.
 - Existing chat Attach File action and shortcut.
 - Existing attachment reference creation.
 - Existing workspace-switch safety.
@@ -852,7 +852,7 @@ Preserve:
 - Git and diagnostic indicators never appear in either picker.
 - Disabled picker capabilities perform no Git, diagnostic, LSP, or watcher
   work.
-- New Workspace retains its current header, spacing, breadcrumb row, action
+- New workspace retains its current header, spacing, breadcrumb row, action
   bar, and preferred/minimum size.
 - Attach File uses the same size and skeleton.
 - No permanent parent pseudo-row is painted.
@@ -865,7 +865,7 @@ Preserve:
 - Every breadcrumb segment has correct hit geometry.
 - Breadcrumb root, middle, current, collapsed `...`, drive, and UNC cases pass.
 - Folder expansion and collapse work by keyboard and mouse.
-- New Workspace permits folders only.
+- New workspace permits folders only.
 - Attach File permits files only and supports multiple selection.
 - Range selection skips directories.
 - Search result activation reveals folders or toggles files as specified.
@@ -913,7 +913,7 @@ Preserve:
 
 The work is complete only when:
 
-- New Workspace looks like the current New Workspace surface and uses the new
+- New workspace looks like the current New workspace surface and uses the new
   folder tree.
 - Attach File uses the same surface geometry and uses the file-capable tree.
 - Breadcrumbs are genuinely clickable and keyboard accessible.

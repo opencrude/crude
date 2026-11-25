@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"crude/core/coreprotocol"
 	"crude/types/control"
 )
 
@@ -81,7 +82,7 @@ func makeRestartStartupManifest(t *testing.T, home string, old coreOwner) (strin
 		t.Fatal(err)
 	}
 	manifest := coreRestartManifest{
-		Version: 1, Home: home, Root: filepath.Join(home, "project"), Profile: "startup-profile", ControlID: operation,
+		Version: restartManifestVersion, Entry: &coreprotocol.EntryIntent{}, Home: home, Root: filepath.Join(home, "project"), Profile: "startup-profile", ControlID: operation,
 		Target:   control.Target{WorkspaceID: "workspace", SessionID: "session", Shell: &control.ShellOwner{ClientID: "original", Epoch: 1}},
 		OldOwner: old, Image: image, Identity: identity, Token: strings.Repeat("b", 64),
 		NotBefore: notBefore, ExpiresAt: notBefore.Add(10 * time.Minute),

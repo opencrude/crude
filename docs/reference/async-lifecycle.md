@@ -19,6 +19,10 @@ workspace storage closes. Event delivery is separately fenced and never joined
 while holding Update. Switch bootstrap tree/catalog/source-control reads use this
 same owner. Catalog SQL deadlines remain cooperative: returning a timeout never
 abandons a detached SQLite opener that can create WAL/SHM files after teardown.
+Same-folder promotion runs on this attachment's client-I/O owner. Only its
+reply can update the shell; a workspace switch drops the old completion.
+The Notices replica queues durable entry notifications through its existing
+status worker, not an RPC on Update.
 SSH stdout uses an explicitly owned OS pipe so a fast process exit/Wait cannot
 close unread buffered output; cancellation still closes and joins that exact SSH
 subprocess rather than a process-name search.

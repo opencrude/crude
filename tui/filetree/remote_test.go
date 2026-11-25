@@ -2,6 +2,7 @@ package filetree
 
 import (
 	"context"
+	"maps"
 	"os"
 	"path/filepath"
 	"testing"
@@ -9,6 +10,42 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 )
+
+func TestRemoteRefreshRenewsOnlyBrowsedListings(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "remote-only")
+	parent := filepath.Join(root, "parent")
+	nested, unopened := filepath.Join(parent, "nested"), filepath.Join(parent, "unopened")
+	pending := filepath.Join(parent, "pending")
+	requests := map[string]int{}
+	tree := NewRemoteModel(root, func(_ context.Context, path string) tea.Cmd {
+		requests[path]++
+		return func() tea.Msg { return nil }
+	})
+	tree.SetDirectoryEntries(root, []DirectoryEntry{{Name: "parent", Path: parent, IsDir: true}})
+	tree.Expand(parent)
+	tree.SetDirectoryEntries(parent, []DirectoryEntry{
+		{Name: "nested", Path: nested, IsDir: true},
+		{Name: "unopened", Path: unopened, IsDir: true},
+		{Name: "pending", Path: pending, IsDir: true},
+	})
+	tree.Expand(nested)
+	tree.SetDirectoryEntries(nested, nil)
+	tree.Expand(pending)
+	tree.CollapseAll()
+	clear(requests)
+	tree.RefreshRemoteDirectories(nil)
+	if want := map[string]int{root: 1, parent: 1, nested: 1, pending: 1}; !maps.Equal(requests, want) {
+		t.Fatalf("resync requested %v, want %v", requests, want)
+	}
+	clear(requests)
+	tree.RefreshRemoteDirectories(map[string]bool{nested: true, unopened: true, filepath.Join(root, "unknown"): true})
+	if !maps.Equal(requests, map[string]int{nested: 1}) {
+		t.Fatalf("targeted refresh requested %v, want only %q", requests, nested)
+	}
+	if rows := tree.VisibleRows(); len(rows) != 1 || rows[0] != parent {
+		t.Fatalf("refresh changed collapsed rows: %v", rows)
+	}
+}
 
 func TestRemoteModelNeverLoadsClientDisk(t *testing.T) {
 	root := t.TempDir()

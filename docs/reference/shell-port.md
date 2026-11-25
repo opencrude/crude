@@ -18,6 +18,7 @@ implementation inventory for the connected (`core/` RPC) adapter and its explici
 |------|------------------|---------|
 | `runtime.go` | `Runtime`, `WorkspaceStore` | identity, lifecycle, project switch, event wiring, DB identity token |
 | `startup.go` | `Startup`, `WorkspaceFolderCreator` | Detached path inspection, bounded folder browsing and discovery, explicit single-child folder creation, and sparse introduction/reminder saves. No workspace attachment is necessary. |
+| `replica.go` | `FolderEntry` | Reports this attachment's file-only mode. Promotes it to a project without replacing its editor or session. |
 | `agents.go` | `Agents` | agent inventory replica, turn control, blocking prompts, input admission |
 | `sessions.go` | `Sessions` | session registry replica, create/open, per-session settings |
 | `settings.go` | `Settings` | app/workspace settings, accounts |

@@ -22,6 +22,10 @@ Text follows ASD-STE100 (Simplified Technical English):
 - Do not use contractions. Do not use em dashes in UI text.
 - Use the exact name of the control the user must use, in the case it is
   shown: **Trust folder**, **Workspace settings**.
+- Use **New workspace** on the welcome button, Home card, Recent Workspaces
+  row and picker title. The picker confirmation is **Open Workspace** because
+  it opens the selected folder. The footer reads **1 Notice**, **2 Notices**
+  or **Notices** when there is no unread count.
 
 ## What to say
 

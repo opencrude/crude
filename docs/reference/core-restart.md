@@ -47,7 +47,13 @@ The private `--core-handover /absolute/manifest.json` startup route is only for
 the exact already-admitted foreground handoff. It cannot select another profile,
 workspace, session, model, account or authority. It refuses an unexpected owner
 instead of using ordinary startup's mismatch handover. It is not an alternative
-agent control channel or an initial bootstrap workaround.
+agent control channel or an initial bootstrap workaround. The private manifest
+records whether the originating shell opened one file or a project. Ready
+rechecks that choice, and the successor attaches with the same intent. It
+cannot enable project services merely by resuming a file-only shell.
+The candidate identity declares the manifest format. An incompatible image
+must fail the identity check before reservation or stop. When moving between
+these formats, use an ordinary launch after closing the old shell.
 
 ## Natural checkpoint and continuation
 

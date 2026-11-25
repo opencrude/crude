@@ -861,6 +861,25 @@ func (s *DocumentService) SetFileOnlyOwner(owner document.Owner) {
 	s.fileOnlyOwners[owner] = true
 }
 
+// OpenFolder requests language views for this file attachment's existing buffers.
+// It runs on the document worker, not the actor that owns workspace settings.
+func (s *DocumentService) OpenFolder(owner document.Owner) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ownerMu.Lock()
+	wasFile := s.fileOnlyOwners[owner] && !s.detached[owner]
+	delete(s.fileOnlyOwners, owner)
+	s.ownerMu.Unlock()
+	if !wasFile || s.closed {
+		return
+	}
+	for _, d := range s.docs {
+		if d.owners[owner] {
+			s.openLanguageView(d)
+		}
+	}
+}
+
 func (s *DocumentService) languageViewNeeded(d *liveDocument) bool {
 	s.ownerMu.Lock()
 	defer s.ownerMu.Unlock()

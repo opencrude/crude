@@ -91,7 +91,7 @@ func New(th *theme.Theme) *Screen {
 	}
 	s := &Screen{Base: ui.NewBase(ScreenID), tokens: ui.NewTokenSet(th), registry: ui.DefaultRegistry()}
 	s.newSession = newLauncherAction(s, NewSessionID, ItemNewSession, " New Session", "")
-	s.openWorkspace = newLauncherAction(s, NewWorkspaceID, ItemOpenFolder, "📁 New Workspace", "Open a folder as a workspace")
+	s.openWorkspace = newLauncherAction(s, NewWorkspaceID, ItemOpenFolder, "📁 New workspace", "Open a folder as a workspace")
 	s.split = ui.NewSplitModel(ui.Horizontal)
 	s.split.SetDividerSize(3)
 	s.divider = ui.NewSplitDivider(DividerID, s.split)

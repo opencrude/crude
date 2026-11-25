@@ -60,6 +60,35 @@ func (m *Model) RequestRemoteDirectory(path string) tea.Cmd {
 	return m.requestRemoteDirectory(context.Background(), path, true)
 }
 
+// RefreshRemoteDirectories renews requested listings without expanding them.
+// A nil set resyncs all cached or pending listings, even under collapsed rows.
+// A folder known only from its parent's listing needs no read or watch.
+func (m *Model) RefreshRemoteDirectories(parents map[string]bool) tea.Cmd {
+	m.mu.RLock()
+	var paths []string
+	add := func(node *TreeNode) {
+		if node != nil && node.IsDir && (node == m.Root || node.Children != nil || node.Loading || node.IsExpanded) {
+			paths = append(paths, node.Path)
+		}
+	}
+	if parents == nil {
+		for _, node := range m.nodes {
+			add(node)
+		}
+	} else {
+		for path := range parents {
+			add(m.nodes[path])
+		}
+	}
+	m.mu.RUnlock()
+
+	var cmds []tea.Cmd
+	for _, path := range paths {
+		cmds = append(cmds, m.RequestRemoteDirectory(path))
+	}
+	return tea.Batch(cmds...)
+}
+
 // RequestRemoteDirectoryContext reads without changing expansion/loading state.
 // It is used by an owned reveal which installs the result only while current.
 func (m *Model) RequestRemoteDirectoryContext(ctx context.Context, path string) tea.Cmd {

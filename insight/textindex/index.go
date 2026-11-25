@@ -117,8 +117,9 @@ type corpus struct {
 	textBytes int64
 	memory    int64
 	// overLimit: a file did not fit and keeps only its path.
-	overLimit bool
-	ignore    gitignore.Matcher
+	overLimit       bool
+	missedDirectory bool // the walk could not read all searchable directories
+	ignore          gitignore.Matcher
 }
 
 func newCorpus() *corpus {
@@ -258,7 +259,7 @@ func (x *Index) Complete() bool {
 	}
 	x.mu.RLock()
 	defer x.mu.RUnlock()
-	return !x.stale && !x.live.overLimit
+	return !x.stale && !x.live.overLimit && !x.live.missedDirectory
 }
 
 // Stats returns a snapshot for diagnostics.
@@ -267,7 +268,7 @@ func (x *Index) Stats() Stats {
 	defer x.mu.RUnlock()
 	c := x.live
 	return Stats{Ready: x.ready.Load(), Files: len(c.files), TextBytes: c.textBytes, MemoryBytes: c.memory,
-		Chunks: len(c.chunks), Tokens: len(c.postings), Incomplete: x.stale || c.overLimit,
+		Chunks: len(c.chunks), Tokens: len(c.postings), Incomplete: x.stale || c.overLimit || c.missedDirectory,
 		Builds: x.builds, BuildTime: x.took}
 }
 
@@ -315,9 +316,13 @@ func (x *Index) build(ctx context.Context) (*corpus, error) {
 	var mu sync.Mutex
 	var paths []found
 	var ignores []ignoreFile
+	var missedDirectory atomic.Bool
 	conf := &fastwalk.Config{NumWorkers: min(8, fastwalk.DefaultNumWorkers())}
 	err := fastwalk.WalkContext(ctx, conf, x.root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
+			if !os.IsNotExist(err) {
+				missedDirectory.Store(true)
+			}
 			return nil
 		}
 		if entry.IsDir() {
@@ -347,6 +352,7 @@ func (x *Index) build(ctx context.Context) (*corpus, error) {
 		return nil, err
 	}
 	c := newCorpus()
+	c.missedDirectory = missedDirectory.Load()
 	c.ignore = matcherOf(ignores)
 	for _, f := range paths {
 		if err := ctx.Err(); err != nil {
@@ -462,8 +468,16 @@ func (x *Index) refreshDir(ctx context.Context, dir string) {
 	c := x.live
 	x.mu.Unlock()
 	_ = filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil || ctx.Err() != nil {
+		if ctx.Err() != nil {
 			return ctx.Err()
+		}
+		if err != nil {
+			if !os.IsNotExist(err) {
+				x.mu.Lock()
+				c.missedDirectory = true
+				x.mu.Unlock()
+			}
+			return nil
 		}
 		if entry.IsDir() {
 			if path != dir && fileio.ShouldSkipProjectDir(entry.Name(), false) {
@@ -713,7 +727,7 @@ func compareWalkOrder(a, b string) int {
 
 // Related ranks chunks against the identifiers in query and returns up to
 // limit snippets, skipping chunks for which skip returns true. It never waits
-// for a build and returns nothing while coverage is incomplete.
+// for a build. It ranks readable files, but not a stale or over-budget corpus.
 func (x *Index) Related(query string, limit int, skip func(path string, line int) bool) []Snippet {
 	if x == nil || limit <= 0 {
 		return nil

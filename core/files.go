@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -90,10 +91,10 @@ func readFileChunk(ctx context.Context, root string, in coreprotocol.FileReadReq
 // prepareFiles captures services/root on the actor; workers never traverse mutable
 // workspace session maps or carry SQL handles. The actor lifetime joins workers.
 func (a *actor) prepareFiles(request coreprotocol.Request) (func(context.Context) coreprotocol.Response, bool) {
-	return a.prepareFilesAtRoot(request, a.ws.RootPath)
+	return a.prepareFilesAtRoot(request, a.ws.RootPath, "")
 }
 
-func (a *actor) prepareFilesAtRoot(request coreprotocol.Request, root string) (func(context.Context) coreprotocol.Response, bool) {
+func (a *actor) prepareFilesAtRoot(request coreprotocol.Request, root, executionID string) (func(context.Context) coreprotocol.Response, bool) {
 	if root == a.ws.RootPath {
 		if run, known := a.prepareHistorySafety(request); known {
 			return run, true
@@ -172,6 +173,29 @@ func (a *actor) prepareFilesAtRoot(request coreprotocol.Request, root string) (f
 		if ops == nil {
 			return bad("unavailable", "workspace file operations unavailable")
 		}
+		var keepBeforeDelete func(context.Context, string) error
+		if request.Method == coreprotocol.FilesDelete {
+			switch {
+			case root == a.ws.RootPath && history != nil:
+				keepBeforeDelete = history.KeepBeforeDelete
+			case !a.ws.EffectiveAppSettings().LocalHistory.EnabledValue():
+				// History is off. Do not open a checkout store.
+			case root == a.ws.RootPath:
+				return bad("history_unavailable", "Local History could not keep a safety copy. Check Workspace Settings and storage permissions. The file was not deleted.")
+			default:
+				executionHistory := a.ws.ExecutionHistory
+				keepBeforeDelete = func(ctx context.Context, path string) error {
+					store, actual, err := executionHistory(executionID)
+					if err != nil {
+						return fmt.Errorf("could not open Local History for this checkout. Check storage permissions: %w", err)
+					}
+					if actual != root {
+						return errors.New("the checkout for this safety copy changed. Check the execution before deleting")
+					}
+					return store.KeepBeforeDelete(ctx, path)
+				}
+			}
+		}
 		var in coreprotocol.FilePathRequest
 		var edits coreprotocol.FileEditsRequest
 		if request.Method == coreprotocol.FilesEdit {
@@ -215,13 +239,9 @@ func (a *actor) prepareFilesAtRoot(request coreprotocol.Request, root string) (f
 					if documents == nil {
 						return nil, errors.New("shared document authority unavailable")
 					}
-					if history != nil {
+					if keepBeforeDelete != nil {
 						progress("Keeping safety copy of")
-						rel, err := filepath.Rel(root, path)
-						if err != nil {
-							return nil, err
-						}
-						if err := history.KeepBeforeDelete(ctx, filepath.ToSlash(rel)); err != nil {
+						if err := keepBeforeDelete(ctx, path); err != nil {
 							return nil, err
 						}
 					}

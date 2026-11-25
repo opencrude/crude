@@ -82,6 +82,10 @@ func (m *App) openPaneFilesContext(ctx context.Context, paths []string, group wi
 // openPaneFilesChecked opens paths; with existing set, a path opens only if
 // it is an open named buffer or an existing file, and no document is created.
 func (m *App) openPaneFilesChecked(ctx context.Context, paths []string, group window.GroupID, existing bool) tea.Cmd {
+	return m.preparePaneFiles(ctx, paths, group, existing, "")
+}
+
+func (m *App) preparePaneFiles(ctx context.Context, paths []string, group window.GroupID, existing bool, newFile string) tea.Cmd {
 	m.paneFileOpenSeq++ // An empty request also cancels an earlier pending open.
 	if len(paths) == 0 || m.Win == nil || m.BufferMgr == nil || !m.Win.HasGroup(group) {
 		return nil
@@ -99,10 +103,6 @@ func (m *App) openPaneFilesChecked(ctx context.Context, paths []string, group wi
 	// The inspected missing leaf is a new text document even when its name
 	// happens to have an image extension. The document writer still checks
 	// whether a file appeared before Save.
-	newFile := ""
-	if m.launchFileMissing {
-		newFile = m.launchFile
-	}
 	isImage := func(path string) bool { return path != newFile && imagepreview.SupportedPath(path) }
 	existingImages := make(map[string]window.TabID)
 	var imageStore *paneImageStore
@@ -170,7 +170,7 @@ func (m *App) openPaneFilesChecked(ctx context.Context, paths []string, group wi
 				continue
 			}
 			abs, err := filepath.Abs(path)
-			file := paneFilePrepared{path: path, err: err}
+			file := paneFilePrepared{path: path, requested: path, err: err}
 			if err == nil {
 				file.path = filepath.Clean(abs)
 				// Reading the manager's mutex-protected registry is safe. Do

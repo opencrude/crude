@@ -206,11 +206,13 @@ capture does not record a snapshot from a scan shared with other requests.
   exact checkout and the owning agent's private scratch directory; Local History
   does not widen that execution or file-ownership authority.
 - Deleting from the file tree first records a `safety` snapshot that includes
-  the deleted path (`LocalHistoryService.KeepBeforeDelete`, called by the core
-  for every `files.delete`), so the file or folder can be restored from Local
-  History, even when Git ignores it. If Local History is on and the snapshot
-  fails, nothing is deleted. With Local History off, delete proceeds and the
-  prompt does not promise a copy.
+  the deleted path, so the file or folder can be restored even when Git ignores
+  it. `files.delete` uses the actual native target in the destination checkout's
+  store. A semantic delete in a managed checkout uses its bound execution ID,
+  never a same-name file in the logical workspace. If Local History is on but
+  the store cannot open or cannot keep the target, nothing is deleted. An
+  unavailable store is not the same as turning History off. With Local History
+  off, delete proceeds and the prompt does not promise a copy.
   Delete safety uses a subtree-scoped manifest (`ScopeRoots`): it walks only
   the deleted file/folder, not the project or its ignore files. It captures
   ignored descendants and large files through the ordinary object store.

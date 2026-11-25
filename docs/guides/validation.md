@@ -349,6 +349,20 @@ evidence:
 [workspace chooser](images/startup/workspace-chooser-desktop.png),
 [workspace chooser at 80x24](images/startup/workspace-chooser-80x24.png).
 
+### Workspace entry captures
+
+These Linux frames show the same real product at two sizes. On an explicit
+home launch, dismiss the Trust prompt with Ctrl+Q. Open **Notices** after the
+footer timeout and expand the notice. On a direct file launch, type an edit
+before choosing **Open folder as workspace**. Show the tree with Ctrl+B.
+The editor must stay dirty and the file on disk must not change.
+
+| State | Desktop | Constrained |
+|---|---|---|
+| Explicit home, expanded explanation | [160×40](images/startup/home-notice-160x40.png) | [80×24](images/startup/home-notice-80x24.png) |
+| Edited file, both notice actions | [160×40](images/startup/file-notice-160x40.png) | [80×24](images/startup/file-notice-80x24.png) |
+| Same editor after promotion and Ctrl+B | [160×40](images/startup/file-promoted-160x40.png) | [80×24](images/startup/file-promoted-80x24.png) |
+
 Never regenerate goldens, raise allocation ceilings or loosen a gate to land a
 regression. Update golden output only for an intentional, visually verified
 change.

@@ -239,6 +239,7 @@ func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
 		arrival = &viewMemoryArrival{}
 	}
 	m.viewMemory, m.viewMemoryLoadErr = arrival.store, arrival.err
+	m.openingEntry = nil
 	m.SetLaunchFile("", false)
 	m.installViewMemory(arrival.memory)
 	m.showEntryFolderNotice()

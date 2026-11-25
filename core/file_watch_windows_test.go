@@ -24,7 +24,7 @@ func TestCoreFileWatchWindowsAtomicReplacementSequence(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	w, err := newCoreWatcher(root)
+	w, err := newCoreWatcher(testWatchRoot(t, root))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestCoreFileWatchWindowsSiblingDescendantsStayOutsideKernelScope(t *testing
 			t.Fatal(err)
 		}
 	}
-	w, err := newCoreWatcher(root)
+	w, err := newCoreWatcher(testWatchRoot(t, root))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,7 @@ func TestCoreFileWatchWindowsSiblingDescendantsStayOutsideKernelScope(t *testing
 
 func TestCoreFileWatchWindowsRootKernelOverflowIsReportedAndCloseJoins(t *testing.T) {
 	root := t.TempDir()
-	w, err := newCoreWatcher(root)
+	w, err := newCoreWatcher(testWatchRoot(t, root))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,5 +285,27 @@ func TestCoreWatchWalkVisitsLongWindowsPaths(t *testing.T) {
 	})
 	if err != nil || !found {
 		t.Fatalf("long path walk: found=%v, error=%v", found, err)
+	}
+}
+
+func TestCoreWatchWindowsRejectsDifferentNativeRoot(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "project")
+	if err := os.Mkdir(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	pinned := testWatchRoot(t, root)
+	if err := os.Rename(root, filepath.Join(parent, "old")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	w, err := newCoreWatcher(pinned)
+	if w != nil {
+		_ = w.Close()
+	}
+	if !errors.Is(err, errWatchRootChanged) {
+		t.Fatalf("watched the replacement directory or did not identify it: %v", err)
 	}
 }

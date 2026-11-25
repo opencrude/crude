@@ -593,8 +593,10 @@ func (r *Runtime) workspaceForEntry(ctx context.Context, id, root string, fileOn
 				initErr := ws.InitializeCoreResources(initCtx)
 				cancel()
 				if initErr != nil {
-					ws.Logger.Warn("CORE", "workspace_resources_failed", "error", initErr.Error())
-					ws.Status.Notify(statuscenter.NotificationRecord{Severity: statuscenter.SeverityError, Source: "workspace", Summary: "Workspace resources need attention", Detail: "Saved Notices or capabilities could not be loaded. Inspect the workspace persistence and Skills/MCP settings before retrying."})
+					if ws.Logger != nil {
+						ws.Logger.Warn("CORE", "workspace_resources_failed", "error", initErr.Error())
+					}
+					ws.Status.Notify(statuscenter.NotificationRecord{Severity: statuscenter.SeverityError, Source: "workspace", Summary: "Workspace resources need attention", Detail: initErr.Error()})
 				}
 				if ws.Capabilities != nil {
 					ws.Capabilities.SetHostDispatcher(r)
@@ -729,32 +731,44 @@ func newActor(id string, ws *workspace.Workspace, receipts *receiptJournal) *act
 	// The text index builds on its own worker; the watch keeps it current.
 	index := ws.TextIndex
 	onDemand := ws.EffectiveAppSettings().Entry.DeferProjectScan()
-	if index != nil && !onDemand {
-		index.Start()
-	}
+
 	notify := func(ctx context.Context, path string, kind int) {
 		ws.LSPMgr.NotifyWatchedFilesChanged(ctx, path, kind)
 		index.Changed(path)
 	}
 	// A watch that lost events and recovered rebuilds the index, because
 	// the changes it missed were never queued.
-	var watched atomic.Bool
-	reliable := func(ok bool) {
-		ws.LSPMgr.SetProjectWatchReliable(ok)
-		if ok && watched.Swap(true) {
-			index.Rescan()
+	const watchIssue = "project-file-observation"
+	var watched bool // Coverage callbacks run in observation order.
+	coverage := func(c watchCoverage) {
+		ws.LSPMgr.SetProjectWatchReliable(c.complete())
+		switch {
+		case c.rootLost:
+			if index != nil {
+				index.Close()
+			}
+			ws.Status.SetIssue(statuscenter.IssueSnapshot{ID: watchIssue, Severity: statuscenter.SeverityWarning, Summary: "The workspace folder changed", Detail: "Reopen the folder to watch its files."})
+		case c.excluded != "":
+			ws.Status.SetIssue(statuscenter.IssueSnapshot{ID: watchIssue, Severity: statuscenter.SeverityWarning, Summary: "Crude cannot watch every folder", Detail: "Check access to this folder: " + c.excluded + ". Crude will try again."})
+		case c.complete():
+			ws.Status.ResolveIssue(watchIssue)
+		}
+		if c.usable {
+			if watched {
+				index.Rescan()
+			} else if !onDemand && index != nil {
+				index.Start()
+			}
+			watched = true
 		}
 	}
-	publish := func(change coreprotocol.FileChange) { a.Send(change) }
-	var watch *coreFileWatch
-	var err error
-	if onDemand {
-		watch, err = startDirectoryScope(ws.RootPath, publish, notify, reliable, ws.AnalysisDemand(), index)
-	} else {
-		watch, err = startCoreFileWatch(ws.RootPath, publish, notify, reliable)
-	}
+	feed := fileWatchFeed{publish: func(change coreprotocol.FileChange) { a.Send(change) }, notify: notify, coverage: coverage}
+	watch, err := feed.start(ws.RootPath, onDemand, ws.AnalysisDemand(), index)
 	if err != nil {
-		ws.Logger.Warn("CORE", "file_watch_failed", "error", err.Error())
+		if ws.Logger != nil {
+			ws.Logger.Warn("CORE", "file_watch_failed", "error", err.Error())
+		}
+		ws.Status.SetIssue(statuscenter.IssueSnapshot{ID: watchIssue, Severity: statuscenter.SeverityWarning, Summary: "Crude cannot watch this folder", Detail: "Check folder access and reopen the workspace. " + err.Error()})
 	} else {
 		installed := make(chan struct{})
 		select {
@@ -1040,9 +1054,8 @@ func (a *actor) runCommand(command actorCommand) (retired bool) {
 		return false
 	}
 	if command.attach != nil {
-		if !command.fileOnly && a.ws.SetFileOnly(false) {
-			a.queueState(coreprotocol.TopicSettings)
-			a.queueState(coreprotocol.TopicLSP)
+		if !command.fileOnly {
+			a.openProjectFolder()
 		}
 		if command.fileOnly && a.ws.LiveDocuments != nil {
 			a.ws.LiveDocuments.SetFileOnlyOwner(document.Owner{ClientID: command.attach.Owner.ClientID, Epoch: command.attach.Owner.Epoch})
@@ -1089,6 +1102,13 @@ func (a *actor) runCommand(command actorCommand) (retired bool) {
 	}
 	command.result <- a.execute(*command.request)
 	return false
+}
+
+func (a *actor) openProjectFolder() {
+	if a.ws.SetFileOnly(false) {
+		a.queueState(coreprotocol.TopicSettings)
+		a.queueState(coreprotocol.TopicLSP)
+	}
 }
 
 func (a *actor) changed(ids []string) {

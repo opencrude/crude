@@ -14,7 +14,7 @@ import (
 // attachStartupSelection is the single startup chooser/attachment lifecycle.
 // Private handovers never enter the ordinary repair chooser, including failures
 // after a successful initial inspection. Callbacks are the existing I/O owners.
-func attachStartupSelection(ctx context.Context, root string, exact, explicit bool, selection coreprotocol.StartupSnapshot,
+func attachStartupSelection(ctx context.Context, root string, exact bool, intent coreprotocol.EntryIntent, selection coreprotocol.StartupSnapshot,
 	choose func(context.Context, coreprotocol.StartupSnapshot) (startuptui.Selection, error),
 	attach func(context.Context, string, coreprotocol.EntryIntent) (*remote.Workspace, error),
 ) (string, *remote.Workspace, []statuscenter.OperationIssue, error) {
@@ -23,7 +23,10 @@ func attachStartupSelection(ctx context.Context, root string, exact, explicit bo
 	}
 	issues := append([]statuscenter.OperationIssue(nil), selection.Issues...)
 	for {
-		entry := coreprotocol.EntryIntent{Explicit: explicit, FileOnly: selection.FilePath != ""}
+		entry := intent
+		if !exact {
+			entry.FileOnly = selection.FilePath != ""
+		}
 		if selection.ChooseWorkspace {
 			selected, err := choose(ctx, selection)
 			if err != nil {

@@ -174,6 +174,49 @@ func TestStartupClientUncertainSaveIsNotReplayed(t *testing.T) {
 	}
 }
 
+func TestStartupBrowseRecoversWhenNavigationDiscoversSessionLoss(t *testing.T) {
+	// The core disappears while the current client still looks healthy. Do not
+	// wait for Client.Done before navigating: the navigation discovers the loss.
+	r := newStartupTestCore(t, &startupTestOwner{})
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "project"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	a, b := net.Pipe()
+	reached := make(chan struct{})
+	holdingCore(t, a, coreprotocol.StartupBrowse, reached, nil)
+	var ids []string
+	opts := Options{Root: root, ClientID: "shell", Namespace: "selected-host", Dial: func(ctx context.Context, id string) (*coreclient.Client, error) {
+		ids = append(ids, id)
+		if len(ids) == 1 {
+			return coreclient.Dial(ctx, coreclient.SingleCarrier(b), id)
+		}
+		server, peer := net.Pipe()
+		go func() { _ = core.ServeConnection(t.Context(), r, server) }()
+		return coreclient.Dial(ctx, coreclient.SingleCarrier(peer), id)
+	}}
+	ctx := startupTestContext(t)
+	s, err := ConnectStartup(ctx, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	go func() {
+		select {
+		case <-reached:
+		case <-ctx.Done():
+		}
+		_ = a.Close()
+	}()
+	page, err := s.Browse(ctx, coreprotocol.StartupBrowseRequest{Path: root})
+	if err != nil || page.Path != root || len(page.Entries) != 1 || page.Entries[0].Name != "project" {
+		t.Fatalf("explicit browse did not return the selected folder: %+v, %v", page, err)
+	}
+	if len(ids) != 2 || ids[0] != opts.attachmentID() || ids[1] != ids[0] {
+		t.Fatalf("expected one replacement for the selected identity, got %v", ids)
+	}
+}
+
 // holdingCore speaks the session protocol and never answers the held method,
 // leaving that command awaiting delivery while the others are served.
 func holdingCore(t *testing.T, conn net.Conn, held string, reached chan struct{}, answer func(coreprotocol.Open, []byte) coreprotocol.Value) {

@@ -144,7 +144,7 @@ func (m *App) openWorkspacePathSwitcher() tea.Cmd {
 			detail = "current"
 		}
 		items = append(items, ui.ContextMenuItem{
-			Label: workspace.DisplayName(info), Detail: detail, Disabled: current,
+			Label: workspace.DisplayName(info), Detail: detail, Disabled: current && !m.fileOnly(),
 			Action: func() {
 				if valid() {
 					m.runDetachedAsyncCmd(m.launcherOpenFolder(path))

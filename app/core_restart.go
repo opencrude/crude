@@ -28,17 +28,21 @@ import (
 	"github.com/gofrs/flock"
 )
 
-const restartRecordLimit = 64 << 10
+const (
+	restartRecordLimit     = 64 << 10
+	restartManifestVersion = 2 // The private entry intent is required, even for an implicit project.
+)
 
 // CoreRestartIdentity is the bounded, read-only candidate executable handshake.
 // A source cohort is not an image digest: both must be checked.
 type CoreRestartIdentity struct {
-	BuildID string `json:"build_id"`
-	Cohort  string `json:"cohort"`
-	Schema  string `json:"schema"`
-	SHA256  string `json:"sha256"`
-	GOOS    string `json:"goos"`
-	GOARCH  string `json:"goarch"`
+	ManifestVersion int    `json:"manifest_version"`
+	BuildID         string `json:"build_id"`
+	Cohort          string `json:"cohort"`
+	Schema          string `json:"schema"`
+	SHA256          string `json:"sha256"`
+	GOOS            string `json:"goos"`
+	GOARCH          string `json:"goarch"`
 }
 
 func CoreRestartIdentityForCurrent() (CoreRestartIdentity, error) {
@@ -50,11 +54,12 @@ func CoreRestartIdentityForCurrent() (CoreRestartIdentity, error) {
 	if err != nil {
 		return CoreRestartIdentity{}, errors.New("cannot verify running handover image")
 	}
-	return CoreRestartIdentity{BuildID: digest[:16], Cohort: buildinfo.ProtocolBuild,
+	return CoreRestartIdentity{ManifestVersion: restartManifestVersion, BuildID: digest[:16], Cohort: buildinfo.ProtocolBuild,
 		Schema: coreprotocol.Schema, SHA256: digest, GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}, nil
 }
 
 type coreRestartManifest struct {
+	Entry     *coreprotocol.EntryIntent  `json:"entry"`
 	Version   int                        `json:"version"`
 	Home      string                     `json:"home"`
 	Root      string                     `json:"root"`
@@ -89,6 +94,7 @@ type coreRestartReceipt struct {
 
 // CoreRestartStartup contains only routing facts, never the private nonce.
 type CoreRestartStartup struct {
+	Entry                                 coreprotocol.EntryIntent
 	Root, Profile, SessionID, OperationID string
 }
 
@@ -100,7 +106,7 @@ func ReadCoreRestartStartup(home, path string) (CoreRestartStartup, error) {
 	if err != nil {
 		return CoreRestartStartup{}, err
 	}
-	return CoreRestartStartup{Root: m.Root, Profile: m.Profile,
+	return CoreRestartStartup{Entry: *m.Entry, Root: m.Root, Profile: m.Profile,
 		SessionID: m.Target.SessionID, OperationID: m.ControlID}, nil
 }
 
@@ -151,7 +157,7 @@ func newCoreRestartHostFromManifest(home, root, profile string, target control.T
 	if err != nil {
 		return nil, err
 	}
-	if m.Root != root || m.Profile != profile || m.Target.WorkspaceID != target.WorkspaceID ||
+	if *m.Entry != port.EntryIntent() || m.Root != root || m.Profile != profile || m.Target.WorkspaceID != target.WorkspaceID ||
 		m.Target.Shell.ClientID != target.Shell.ClientID || (target.SessionID != "" && m.Target.SessionID != target.SessionID) {
 		return nil, errors.New("restart successor is not the original profile attachment")
 	}
@@ -302,6 +308,9 @@ func (h *coreRestartHost) Schedule(ctx context.Context, req control.Request) (st
 			return errors.New("restart staged image size or mode mismatch")
 		}
 		identity, err := h.identity(ctx, image)
+		if err == nil && identity.ManifestVersion != restartManifestVersion {
+			return errors.New("restart candidate uses a different handover format; reopen Crude normally")
+		}
 		if err != nil || !restartValidIdentity(identity, actual) {
 			return errors.New("restart candidate self-identity failed")
 		}
@@ -325,7 +334,8 @@ func (h *coreRestartHost) Schedule(ctx context.Context, req control.Request) (st
 			return errors.New("restart nonce generation failed")
 		}
 		now := h.now().UTC()
-		m := coreRestartManifest{Version: 1, Home: h.home, Root: h.root, Profile: h.profile,
+		entry := h.port.EntryIntent()
+		m := coreRestartManifest{Entry: &entry, Version: restartManifestVersion, Home: h.home, Root: h.root, Profile: h.profile,
 			ControlID: req.ID, Target: req.Target, Input: input, Caller: req.Caller,
 			OldOwner: old, Image: image, Identity: identity, Token: hex.EncodeToString(token[:]),
 			NotBefore: now.Add(time.Duration(input.DelaySeconds) * time.Second), ExpiresAt: now.Add(10 * time.Minute)}
@@ -474,7 +484,7 @@ func (h *coreRestartHost) Cancel(ctx context.Context, operationID string) (state
 }
 
 func (h *coreRestartHost) validateReady(m coreRestartManifest, r coreRestartReceipt) error {
-	if m.Home != h.home || m.Root != h.root || m.Profile != h.profile ||
+	if *m.Entry != h.port.EntryIntent() || m.Home != h.home || m.Root != h.root || m.Profile != h.profile ||
 		m.Target.WorkspaceID != h.target.WorkspaceID || m.Target.Shell == nil || *m.Target.Shell != *h.target.Shell {
 		return errors.New("restart readiness belongs to a different original attachment")
 	}
@@ -678,7 +688,7 @@ func restartValidateState(m coreRestartManifest, s handover.State) error {
 }
 
 func restartValidIdentity(i CoreRestartIdentity, digest string) bool {
-	return i.SHA256 == digest && digestToken(i.SHA256) && i.BuildID == digest[:16] &&
+	return i.ManifestVersion == restartManifestVersion && i.SHA256 == digest && digestToken(i.SHA256) && i.BuildID == digest[:16] &&
 		digestToken(i.Cohort) && i.Schema != "" && len(i.Schema) <= 256 &&
 		i.GOOS == runtime.GOOS && i.GOARCH == runtime.GOARCH
 }
@@ -987,7 +997,7 @@ func readRestartManifest(home, path string) (m coreRestartManifest, r coreRestar
 		return m, r, "", errors.New("invalid private restart manifest")
 	}
 	expected := filepath.Join(restartProfileDir(home, m.Profile), restartHash(m.ControlID), "manifest.json")
-	if path != expected || m.Version != 1 || m.Home != home || m.ControlID == "" ||
+	if path != expected || m.Version != restartManifestVersion || m.Entry == nil || m.Home != home || m.ControlID == "" ||
 		!filepath.IsAbs(m.Root) || m.Profile == "" || m.Target.SessionID == "" || m.Target.WorkspaceID == "" ||
 		m.Target.Shell == nil || m.Target.Shell.ClientID == "" || m.Target.Shell.Epoch == 0 ||
 		!digestToken(m.Token) || !digestToken(m.OldOwner.Generation) ||

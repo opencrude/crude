@@ -16,7 +16,7 @@ Language servers consume decoded source; they do not own file encodings.
 
 | Date | Decision | From |
 |---|---|---|
-| 2026-11-25 | `crude PATH` with a file opens its parent folder as the workspace, opens the file, collapses the folder tree and starts no language server. Crude tells the user what it did. Tracked in [the open immediate actions](../issues/2026-11-25-composer-entry-and-errand-setup.md#4-open-one-file-directly). | User |
+| 2026-11-25 | `crude PATH` with a file opens its parent folder as the workspace, opens the file, collapses the folder tree and starts no language server. Crude tells the user what it did. Verified in [the workspace entry record](../issues/2026-11-25-composer-entry-and-errand-setup.md#4-open-one-file-directly). | User |
 | 2026-11-24 | Show the whole selected file in Find, Replace and Go to File. Start at the result and open the double-clicked source line. Open editable pasted text in a normal editor tab. | User |
 | 2026-11-16 | Improve Find in Files performance; the current search feels slow. | User |
 | 2026-11-14 | Restore the Save File picker header. Use bounded filename and encoding controls, with a real encoding dropdown rather than the stepper. Keep the shared form and window assets. | User |

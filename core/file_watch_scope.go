@@ -2,10 +2,10 @@ package core
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -19,6 +19,7 @@ import (
 // its cache (including collapsed rows) until it detaches. No read or handle
 // is needed for any other subtree. Open documents have their own disk watcher.
 type directoryScope struct {
+	root     watchRoot
 	mu       sync.Mutex
 	owners   map[coreprotocol.Owner]map[string]bool
 	requests chan directoryInterest
@@ -55,7 +56,7 @@ func (s *directoryScope) observe(ctx context.Context, owner coreprotocol.Owner, 
 	req := directoryInterest{owner, path, make(chan error, 1)}
 	select {
 	case <-s.promoted:
-		return nil
+		return s.root.check()
 	case <-s.done:
 		return context.Canceled
 	case <-ctx.Done():
@@ -72,17 +73,17 @@ func (s *directoryScope) observe(ctx context.Context, owner coreprotocol.Owner, 
 	}
 }
 
-// startDirectoryScope keeps a top-level workspace off the recursive watch and
-// text index until a consumer needs project-wide coverage. The two modes never
-// publish concurrently. Full coverage uses the normal gap/recovery owner.
-func startDirectoryScope(root string, publish func(coreprotocol.FileChange), notify func(context.Context, string, int), reliable func(bool), analysis <-chan struct{}, index *textindex.Index) (*coreFileWatch, error) {
+// Keep the loaded listings live until the recursive observer has installed
+// its watches on every readable directory. Resync once at the handoff.
+func (f fileWatchFeed) startScope(pin watchRoot, analysis <-chan struct{}, index *textindex.Index) (*coreFileWatch, error) {
+	root, publish := pin.path, f.publish
 	native, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, err
 	}
-	rootInfo, err := os.Stat(root)
+	err = native.Add(root)
 	if err == nil {
-		err = native.Add(root)
+		err = pin.check()
 	}
 	if err != nil {
 		_ = native.Close()
@@ -91,11 +92,10 @@ func startDirectoryScope(root string, publish func(coreprotocol.FileChange), not
 	ctx, cancel := context.WithCancel(context.Background())
 	w := &coreFileWatch{cancel: cancel, done: make(chan struct{}), ready: make(chan struct{}), lspDone: make(chan struct{})}
 	close(w.lspDone)
-	s := &directoryScope{owners: make(map[coreprotocol.Owner]map[string]bool), requests: make(chan directoryInterest), prune: make(chan struct{}, 1), promoted: make(chan struct{}), done: w.done}
+	s := &directoryScope{root: pin, owners: make(map[coreprotocol.Owner]map[string]bool), requests: make(chan directoryInterest), prune: make(chan struct{}, 1), promoted: make(chan struct{}), done: w.done}
 	w.scope = s
 	go func() {
 		defer close(w.done)
-		defer cancel()
 		defer func() {
 			if native != nil {
 				_ = native.Close()
@@ -105,8 +105,14 @@ func startDirectoryScope(root string, publish func(coreprotocol.FileChange), not
 		paths := map[string]bool{root: true}
 		query := index.Demand()
 		var whole *coreFileWatch
-		defer func() { whole.Close() }()
-		var complete atomic.Bool
+		defer func() { cancel(); whole.Close() }()
+		// Coverage reports are synchronous with the walk. The worker cannot
+		// send ordinary changes before the scope has finished the handoff.
+		reports := make(chan watchCoverage)
+		ack := make(chan struct{})
+		var usable bool
+		events, watchErrors := native.Events, native.Errors
+		requests, prune := s.requests, s.prune
 		var retryAt <-chan time.Time
 		var timer *time.Timer
 		var attempts int
@@ -115,22 +121,55 @@ func startDirectoryScope(root string, publish func(coreprotocol.FileChange), not
 				timer.Stop()
 			}
 		}()
-		recovery := func(ok bool) {
-			complete.Store(ok)
-			reliable(ok)
-			if ok && index != nil {
-				select {
-				case <-index.Demand():
-					index.Start()
-				default:
-				}
+		candidate := f
+		candidate.coverage = func(c watchCoverage) {
+			select {
+			case reports <- c:
+			case <-ctx.Done():
+				return
+			}
+			select {
+			case <-ack:
+			case <-ctx.Done():
 			}
 		}
+		lost := func() { f.coverage(watchCoverage{rootLost: true}); publish(coreprotocol.FileChange{Resync: true}) }
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case req := <-s.requests:
+			case c := <-reports:
+				if c.rootLost {
+					lost()
+					return
+				}
+				if c.usable && native != nil {
+					_ = native.Close()
+					if err := pin.check(); err != nil {
+						lost()
+						return
+					}
+					native = nil
+					events, watchErrors = nil, nil
+					requests, prune = nil, nil
+					close(s.promoted)
+					publish(coreprotocol.FileChange{Resync: true})
+				}
+				usable = c.usable
+				f.coverage(c)
+				if usable && query == nil && index != nil {
+					index.Start()
+				}
+				select {
+				case ack <- struct{}{}:
+				case <-ctx.Done():
+					return
+				}
+			case req := <-requests:
+				if err := pin.check(); err != nil {
+					req.reply <- err
+					continue
+				}
 				s.mu.Lock()
 				lease := s.owners[req.owner]
 				s.mu.Unlock()
@@ -151,7 +190,7 @@ func startDirectoryScope(root string, publish func(coreprotocol.FileChange), not
 				}
 				s.mu.Unlock()
 				req.reply <- nil
-			case <-s.prune:
+			case <-prune:
 				s.mu.Lock()
 				keep := map[string]bool{root: true}
 				for _, dirs := range s.owners {
@@ -166,13 +205,17 @@ func startDirectoryScope(root string, publish func(coreprotocol.FileChange), not
 						delete(paths, path)
 					}
 				}
-			case evt, ok := <-native.Events:
+			case evt, ok := <-events:
 				if !ok {
 					return
 				}
 				path := filepath.Clean(evt.Name)
 				removed := evt.Has(fsnotify.Remove) || evt.Has(fsnotify.Rename)
 				if removed {
+					if coreWatchPathKey(path) == coreWatchPathKey(root) {
+						lost()
+						return
+					}
 					delete(paths, path)
 				}
 				if skipCoreWatchPath(root, path) {
@@ -181,7 +224,7 @@ func startDirectoryScope(root string, publish func(coreprotocol.FileChange), not
 				rel, _ := filepath.Rel(root, path)
 				git := rel == ".git" || filepath.Dir(rel) == ".git"
 				publish(coreprotocol.FileChange{Path: path, Removed: removed, Git: git})
-			case _, ok := <-native.Errors:
+			case _, ok := <-watchErrors:
 				if !ok {
 					return
 				}
@@ -194,20 +237,26 @@ func startDirectoryScope(root string, publish func(coreprotocol.FileChange), not
 				goto promote
 			case <-query:
 				query = nil
+				if usable && index != nil {
+					if err := pin.check(); err != nil {
+						lost()
+						return
+					}
+					index.Start()
+				}
 				goto promote
 			}
 			continue
 		promote:
-			current, statErr := os.Stat(root)
-			if statErr != nil || !os.SameFile(rootInfo, current) {
-				publish(coreprotocol.FileChange{Resync: true})
+			if whole != nil || retryAt != nil {
 				continue
 			}
-			// Start the complete observer before releasing the loaded folders.
-			// It publishes a resync before the first traversal and fences LSP
-			// until the entire root has been admitted.
-			whole, err = startCoreFileWatch(root, publish, notify, recovery)
+			whole, err = candidate.startRecursive(pin)
 			if err != nil {
+				if os.IsNotExist(err) || errors.Is(err, errWatchRootChanged) {
+					lost()
+					return
+				}
 				attempts++
 				if timer != nil {
 					timer.Stop()
@@ -217,21 +266,6 @@ func startDirectoryScope(root string, publish func(coreprotocol.FileChange), not
 				publish(coreprotocol.FileChange{Resync: true})
 				continue
 			}
-			close(s.promoted)
-			_ = native.Close()
-			native = nil
-			if query != nil {
-				select {
-				case <-ctx.Done():
-					return
-				case <-query:
-					if complete.Load() {
-						index.Start()
-					}
-				}
-			}
-			<-ctx.Done()
-			return
 		}
 	}()
 	return w, nil

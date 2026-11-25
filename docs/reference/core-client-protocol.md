@@ -28,6 +28,9 @@ The connected core can serve startup without a workspace attachment. Opening the
 proposed project transfers this session to the workspace. Closing the chooser
 cannot close the transferred session. A different folder keeps its own root-scoped
 client identity and does not borrow the proposed folder's attachment.
+If a read discovers that the session ended, `startup.inspect`, `.browse` and
+`.catalog` can redial the selected host and repeat that exact read once. The
+original cancellation still applies. Never replay a save or folder creation.
 The application owns profile metadata and saves through the existing settings owner.
 `tui/startup/` owns the detached introduction and project-selection screen.
 The current project layout, settings, and services remain unchanged.
@@ -51,7 +54,11 @@ For `crude PATH`, `startup.inspect` also accepts a regular file or a missing lea
 under an existing parent. It returns the canonical parent and the selected file.
 `--workspace` remains directory-only. A missing leaf opens as a named, unwritten
 buffer; manual Save checks the absent preimage and creates the file. A dangling
-link, special file or missing parent is not a new file.
+link, special file, missing parent or path spelled as a directory is not a
+new file. The admitted filename is opened independently of the shell's
+saved-pane path limit. Its missing-leaf status applies to that open only.
+Core paths keep their host volume: `C:/` is a root, and `//server/share` is
+one volume. A POSIX filename can contain a literal backslash.
 
 `entry.file_only` describes demand, not a new workspace identity. The core uses
 one actor per canonical parent. If only a file has requested it, language
@@ -60,17 +67,28 @@ its effective project settings without restarting the core. Project demand
 lasts for the retained actor, including work that outlives its shells. A file
 attachment to that actor never stops or starts project services for its own
 open document. A project view of the same document can use them as usual. A
-reconnect keeps the original entry intent; an explicit workspace switch opens
-in project mode. See [workspace settings](settings.md#workspace-entry-defaults).
+file shell can send `workspace.open_folder` for its current attachment. This
+uses the same project demand and enrolls that owner's existing buffers with
+their current text; it does not detach, save, or change peer document owners.
+Reconnect and [checkpoint handover](core-restart.md) use the acknowledged
+entry intent. A different-workspace switch opens in project mode.
+See [workspace settings](settings.md#workspace-entry-defaults).
 
 A top-level actor first watches the root and each directory for which a shell
 loads a listing. This includes cached collapsed rows; detach releases that
-shell's directory interests. Open documents keep their own outside-edit watch.
+shell's directory interests. On reconnect the shell refreshes every loaded
+listing, including collapsed ones, without reading unopened subtrees. Open
+documents keep their own outside-edit watch.
 Find in Files and Go to File scan on explicit requests, not at attach. No
 project-wide language discovery, recursive watch setup or text-index build
 runs by default. An explicit request for indexed content or enabling language
-servers starts complete observation; only a content query starts the text
-index. Language-server project coverage stays fenced until observation is ready.
+servers starts recursive observation; only a content query starts the text
+index in a top-level folder. The scoped watch serves listings through takeover.
+A pinned directory handle prevents a replacement from inheriting coverage.
+If a subtree denies access, the watcher continues with readable siblings and
+retries the excluded branches. Status identifies the affected folder. Ranking
+remains usable; neither the index nor project diagnostics claim full coverage
+while folders are missing. Reopen the workspace after its root is replaced.
 
 | Operation | Contract |
 |---|---|

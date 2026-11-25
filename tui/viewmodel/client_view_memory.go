@@ -256,11 +256,6 @@ func (m *App) installViewMemory(memory viewMemory) {
 		if memory.ActivePane < 0 || memory.ActivePane >= len(memory.Panes) {
 			memory.ActivePane = 0
 		}
-		pane := &memory.Panes[memory.ActivePane]
-		if !slices.Contains(pane.Files, m.launchFile) {
-			pane.Files = append(pane.Files, m.launchFile)
-		}
-		pane.Active = m.launchFile
 	}
 	m.restoreViewPanes(memory)
 	m.viewMemoryVersion, m.viewMemorySavedVersion = 0, 0
