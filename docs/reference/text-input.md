@@ -38,8 +38,8 @@ shared control, never to one popup.
   composes a read-only TextArea with the shared ScrollbarControl bound to that
   same model. It reserves a scrollbar column only when the wrapped content
   exceeds the assigned height; keys, wheel and thumb dragging cannot diverge.
-  Wrap counts retain the two most recent widths and the content and terminal-width
-  profile generations. Repeated layout does not rewrap unchanged long text.
+  Wrapped rows retain the two most recent widths and the content, chip and
+  terminal-width profile generations. Repeated layout does not rewrap unchanged long text.
 - TextArea may color individual graphemes by their starting flat rune offset.
   Semantic roles follow theme changes and native selection contrast. Content
   edits retire the colors; they never change wrapping, copy text or input routing.
@@ -168,7 +168,7 @@ selectors. See the [Windows emoji regression](../issues/2026-11-25-windows-emoji
   remains image-only and never reads unrelated text.
 - **Text areas splice pastes in one linear pass.** `TextArea` insertions never
   loop rune by rune, and wrap segment offsets come from one
-  `rendering.FindSegmentStarts` walk per line, not one per visual row. Only the
+  `rendering.WordWrapRuneRanges` walk per line, not one per visual row. Only the
   composer promotes large pastes off the UI; every other text field inserts
   the payload in place, so a multi-megabyte instructions paste must still
   return promptly.
@@ -183,8 +183,8 @@ selectors. See the [Windows emoji regression](../issues/2026-11-25-windows-emoji
   keeps the selection for editing and never writes the clipboard, while a
   read-only control is a reading surface that copies on release and drops the
   highlight (like the chat transcript and terminals). Hosts add policy on top:
-  the chat composer clears its draft on an unhandled Ctrl+C, and its Esc ladder
-  is selection → draft → cancel the turn.
+  the chat composer clears its draft on an unhandled Ctrl+C. Its Esc ladder is selection,
+  visible slash list, draft, then cancel the turn.
 - **Line breaks and commits use the semantic chords** in `tui/ui/chords.go`:
   where Enter sends (the composer, single-line areas) the newline chord
   (Shift+Enter, Alt+Enter, Ctrl+J) breaks the line; in multi-line areas the
@@ -201,6 +201,20 @@ selectors. See the [Windows emoji regression](../issues/2026-11-25-windows-emoji
   password/API-key field can never be exfiltrated through the clipboard.
 
 ## Composer
+
+- Type `/` at the start of a word anywhere in a draft. If the token at the
+  caret matches a command, the list shows name prefixes first, then matches in
+  descriptions. For example, `/model` offers **settings** before or after prose.
+  Click a choice or press Enter to run it. Esc closes the list without changing
+  the draft. Tab completes a whole command line
+  or runs the choice inside a prompt. A command inside a prompt removes only
+  its name and keeps the rest of the draft. With no list, Enter never chooses
+  a description match. A path such as `/usr/bin` stays plain text.
+- An inline attachment stays on one row. If it does not fit beside the text,
+  the whole chip moves to the next row. A chip wider than the text column
+  fills its own row with a shortened label. Movement, selection, edits and
+  undo use the full chip, not the shortened text. Space before it inserts a
+  space. To open the attachment, click its chip.
 
 - Enter acknowledges on the next frame: the submitted draft stays intact and
   dimmed until the core's durable receipt clears it (`MarkSending` /

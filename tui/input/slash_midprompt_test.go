@@ -50,6 +50,7 @@ func TestSlashCommandBetweenWordsRemovesOnlyItsName(t *testing.T) {
 	model.SetInput("alpha  beta")
 	model.input.SetCursorFlat(len("alpha "))
 	model = typeInto(t, model, "/sett")
+	model.LayoutShell(72, model.ShellHeight(72))
 	updated, _, event := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, false, false)
 	if slash, ok := event.(SlashCommandEvent); !ok || slash.Command != "/settings" {
 		t.Fatalf("event=%#v", event)
@@ -68,6 +69,7 @@ func TestSlashCommandInsidePromptKeepsAttachments(t *testing.T) {
 	model.UseReferenceIDs([]string{ref.ID})
 	model.input.SetCursorFlat(len([]rune(model.Value())))
 	model = typeInto(t, model, "/sess")
+	model.LayoutShell(72, model.ShellHeight(72))
 	updated, _, event := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, false, false)
 	if slash, ok := event.(SlashCommandEvent); !ok || slash.Command != "/sessions" || len(slash.ReferenceIDs) != 0 {
 		t.Fatalf("event=%#v", event)

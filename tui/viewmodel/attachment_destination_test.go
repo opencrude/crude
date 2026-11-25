@@ -18,7 +18,6 @@ import (
 
 	"crude/agent/prompthistory"
 	"crude/agent/sessiondb"
-	"crude/tui/input"
 	"crude/tui/ui"
 	"crude/types/attachment"
 	"crude/types/conversation"
@@ -99,7 +98,7 @@ func TestPastedAttachmentChipAndPreviewUseTheSameName(t *testing.T) {
 
 func TestAttachmentDestinationAllEntryPoints(t *testing.T) {
 	for _, destination := range []string{"", "system", "file-manager", "crude"} {
-		for _, entry := range []string{"chip", "keyboard", "posted", "sqlite", "prompt-history"} {
+		for _, entry := range []string{"chip", "action", "posted", "sqlite", "prompt-history"} {
 			t.Run(destination+"/"+entry, func(t *testing.T) {
 				app := newTranscriptAttachmentApp(t)
 				calls := recordDesktopLauncher(t, app)
@@ -120,10 +119,9 @@ func TestAttachmentDestinationAllEntryPoints(t *testing.T) {
 					x, y := app.inputRect.X+chips[0].Body.X+1, app.inputRect.Y+chips[0].Body.Y
 					_, command := app.Update(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
 					runAppCommand(t, app, command)
-				case "keyboard":
-					for _, command := range app.handleInputEvent(input.RefOpenEvent{ID: ref.ID}) {
-						runAppCommand(t, app, command)
-					}
+				case "action":
+					// The chip's open action, as menus and semantic control send it.
+					runAppCommand(t, app, app.handleHostAction(&ui.Action{ID: "input.attachment.open", Payload: ref.ID}))
 				case "posted", "sqlite":
 					if entry == "sqlite" {
 						app.hydrateActiveMessages(ChatMessagesFromViews(retainedAttachmentRows(t, ref, "Inspect "+ref.Label)))

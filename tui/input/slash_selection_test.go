@@ -87,6 +87,7 @@ func TestSlashNameMatchTakesPriorityOverRetainedDescription(t *testing.T) {
 	model := NewModel(theme.DefaultDark())
 	model.SetInput("/")
 	model.SetInput("/lo") // "plan" still matches "explore", but "loop" is the name prefix.
+	model.LayoutShell(72, model.ShellHeight(72))
 	updated, _, event := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, false, false)
 	slash, ok := event.(SlashCommandEvent)
 	if !ok || slash.Command != "/loop" || updated.Value() != "" {

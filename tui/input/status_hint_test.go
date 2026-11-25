@@ -1,6 +1,7 @@
 package input
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -94,13 +95,16 @@ func TestDraftRevisionFencesReceiptAfterEditorOnlyChanges(t *testing.T) {
 				m.SetSelection(0, 4)
 			}
 			revision := m.DraftRevision()
-			before := m.draftStateKey()
+			snapshot := func() string {
+				return fmt.Sprintf("%v:%d:%v:%s", m.input.EditState(), m.DraftEpoch(), m.SnapshotReferenceIDs(), m.Value())
+			}
+			before := snapshot()
 			change.mutate(&m)
-			after := m.draftStateKey()
+			after := snapshot()
 			if before == after {
 				t.Fatal("fixture did not change the editable draft state")
 			}
-			if m.ClearInputAtRevision(revision) || m.draftStateKey() != after {
+			if m.ClearInputAtRevision(revision) || snapshot() != after {
 				t.Fatal("late receipt consumed a newer cursor, selection or scroll state")
 			}
 		})

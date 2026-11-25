@@ -928,10 +928,6 @@ func (m *App) handleInputEvent(evt any) []tea.Cmd {
 		cmds = append(cmds, m.recallPrompt(e))
 	case input.SettingsOpenEvent:
 		m.openSessionSettings()
-	case input.RefOpenEvent:
-		if cmd := m.openAttachment(e.ID, false); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
 	case input.PasteAttachmentEvent:
 		cmds = append(cmds, m.storePastedText(e))
 	case input.PasteFragmentEvent:

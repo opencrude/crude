@@ -2,9 +2,12 @@ package ui
 
 import (
 	"maps"
+	"slices"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -443,16 +446,17 @@ func (t *TextArea) FlatToLineCol(pos int) (int, int) { return t.edit.FlatToLineC
 func (t *TextArea) DeleteRange(start, end int) { t.edit.DeleteRange(start, end) }
 
 // SetAtomicRanges sets the atomic (untouchable) ranges for reference chips.
-func (t *TextArea) SetAtomicRanges(ranges []AtomicRange) { t.edit.SetAtomicRanges(ranges) }
+func (t *TextArea) SetAtomicRanges(ranges []AtomicRange) {
+	if t.edit.SetAtomicRanges(ranges) {
+		t.EnsureCursorVisible()
+	}
+}
 
 // AtomicRanges returns a copy of the currently registered atomic ranges,
 // including display tone. Attachment flows use it to verify chip state.
 func (t *TextArea) AtomicRanges() []AtomicRange {
-	return append([]AtomicRange(nil), t.edit.atomicRanges...)
+	return slices.Clone(t.edit.atomicRanges)
 }
-
-// NormalizeCursorAtomic snaps the cursor out of any atomic range.
-func (t *TextArea) NormalizeCursorAtomic() { t.edit.NormalizeCursorAtomic() }
 
 // MouseToFlatPos translates a local (x, y) within the painted area to a flat
 // rune cursor offset. Returns the end offset if y is below the content.
@@ -570,7 +574,7 @@ func (t *TextArea) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pain
 	cursorVisible := ctx.Focused && t.cursor.Visible(ctx.Frame)
 
 	// Placeholder when empty
-	if t.edit.Len() == 0 && t.placeholder != "" {
+	if t.placeholder != "" && len(t.edit.buf) == 1 && len(t.edit.buf[0]) == 0 {
 		// First-row prompt glyph
 		t.paintPromptPrefix(buf, ox, oy, fg, bg, true)
 		phFG := fg
@@ -601,64 +605,23 @@ func (t *TextArea) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pain
 		selBG = t.tokens.Color(ColorTextSelection)
 	}
 
-	lines := t.edit.Lines()
-	visRow := 0
-	flatOffset := 0
-	for li, logLine := range lines {
-		segs := rendering.WordWrap(string(logLine), textW)
-		var starts []int
-		if visRow+len(segs) > t.ScrollOffset() {
-			// Row offsets are only needed once part of this line is on screen.
-			starts = rendering.FindSegmentStarts(logLine, textW)
-		}
-		cursorSeg := -1
-		if li == t.edit.CurLine() && starts != nil {
-			// Resolve the cursor's segment once per line from the offsets above.
-			// Re-deriving it per painted row re-wrapped the line for every row.
-			cursorSeg = segmentIdxFromStarts(starts, segs, t.edit.CurCol())
-		}
-		for si, seg := range segs {
-			isFirst := li == 0 && si == 0
-			if visRow < t.ScrollOffset() {
-				visRow++
-				continue
-			}
-			screenY := oy + visRow - t.ScrollOffset()
-			if screenY >= oy+r.H {
+	w := t.edit.wrapped(textW)
+	first := t.ScrollOffset()
+	cursorRow := w.lines[t.edit.curLine].first + w.lines[t.edit.curLine].rowAtCursor(t.edit.curCol)
+	cursorPos := w.lines[t.edit.curLine].flat + t.edit.curCol
+	for li := w.lineAtRow(first); li < len(w.lines); li++ {
+		line := w.lines[li]
+		for si := max(0, first-line.first); si < len(line.rows); si++ {
+			row := line.first + si
+			y := oy + row - first
+			if y >= oy+r.H {
 				return
 			}
-			// Prompt glyph / continuation indent at the start of the row
-			t.paintPromptPrefix(buf, ox, screenY, fg, bg, isFirst)
-
-			segRunes := []rune(seg)
-			segStart := 0
-			if si < len(starts) {
-				segStart = starts[si]
-			}
-			lineTokenStart := segStart
-			lineTokenEnd := segStart + len(segRunes)
-			isCursorSeg := li == t.edit.CurLine() && si == cursorSeg
-
-			t.paintSegment(buf, textX, screenY, textW, logLine, flatOffset,
-				lineTokenStart, lineTokenEnd, isCursorSeg,
-				selStart, selEnd, cursorVisible, ctx.Focused,
-				fg, cursorFG, bg, selBG)
-			// The row was painted in logical order, cursor and selection
-			// included; arranging it moves them with their characters.
-			buf.ApplyLine(textX, screenY, t.edit.rowLine(li, segStart, len(segRunes)))
-
-			visRow++
-		}
-		flatOffset += len(logLine) + 1
-	}
-
-	// Empty buffer: draw prompt + block cursor at the origin
-	if visRow == 0 && ctx.Focused {
-		if oy < oy+r.H {
-			t.paintPromptPrefix(buf, ox, oy, fg, bg, true)
-			if cursorVisible {
-				PaintBlockCursor(buf, textX, oy, cursorFG, bg)
-			}
+			seg := line.rows[si]
+			t.paintPromptPrefix(buf, ox, y, fg, bg, row == 0)
+			t.paintSegment(buf, textX, y, textW, t.edit.buf[li], line.flat, seg.Start, seg.End, row == cursorRow,
+				cursorPos, selStart, selEnd, cursorVisible, ctx.Focused, fg, cursorFG, bg, selBG, w.clipped)
+			buf.ApplyLine(textX, y, t.edit.rowLine(li, seg.Start, seg.End-seg.Start))
 		}
 	}
 }
@@ -687,10 +650,8 @@ func (t *TextArea) paintPromptPrefix(buf *surface.CellBuffer, x, y int, fg, bg c
 }
 
 func (t *TextArea) paintSegment(buf *surface.CellBuffer, x, y, width int, line []rune,
-	flatOffset, start, end int, isCursorSeg bool, selStart, selEnd int,
-	cursorVisible, focused bool, fg, cursorFG, bg, selBG cell.Color) {
-
-	cursorPos := t.edit.CursorFlat()
+	flatOffset, start, end int, isCursorSeg bool, cursorPos, selStart, selEnd int,
+	cursorVisible, focused bool, fg, cursorFG, bg, selBG cell.Color, clipped map[int]string) {
 	col := 0
 	pos := start
 	for pos < end && col < width {
@@ -698,11 +659,13 @@ func (t *TextArea) paintSegment(buf *surface.CellBuffer, x, y, width int, line [
 
 		// Atomic range chip: render the whole token at once, then advance.
 		if ar, ok := t.edit.atomicRangeStartingAt(flatPos); ok && ar.End <= flatOffset+end {
-			labelRunes := line[pos : pos+(ar.End-ar.Start)]
-			label := string(labelRunes)
+			label, ok := clipped[flatPos]
+			if !ok {
+				label = string(line[pos : pos+ar.End-ar.Start])
+			}
 			cursorInChip := focused && isCursorSeg && cursorPos >= ar.Start && cursorPos < ar.End
 			col += t.paintAtomicChip(buf, x+col, y, label, ar, cursorInChip,
-				cursorVisible, selStart, selEnd, fg, cursorFG, bg, selBG)
+				cursorVisible, cursorPos, selStart, selEnd, fg, cursorFG, bg, selBG)
 			pos += ar.End - ar.Start
 			continue
 		}
@@ -751,6 +714,8 @@ func (t *TextArea) paintSegment(buf *surface.CellBuffer, x, y, width int, line [
 	if cursorVisible && focused && isCursorSeg && cursorPos == flatOffset+end {
 		if col < width {
 			PaintBlockCursor(buf, x+col, y, cursorFG, bg)
+		} else if ar, ok := t.edit.atomicRangeAround(cursorPos - 1); ok && ar.End == cursorPos {
+			PaintBlockCursor(buf, x+width-1, y, cursorFG, bg)
 		}
 	}
 }
@@ -762,7 +727,7 @@ func (t *TextArea) paintSegment(buf *surface.CellBuffer, x, y, width int, line [
 // background. A visible text cursor reverses only the grapheme under it.
 func (t *TextArea) paintAtomicChip(buf *surface.CellBuffer, x, y int, label string,
 	ar AtomicRange, cursorInChip, cursorVisible bool,
-	selStart, selEnd int, fg, cursorFG, bg, selBG cell.Color) int {
+	cursorPos, selStart, selEnd int, fg, cursorFG, bg, selBG cell.Color) int {
 	chipFG := fg
 	chipBG := bg
 	if t.tokens != nil {
@@ -775,7 +740,6 @@ func (t *TextArea) paintAtomicChip(buf *surface.CellBuffer, x, y int, label stri
 	if t.hoverFlat >= ar.Start && t.hoverFlat < ar.End && t.tokens != nil {
 		chipBG = t.tokens.Color(ColorHover)
 	}
-	cursorPos := t.edit.CursorFlat()
 	col := 0
 	pos := 0
 	for len(label) > 0 {
@@ -931,9 +895,7 @@ func (t *TextArea) projectPointer(pos int) {
 	start, end := pos, pos
 	switch t.pointer.unit {
 	case textSelectionWord:
-		line, col := t.edit.flatToLineCol(pos)
-		a, b := textWordRange(t.edit.buf[line], col)
-		start, end = t.edit.lineColToFlat(line, a), t.edit.lineColToFlat(line, b)
+		start, end = t.edit.wordAt(pos)
 	case textSelectionLine:
 		line, _ := t.edit.flatToLineCol(pos)
 		start = t.edit.lineColToFlat(line, 0)
@@ -1103,59 +1065,6 @@ func (t *TextArea) Update(msg tea.Msg, disabled bool) tea.Cmd {
 	return nil
 }
 
-// segmentIdxFromStarts maps a logical rune column to its visual segment using
-// offsets already computed for the line, so paint never re-wraps the line per
-// row.
-func segmentIdxFromStarts(starts []int, segs []string, col int) int {
-	for si := range segs {
-		start := 0
-		if si < len(starts) {
-			start = starts[si]
-		}
-		if col < start {
-			return si
-		}
-		if col <= start+len([]rune(segs[si])) || si == len(segs)-1 {
-			return si
-		}
-	}
-	return 0
-}
-
-// cursorSegmentInfo maps a logical rune cursor to the visible segment and cell
-// column produced by WordWrap. WordWrap intentionally discards whitespace at
-// the start of continuation rows, so logical cursor offsets can fall between a
-// segment's visible end and the next segment's rune start. Those offsets map to
-// column zero of the following segment instead of being sliced as though they
-// were part of its visible text.
-func cursorSegmentInfo(curLine, curCol int, buf [][]rune, textW int) (segment, visualCol int) {
-	if curLine < 0 || curLine >= len(buf) {
-		return 0, 0
-	}
-	runes := buf[curLine]
-	curCol = min(max(0, curCol), len(runes))
-	segs := rendering.WordWrap(string(runes), textW)
-	starts := rendering.FindSegmentStarts(runes, textW)
-	for si := range segs {
-		segStart := 0
-		if si < len(starts) {
-			segStart = starts[si]
-		}
-		if curCol < segStart {
-			return si, 0
-		}
-		segEnd := segStart + len([]rune(segs[si]))
-		if curCol <= segEnd || si == len(segs)-1 {
-			cursorInSegment := min(curCol, segEnd)
-			return si, rendering.RuneIdxToCol(
-				runes[segStart:cursorInSegment],
-				cursorInSegment-segStart,
-			)
-		}
-	}
-	return 0, 0
-}
-
 var _ Component = (*TextArea)(nil)
 var _ TextClipboardTarget = (*TextArea)(nil)
 
@@ -1168,46 +1077,42 @@ var _ TextClipboardTarget = (*TextArea)(nil)
 // Pointer capture belongs to TextArea, independently of this selection anchor.
 // ---------------------------------------------------------------------------
 type textAreaEngine struct {
-	buf                   [][]rune
-	curLine               int
-	curCol                int
-	lastVisCol            int
-	selActive             bool
-	selAnchor             int
-	selEnd                int
-	lastInputTime         time.Time
-	frame                 int
-	textWidth             int
-	atomicRanges          []AtomicRange
-	undo                  []textAreaSnapshot
-	redo                  []textAreaSnapshot
-	contentRevision       uint64
-	wrapCacheRevision     uint64
-	wrapProfileGeneration uint64
-	wrapCacheWidth        int
-	wrapCacheCount        int
-	wrapPreviousWidth     int
-	wrapPreviousCount     int
-	atomicRevision        uint64
-	bidi                  textAreaBidi
+	buf             [][]rune
+	curLine         int
+	curCol          int
+	lastVisCol      int
+	selActive       bool
+	selAnchor       int
+	selEnd          int
+	lastInputTime   time.Time
+	frame           int
+	textWidth       int
+	atomicRanges    []AtomicRange
+	undo            []textAreaSnapshot
+	redo            []textAreaSnapshot
+	contentRevision uint64
+	wrap            [2]textAreaWrap
+	atomicRevision  uint64
+	bidi            textAreaBidi
 }
 
 // textAreaBidi caches the bidirectional layout of every logical line for one
 // content revision, chip set and presentation policy.
 type textAreaBidi struct {
-	valid                        bool
-	content, atoms, presentation uint64
-	lines                        []textLineBidi
+	valid                                 bool
+	content, atoms, presentation, profile uint64
+	lines                                 []textLineBidi
 }
 
 type textAreaSnapshot struct {
 	value               string
+	atoms               []AtomicRange // immutable, shared with the engine until an edit replaces them
 	cursor, anchor, end int
 	selActive           bool
 }
 
 func newTextAreaEngine() *textAreaEngine {
-	return &textAreaEngine{buf: [][]rune{{}}, wrapCacheRevision: ^uint64(0)}
+	return &textAreaEngine{buf: [][]rune{{}}}
 }
 
 func (e *textAreaEngine) touchContent() { e.contentRevision++ }
@@ -1287,19 +1192,8 @@ func (e *textAreaEngine) handleKey(msg tea.KeyPressMsg) {
 
 	switch msg.Code {
 	case tea.KeyEnter:
-		if shift {
-			// Shift+Enter: insert newline (same as plain Enter in multi-line)
-			e.splitLineAt(e.curLine, e.curCol)
-			e.curLine++
-			e.curCol = 0
-			break
-		}
-		e.selActive = false
-		e.selAnchor = 0
-		e.selEnd = 0
-		e.splitLineAt(e.curLine, e.curCol)
-		e.curLine++
-		e.curCol = 0
+		e.ClearSelection()
+		e.insertText("\n")
 	case tea.KeyBackspace:
 		if word && !e.HasActiveSelection() {
 			pos := e.cursorPrevWord()
@@ -1484,12 +1378,14 @@ func (e *textAreaEngine) handleKey(msg tea.KeyPressMsg) {
 				e.selEnd = 0
 			}
 		} else {
-			for _, r := range msg.Text {
+			printable := strings.Map(func(r rune) rune {
 				if isEditableRune(r) {
-					pos := e.lineColToFlat(e.curLine, e.curCol)
-					e.insertRuneAt(pos, r)
-					e.curCol++
+					return r
 				}
+				return -1
+			}, msg.Text)
+			if printable != "" {
+				e.insertText(printable)
 			}
 			e.selActive = false
 			e.selAnchor = 0
@@ -1516,6 +1412,7 @@ func (e *textAreaEngine) Value() string {
 }
 
 func (e *textAreaEngine) SetValue(s string) {
+	e.atomicRanges = nil
 	lines := strings.Split(s, "\n")
 	e.buf = make([][]rune, len(lines))
 	for i, l := range lines {
@@ -1574,6 +1471,10 @@ func (e *textAreaEngine) insertText(text string) {
 	lineIdx := min(max(e.curLine, 0), len(e.buf)-1)
 	line := e.buf[lineIdx]
 	col := min(max(e.curCol, 0), len(line))
+	if len(e.atomicRanges) > 0 {
+		pos := e.CursorFlat()
+		e.spliceAtoms(pos, pos, utf8.RuneCountInString(text))
+	}
 	parts := strings.Split(text, "\n")
 	if len(parts) == 1 {
 		inserted := []rune(parts[0])
@@ -1609,6 +1510,7 @@ func (e *textAreaEngine) insertText(text string) {
 }
 
 func (e *textAreaEngine) Clear() {
+	e.atomicRanges = nil
 	e.buf = [][]rune{{}}
 	e.curLine = 0
 	e.curCol = 0
@@ -1631,8 +1533,27 @@ func (e *textAreaEngine) Len() int {
 	return n
 }
 
+// wordSpan bounds a word scan to prose between chips. A chip, even one
+// touching prose without intervening whitespace, is a word of its own.
+func (e *textAreaEngine) wordSpan(pos, total int) (start, end int, chip bool) {
+	i := e.atomAfter(pos)
+	if i < len(e.atomicRanges) {
+		a := e.atomicRanges[i]
+		if a.Start <= pos {
+			return a.Start, a.End, true
+		}
+		end = a.Start
+	} else {
+		end = total
+	}
+	if i > 0 {
+		start = e.atomicRanges[i-1].End
+	}
+	return start, end, false
+}
+
 func (e *textAreaEngine) cursorPrevWord() int {
-	pos := e.lineColToFlat(e.curLine, e.curCol)
+	pos := e.CursorFlat()
 	if pos <= 0 {
 		return 0
 	}
@@ -1641,23 +1562,27 @@ func (e *textAreaEngine) cursorPrevWord() int {
 	for pos > 0 && buf[pos] == ' ' {
 		pos--
 	}
-	for pos > 0 && buf[pos-1] != ' ' {
+	start, _, chip := e.wordSpan(pos, len(buf))
+	if chip {
+		return start
+	}
+	for pos > start && buf[pos-1] != ' ' {
 		pos--
 	}
 	return pos
 }
 
 func (e *textAreaEngine) cursorNextWord() int {
-	pos := e.lineColToFlat(e.curLine, e.curCol)
+	pos := e.CursorFlat()
 	buf := []rune(e.Value())
-	total := len(buf)
-	if pos >= total {
-		return total
-	}
-	for pos < total && buf[pos] == ' ' {
+	for pos < len(buf) && buf[pos] == ' ' {
 		pos++
 	}
-	for pos < total && buf[pos] != ' ' {
+	_, end, chip := e.wordSpan(pos, len(buf))
+	if chip {
+		return end
+	}
+	for pos < end && buf[pos] != ' ' {
 		pos++
 	}
 	return pos
@@ -1669,13 +1594,12 @@ func (e *textAreaEngine) cursorNextDeleteWord() int {
 	if pos >= len(buf) {
 		return len(buf)
 	}
-	if unicode.IsSpace(buf[pos]) {
-		for pos < len(buf) && unicode.IsSpace(buf[pos]) {
-			pos++
-		}
-		return pos
+	_, end, chip := e.wordSpan(pos, len(buf))
+	if chip {
+		return end
 	}
-	for pos < len(buf) && !unicode.IsSpace(buf[pos]) {
+	space := unicode.IsSpace(buf[pos])
+	for pos < end && unicode.IsSpace(buf[pos]) == space {
 		pos++
 	}
 	return pos
@@ -1700,6 +1624,8 @@ func (e *textAreaEngine) deleteRange(start, end int) {
 	if start >= end {
 		return
 	}
+	start, end = e.atomicBoundary(start, false), e.atomicBoundary(end, true)
+	e.spliceAtoms(start, end, 0)
 	defer e.touchContent()
 	sLine, sCol := e.flatToLineCol(start)
 	eLine, eCol := e.flatToLineCol(end)
@@ -1735,36 +1661,7 @@ func (e *textAreaEngine) CursorVisualLine() int {
 func (e *textAreaEngine) TotalVisualLines() int { return e.visualLineCount() }
 
 func (e *textAreaEngine) VisualLineCount(textW int) int {
-	if textW < 1 {
-		textW = 1
-	}
-	profile := rendering.WidthProfileGeneration()
-	if e.wrapCacheRevision == e.contentRevision && e.wrapProfileGeneration == profile {
-		if e.wrapCacheWidth == textW {
-			return e.wrapCacheCount
-		}
-		if e.wrapPreviousWidth == textW {
-			// Promote the other warm width. Composite readers measure with
-			// and without a scrollbar and must not rewrap on each layout.
-			e.wrapCacheWidth, e.wrapPreviousWidth = e.wrapPreviousWidth, e.wrapCacheWidth
-			e.wrapCacheCount, e.wrapPreviousCount = e.wrapPreviousCount, e.wrapCacheCount
-			return e.wrapCacheCount
-		}
-		e.wrapPreviousWidth, e.wrapPreviousCount = e.wrapCacheWidth, e.wrapCacheCount
-	} else {
-		e.wrapPreviousWidth, e.wrapPreviousCount = 0, 0
-	}
-	count := 0
-	for _, l := range e.buf {
-		segments := rendering.WordWrap(string(l), textW)
-		count += len(segments)
-	}
-	if count < 1 {
-		count = 1
-	}
-	e.wrapCacheRevision, e.wrapCacheWidth, e.wrapCacheCount = e.contentRevision, textW, count
-	e.wrapProfileGeneration = profile
-	return count
+	return e.wrapped(textW).count
 }
 
 func (e *textAreaEngine) SelectionRange() (start, end int) {
@@ -1781,6 +1678,7 @@ func (e *textAreaEngine) HasActiveSelection() bool {
 
 func (e *textAreaEngine) SetSelection(anchor, end int) {
 	anchor, end = min(e.Len(), max(0, anchor)), min(e.Len(), max(0, end))
+	anchor, end = e.atomicBoundary(anchor, anchor > end), e.atomicBoundary(end, end > anchor)
 	e.selActive = true
 	e.selAnchor = anchor
 	e.selEnd = end
@@ -1810,7 +1708,7 @@ func (e *textAreaEngine) SelectedText() string {
 
 func (e *textAreaEngine) snapshot() textAreaSnapshot {
 	return textAreaSnapshot{
-		value: e.Value(), cursor: e.CursorFlat(), anchor: e.selAnchor,
+		value: e.Value(), atoms: e.atomicRanges, cursor: e.CursorFlat(), anchor: e.selAnchor,
 		end: e.selEnd, selActive: e.selActive,
 	}
 }
@@ -1824,6 +1722,7 @@ func (e *textAreaEngine) restore(snapshot textAreaSnapshot) {
 	if len(e.buf) == 0 {
 		e.buf = [][]rune{{}}
 	}
+	e.atomicRanges = snapshot.atoms
 	e.setCursorFlat(snapshot.cursor)
 	e.selAnchor, e.selEnd, e.selActive = snapshot.anchor, snapshot.end, snapshot.selActive
 	e.touchContent()
@@ -1864,10 +1763,19 @@ func (e *textAreaEngine) deleteActiveSelectionWithHistory() bool {
 	return true
 }
 
-func (e *textAreaEngine) selectWordAt(pos int) {
+func (e *textAreaEngine) wordAt(pos int) (start, end int) {
 	line, col := e.flatToLineCol(pos)
-	a, b := textWordRange(e.buf[line], col)
-	start, end := e.lineColToFlat(line, a), e.lineColToFlat(line, b)
+	flat := pos - col
+	lo, hi, chip := e.wordSpan(pos, flat+len(e.buf[line]))
+	if chip {
+		return lo, hi
+	}
+	lo, hi = max(flat, lo), min(flat+len(e.buf[line]), hi)
+	a, b := textWordRange(e.buf[line][lo-flat:hi-flat], pos-lo)
+	return lo + a, lo + b
+}
+func (e *textAreaEngine) selectWordAt(pos int) {
+	start, end := e.wordAt(pos)
 	e.SetSelection(start, end)
 	e.setCursorFlat(end)
 }
@@ -1909,56 +1817,79 @@ func (e *textAreaEngine) moveVisualRows(delta int, extend bool) {
 }
 
 func (e *textAreaEngine) FlatToLineCol(pos int) (int, int) { return e.flatToLineCol(pos) }
-func (e *textAreaEngine) SetCursorFlat(pos int)            { e.setCursorFlat(pos) }
+func (e *textAreaEngine) SetCursorFlat(pos int)            { e.setCursorFlat(e.atomicBoundary(pos, false)) }
 func (e *textAreaEngine) DeleteRange(start, end int)       { e.deleteRange(start, end) }
 
-func (e *textAreaEngine) SetAtomicRanges(ranges []AtomicRange) {
+func (e *textAreaEngine) SetAtomicRanges(ranges []AtomicRange) bool {
+	if slices.Equal(e.atomicRanges, ranges) {
+		return false
+	}
+	ranges = slices.Clone(ranges)
+	for i, a := range ranges {
+		if a.Start > a.End {
+			ranges[i].Start, ranges[i].End = a.End, a.Start
+		}
+	}
+	sort.Slice(ranges, func(i, j int) bool { return ranges[i].Start < ranges[j].Start })
 	e.atomicRanges = ranges
 	e.atomicRevision++
-	for i := range e.atomicRanges {
-		if e.atomicRanges[i].Start > e.atomicRanges[i].End {
-			e.atomicRanges[i].Start, e.atomicRanges[i].End = e.atomicRanges[i].End, e.atomicRanges[i].Start
-		}
+	e.snapCursorAcrossAtomic(true)
+	if e.selActive {
+		e.SetSelection(e.selAnchor, e.selEnd)
 	}
+	return true
 }
 
-func (e *textAreaEngine) NormalizeCursorAtomic() { e.snapCursorAcrossAtomic(true) }
+// spliceAtoms updates object positions for the same logical splice as the
+// text. Keep the old slice immutable: undo and redo retain its identities.
+func (e *textAreaEngine) spliceAtoms(start, end, inserted int) {
+	i := e.atomAfter(start)
+	if i == len(e.atomicRanges) {
+		return
+	}
+	next := make([]AtomicRange, i, len(e.atomicRanges))
+	copy(next, e.atomicRanges[:i])
+	delta := inserted - (end - start)
+	for _, a := range e.atomicRanges[i:] {
+		if a.Start < end {
+			continue
+		}
+		a.Start += delta
+		a.End += delta
+		next = append(next, a)
+	}
+	e.atomicRanges = next
+}
 
 func (e *textAreaEngine) SetTextWidth(w int) { e.textWidth = w }
-
-func (e *textAreaEngine) atomicRangeStartingAt(pos int) (AtomicRange, bool) {
-	for _, ar := range e.atomicRanges {
-		if ar.Start == pos && ar.End > ar.Start {
-			return ar, true
-		}
-	}
-	return AtomicRange{}, false
+func (e *textAreaEngine) atomAfter(pos int) int {
+	return sort.Search(len(e.atomicRanges), func(i int) bool { return e.atomicRanges[i].End > pos })
 }
 
 func (e *textAreaEngine) atomicRangeAround(pos int) (AtomicRange, bool) {
-	for _, ar := range e.atomicRanges {
-		if ar.End <= ar.Start {
-			continue
-		}
-		if pos >= ar.Start && pos < ar.End {
-			return ar, true
-		}
+	i := e.atomAfter(pos)
+	if i < len(e.atomicRanges) && e.atomicRanges[i].Start <= pos {
+		return e.atomicRanges[i], true
 	}
 	return AtomicRange{}, false
 }
-
+func (e *textAreaEngine) atomicRangeStartingAt(pos int) (AtomicRange, bool) {
+	a, ok := e.atomicRangeAround(pos)
+	return a, ok && a.Start == pos
+}
+func (e *textAreaEngine) atomicBoundary(pos int, forward bool) int {
+	if a, ok := e.atomicRangeAround(pos); ok && a.Start < pos {
+		if forward {
+			return a.End
+		}
+		return a.Start
+	}
+	return pos
+}
 func (e *textAreaEngine) snapCursorAcrossAtomic(forward bool) {
 	pos := e.CursorFlat()
-	for _, ar := range e.atomicRanges {
-		if ar.End <= ar.Start || pos <= ar.Start || pos >= ar.End {
-			continue
-		}
-		if forward {
-			e.setCursorFlat(ar.End)
-		} else {
-			e.setCursorFlat(ar.Start)
-		}
-		return
+	if boundary := e.atomicBoundary(pos, forward); boundary != pos {
+		e.setCursorFlat(boundary)
 	}
 }
 
@@ -2000,24 +1931,6 @@ func (e *textAreaEngine) lineColToFlat(line, col int) int {
 	return pos + col
 }
 
-func (e *textAreaEngine) insertRuneAt(pos int, r rune) {
-	if len(e.buf) == 0 {
-		e.buf = [][]rune{{r}}
-		e.touchContent()
-		return
-	}
-	line, col := e.flatToLineCol(pos)
-	if line >= len(e.buf) {
-		line = len(e.buf) - 1
-	}
-	newLine := make([]rune, len(e.buf[line])+1)
-	copy(newLine, e.buf[line][:col])
-	newLine[col] = r
-	copy(newLine[col+1:], e.buf[line][col:])
-	e.buf[line] = newLine
-	e.touchContent()
-}
-
 func (e *textAreaEngine) setCursorFlat(pos int) {
 	e.curLine, e.curCol = e.flatToLineCol(pos)
 	e.curCol = rendering.GraphemeBoundary(e.buf[e.curLine], e.curCol)
@@ -2028,40 +1941,18 @@ func (e *textAreaEngine) pointerUnitEnd(pos int) int {
 	if col >= len(e.buf[line]) {
 		return pos
 	} // EOL press never silently selects a newline
-	for _, ar := range e.atomicRanges {
-		if pos >= ar.Start && pos < ar.End {
-			return ar.End
-		}
+	if a, ok := e.atomicRangeAround(pos); ok {
+		return a.End
 	}
 	return e.lineColToFlat(line, rendering.NextGrapheme(e.buf[line], col))
 }
 
 func (e *textAreaEngine) pointerPosition(pos int) int {
-	for _, ar := range e.atomicRanges {
-		if pos > ar.Start && pos < ar.End {
-			return ar.Start
-		}
+	if a, ok := e.atomicRangeAround(pos); ok {
+		return a.Start
 	}
 	line, col := e.flatToLineCol(pos)
 	return e.lineColToFlat(line, rendering.GraphemeBoundary(e.buf[line], col))
-}
-
-func (e *textAreaEngine) splitLineAt(line, col int) {
-	if line < 0 || line >= len(e.buf) {
-		return
-	}
-	runes := e.buf[line]
-	left := make([]rune, col)
-	copy(left, runes[:col])
-	right := make([]rune, len(runes)-col)
-	copy(right, runes[col:])
-	newLines := make([][]rune, len(e.buf)+1)
-	copy(newLines, e.buf[:line])
-	newLines[line] = left
-	newLines[line+1] = right
-	copy(newLines[line+2:], e.buf[line+1:])
-	e.buf = newLines
-	e.touchContent()
 }
 
 func (e *textAreaEngine) visualLineCount() int {
@@ -2075,26 +1966,19 @@ func (e *textAreaEngine) cursorVisualInfo() (visualLine, visualCol int) {
 	if e.textWidth < 1 {
 		return e.curLine, e.curCol
 	}
-	lines := e.buf
-	vis := 0
-	for li := 0; li < e.curLine; li++ {
-		segs := rendering.WordWrap(string(lines[li]), e.textWidth)
-		vis += len(segs)
-	}
-	segment, col := cursorSegmentInfo(e.curLine, e.curCol, lines, e.textWidth)
-	if segStart, segLen, ok := e.segmentAt(e.curLine, segment); ok {
-		col = e.rowLine(e.curLine, segStart, segLen).Visual(col)
-	}
-	return vis + segment, col
+	w := e.wrapped(e.textWidth)
+	line := w.lines[e.curLine]
+	idx := line.rowAtCursor(e.curCol)
+	ln, col, _, _ := e.cursorRow()
+	return line.first + idx, ln.Visual(col)
 }
 
 func (e *textAreaEngine) cursorUpVisual() {
-	_, visCol := e.cursorVisualInfo()
+	visLine, visCol := e.cursorVisualInfo()
 	targetVisCol := e.lastVisCol
 	if targetVisCol < 0 {
 		targetVisCol = visCol
 	}
-	visLine, _ := e.cursorVisualInfo()
 	if visLine <= 0 {
 		e.curCol = 0
 		e.lastVisCol = -1
@@ -2104,12 +1988,11 @@ func (e *textAreaEngine) cursorUpVisual() {
 }
 
 func (e *textAreaEngine) cursorDownVisual() {
-	_, visCol := e.cursorVisualInfo()
+	visLine, visCol := e.cursorVisualInfo()
 	targetVisCol := e.lastVisCol
 	if targetVisCol < 0 {
 		targetVisCol = visCol
 	}
-	visLine, _ := e.cursorVisualInfo()
 	total := e.visualLineCount()
 	if visLine >= total-1 {
 		last := len(e.buf) - 1
@@ -2127,47 +2010,11 @@ func (e *textAreaEngine) setCursorFromVisualLine(targetVisLine, targetVisCol int
 	if e.textWidth < 1 {
 		if targetVisLine >= 0 && targetVisLine < len(e.buf) {
 			e.curLine = targetVisLine
-			if targetVisCol < len(e.buf[targetVisLine]) {
-				e.curCol = rendering.GraphemeBoundary(e.buf[targetVisLine], targetVisCol)
-			} else {
-				e.curCol = len(e.buf[targetVisLine])
-			}
+			e.SetCursorFlat(e.lineColToFlat(targetVisLine, targetVisCol))
 		}
 		return
 	}
-	lines := e.buf
-	vis := 0
-	for li, logLine := range lines {
-		segs := rendering.WordWrap(string(logLine), e.textWidth)
-		var starts []int
-		if vis+len(segs) > targetVisLine {
-			starts = rendering.FindSegmentStarts(logLine, e.textWidth)
-		}
-		for si := range segs {
-			if vis == targetVisLine {
-				e.curLine = li
-				segStart := 0
-				if si < len(starts) {
-					segStart = starts[si]
-				}
-				segRunes := []rune(segs[si])
-				col := e.rowLine(li, segStart, len(segRunes)).Logical(targetVisCol)
-				segRuneIdx := rendering.ColToRuneIdx(segRunes, col)
-				e.curCol = segStart + segRuneIdx
-				if e.curCol > len(lines[li]) {
-					e.curCol = len(lines[li])
-				}
-				return
-			}
-			vis++
-		}
-	}
-	last := len(lines) - 1
-	if last < 0 {
-		last = 0
-	}
-	e.curLine = last
-	e.curCol = len(lines[last])
+	e.setCursorFlat(e.visualToFlat(e.textWidth, targetVisCol, targetVisLine))
 }
 
 // visualToFlat converts a visual (x, y) position to a flat rune offset,
@@ -2180,29 +2027,19 @@ func (e *textAreaEngine) visualToFlat(textW, x, y int) int {
 	if y < 0 {
 		return 0
 	}
-	lines := e.buf
-	vis := 0
-	for li, logLine := range lines {
-		segs := rendering.WordWrap(string(logLine), textW)
-		var starts []int
-		if vis+len(segs) > y {
-			starts = rendering.FindSegmentStarts(logLine, textW)
-		}
-		for si := range segs {
-			if vis == y {
-				segStart := 0
-				if si < len(starts) {
-					segStart = starts[si]
-				}
-				segRunes := []rune(segs[si])
-				col := e.rowLine(li, segStart, len(segRunes)).Logical(x)
-				segRuneIdx := rendering.ColToRuneIdx(segRunes, col)
-				return e.lineColToFlat(li, segStart+segRuneIdx)
-			}
-			vis++
-		}
+	w := e.wrapped(textW)
+	li := w.lineAtRow(y)
+	if li >= len(w.lines) {
+		return e.Len()
 	}
-	return e.Len()
+	line := w.lines[li]
+	row := line.rows[y-line.first]
+	if _, ok := w.clipped[line.flat+row.Start]; ok && x < textW {
+		return line.flat + row.Start
+	}
+	col := e.rowLine(li, row.Start, row.End-row.Start).Logical(x)
+	pos := line.flat + row.Start + rendering.ColToRuneIdx(e.buf[li][row.Start:row.End], col)
+	return e.atomicBoundary(pos, false)
 }
 
 // bidiLines returns the bidirectional layout of every logical line. Each
@@ -2213,7 +2050,7 @@ func (e *textAreaEngine) bidiLines() []textLineBidi {
 	c := &e.bidi
 	generation := bidi.Generation()
 	if c.valid && c.content == e.contentRevision && c.atoms == e.atomicRevision &&
-		c.presentation == generation && len(c.lines) == len(e.buf) {
+		c.presentation == generation && c.profile == rendering.WidthProfileGeneration() && len(c.lines) == len(e.buf) {
 		return c.lines
 	}
 	lines := c.lines[:0]
@@ -2225,7 +2062,7 @@ func (e *textAreaEngine) bidiLines() []textLineBidi {
 		lines = append(lines, lb)
 		flat += len(runes) + 1
 	}
-	*c = textAreaBidi{valid: true, content: e.contentRevision, atoms: e.atomicRevision, presentation: generation, lines: lines}
+	*c = textAreaBidi{valid: true, content: e.contentRevision, atoms: e.atomicRevision, presentation: generation, profile: rendering.WidthProfileGeneration(), lines: lines}
 	return lines
 }
 
@@ -2242,33 +2079,21 @@ func (e *textAreaEngine) rowLine(li, start, n int) *bidi.Line {
 	return lines[li].line(start, n, e.textWidth)
 }
 
-// segmentAt returns the rune range of row si of logical line li.
-func (e *textAreaEngine) segmentAt(li, si int) (start, n int, ok bool) {
-	if li < 0 || li >= len(e.buf) || e.textWidth < 1 {
-		return 0, 0, false
-	}
-	segs := rendering.WordWrap(string(e.buf[li]), e.textWidth)
-	if si < 0 || si >= len(segs) {
-		return 0, 0, false
-	}
-	if starts := rendering.FindSegmentStarts(e.buf[li], e.textWidth); si < len(starts) {
-		start = starts[si]
-	}
-	return start, len([]rune(segs[si])), true
-}
-
 // cursorRow returns the arranged row under the caret, the caret's logical
 // column on it, and the row's rune range.
 func (e *textAreaEngine) cursorRow() (ln *bidi.Line, col, start, n int) {
 	if e.textWidth < 1 || e.curLine < 0 || e.curLine >= len(e.buf) {
 		return nil, 0, 0, 0
 	}
-	segment, col := cursorSegmentInfo(e.curLine, e.curCol, e.buf, e.textWidth)
-	start, n, ok := e.segmentAt(e.curLine, segment)
-	if !ok {
-		return nil, 0, 0, 0
+	w := e.wrapped(e.textWidth)
+	line := w.lines[e.curLine]
+	seg := line.rows[line.rowAtCursor(e.curCol)]
+	if _, ok := w.clipped[line.flat+seg.Start]; ok && e.curCol >= seg.End {
+		col = e.textWidth - 1
+	} else {
+		col = rendering.RuneIdxToCol(e.buf[e.curLine][seg.Start:seg.End], e.curCol-seg.Start)
 	}
-	return e.rowLine(e.curLine, start, n), col, start, n
+	return e.rowLine(e.curLine, seg.Start, seg.End-seg.Start), col, seg.Start, seg.End - seg.Start
 }
 
 // stepOnScreen moves the caret one cell left or right on an arranged row.

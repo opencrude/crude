@@ -11,7 +11,6 @@ import (
 )
 
 type ReferenceStore interface {
-	DeleteReference(id string) error
 	Reference(id string) (sessiondb.Reference, bool)
 	ListReferences() []sessiondb.Reference
 }
@@ -22,21 +21,13 @@ type RefRange struct {
 	End   int
 }
 
-type RefOpenEvent struct{ ID string }
-
-func (RefOpenEvent) event() {}
-
-type RefSelectEvent struct{ ID string }
-
-func (RefSelectEvent) event() {}
-
 func (m *Model) SetReferenceStore(store ReferenceStore) {
 	if m.refStore != store {
 		m.invalidatePendingPastes()
 		m.promptReferenceIDs = nil
 	}
 	m.refStore = store
-	m.applyReferenceRanges()
+	m.applyReferenceRanges(nil)
 }
 
 func (m *Model) InsertReference(ref sessiondb.Reference) {
@@ -44,7 +35,7 @@ func (m *Model) InsertReference(ref sessiondb.Reference) {
 		m.promptReferenceIDs[ref.ID] = true
 	}
 	m.input.InsertString(ref.DisplayName())
-	m.applyReferenceRanges()
+	m.applyReferenceRanges(nil)
 	m.draftRevision++
 }
 
@@ -61,25 +52,21 @@ func (m *Model) AttachReference(ref sessiondb.Reference) {
 		text = " " + text
 	}
 	m.input.InsertString(text)
-	m.applyReferenceRanges()
+	m.applyReferenceRanges(nil)
 	m.draftRevision++
 }
 
+// RefRanges projects the same chip positions used to paint and edit the draft.
 func (m Model) RefRanges() []RefRange {
-	if m.refStore == nil {
+	if m.input == nil {
 		return nil
 	}
-	refs := m.refStore.ListReferences()
-	if m.promptReferenceIDs != nil {
-		var selected []sessiondb.Reference
-		for _, ref := range refs {
-			if m.promptReferenceIDs[ref.ID] {
-				selected = append(selected, ref)
-			}
-		}
-		refs = selected
+	atoms := m.input.AtomicRanges()
+	ranges := make([]RefRange, len(atoms))
+	for i, a := range atoms {
+		ranges[i] = RefRange{ID: a.ID, Start: a.Start, End: a.End}
 	}
-	return FindRefRanges(m.input.Value(), refs)
+	return ranges
 }
 
 // Pin recalled/hydrated drafts to their recorded attachment identities, so
@@ -89,18 +76,8 @@ func (m *Model) UseReferenceIDs(ids []string) {
 	for _, id := range ids {
 		m.promptReferenceIDs[id] = true
 	}
-	m.applyReferenceRanges()
+	m.applyReferenceRanges(nil)
 	m.draftRevision++
-}
-
-func (m Model) ActiveReferenceID() string {
-	pos := m.input.CursorFlat()
-	for _, rr := range m.RefRanges() {
-		if pos >= rr.Start && pos < rr.End {
-			return rr.ID
-		}
-	}
-	return ""
 }
 
 func (m Model) ReferencedIDs() []string {
@@ -122,28 +99,46 @@ func (m *Model) SetValuePreserveReferences(text string) {
 	m.historyGeneration++
 	m.historyLoading = false
 	m.input.SetValue(text)
-	m.applyReferenceRanges()
+	m.applyReferenceRanges(nil)
 	m.draftRevision++
 }
 
-func (m *Model) applyReferenceRanges() {
+// applyReferenceRanges binds visible labels to the current store and allow-list.
+// On an ordinary edit the engine already moved each surviving chip with its
+// tone. Only a newly bound label needs its backing file checked. An explicit
+// store or draft replacement refreshes all tones.
+func (m *Model) applyReferenceRanges(known []ui.AtomicRange) {
 	if m.refStore == nil {
 		m.input.SetAtomicRanges(nil)
-		m.input.NormalizeCursorAtomic()
 		return
 	}
-	ranges := m.RefRanges()
 	refs := m.refStore.ListReferences()
+	if m.promptReferenceIDs != nil {
+		var selected []sessiondb.Reference
+		for _, ref := range refs {
+			if m.promptReferenceIDs[ref.ID] {
+				selected = append(selected, ref)
+			}
+		}
+		refs = selected
+	}
+	ranges := FindRefRanges(m.input.Value(), refs)
+	tones := make(map[string]ui.ChipTone, len(known))
+	for _, a := range known {
+		tones[a.ID] = a.Tone
+	}
 	atomic := make([]ui.AtomicRange, len(ranges))
 	for i, rr := range ranges {
-		tone := ui.ChipToneNormal
-		if ref, ok := refByID(refs, rr.ID); !ok || !ref.Active() || refFileMissing(ref) {
-			tone = ui.ChipToneError
+		tone, ok := tones[rr.ID]
+		if !ok {
+			if ref, ok := refByID(refs, rr.ID); !ok || refFileMissing(ref) {
+				tone = ui.ChipToneError
+			}
+			tones[rr.ID] = tone
 		}
 		atomic[i] = ui.AtomicRange{Start: rr.Start, End: rr.End, ID: rr.ID, Tone: tone}
 	}
 	m.input.SetAtomicRanges(atomic)
-	m.input.NormalizeCursorAtomic()
 }
 
 // refFileMissing reports whether a file-backed reference points at a path

@@ -160,7 +160,7 @@ func (m *Model) FinishFragmentPaste(event PasteFragmentEvent, text string, refs 
 		m.input.DeleteTextSelection()
 	}
 	m.input.InsertString(text)
-	m.applyReferenceRanges()
+	m.applyReferenceRanges(nil)
 	m.syncSlashState()
 	m.draftRevision++
 	return true

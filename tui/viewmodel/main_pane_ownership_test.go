@@ -49,8 +49,11 @@ func TestMainPaneOwnershipSessionDraftsPointerAndKeyboard(t *testing.T) {
 	app.Input.InsertReference(ref)
 	_, _ = app.Update(tea.PasteMsg{Content: " FIRST_DRAFT_MARKER"})
 	text := app.Input.Value()
-	app.Input.SetCursorFlat(3)
-	app.Input.SetSelection(1, 3)
+	// Caret and selection sit in the prose after the chip; the chip itself
+	// is one unit that a caret or selection edge cannot enter.
+	chipEnd := len([]rune(ref.DisplayName()))
+	app.Input.SetCursorFlat(chipEnd + 3)
+	app.Input.SetSelection(chipEnd+1, chipEnd+3)
 	paneJourneyKey(app, ']', tea.ModAlt)
 	if app.ActiveSession != second || app.Input.Value() != "" {
 		t.Fatal("second pane inherited first draft")
@@ -69,7 +72,7 @@ func TestMainPaneOwnershipSessionDraftsPointerAndKeyboard(t *testing.T) {
 	app.forceFrame()
 	_ = app.View()
 	a, b := app.Input.InputSelectionRange()
-	if app.ActiveSession != first || app.Win.ActiveGroup() != left || app.Input.Value() != text || app.Input.CursorFlat() != 3 || a != 1 || b != 3 || !slices.Equal(app.Input.ReferencedIDs(), []string{ref.ID}) {
+	if app.ActiveSession != first || app.Win.ActiveGroup() != left || app.Input.Value() != text || app.Input.CursorFlat() != chipEnd+3 || a != chipEnd+1 || b != chipEnd+3 || !slices.Equal(app.Input.ReferencedIDs(), []string{ref.ID}) {
 		t.Fatalf("pointer activation lost exact first draft: text=%q cursor=%d selection=%d:%d refs=%v", app.Input.Value(), app.Input.CursorFlat(), a, b, app.Input.ReferencedIDs())
 	}
 	app.Input.ClearInputSelection()

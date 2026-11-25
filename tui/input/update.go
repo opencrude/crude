@@ -1,7 +1,6 @@
 package input
 
 import (
-	"fmt"
 	"strings"
 	"unicode"
 
@@ -12,11 +11,9 @@ import (
 )
 
 func (m Model) Update(msg tea.Msg, thinking, blocking bool) (Model, tea.Cmd, Event) {
-	before := m.draftStateKey()
+	before := m.input.EditState()
 	updated, cmd, event := m.update(msg, thinking, blocking)
-	if updated.draftStateKey() != before {
-		updated.draftRevision++
-	}
+	updated.recordDraftEdit(before)
 	switch value := event.(type) {
 	case SubmitEvent:
 		value.DraftRevision = updated.draftRevision
@@ -59,10 +56,6 @@ func (m Model) update(msg tea.Msg, thinking, blocking bool) (Model, tea.Cmd, Eve
 		return m, nil, PastePendingEvent{}
 	}
 
-	if m.slashActive {
-		return m.updateSlash(msg)
-	}
-
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		if msg.String() == "ctrl+o" {
@@ -72,10 +65,16 @@ func (m Model) update(msg tea.Msg, thinking, blocking bool) (Model, tea.Cmd, Eve
 		// The newline chord (Shift+Enter, Alt+Enter or Ctrl+J; see
 		// ui.NewlineChord) breaks the line; every other Enter sends.
 		if ui.IsNewlineChord(msg) {
+			m.slashActive = false
 			cmd := m.input.Update(msg, false)
 			return m, cmd, nil
 		}
 
+		if m.slashVisible() {
+			if cmd, event, handled := m.updateSlash(msg); handled {
+				return m, cmd, event
+			}
+		}
 		switch msg.Code {
 		case tea.KeyEnter:
 			text := m.input.Value()
@@ -112,26 +111,7 @@ func (m Model) update(msg tea.Msg, thinking, blocking bool) (Model, tea.Cmd, Eve
 			cmd := m.input.Update(msg, false)
 			return m, cmd, nil
 
-		case tea.KeyBackspace, tea.KeyDelete:
-			if id, deleted := m.deleteReferenceAtCursor(msg.Code == tea.KeyBackspace); deleted {
-				m.syncSlashState()
-				return m, nil, RefSelectEvent{ID: id}
-			}
-			if m.histIdx >= 0 {
-				m.histPrefix = strings.TrimSpace(m.input.Value())
-				m.histDraft = m.input.Value()
-				m.histIdx = -1
-			}
-			cmd := m.input.Update(msg, false)
-			m.syncSlashState()
-			return m, cmd, nil
-
 		default:
-			if msg.Code == tea.KeySpace && msg.Text == " " {
-				if id := m.ActiveReferenceID(); id != "" {
-					return m, nil, RefOpenEvent{ID: id}
-				}
-			}
 			if msg.Mod.Contains(tea.ModCtrl) && msg.Code == 's' {
 				return m, nil, SettingsOpenEvent{}
 			}
@@ -141,17 +121,12 @@ func (m Model) update(msg tea.Msg, thinking, blocking bool) (Model, tea.Cmd, Eve
 				m.histIdx = -1
 			}
 			cmd := m.input.Update(msg, false)
-			m.applyReferenceRanges()
 			m.syncSlashState()
 			return m, cmd, nil
 		}
 	}
 
 	return m, nil, nil
-}
-
-func (m Model) draftStateKey() string {
-	return fmt.Sprintf("%v\x00%d\x00%v", m.input.EditState(), m.draftEpoch, m.SnapshotReferenceIDs())
 }
 
 func (m Model) handlePaste(content string) (Model, tea.Cmd, Event) {
@@ -176,28 +151,6 @@ func (m Model) handlePaste(content string) (Model, tea.Cmd, Event) {
 	}
 	m.pendingPastes[m.pasteSequence] = true
 	return m, nil, PasteAttachmentEvent{ID: m.pasteSequence, Epoch: m.draftEpoch, Content: content}
-}
-
-func (m *Model) deleteReferenceAtCursor(backspace bool) (string, bool) {
-	pos := m.input.CursorFlat()
-	for _, rr := range m.RefRanges() {
-		deleteIt := false
-		if backspace {
-			deleteIt = pos > rr.Start && pos <= rr.End
-		} else {
-			deleteIt = pos >= rr.Start && pos < rr.End
-		}
-		if !deleteIt {
-			continue
-		}
-		m.input.DeleteRange(rr.Start, rr.End)
-		m.input.SetCursorFlat(rr.Start)
-		if m.refStore != nil {
-			_ = m.refStore.DeleteReference(rr.ID)
-		}
-		return rr.ID, true
-	}
-	return "", false
 }
 
 // slashToken is a command name being typed at the caret: "/" at the start of
@@ -244,28 +197,11 @@ func (m *Model) syncSlashState() {
 		return
 	}
 	m.slash = token
-	m.slashActive = true
 	m.setSlashFilter(filter)
-	// Inside a prompt only a command name that starts with the typed text
-	// opens the list, so a path such as /usr/bin stays plain prose.
-	if !token.whole && !m.slashNameMatches(filter) {
-		m.slashActive = false
-	}
-}
-
-// slashNameMatches reports a command whose name starts with filter.
-func (m *Model) slashNameMatches(filter string) bool {
-	filter = strings.ToLower(filter)
-	for _, c := range availableCmds {
-		if strings.HasPrefix(strings.ToLower(c.Name), filter) {
-			return true
-		}
-	}
-	return false
+	m.slashActive = len(m.slashList.Items()) > 0
 }
 
 func (m *Model) setSlashFilter(filter string) {
-	m.slashFilter = filter
 	filter = strings.ToLower(filter)
 	// Commands whose name starts with the filter come first, so Tab and Enter
 	// complete the command being typed; description matches follow.
@@ -332,7 +268,6 @@ func (m *Model) commitSlashToken(name string) SlashCommandEvent {
 	}
 	m.input.DeleteRange(start, end)
 	m.input.SetCursorFlat(start)
-	m.applyReferenceRanges()
 	m.slashActive = false
 	return SlashCommandEvent{Command: "/" + name}
 }
@@ -381,64 +316,35 @@ func (m *Model) commitSlashCommand(command string) SlashCommandEvent {
 	return event
 }
 
-func (m Model) updateSlash(msg tea.Msg) (Model, tea.Cmd, Event) {
-	keyMsg, ok := msg.(tea.KeyPressMsg)
-	if !ok {
-		return m, nil, nil
-	}
-
-	switch keyMsg.Code {
+// updateSlash handles only the visible list's keys. All other keys continue
+// through the ordinary composer without a second clipboard or history pass.
+func (m *Model) updateSlash(key tea.KeyPressMsg) (tea.Cmd, Event, bool) {
+	switch key.Code {
 	case tea.KeyEsc:
-		m.slashActive = false
-		return m, nil, nil
-
+		return nil, nil, m.DismissSlashSuggestions()
 	case tea.KeyTab:
 		item, ok := m.slashList.Selected()
-		if ok && !m.slash.whole {
-			// Inside a prompt there are no arguments to complete: Tab runs
-			// the chosen command like Enter.
-			return m, nil, m.commitSlashToken(item.ID)
+		if !ok {
+			return nil, nil, false
 		}
+		if !m.slash.whole {
+			return nil, m.commitSlashToken(item.ID), true
+		}
+		m.invalidatePendingPastes()
+		m.input.SetValue("/" + item.ID + " ")
+		m.slashActive = false
+		return nil, nil, true
+	case tea.KeyEnter, tea.KeyUp, tea.KeyDown:
+		res := m.slashList.Handle(ui.EventContext{}, ui.KeyEvent(key))
+		if key.Code != tea.KeyEnter {
+			return res.Cmd, nil, res.Handled
+		}
+		event, ok := m.activateSlashSelection(res.Action)
 		if ok {
-			m.invalidatePendingPastes()
-			m.input.SetValue("/" + item.ID + " ")
+			return res.Cmd, event, true
 		}
-		m.slashActive = false
-		return m, nil, nil
-
-	case tea.KeyEnter:
-		if ui.IsNewlineChord(keyMsg) && !m.slash.whole {
-			m.slashActive = false
-			return m, m.input.Update(msg, false), nil
-		}
-		res := m.slashList.Handle(ui.EventContext{}, ui.KeyEvent(keyMsg))
-		if event, ok := m.activateSlashSelection(res.Action); ok {
-			return m, res.Cmd, event
-		}
-		m.slashActive = false
-		if m.slash.whole {
-			if event, ok := m.commitCommandLine(m.input.Value()); ok {
-				return m, nil, event
-			}
-		}
-		return m, nil, nil
-
-	case tea.KeyUp:
-		res := m.slashList.Handle(ui.EventContext{}, ui.KeyEvent(keyMsg))
-		return m, res.Cmd, nil
-
-	case tea.KeyDown:
-		res := m.slashList.Handle(ui.EventContext{}, ui.KeyEvent(keyMsg))
-		return m, res.Cmd, nil
-
-	default:
-		// Every other key edits the draft through the ordinary composer
-		// path (references, history, Left/Right, Backspace, typing); the
-		// command list then follows the token at the caret.
-		m.slashActive = false
-		updated, cmd, event := m.update(msg, m.thinking, m.blocking)
-		return updated, cmd, event
 	}
+	return nil, nil, false
 }
 
 func (m Model) handleMouse(msg tea.MouseMsg) (Model, tea.Cmd, Event) {
@@ -472,9 +378,7 @@ func (m Model) applyClipboardChord(key tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		if ui.ClipboardChordFor(key) == ui.ClipboardChordCut && m.input.Value() == "" {
 			m.invalidatePendingPastes()
 		}
-		// Cut and clear can rewrite the draft, so chips and the slash popup
-		// are resynced exactly like every other key path.
-		m.applyReferenceRanges()
+		// Cut or selection dismissal can change the slash token at the caret.
 		m.syncSlashState()
 		return m, res.Cmd, true
 	}

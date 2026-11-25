@@ -37,7 +37,7 @@ func TestWordWrapVeryLongSourceHasNoMissingTail(t *testing.T) {
 	}
 }
 
-func TestFindSegmentStartsMatchesWordWrapBoundaries(t *testing.T) {
+func TestWordWrapRuneRangesMatchWordWrapBoundaries(t *testing.T) {
 	cases := []struct {
 		text  string
 		width int
@@ -81,15 +81,15 @@ func TestFindSegmentStartsMatchesWordWrapBoundaries(t *testing.T) {
 	for _, tc := range cases {
 		runes := []rune(tc.text)
 		segs := WordWrap(tc.text, tc.width)
-		starts := FindSegmentStarts(runes, tc.width)
-		if len(starts) != len(segs) {
-			t.Fatalf("FindSegmentStarts(%q,%d) returned %d starts for %d segments",
-				tc.text, tc.width, len(starts), len(segs))
+		ranges := WordWrapRuneRanges(runes, tc.width, nil)
+		if len(ranges) != len(segs) {
+			t.Fatalf("WordWrapRuneRanges(%q,%d) returned %d ranges for %d segments",
+				tc.text, tc.width, len(ranges), len(segs))
 		}
 		for i, seg := range segs {
 			segRunes := []rune(seg)
-			start := starts[i]
-			if start < 0 || start+len(segRunes) > len(runes) || string(runes[start:start+len(segRunes)]) != seg {
+			start := ranges[i].Start
+			if start < 0 || ranges[i].End != start+len(segRunes) || ranges[i].End > len(runes) || string(runes[start:start+len(segRunes)]) != seg {
 				t.Fatalf("segment %d of %q at width %d starts at %d, want the runes of %q",
 					i, tc.text, tc.width, start, seg)
 			}
