@@ -48,8 +48,32 @@ func (s *CodexStandard) Info() ProtocolInfo {
 	info.WebSearch = WebSearchNone
 	// The codex backend forces store:false itself; only the summary knob
 	// is user-selectable.
-	info.Options = ProtocolOptions{ReasoningSummaries: true}
+	info.Options = ProtocolOptions{ReasoningSummaries: true, NativeCompaction: "responses/compact"}
 	return info
+}
+
+// compactBody adapts the standalone compact request to the backend's
+// required top-level instructions, as its create request does. A synthetic
+// check without a system message carries its directive there instead.
+func (s *CodexStandard) compactBody(req *ChatRequest, directive string, extras map[string]any) (map[string]any, error) {
+	body, err := s.OpenAIResponsesStandard.compactBody(req, directive, extras)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	wire, err := decodeJSONObject(raw)
+	if err != nil {
+		return nil, err
+	}
+	instructions, input := codexExtractInstructions(wire["input"])
+	if instructions == "" {
+		instructions = directive
+	}
+	wire["instructions"], wire["input"] = instructions, input
+	return wire, nil
 }
 
 // EncodeRequest is the Responses envelope adapted to the stricter ChatGPT codex

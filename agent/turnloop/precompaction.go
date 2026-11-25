@@ -106,6 +106,9 @@ func (p *compactionPlanner) observe(a *Agent, usage provider.TokenUsage, context
 		return
 	}
 	prompt, cached := usage.PromptTokens, usage.PromptTokensCached
+	if prompt > 0 && usage.CacheReadKnown {
+		a.servingCacheRatio = min(1, float64(cached)/float64(prompt))
+	}
 	if prompt <= 0 {
 		prompt = contextTokens
 	}
@@ -162,9 +165,13 @@ func (p *compactionPlanner) adoptPrepared(a *Agent, active, remaining, post, har
 	return p.excess >= p.buyCost(a, remaining, post)
 }
 
-// learn records an adopted checkpoint and resets the accumulated excess.
-func (p *compactionPlanner) learn(a *Agent, source, checkpoint, after int, usage provider.TokenUsage) {
-	_, compaction, _ := p.prices(a)
+// learn records an adopted checkpoint and resets the accumulated excess. A
+// checkpoint the serving model wrote is priced at its own rates.
+func (p *compactionPlanner) learn(a *Agent, source, checkpoint, after int, usage provider.TokenUsage, servingWrote bool) {
+	main, compaction, _ := p.prices(a)
+	if servingWrote {
+		compaction = main
+	}
 	cost := compaction.CalculateCost(usage.PromptTokens, usage.CompletionTokens, usage.PromptTokensCached)
 	if source > 0 && cost > 0 {
 		p.costPerSource = cost / float64(source)
@@ -175,6 +182,21 @@ func (p *compactionPlanner) learn(a *Agent, source, checkpoint, after int, usage
 	// The capacity margin is the largest growth since this checkpoint: one
 	// past jump (a large paste) must not keep the agent near capacity forever.
 	p.excess, p.floor, p.previous, p.maxGrowth, p.observed = 0, after, after, 0, 0
+}
+
+// servingCheckpointCheaper reports whether the serving model, reading the
+// share of the conversation its route already caches, writes a checkpoint for
+// less than the compaction model reading the same source uncached. Both prices
+// must be known; otherwise the configured compaction model keeps the work.
+func servingCheckpointCheaper(servingModel, compactionModel string, source, output int, cachedRatio float64) bool {
+	serving, servingKnown, _ := provider.LookupPriceKnown(servingModel)
+	compaction, compactionKnown, _ := provider.LookupPriceKnown(compactionModel)
+	if !servingKnown || !compactionKnown || serving.InputPricePerToken <= 0 || compaction.InputPricePerToken <= 0 || source <= 0 {
+		return false
+	}
+	cachedRatio = min(1, max(0, cachedRatio))
+	cached := int(cachedRatio * float64(source))
+	return serving.CalculateCost(source, output, cached) < compaction.CalculateCost(source, output, 0)
 }
 
 // economicFloor is the smallest context the economic rule may compact. A
@@ -539,6 +561,7 @@ func (a *Agent) compactorFor(useMain bool, window, targetTokens int) *Agent {
 		compactor.NativeCompactionProvider = a.Provider
 		compactor.CompactionTargetOutput = a.MaxOutputTokens
 		compactor.CompactionConfigError = a.CompactionConfigError
+		compactor.servingCacheRatio = a.servingCacheRatio
 	}
 	compactor.PrepareCompaction, compactor.CommitCompaction = nil, nil
 	compactor.CompactionTargetTokens = max(1, targetTokens)

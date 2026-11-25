@@ -65,6 +65,10 @@ type ProtocolInfo struct {
 	// Options declares the protocol-level switches the settings UI may
 	// expose. A false field means the protocol has no such knob.
 	Options ProtocolOptions
+	// ToolChoiceNone means a request can declare the conversation's tools and
+	// still forbid calling them. A checkpoint written by the serving model then
+	// keeps the conversation's cached prefix.
+	ToolChoiceNone bool
 }
 
 // ProtocolOptions declares which protocol-level request switches exist for a

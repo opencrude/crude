@@ -3,11 +3,13 @@ package turnloop
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -333,5 +335,92 @@ func TestAutoUncertainNativeCheckpointUsesErrandAndContinues(t *testing.T) {
 	}
 	if reason != "The provider did not confirm native compaction (HTTP 502). Using Errand." {
 		t.Fatalf("notice %q", reason)
+	}
+}
+
+// Wires without a native compaction operation still have the serving
+// model. Provider only never charges another model, Auto uses the serving
+// model when its cached context is cheaper or Errand cannot run, and Errand
+// only always uses Errand. A serving checkpoint declares the conversation's
+// tools (forbidden), so it reads the conversation's cached prefix.
+func TestServingModelWritesCheckpointOnWiresWithoutNativeCompaction(t *testing.T) {
+	const handoff = "<<<intent>>>\nKeep the build passing\n<<<work>>>\nChecked inputs\n<<<state>>>\nTarget is blue\n<<<continuation>>>\nCheck the target"
+	type route struct {
+		calls  atomic.Int32
+		bodies []map[string]any
+		mu     sync.Mutex
+	}
+	serve := func(r *route) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			var body map[string]any
+			_ = json.NewDecoder(req.Body).Decode(&body)
+			r.mu.Lock()
+			r.bodies = append(r.bodies, body)
+			r.mu.Unlock()
+			r.calls.Add(1)
+			writeChatSSE(w, handoff, "stop")
+		}))
+	}
+	provider.SetModelPrice("serving-cheap-cached", provider.ModelPrice{InputPricePerToken: 3e-6, OutputPricePerToken: 1.5e-5, InputCachedPricePerToken: 3e-7})
+	provider.SetModelPrice("errand-flat", provider.ModelPrice{InputPricePerToken: 1e-6, OutputPricePerToken: 4e-6})
+	provider.SetModelPrice("errand-cheap", provider.ModelPrice{InputPricePerToken: 1e-7, OutputPricePerToken: 4e-7})
+	tools := []provider.ToolDef{{Type: "function", Function: provider.FunctionDef{Name: "read_file", Description: "Read a file.", Parameters: json.RawMessage(`{"type":"object"}`)}}}
+	for _, test := range []struct {
+		name, method, errandModel string
+		ratio                     float64
+		broken                    bool
+		serving                   bool
+	}{
+		{name: "provider only", method: provider.CompactionProviderOnly, errandModel: "errand-cheap", serving: true},
+		{name: "auto cached serving is cheaper", errandModel: "errand-flat", ratio: 0.95, serving: true},
+		{name: "auto errand is cheaper", errandModel: "errand-cheap", ratio: 0.95},
+		{name: "auto errand cannot run", errandModel: "errand-cheap", broken: true, serving: true},
+		{name: "errand only", method: provider.CompactionErrandOnly, errandModel: "errand-flat", ratio: 0.95},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var main, errand route
+			mainServer, errandServer := serve(&main), serve(&errand)
+			defer mainServer.Close()
+			defer errandServer.Close()
+			serving := provider.FromPreset("openai-chat", "key", mainServer.URL)
+			serving.Model, serving.AccountID = "serving-cheap-cached", "serving-"+test.name
+			serving.SetContextWindow(1_000_000)
+			if test.method != "" {
+				serving.SetProtocolSettings(&provider.ProtocolSettings{Compaction: test.method})
+			}
+			extractor := provider.FromPreset("openai-chat", "key", errandServer.URL)
+			extractor.Model, extractor.AccountID = test.errandModel, "errand-"+test.name
+			extractor.SetContextWindow(200_000)
+			a := newTestAgent(t, extractor, extractor.Model)
+			a.NativeCompactionProvider = serving
+			a.CompactionTargetModel, a.CompactionTargetWindow = serving.Model, 1_000_000
+			a.servingCacheRatio = test.ratio
+			a.FilteredTools = nil
+			if test.broken {
+				a.CompactionConfigError = errors.New("Errand has no credentials")
+			}
+			history := []provider.ChatMessage{provider.NewTextMessage("user", "Review the build "+strings.Repeat("evidence ", 3000))}
+			var events []AgentEvent
+			msgs := append([]provider.ChatMessage{provider.NewTextMessage("system", "system")}, history...)
+			// The decision uses the source size the run measured: 400K tokens.
+			outcome, err := a.compactWithModel(t.Context(), msgs, tools, "op", 400_000, CompactionTriggerManual, func(e AgentEvent) { events = append(events, e) })
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.serving != (main.calls.Load() > 0) || test.serving == (errand.calls.Load() > 0) || outcome.ModelID != map[bool]string{true: serving.Model, false: extractor.Model}[test.serving] {
+				t.Fatalf("main=%d errand=%d model=%s", main.calls.Load(), errand.calls.Load(), outcome.ModelID)
+			}
+			if test.serving {
+				body := main.bodies[0]
+				if body["tool_choice"] != "none" || body["tools"] == nil {
+					t.Fatalf("serving checkpoint lost the cached tool prefix: %v", body)
+				}
+			} else if errand.bodies[0]["tools"] != nil {
+				t.Fatal("a different compaction model received the conversation's tools")
+			}
+			if test.broken != hasEvent(events, "compaction_route_notice") {
+				t.Fatalf("notice for broken Errand = %v", hasEvent(events, "compaction_route_notice"))
+			}
+		})
 	}
 }

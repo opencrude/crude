@@ -30,6 +30,7 @@ func (s *GeminiInteractionsStandard) Info() ProtocolInfo {
 		DecisionPath:        "decisions",
 		ListsDecisionModels: true,
 		Streaming:           FramingSSE,
+		ToolChoiceNone:      true,
 		Options: ProtocolOptions{
 			ReasoningSummaries: true,
 			ServiceTiers:       []string{"standard", "flex", "priority"},

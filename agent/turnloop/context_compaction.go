@@ -291,6 +291,11 @@ func (a *Agent) compactSource(ctx context.Context, msgs, source []provider.ChatM
 	if main == nil && (trigger == CompactionTriggerManual || trigger == CompactionTriggerLoopEnd) && targetModel == a.Model {
 		main = a.Provider
 	}
+	if a.portableOnly {
+		main = nil
+	}
+	var fallback string
+	var fallbackChanged, transient bool
 	if main != nil && main.UsesNativeCompaction() {
 		owner := NewAgent(main, targetModel, a.logger)
 		stage := func(label string) {
@@ -340,16 +345,37 @@ func (a *Agent) compactSource(ctx context.Context, msgs, source []provider.ChatM
 			}
 			return outcome, nil
 		}
-		if a.CompactionConfigError != nil {
-			return compactOutcome{AccountID: main.AccountID, ProviderID: main.ID, ModelID: targetModel, Usage: usage}, fmt.Errorf("%s %w", r.Fallback, a.CompactionConfigError)
+		fallback, fallbackChanged, transient = r.Fallback, r.Changed, r.Transient
+	}
+	if writer := a.servingWriter(main, targetModel, tools, beforeTokens, min(8192, checkpointBudget), transient); writer != nil {
+		if fallbackChanged {
+			emit(AgentEvent{Type: "compaction_route_notice", Data: map[string]any{"reason": fallback + " The agent's model writes the checkpoint."}})
+		} else if a.CompactionConfigError != nil && main.CompactionMethod() != provider.CompactionProviderOnly {
+			emit(AgentEvent{Type: "compaction_route_notice", Data: map[string]any{"reason": errandUnavailableNotice}})
 		}
-		stage("Using Errand for compaction")
-		if r.Changed {
-			emit(AgentEvent{Type: "compaction_route_notice", Data: map[string]any{"reason": r.Fallback + " Using Errand."}})
+		return writer.compactSource(ctx, msgs, source, tools, requestID, beforeTokens, trigger, emit)
+	}
+	if fallback != "" {
+		data := a.compactionEventData(requestID, trigger, role, 1, 0, beforeTokens, 0, ctxWindow)
+		data["stage_name"], data["stage_label"] = "Using Errand for compaction", "Using Errand for compaction"
+		emit(AgentEvent{Type: "context_compaction_stage", Data: data})
+		if fallbackChanged {
+			emit(AgentEvent{Type: "compaction_route_notice", Data: map[string]any{"reason": fallback + " Using Errand."}})
 		}
 	}
+	// The serving model writing its own checkpoint keeps the conversation's
+	// cached prefix only with the same tools declared.
+	serving := a.Model == targetModel && (main == nil || provider.SameConnection(main, a.Provider))
 	if a.CompactionConfigError != nil {
-		return compactOutcome{}, a.CompactionConfigError
+		if !serving {
+			return compactOutcome{}, a.CompactionConfigError
+		}
+		if fallback == "" && main != nil && main.CompactionMethod() != provider.CompactionProviderOnly {
+			emit(AgentEvent{Type: "compaction_route_notice", Data: map[string]any{"reason": errandUnavailableNotice}})
+		}
+	}
+	if serving && a.Provider.Protocol().Info().ToolChoiceNone {
+		a.extractionTools = tools
 	}
 	extractionWindow := a.Provider.ContextWindow(a.Model)
 	learnedLimit, err := provider.LearnedOutputLimit(a.CompactionAgentProfile, a.Provider, a.Model)
@@ -475,6 +501,45 @@ func (a *Agent) compactSource(ctx context.Context, msgs, source []provider.ChatM
 	checkpointMsg.Origin = provider.OriginCheckpoint
 	checkpointMsg.Visibility = provider.VisibilityContextOnly
 	return a.finishCheckpoint(ctx, msgs, tools, checkpointMsg, targetModel, continuationLimit, fixed, compactOutcome{Usage: aggregate, SourceTokens: beforeTokens, ContextWindow: ctxWindow, RequestID: requestID, Role: role, Trigger: trigger, AccountID: a.Provider.AccountID, ProviderID: a.Provider.ID, ModelID: a.Model})
+}
+
+const errandUnavailableNotice = "Errand cannot compact with its current settings. The agent's model writes the checkpoint."
+
+// servingWriter returns the serving model as the portable checkpoint writer,
+// or nil when the configured compaction model writes it. Provider only never
+// charges another model. Auto uses the serving model when Errand cannot run,
+// or when its cached context makes the checkpoint cheaper, but not right after
+// an outage of that route.
+func (a *Agent) servingWriter(main *provider.Provider, model string, tools []provider.ToolDef, source, output int, transient bool) *Agent {
+	if main == nil || a.portableOnly || provider.SameConnection(main, a.Provider) && a.Model == model {
+		return nil
+	}
+	switch main.CompactionMethod() {
+	case provider.CompactionErrandOnly:
+		return nil
+	case provider.CompactionProviderOnly:
+	default:
+		window := main.ContextWindow(model)
+		fits := window > 0 && source+output < window-contextSafetyReserve(window)
+		if a.CompactionConfigError == nil && (transient || !fits || !servingCheckpointCheaper(model, a.Model, source, output, a.servingCacheRatio)) {
+			return nil
+		}
+	}
+	w := NewAgent(main, model, a.logger)
+	w.AgentID, w.TurnGeneration, w.Depth, w.ParentID = a.AgentID, a.TurnGeneration, a.Depth, a.ParentID
+	w.WorkDir, w.AsyncMgr, w.SubAgentMgr = a.WorkDir, a.AsyncMgr, a.SubAgentMgr
+	w.ContinuationContext, w.LatestHumanTurnState = a.ContinuationContext, a.LatestHumanTurnState
+	w.guidance, w.GuidanceCacheLoad, w.GuidanceCacheStore = a.guidance, a.GuidanceCacheLoad, a.GuidanceCacheStore
+	w.reportPublished, w.MaxRetries, w.FilteredTools, w.Ctx = a.reportPublished, a.MaxRetries, a.FilteredTools, a.Ctx
+	w.testHTTPClient, w.compactionRetryDelay = a.testHTTPClient, a.compactionRetryDelay
+	w.CompactionTargetModel, w.CompactionTargetWindow, w.CompactionTargetTokens = a.CompactionTargetModel, a.CompactionTargetWindow, a.CompactionTargetTokens
+	w.CompactionRetentionTokens, w.CompactionAgentProfile = a.CompactionRetentionTokens, a.CompactionAgentProfile
+	w.MaxOutputTokens = a.CompactionTargetOutput
+	w.portableOnly = true
+	if main.Protocol().Info().ToolChoiceNone {
+		w.extractionTools = tools
+	}
+	return w
 }
 
 // nativeCheckpointError is a Provider only failure. No other model may write

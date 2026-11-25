@@ -590,7 +590,7 @@ steps:
 				contextUsage.reset()
 				prefix.reset()
 				checkpointTokens := estimateCanonicalRequest(append([]provider.ChatMessage{system}, outcome.Messages...), allTools, a.Model) - fixed
-				planner.learn(a, outcome.SourceTokens, checkpointTokens, after, outcome.Usage)
+				planner.learn(a, outcome.SourceTokens, checkpointTokens, after, outcome.Usage, outcome.ModelID == a.Model && outcome.AccountID == a.Provider.AccountID)
 				l.Info("COMPACT", trigger, "reason", plan.reason, "active_before", activeTokens, "active_after", after)
 				return true, nil
 			}

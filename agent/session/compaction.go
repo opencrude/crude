@@ -396,7 +396,7 @@ func (s *Session) runPreparedCompaction(
 	}
 	extractor, configErr := effectiveCfg.providerForCategory(compactionCfg)
 	if configErr != nil {
-		if !main.UsesNativeCompaction() {
+		if main.CompactionMethod() == provider.CompactionErrandOnly {
 			return s.finishManualCompactionError(ctx, emit, operationID, trigger, turnloop.CompactResult{}, configErr)
 		}
 		extractor = main

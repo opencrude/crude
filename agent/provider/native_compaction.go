@@ -26,11 +26,14 @@ type NativeCheckpointRequest struct {
 }
 
 // NativeCheckpointResult distinguishes a safe portable fallback from an
-// uncertain, possibly billable real request. A fallback never installs state.
+// uncertain, possibly billable real request. A fallback never installs state:
+// the caller writes a full portable checkpoint. Transient marks a fallback
+// after an outage of this route, so the route should not write it either.
 type NativeCheckpointResult struct {
-	Message  ChatMessage
-	Fallback string
-	Changed  bool
+	Message   ChatMessage
+	Fallback  string
+	Changed   bool
+	Transient bool
 }
 
 func (p *Provider) nativeReady(ctx context.Context, model string) error {
@@ -76,13 +79,13 @@ func (c *Client) checkpointClient(req *ChatRequest) *Client {
 	if req == nil {
 		return c
 	}
-	wire := c.proto.Info().ID
+	wire := nativeStandard(c.proto)
 	for _, m := range req.Messages[:min(2, len(req.Messages))] {
 		if nativeItem(m, wire) == nil {
 			continue
 		}
 		c = withoutRedirects(c)
-		if wire == "anthropic" {
+		if c.proto.Info().ID == "anthropic" {
 			return withCompactHeaders(c)
 		}
 		return c
@@ -94,16 +97,13 @@ func (c *Client) checkpointClient(req *ChatRequest) *Client {
 // a continuation from the exact returned artifact. There are no HTTP retries or
 // redirects on either billable call. The text is portable if the route changes.
 //
-// Auto never stops a run here: when the native route cannot finish this
-// checkpoint, it returns a Fallback and the caller writes a full portable
-// checkpoint. Provider only returns an error instead. A transient cause stays
-// visible to run recovery; a definite refusal names the setting to change.
+// A run never stops here for a refusal: when the native route cannot finish
+// this checkpoint, it returns a Fallback and the caller writes a full portable
+// checkpoint (Provider only with the serving model itself). Only an outage in
+// Provider only is an error, so run recovery retries it like any request.
 func (p *Provider) NativeCheckpoint(ctx context.Context, r NativeCheckpointRequest, opts ...ClientOption) (NativeCheckpointResult, error) {
 	var zero NativeCheckpointResult
 	fallback := func(why string, changed bool) (NativeCheckpointResult, error) {
-		if p.CompactionMethod() == CompactionProviderOnly {
-			return zero, &nativeFailure{text: why + " " + providerOnlyAdvice}
-		}
 		return NativeCheckpointResult{Fallback: why, Changed: changed}, nil
 	}
 	if err := p.nativeReady(ctx, r.Model); err != nil {
@@ -115,15 +115,15 @@ func (p *Provider) NativeCheckpoint(ctx context.Context, r NativeCheckpointReque
 	if len(r.Messages) < 2 || r.Messages[0].Role != "system" || r.Limit <= 0 || r.Limit > 8192 || len(r.ProbeSource) > 512 || len(r.ProbeQuestion) > 512 || len(r.ProbeAnswer) > 96 || r.ProbeAnswer == "" || r.Directive == "" || r.Verify == "" {
 		return zero, errors.New("incomplete compaction request")
 	}
-	if catalogUnavailable.Load() {
-		// Without the saved attempt records a lost result could be paid twice.
-		return fallback("Crude cannot read its saved compaction checks.", true)
-	}
 	proto := p.Protocol()
 	codec, ok := proto.(compactWire)
 	path := proto.Info().Options.NativeCompaction
 	if !ok || path == "" {
-		return fallback("This wire protocol has no supported native compaction operation.", false)
+		return fallback("This wire protocol has no native compaction operation.", false)
+	}
+	if catalogUnavailable.Load() {
+		// Without the saved attempt records a lost result could be paid twice.
+		return fallback("Crude cannot read its saved compaction checks.", true)
 	}
 	// An arbitrary extra field can replace the history, route, store policy or
 	// output limit. Only carry fields for which this operation has a contract.
@@ -139,13 +139,14 @@ func (p *Provider) NativeCheckpoint(ctx context.Context, r NativeCheckpointReque
 			return fallback(nativeOptionsReason, true)
 		}
 	}
-	opts = append(opts, WithMaxAttempts(1), WithResponseLimit(maxNativeWindowBytes*2))
+	// A streamed body carries every delta; the window itself stays bounded.
+	opts = append(opts, WithMaxAttempts(1), WithResponseLimit(16*maxNativeWindowBytes))
 	c, err := p.Client(opts...)
 	if err != nil {
 		return zero, err
 	}
 	c = withoutRedirects(c)
-	responses := proto.Info().ID == "openai-responses"
+	responses := path == "responses/compact"
 	if proto.Info().ID == "anthropic" {
 		c = withCompactHeaders(c)
 	}
@@ -184,7 +185,7 @@ func (p *Provider) NativeCheckpoint(ctx context.Context, r NativeCheckpointReque
 	defaultPath := op.path
 	if responses && fact.method == proto.Info().ChatPath {
 		op.path = fact.method
-		op.codec = &triggerWire{}
+		op.codec = &triggerWire{enc: proto}
 	}
 	// A missing standalone operation, or an explicit refusal of the option,
 	// proves that no work was done. The other Responses operation may exist.
@@ -194,7 +195,7 @@ func (p *Provider) NativeCheckpoint(ctx context.Context, r NativeCheckpointReque
 	}
 	switchOperation := func() {
 		if op.path == defaultPath {
-			op.codec, op.path = &triggerWire{}, proto.Info().ChatPath
+			op.codec, op.path = &triggerWire{enc: proto}, proto.Info().ChatPath
 		} else {
 			op.codec, op.path = proto.(compactWire), defaultPath
 		}
@@ -205,9 +206,6 @@ func (p *Provider) NativeCheckpoint(ctx context.Context, r NativeCheckpointReque
 	if fact.retryAt > time.Now().Unix() || fact.fresh() && fact.state == supportUnavailable {
 		if fact.state == supportUnavailable && fact.retryAt <= time.Now().Unix() {
 			return fallback("This route did not support native compaction at its last check.", false)
-		}
-		if p.CompactionMethod() == CompactionProviderOnly {
-			return zero, &StatusError{StatusCode: http.StatusServiceUnavailable, Message: "Native compaction is temporarily unavailable. Crude will check again.", RetryAfter: time.Until(time.Unix(fact.retryAt, 0))}
 		}
 		return fallback("Native compaction could not be verified. Crude will check again later.", false)
 	}
@@ -240,13 +238,10 @@ func (p *Provider) NativeCheckpoint(ctx context.Context, r NativeCheckpointReque
 			return zero, e
 		}
 		failure := newNativeFailure(err)
-		if p.CompactionMethod() == CompactionProviderOnly {
-			if failure.cause == nil {
-				failure.text += " " + providerOnlyAdvice
-			}
+		if p.CompactionMethod() == CompactionProviderOnly && failure.cause != nil {
 			return zero, failure
 		}
-		return NativeCheckpointResult{Fallback: failure.text, Changed: initial.failures == 0}, nil
+		return NativeCheckpointResult{Fallback: failure.text, Changed: initial.failures == 0, Transient: failure.cause != nil}, nil
 	}
 	verified := fact.fresh() && fact.state == supportVerified && fact.failures == 0
 	if !verified && (!anchored || fact.failures > 0) {
@@ -337,15 +332,12 @@ func (p *Provider) NativeCheckpoint(ctx context.Context, r NativeCheckpointReque
 }
 
 // earlierAttempt keeps a possibly paid request from being sent again
-// automatically. Auto uses Errand; Provider only waits for the marker. A
-// recorded failure already told the user; a marker left by a stopped core did not.
+// automatically; a portable checkpoint is written instead. A recorded failure
+// already told the user; a marker left by a stopped core did not.
 func (p *Provider) earlierAttempt(err error, fallback func(string, bool) (NativeCheckpointResult, error), unreported bool) (NativeCheckpointResult, error) {
 	var earlier *earlierAttemptError
 	if !errors.As(err, &earlier) {
 		return NativeCheckpointResult{}, err
-	}
-	if p.CompactionMethod() == CompactionProviderOnly {
-		return NativeCheckpointResult{}, &StatusError{StatusCode: http.StatusServiceUnavailable, Message: "An earlier compaction request did not finish. Crude will try again.", RetryAfter: time.Until(earlier.until)}
 	}
 	return fallback("An earlier native compaction request for this conversation did not finish.", unreported)
 }

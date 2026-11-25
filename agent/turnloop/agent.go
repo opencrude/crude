@@ -69,9 +69,20 @@ type Agent struct {
 	CompactionProvider   *provider.Provider
 	// NativeCompactionProvider is the main connection for a detached extraction agent.
 	NativeCompactionProvider *provider.Provider
-	// CompactionConfigError preserves a missing Errand binding without blocking native use.
+	// CompactionConfigError preserves a missing Errand binding; the serving
+	// model writes checkpoints instead unless the account requires Errand.
 	CompactionConfigError  error
 	CompactionTargetOutput int
+	// servingCacheRatio is the share of the last request's input the serving
+	// route read from its cache: evidence for a cheaper serving checkpoint.
+	servingCacheRatio float64
+	// portableOnly marks the serving model writing a portable checkpoint
+	// after native negotiation already ended for this boundary.
+	portableOnly bool
+	// extractionTools are the conversation's tools, declared (but forbidden)
+	// on extraction requests only when the writer is the serving model, so
+	// they keep the conversation's cached prefix.
+	extractionTools        []provider.ToolDef
 	CompactionTargetModel  string
 	CompactionTargetWindow int
 	CompactionTargetTokens int
