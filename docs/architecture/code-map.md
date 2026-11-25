@@ -25,7 +25,7 @@ them, are in [code layout](../reference/code-layout.md).
 | `lsp/` | Group: `lspaction/`, `lspclient/`, `lspcompletion/`, `lspedit/`, `lspinlay/`, `lspnav/`, `lspsemantic/`. |
 | `text/` | Group: `anchor/`, `indentation/`, `jsonrepair/`, `snippet/`, `textdiff/`, `textencoding/`, `textsearch/`, `unidiff/`. |
 | `types/` | Group of neutral contracts by subject: `setting/`, `conversation/`, `insight/`, `statuscenter/`, `syntaxdata/`, `accounting/`, `activity/`, `attachment/`, `capability/`, `command/`, `control/`, `handover/`, `inspect/`, `jsondoc/`, `reasoning/`, `recovery/`, `toolresult/`. |
-| `internal/` | Group of shared support with no product rules: `buildinfo/`, `clientstate/`, `clipboard/`, `console/`, `crashlog/`, `filelink/`, `fileuri/`, `hostenv/`, `logger/`, `metrics/`, `network/`, `perfdata/`, `retry/`, `sysload/`, `terminalvt/`, `testhome/`, `testsymlink/`, `testterminal/`. |
+| `internal/` | Group of shared support with no product rules: `buildinfo/`, `clientstate/`, `clipboard/`, `console/`, `crashlog/`, `filelink/`, `fileuri/`, `hostenv/`, `logger/`, `metrics/`, `network/`, `perfdata/`, `providersim/`, `retry/`, `sysload/`, `terminalvt/`, `testhome/`, `testsymlink/`, `testterminal/`. |
 | `tools/` | Group of development programs: `wiregen/`, `namesgate/`, `layoutcheck/`, `catalogimport/`, `coreshellobserver/`. |
 
 ## Application and runtime
@@ -70,6 +70,7 @@ them, are in [code layout](../reference/code-layout.md).
 | `agent/capability/`, `agent/skills/`, `agent/mcpclient/`, `agent/cranemcp/` | Capability discovery/acquisition/grants, skill loading, MCP client transport, Crude's own MCP control server. |
 | `agent/safety/` | Command safety assessment and permission policy. |
 | `agent/hostshell/` | Installed-shell inventory on the core's machine and the agent command shell resolver. |
+| `internal/providersim/` | Test-only HTTP provider simulator: pinned wire schemas, scripted turns and faults, request journal, and synthetic prefix/cache accounting. |
 | `internal/retry/` | The single automatic-cooldown contract (five-minute ceiling). |
 | `internal/metrics/` | Bounded per-process performance history (latency, counters, gauges, keyed tables, stall events) and, per snapshot, OS resource usage (memory, CPU, started processes, disk via a registered source) read by the Performance surface ([performance baselines](../reference/performance-baselines.md)). |
 | `internal/sysload/` | Observes the computer for background work: power source, CPU/memory/I/O pressure (Linux PSI) or idle cores, and available memory. Read off the UI goroutine by the closed-file check ([editor](../reference/editor.md#project-check-of-closed-files)). |
