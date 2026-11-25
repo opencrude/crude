@@ -937,6 +937,11 @@ func withStreamFlag(req *ChatRequest, stream bool) *ChatRequest {
 	}
 	clone := *req
 	clone.Stream = stream
+	if stream && clone.StreamOptions == nil {
+		// Crude charges each request and sizes context from usage. Chat
+		// Completions streams send usage only on request.
+		clone.StreamOptions = &StreamOptions{IncludeUsage: true}
+	}
 	return &clone
 }
 

@@ -23,6 +23,11 @@ func textStream(t *testing.T, w wireProfile) {
 	if err != nil || r.text != want || r.finish == "" {
 		t.Fatalf("stream text=%q finish=%q err=%v", r.text, r.finish, err)
 	}
+	// Crude charges and sizes context from usage. A caller must not have to
+	// ask for it; the request here sets no stream options.
+	if r.usage == nil || r.usage.PromptTokens <= 0 {
+		t.Errorf("stream reported no usage: %+v", r.usage)
+	}
 	if req := f.last(t, 1); !req.Stream || dialog(req.Effective) != "Find the ticket." {
 		t.Fatalf("wrong stream request: %s", req.Raw)
 	}
@@ -132,7 +137,6 @@ func cacheUsage(t *testing.T, w wireProfile) {
 	f := fixture(t, w, providersim.WithCacheProfile(w.wire, w.model, providersim.CacheProfile{Minimum: 1, Granularity: 1}))
 	f.sim.Respond(func(providersim.Request) providersim.Turn { return providersim.Text("done") })
 	q := f.request()
-	q.StreamOptions = &provider.StreamOptions{IncludeUsage: true}
 	mark := &provider.CacheControl{Type: "ephemeral"}
 	if w.wire == providersim.Messages {
 		q.Messages[len(q.Messages)-1].CacheControl = mark
