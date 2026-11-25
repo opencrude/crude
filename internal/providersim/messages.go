@@ -20,7 +20,8 @@ func init() {
 		state := newMessageState(s)
 		mux := http.NewServeMux()
 		mux.HandleFunc("POST /v1/messages", state.create)
-		mux.HandleFunc("GET /v1/models", state.listModels)
+		mux.HandleFunc("GET /v1/models", state.models)
+		mux.HandleFunc("GET /v1/models/{id}", state.models)
 		return mux
 	})
 }

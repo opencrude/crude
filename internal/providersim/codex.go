@@ -125,8 +125,8 @@ func validateCodex(b *bundle, obj responseObject) (string, error) {
 			return "input", fmt.Errorf("/input/%d: %w", i, err)
 		}
 		it, _ := v.(responseObject)
-		if it["type"] == "compaction_trigger" && (i != len(items)-1 || len(it) != 1) {
-			return "input", fmt.Errorf("/input/%d: supply only a final compaction_trigger", i)
+		if it["type"] == "compaction_trigger" && len(it) != 1 {
+			return "input", fmt.Errorf("/input/%d: a Codex compaction_trigger has no other fields", i)
 		}
 	}
 	return "", nil

@@ -118,43 +118,58 @@ func messageModelProfile(id string) messageProfile {
 }
 
 // Models and inventory: https://platform.claude.com/docs/en/api/models/list.md
-// and https://platform.claude.com/docs/en/api/beta/models/list.md. Synthetic
+// and anthropic-sdk-python@f1edcd7 resources/beta/models.py::retrieve. Synthetic
 // inventory metadata and non-compaction capabilities describe the simulator,
 // not a complete account catalog. The compaction flags match the handler.
-func (s *messageState) listModels(w http.ResponseWriter, r *http.Request) {
+func (s *messageState) models(w http.ResponseWriter, r *http.Request) {
 	req, err := receive(Messages, r)
 	if err != nil {
 		s.reject(w, req, err)
 		return
 	}
+	req.Model = r.PathValue("id")
 	s.server.observe(req)
 	entries, ok := s.server.inventory(w, r, Messages, "claude-sonnet-4-6")
 	if !ok {
 		return
 	}
+	beta := hasMessageBeta(r.Header, demandBeta)
+	if req.Model != "" {
+		for _, m := range entries {
+			if m.ID == req.Model {
+				writeJSON(w, 200, messageModelRow(m, beta))
+				return
+			}
+		}
+		writeJSON(w, 404, messageError(w, "not_found_error", "Model not found.", ""))
+		return
+	}
 	models := make([]messageObject, 0, len(entries))
 	var first, last any
-	yes, no := messageObject{"supported": true}, messageObject{"supported": false}
 	for _, m := range entries {
-		id := m.ID
-		p := messageModelProfile(id)
-		caps := messageObject{"batch": no, "citations": no, "code_execution": no, "image_input": yes, "pdf_input": no, "structured_outputs": no,
-			"server_tools": messageObject{"supported": false, "web_search": no, "code_execution": no}, "effort": messageObject{"supported": false, "high": no, "low": no, "max": no, "medium": no},
-			"context_management": messageObject{"supported": p.threshold, "compact_20260112": messageObject{"supported": p.threshold}},
-			"thinking":           messageObject{"supported": true, "types": messageObject{"enabled": yes, "disabled": yes, "adaptive": yes, "between_tools": no}}}
-		if hasMessageBeta(r.Header, demandBeta) {
-			caps["compaction"] = messageObject{"supported": p.demand, "summarize": messageObject{"supported": p.demand}}
-		}
-		row := messageObject{"id": id, "type": "model", "created_at": "1970-01-01T00:00:00Z", "display_name": cmp.Or(m.DisplayName, id), "lifecycle": "active", "capabilities": caps}
-		if m.ContextWindow != 0 {
-			row["max_input_tokens"] = m.ContextWindow
-		}
-		models = append(models, row)
+		models = append(models, messageModelRow(m, beta))
 	}
 	if len(entries) > 0 {
 		first, last = entries[0].ID, entries[len(entries)-1].ID
 	}
 	writeJSON(w, 200, messageObject{"data": models, "first_id": first, "last_id": last, "has_more": false})
+}
+
+func messageModelRow(m Model, demand bool) messageObject {
+	yes, no := messageObject{"supported": true}, messageObject{"supported": false}
+	p := messageModelProfile(m.ID)
+	caps := messageObject{"batch": no, "citations": no, "code_execution": no, "image_input": yes, "pdf_input": no, "structured_outputs": no,
+		"server_tools": messageObject{"supported": false, "web_search": no, "code_execution": no}, "effort": messageObject{"supported": false, "high": no, "low": no, "max": no, "medium": no},
+		"context_management": messageObject{"supported": p.threshold, "compact_20260112": messageObject{"supported": p.threshold}},
+		"thinking":           messageObject{"supported": true, "types": messageObject{"enabled": yes, "disabled": yes, "adaptive": yes, "between_tools": no}}}
+	if demand {
+		caps["compaction"] = messageObject{"supported": p.demand, "summarize": messageObject{"supported": p.demand}}
+	}
+	row := messageObject{"id": m.ID, "type": "model", "created_at": "1970-01-01T00:00:00Z", "display_name": cmp.Or(m.DisplayName, m.ID), "lifecycle": "active", "capabilities": caps}
+	if m.ContextWindow != 0 {
+		row["max_input_tokens"] = m.ContextWindow
+	}
+	return row
 }
 
 type messageCacheEntry struct {

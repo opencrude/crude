@@ -100,6 +100,7 @@ type Server struct {
 	cacheProfiles map[prefixKey]CacheProfile
 	catalogs      map[Wire]map[string][]Model
 	chatGateways  map[string]ChatGateway
+	responses     *responseState
 
 	mu        sync.Mutex
 	journal   []Request
