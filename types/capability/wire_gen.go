@@ -632,8 +632,8 @@ func (z *AgentBinding) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *ConnectionConfig) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 27
-	o = append(o, 0xdc, 0x0, 0x1b)
+	// array header, size 29
+	o = append(o, 0xdc, 0x0, 0x1d)
 	o = msgp.AppendString(o, z.ID)
 	o = msgp.AppendString(o, z.Name)
 	o = msgp.AppendString(o, z.Host)
@@ -685,6 +685,8 @@ func (z *ConnectionConfig) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.AppendString(o, z.Version)
 	o = msgp.AppendBool(o, z.LaunchApproved)
 	o = msgp.AppendString(o, z.OAuthClientID)
+	o = msgp.AppendString(o, z.OAuthMetadataURL)
+	o = msgp.AppendString(o, z.OAuthIssuer)
 	if z.OAuthScopes == nil { // allownil: if nil
 		o = msgp.AppendNil(o)
 	} else {
@@ -733,8 +735,8 @@ func (z *ConnectionConfig) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 27 {
-		err = msgp.ArrayError{Wanted: 27, Got: zb0001}
+	if zb0001 != 29 {
+		err = msgp.ArrayError{Wanted: 29, Got: zb0001}
 		return
 	}
 	z.ID, bts, err = msgp.ReadStringBytes(bts)
@@ -958,6 +960,16 @@ func (z *ConnectionConfig) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.WrapError(err, "OAuthClientID")
 		return
 	}
+	z.OAuthMetadataURL, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "OAuthMetadataURL")
+		return
+	}
+	z.OAuthIssuer, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "OAuthIssuer")
+		return
+	}
 	if msgp.IsNil(bts) {
 		bts = bts[1:]
 		z.OAuthScopes = nil
@@ -1099,7 +1111,7 @@ func (z *ConnectionConfig) Msgsize() (s int) {
 			s += msgp.StringPrefixSize + len(za0006) + msgp.StringPrefixSize + len(za0007)
 		}
 	}
-	s += msgp.StringPrefixSize + len(z.Auth) + msgp.StringPrefixSize + len(z.CredentialRef) + msgp.IntSize + msgp.BoolSize + msgp.StringPrefixSize + len(string(z.Scope)) + msgp.StringPrefixSize + len(z.Source) + msgp.StringPrefixSize + len(z.Version) + msgp.BoolSize + msgp.StringPrefixSize + len(z.OAuthClientID) + msgp.ArrayHeaderSize
+	s += msgp.StringPrefixSize + len(z.Auth) + msgp.StringPrefixSize + len(z.CredentialRef) + msgp.IntSize + msgp.BoolSize + msgp.StringPrefixSize + len(string(z.Scope)) + msgp.StringPrefixSize + len(z.Source) + msgp.StringPrefixSize + len(z.Version) + msgp.BoolSize + msgp.StringPrefixSize + len(z.OAuthClientID) + msgp.StringPrefixSize + len(z.OAuthMetadataURL) + msgp.StringPrefixSize + len(z.OAuthIssuer) + msgp.ArrayHeaderSize
 	for za0008 := range z.OAuthScopes {
 		s += msgp.StringPrefixSize + len(z.OAuthScopes[za0008])
 	}

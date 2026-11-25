@@ -49,6 +49,9 @@ func SafeConnection(config ConnectionConfig) ConnectionConfig {
 	var safe ConnectionConfig
 	_ = json.Unmarshal(encoded, &safe)
 	redact := func(value string) string {
+		if config.CredentialRef != "" {
+			value = strings.ReplaceAll(value, config.CredentialRef, "[redacted]")
+		}
 		for _, values := range []map[string]string{config.Environment, config.Headers, config.SecretRefs} {
 			for _, secret := range values {
 				if secret != "" {
@@ -59,6 +62,7 @@ func SafeConnection(config ConnectionConfig) ConnectionConfig {
 		return value
 	}
 	safe.URL, safe.Command, safe.Directory = redact(safe.URL), redact(safe.Command), redact(safe.Directory)
+	safe.OAuthClientID, safe.OAuthIssuer, safe.OAuthMetadataURL = redact(safe.OAuthClientID), redact(safe.OAuthIssuer), redact(safe.OAuthMetadataURL)
 	for i := range safe.Args {
 		safe.Args[i] = redact(safe.Args[i])
 	}

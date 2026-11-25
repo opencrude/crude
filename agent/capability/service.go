@@ -402,6 +402,14 @@ func (s *Service) SetSecrets(ctx context.Context, values map[string]string) erro
 	}
 	s.mu.RUnlock()
 	for id, config := range settings.Connections {
+		if name, found := strings.CutPrefix(config.CredentialRef, "secret:"); found {
+			if _, changed := values[name]; changed {
+				for _, clients := range managers {
+					_ = clients.Disconnect(id)
+				}
+				continue
+			}
+		}
 		uses := config.IsBuiltin()
 		for _, reference := range config.SecretRefs {
 			name, found := strings.CutPrefix(reference, "secret:")
@@ -535,21 +543,9 @@ func (s *Service) Execute(ctx context.Context, actor captypes.RuntimeActor, snap
 		if snapshot.RunID != actor.RunID || snapshot.TurnGeneration != actor.TurnGeneration {
 			return captypes.Result{}, errors.New("dynamic request belongs to an expired run")
 		}
-		s.mu.RLock()
-		config := s.settings.Connections[tool.ConnectionID]
-		source, exists := s.settings.Sources[config.Source]
-		currentRun := s.runs[actorKey(actor)]
-		s.mu.RUnlock()
-		if currentRun != taskKey(actor) {
-			return captypes.Result{}, errors.New("dynamic request run was revoked or replaced")
-		}
-		if config.Disabled {
-			return captypes.Result{}, errors.New("MCP connection is disabled")
-		}
-		if config.Source != "" {
-			if !exists || source.Disabled || !source.Trusted {
-				return captypes.Result{}, errors.New("MCP source is unavailable or untrusted")
-			}
+		ctx, err := s.admitToolCall(ctx, actor, tool)
+		if err != nil {
+			return captypes.Result{}, err
 		}
 		return s.actorClients(actor).Call(ctx, tool, params)
 	}

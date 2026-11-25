@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -651,11 +652,11 @@ func (w *Workspace) ResolveQuestion(agentID, blockID string, answers, questions 
 			Detail:    "no questions were answered",
 		})
 	}
-	return w.resolveAgentBlock(agentID, conversation.BlockResponse{
-		RequestID: blockID,
-		Outcome:   conversation.BlockAnswered,
-		Value:     text,
-	})
+	reply := conversation.BlockResponse{RequestID: blockID, Outcome: conversation.BlockAnswered, Value: text}
+	for i := range reply.HumanAnswers {
+		reply.HumanAnswers[i] = answers[strconv.Itoa(i+1)]
+	}
+	return w.resolveAgentBlock(agentID, reply)
 }
 
 // formatQuestionAnswers renders the model-visible question result. Questions

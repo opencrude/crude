@@ -189,8 +189,31 @@ reject changed arguments/session/agent/draft. Nothing is submitted automatically
 The declared MCP profile uses Go SDK v1.8.0 negotiation: 2026-07-28,
 2025-11-25, 2025-06-18, 2025-03-26 and 2024-11-05. Advertised SDK protocol
 versions do not imply support for every optional feature in those specifications.
-Crude disables multi-round-trip extensions and advertises only actual client
-capabilities; resource links remain references, not automatic fetch permission.
+On a 2026-07-28 tool call, Crude advertises form elicitation only when the
+initiating turn has the human question tool and its response channel. The
+question names the MCP connection, tool and fields. Review the answers, then
+select **Send answers** or **Decline**. Cancelling or skipping the sharing
+choice sends no values. Manual call approval, Auto Review, YOLO and an agent's
+own question answers do not answer the form. Do not enter credentials or
+payment details. Crude refuses recognizable requests for these data; use the
+server's separate sign-in flow for authentication.
+
+Forms support flat strings, numbers, integers, booleans and string enums,
+including multiple selections. Each question page contains up to four items.
+When a choice list cannot represent an enum exactly, enter a quoted JSON
+string or a JSON list. This preserves commas, spaces and empty strings.
+An unsupported schema or invalid answer stops the exchange; values
+are never filled from server defaults. Crude rechecks the run, session
+switch, source, connection lifetime and tool grant before sending the next
+request. Under the [2026-07-28 multi-round-trip rules](https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/mrtr),
+only an explicit input-required result with supported requests can continue
+the same call. Its opaque state is not shared with another call.
+The connection timeout applies to each server exchange, not to time spent
+answering a form. Stop, disconnect and the caller's own deadline still cancel
+the wait. A timed-out exchange, dropped reply or busy server does not cause a tool replay.
+Calls without a question owner, older protocol versions, resources and prompts
+remain noninteractive. Resource links remain references, not automatic fetch
+permission.
 
 Coverage: managed stdio and Streamable HTTP, endpoint-bound OAuth, bounded
 tools/resources/prompts discovery, schema changes, ordered mixed text, structured,
@@ -201,7 +224,7 @@ not fetched. Encoded projected content has a 1 MiB budget; oversized content fai
 explicitly. Model modality and wire support still govern media admission. Roots
 use official file-URI roots/list behavior for the resolved execution directory;
 roots are context, not a filesystem sandbox. Composer resource/prompt previews
-are text-only. Sampling, elicitation, task extensions, rich MCP apps and optional
+are text-only. Sampling, URL elicitation, task extensions, rich MCP apps and optional
 remote UI channels are unsupported and not advertised. Resume starts no connection,
 download, update or tool replay.
 
@@ -465,6 +488,15 @@ Saved Version keep the separate full-file reader in movable main tabs.
   OAuth loopback/headless return, grant isolation, cancellation/retry and unknown
   mutations without replay. Board tests use real durable context admission;
   memory tests cover evidence/revision/CAS/exposure and retained browser ownership.
+- The [official client referee](protocol-conformance.md#mcp-client)
+  passed all five `sep-2322-client-request-state` assertions for 2026-07-28
+  with the production manager and an explicit loopback fixture answer.
+  `TestFormRequestStateOverManagedTransports` separately checks concurrent
+  calls and omitted, empty and non-empty state over stdio and HTTP.
+  `TestMCPFormThroughToolQuestionLane` drives the turn's question channel
+  through a real managed server and checks what it receives.
+  `TestMCPFormCompletesLargeHumanApprovedWorkflow` checks that six rounds of
+  five twenty-field forms can complete and that enum values survive paging.
 - `TestLiveDefaultCapabilitySources` is an explicit network-gated acceptance
   (`CRUDE_LIVE_CAPABILITY_SOURCES=1`): it discovers and acquires a real pinned
   Anthropic skill, discovers current remote Streamable HTTP entries from the

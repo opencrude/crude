@@ -219,6 +219,14 @@ func (s *Session) bindAgentRuntime(ctx context.Context, live *turnloop.Agent, ac
 					return captypes.Result{}, jobErr
 				})
 			}
+			if dynamic {
+				callCtx = captypes.WithFormGuard(callCtx, func(ctx context.Context, id string) error {
+					if currentActor().DisabledForSession(id) {
+						return captypes.ErrSessionDisabled(id)
+					}
+					return ctx.Err()
+				})
+			}
 			result, err := runtime.Execute(callCtx, currentActor(), requestSnapshot, tool, params)
 			if scheduled {
 				return jobResult, err

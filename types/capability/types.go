@@ -80,33 +80,36 @@ type ToolGrant struct {
 }
 
 type ConnectionConfig struct {
-	ID             string               `json:"id"`
-	Name           string               `json:"name"`
-	Host           string               `json:"host,omitempty"`
-	Transport      string               `json:"transport"`
-	URL            string               `json:"url,omitempty"`
-	Command        string               `json:"command,omitempty"`
-	Args           []string             `json:"args,omitempty"`
-	Directory      string               `json:"directory,omitempty"`
-	Environment    map[string]string    `json:"environment,omitempty"`
-	Headers        map[string]string    `json:"headers,omitempty"`
-	SecretRefs     map[string]string    `json:"secret_refs,omitempty"`
-	Auth           string               `json:"auth,omitempty"`
-	CredentialRef  string               `json:"credential_ref,omitempty"`
-	TimeoutSeconds int                  `json:"timeout_seconds,omitempty"`
-	Disabled       bool                 `json:"disabled,omitempty"`
-	Scope          Scope                `json:"scope,omitempty"`
-	Source         string               `json:"source,omitempty"`
-	Version        string               `json:"version,omitempty"`
-	LaunchApproved bool                 `json:"launch_approved,omitempty"`
-	OAuthClientID  string               `json:"oauth_client_id,omitempty"`
-	OAuthScopes    []string             `json:"oauth_scopes,omitempty"`
-	Grants         map[string]ToolGrant `json:"grants,omitempty"`
-	PackageType    string               `json:"package_type,omitempty"`
-	PackageID      string               `json:"package_id,omitempty"`
-	RequiredEnv    []string             `json:"required_environment,omitempty"`
-	RepositoryURL  string               `json:"repository_url,omitempty"`
-	WebsiteURL     string               `json:"website_url,omitempty"`
+	ID          string            `json:"id"`
+	Name        string            `json:"name"`
+	Host        string            `json:"host,omitempty"`
+	Transport   string            `json:"transport"`
+	URL         string            `json:"url,omitempty"`
+	Command     string            `json:"command,omitempty"`
+	Args        []string          `json:"args,omitempty"`
+	Directory   string            `json:"directory,omitempty"`
+	Environment map[string]string `json:"environment,omitempty"`
+	Headers     map[string]string `json:"headers,omitempty"`
+	SecretRefs  map[string]string `json:"secret_refs,omitempty"`
+	Auth        string            `json:"auth,omitempty"`
+	// CredentialRef is the write-only vault reference for a registered OAuth client secret.
+	CredentialRef    string               `json:"credential_ref,omitempty"`
+	TimeoutSeconds   int                  `json:"timeout_seconds,omitempty"`
+	Disabled         bool                 `json:"disabled,omitempty"`
+	Scope            Scope                `json:"scope,omitempty"`
+	Source           string               `json:"source,omitempty"`
+	Version          string               `json:"version,omitempty"`
+	LaunchApproved   bool                 `json:"launch_approved,omitempty"`
+	OAuthClientID    string               `json:"oauth_client_id,omitempty"`
+	OAuthMetadataURL string               `json:"oauth_metadata_url,omitempty"`
+	OAuthIssuer      string               `json:"oauth_issuer,omitempty"`
+	OAuthScopes      []string             `json:"oauth_scopes,omitempty"`
+	Grants           map[string]ToolGrant `json:"grants,omitempty"`
+	PackageType      string               `json:"package_type,omitempty"`
+	PackageID        string               `json:"package_id,omitempty"`
+	RequiredEnv      []string             `json:"required_environment,omitempty"`
+	RepositoryURL    string               `json:"repository_url,omitempty"`
+	WebsiteURL       string               `json:"website_url,omitempty"`
 }
 
 type SourceConfig struct {

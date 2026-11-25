@@ -972,6 +972,10 @@ func mcpConnectionFields(value captypes.ConnectionConfig) []*ui.FieldState {
 	transport := ui.SegmentedFieldState("transport", "Runs as", []ui.FormOption{{ID: "http", Label: "Remote server"}, {ID: "stdio", Label: "Local process"}}, mapDefault(value.Transport, "http"),
 		"Remote uses streamable HTTP; Local launches an executable on the core host.")
 	auth := ui.SegmentedFieldState("auth", "Sign in", []ui.FormOption{{ID: "none", Label: "None"}, {ID: "oauth", Label: "OAuth"}}, mapDefault(value.Auth, "none"), "OAuth sign-in is always an explicit step you start.")
+	clientSecret := ui.PasswordFieldState("oauth-secret-ref", "OAuth client secret reference", "", "Use secret:NAME. Leave blank to keep it, or enter - to clear it.")
+	if value.CredentialRef != "" {
+		clientSecret.Placeholder = "Stored"
+	}
 	return []*ui.FieldState{
 		ui.SeparatorFieldState("mcp-identity", "Connection"),
 		ui.TextFieldState("name", "Name", value.Name, "How this connection appears to you and your agents."),
@@ -981,7 +985,10 @@ func mcpConnectionFields(value captypes.ConnectionConfig) []*ui.FieldState {
 		ui.TextFieldState("url", "Endpoint", value.URL, "The server's HTTPS URL. Credentials are bound to this exact endpoint."),
 		table("headers", "Headers", "Add header", value.Headers, "Non-secret headers; put tokens in Secret references.", "Header", "Value"),
 		auth,
-		ui.TextFieldState("oauth-client", "OAuth client", value.OAuthClientID, "Leave blank to register dynamically."),
+		ui.TextFieldState("oauth-client", "OAuth client ID", value.OAuthClientID, "Enter a registered client ID, or leave blank."),
+		ui.TextFieldState("oauth-issuer", "OAuth issuer URL", value.OAuthIssuer, "Required with a client secret. Enter the issuer that registered the client."),
+		clientSecret,
+		ui.TextFieldState("oauth-metadata", "OAuth client metadata URL", value.OAuthMetadataURL, "Use a public HTTPS document. Leave both client fields blank to register."),
 		ui.TextFieldState("oauth-scopes", "OAuth scopes", strings.Join(value.OAuthScopes, " "), "Space- or comma-separated scopes to request at sign-in."),
 		ui.SeparatorFieldState("mcp-local", "Local process"),
 		ui.TextFieldState("command", "Executable", value.Command, "Executable on PATH or an absolute path; launched without a shell."),
@@ -1120,10 +1127,26 @@ func (catalog *capabilityCatalog) draftAction() (captypes.Action, error) {
 		if catalog.draftOriginal.Connection != nil {
 			connection = captypes.Clone(captypes.Settings{Connections: map[string]captypes.ConnectionConfig{catalog.id: *catalog.draftOriginal.Connection}}).Connections[catalog.id]
 		}
+		before := connection
 		connection.ID, connection.Name, connection.Transport, connection.URL, connection.Command, connection.Directory, connection.Auth, connection.OAuthClientID = value("id"), value("name"), value("transport"), value("url"), value("command"), value("directory"), value("auth"), value("oauth-client")
+		connection.OAuthIssuer, connection.OAuthMetadataURL = value("oauth-issuer"), value("oauth-metadata")
+		switch reference := strings.TrimSpace(value("oauth-secret-ref")); reference {
+		case "":
+			if before.CredentialRef != "" && (before.OAuthClientID != connection.OAuthClientID || before.OAuthIssuer != connection.OAuthIssuer) && connection.Auth == "oauth" {
+				return request, fmt.Errorf("Enter the client secret reference again, or enter - to clear it.")
+			}
+		case "-":
+			connection.CredentialRef = ""
+		default:
+			connection.CredentialRef = reference
+		}
 		connection.LaunchApproved = ui.BoolFieldValue(form.Field("launch"))
 		connection.TimeoutSeconds, _ = strconv.Atoi(value("timeout"))
 		connection.OAuthScopes = splitList(value("oauth-scopes"))
+		if connection.Auth == "none" {
+			connection.OAuthClientID, connection.OAuthIssuer, connection.OAuthMetadataURL, connection.CredentialRef = "", "", "", ""
+			connection.OAuthScopes = nil
+		}
 		args, err := splitShellWords(value("args"))
 		if err != nil {
 			return request, fmt.Errorf("arguments: %w", err)

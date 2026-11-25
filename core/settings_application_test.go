@@ -159,7 +159,12 @@ func TestCapabilityFetchedSecretKeepRoundtrip(t *testing.T) {
 	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", setting.Settings{}, coreTestLogger{})
 	defer ws.Close()
 	before := ws.AppDefaults()
-	conn := captypes.ConnectionConfig{ID: "one", Name: "before", Transport: "http", URL: "https://example.com/mcp?token=sentinel", Environment: map[string]string{"KEY": "sentinel"}, Headers: map[string]string{"Authorization": "sentinel"}, SecretRefs: map[string]string{"KEY": "sentinel"}, CredentialRef: "sentinel", Args: []string{"sentinel"}, Scope: captypes.ScopeApplication}
+	conn := captypes.ConnectionConfig{
+		ID: "one", Name: "before", Transport: "http", URL: "https://example.com/mcp?token=sentinel",
+		Auth: "oauth", OAuthClientID: "fixture-client", OAuthIssuer: "https://issuer.example.com", CredentialRef: "secret:sentinel",
+		Environment: map[string]string{"KEY": "sentinel"}, Headers: map[string]string{"Authorization": "sentinel"},
+		SecretRefs: map[string]string{"KEY": "sentinel"}, Args: []string{"sentinel"}, Scope: captypes.ScopeApplication,
+	}
 	source := captypes.SourceConfig{ID: "private", Name: "before", Kind: "registry", Location: "https://example.com/?token=sentinel", Scope: captypes.ScopeApplication}
 	before.Capabilities.Connections[conn.ID] = conn
 	before.Capabilities.Sources[source.ID] = source
