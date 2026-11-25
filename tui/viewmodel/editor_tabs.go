@@ -320,6 +320,9 @@ func (m *App) closeEditorTabForce(path string) {
 		}
 		delete(m.editorSaves, id)
 	}
+	if m.finishScopedEditorClose(path) {
+		return
+	}
 	// Close any popups associated with this editor before closing the tab.
 	m.closeEditorViewPopups()
 
@@ -362,6 +365,34 @@ func (m *App) closeEditorTabForce(path string) {
 		m.openLauncher()
 		m.LastInteractionTime = time.Now()
 	}
+}
+
+// A writer can settle after the user moves the waiting tab or opens another
+// view of its document. The pending close may not destroy that other view.
+func (m *App) finishScopedEditorClose(path string) bool {
+	batch := m.pendingTabClose
+	doc := m.EditorState.Tabs[path]
+	if batch == nil || batch.waiting == nil || doc == nil || doc.Editor != batch.waiting.Editor.Primary() {
+		return false
+	}
+	view := batch.waiting
+	owned := batch.owner.valid(m) && m.Win.GroupOf(view.Tab) == batch.owner.group && m.editorView(view.Tab) == view
+	if owned && len(m.documentViews(path)) == 1 {
+		return false // it is still the last view; close the document normally
+	}
+	if state := m.liveEditors[doc.Editor]; state != nil {
+		state.closeAfter, state.closeView = false, false
+	}
+	if !owned {
+		m.abortPendingTabClose()
+		m.rearmAfterDelayAutosave(path)
+		return true
+	}
+	m.closeLinkedView(view)
+	m.rearmAfterDelayAutosave(path)
+	batch.waiting = nil
+	m.continuePendingTabClose()
+	return true
 }
 
 func (m *App) activeEditorPath() string {
@@ -442,48 +473,4 @@ func (m *App) retitleEditorWindowTab(oldPath, newPath string, ed *editor.Editor)
 	if m.EditorState.ActiveView == oldPath {
 		m.EditorState.ActiveView = newPath
 	}
-}
-
-// closeEditorViews closes the given editor tabs in order. A view of a
-// document still shown by another tab closes at once; the last view of a
-// dirty document stops the walk, prompts, and stores the remainder for
-// continuePendingTabClose so a confirmed close resumes the bulk operation
-// instead of losing unsaved work.
-func (m *App) closeEditorViews(ids []window.TabID) {
-	m.pendingTabClose = nil
-	for i, id := range ids {
-		if isImageTab(m.Win.TabByID(id)) {
-			m.closeImageTab(id)
-			continue
-		}
-		v := m.editorView(id)
-		if v == nil {
-			continue
-		}
-		if len(m.documentViews(v.Path)) > 1 {
-			m.closeLinkedView(v)
-			continue
-		}
-		if v.Editor.Modified() {
-			m.pendingTabClose = append(m.pendingTabClose, ids[i+1:]...)
-			m.showDirtyClosePrompt(v.Path)
-			return
-		}
-		m.closeEditorTabForce(v.Path)
-	}
-}
-
-// continuePendingTabClose resumes a bulk close that stopped at a dirty buffer.
-func (m *App) continuePendingTabClose() {
-	if len(m.pendingTabClose) == 0 {
-		return
-	}
-	ids := m.pendingTabClose
-	m.pendingTabClose = nil
-	m.closeEditorViews(ids)
-}
-
-// abortPendingTabClose drops the remainder of a bulk close the user cancelled.
-func (m *App) abortPendingTabClose() {
-	m.pendingTabClose = nil
 }

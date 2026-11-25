@@ -16,42 +16,63 @@ import (
 type AgentViewState struct {
 	inventory *workspace.AgentManager
 	selected  *workspace.AgentNode
-	hidden    map[*workspace.AgentNode]bool
-	shown     map[*workspace.AgentNode]bool
+	choices   map[*workspace.AgentNode]agentTabChoice
 	// remembered holds this client's saved choices for agents it has not seen
 	// in this attachment yet, by durable agent ID. A node adopts its choice the
 	// first time the view observes it; until then the choice is kept so it
 	// survives being saved again.
-	remembered map[string]bool // true = minimized, false = opened
-	revision   uint64          // changes whenever a saved choice changes
+	remembered map[string]agentTabChoice
+	revision   uint64 // changes whenever a saved choice changes
 }
 
+type agentTabChoice uint8
+
+const (
+	defaultAgentTab agentTabChoice = iota
+	openAgentTab
+	minimizeAgentFamily
+	minimizeAgentTab
+)
+
 func NewAgentViewState(inventory *workspace.AgentManager) *AgentViewState {
-	return &AgentViewState{inventory: inventory, hidden: make(map[*workspace.AgentNode]bool), shown: make(map[*workspace.AgentNode]bool)}
+	return &AgentViewState{inventory: inventory, choices: make(map[*workspace.AgentNode]agentTabChoice)}
 }
 
 // maxRememberedAgents bounds the memory of agents this client no longer sees.
 const maxRememberedAgents = 512
 
 // Remember installs saved choices before inventory arrives.
-func (v *AgentViewState) Remember(minimized, opened []string) {
+func (v *AgentViewState) Remember(minimized, opened, tabsOnly []string) {
 	if v == nil {
 		return
 	}
-	v.remembered = make(map[string]bool, len(minimized)+len(opened))
+	v.remembered = make(map[string]agentTabChoice, len(minimized)+len(opened)+len(tabsOnly))
 	for _, id := range opened {
-		v.remembered[id] = false
+		v.remembered[id] = openAgentTab
 	}
 	for _, id := range minimized {
-		v.remembered[id] = true
+		v.remembered[id] = minimizeAgentFamily
+	}
+	for _, id := range tabsOnly {
+		v.remembered[id] = minimizeAgentTab
 	}
 }
 
 // Choices returns the choices to save: live nodes first, then remembered
 // agents this attachment has not seen, in a stable order.
-func (v *AgentViewState) Choices() (minimized, opened []string) {
+func (v *AgentViewState) Choices() (minimized, opened, tabsOnly []string) {
 	if v == nil {
-		return nil, nil
+		return nil, nil, nil
+	}
+	add := func(id string, choice agentTabChoice) {
+		switch choice {
+		case minimizeAgentFamily:
+			minimized = append(minimized, id)
+		case minimizeAgentTab:
+			tabsOnly = append(tabsOnly, id)
+		case openAgentTab:
+			opened = append(opened, id)
+		}
 	}
 	live := make(map[string]bool)
 	if v.inventory != nil {
@@ -59,13 +80,8 @@ func (v *AgentViewState) Choices() (minimized, opened []string) {
 			if node == nil {
 				continue
 			}
-			v.adopt(node)
+			add(node.ID, v.choice(node))
 			live[node.ID] = true
-			if v.hidden[node] {
-				minimized = append(minimized, node.ID)
-			} else if node.Parent != nil && v.shown[node] {
-				opened = append(opened, node.ID)
-			}
 		}
 	}
 	ids := make([]string, 0, len(v.remembered))
@@ -75,17 +91,13 @@ func (v *AgentViewState) Choices() (minimized, opened []string) {
 		}
 	}
 	slices.Sort(ids)
-	if extra := len(minimized) + len(opened) + len(ids) - maxRememberedAgents; extra > 0 {
+	if extra := len(minimized) + len(opened) + len(tabsOnly) + len(ids) - maxRememberedAgents; extra > 0 {
 		ids = ids[min(extra, len(ids)):]
 	}
 	for _, id := range ids {
-		if v.remembered[id] {
-			minimized = append(minimized, id)
-		} else {
-			opened = append(opened, id)
-		}
+		add(id, v.remembered[id])
 	}
-	return minimized, opened
+	return minimized, opened, tabsOnly
 }
 
 // Chosen reports whether this client already decided the agent's
@@ -99,8 +111,7 @@ func (v *AgentViewState) Chosen(id string) bool {
 		_, remembered := v.remembered[id]
 		return remembered
 	}
-	v.adopt(node)
-	return v.hidden[node] || v.shown[node]
+	return v.choice(node) != defaultAgentTab
 }
 
 // Revision changes whenever a choice worth saving changes.
@@ -111,23 +122,19 @@ func (v *AgentViewState) Revision() uint64 {
 	return v.revision
 }
 
-func (v *AgentViewState) adopt(node *workspace.AgentNode) {
-	minimized, ok := v.remembered[node.ID]
-	if !ok {
-		return
+func (v *AgentViewState) choice(node *workspace.AgentNode) agentTabChoice {
+	if chosen, ok := v.remembered[node.ID]; ok {
+		delete(v.remembered, node.ID)
+		if chosen != openAgentTab || node.Parent != nil {
+			v.choices[node] = chosen
+		}
 	}
-	delete(v.remembered, node.ID)
-	if minimized {
-		v.hidden[node] = true
-	} else if node.Parent != nil {
-		v.shown[node] = true
-	}
+	return v.choices[node]
 }
 
-// collapsed reports whether node itself is minimized, ignoring ancestors.
-func (v *AgentViewState) collapsed(node *workspace.AgentNode) bool {
-	v.adopt(node)
-	return v.hidden[node] || node.Parent != nil && !v.shown[node]
+// familyHidden reports whether this node's choice also hides its descendants.
+func familyHidden(node *workspace.AgentNode, choice agentTabChoice) bool {
+	return choice == minimizeAgentFamily || choice == defaultAgentTab && node.Parent != nil
 }
 
 func (v *AgentViewState) ActiveNode() *workspace.AgentNode {
@@ -158,8 +165,10 @@ func (v *AgentViewState) IsHidden(id string) bool {
 	if v == nil || v.inventory == nil {
 		return false
 	}
-	for node := v.inventory.Get(id); node != nil; node = node.Parent {
-		if v.collapsed(node) {
+	target := v.inventory.Get(id)
+	for node := target; node != nil; node = node.Parent {
+		choice := v.choice(node)
+		if familyHidden(node, choice) || node == target && choice == minimizeAgentTab {
 			return true
 		}
 	}
@@ -173,20 +182,22 @@ func (v *AgentViewState) SetHidden(id string, hidden bool) {
 	if node == nil {
 		return
 	}
-	if v.shown == nil {
-		v.shown = make(map[*workspace.AgentNode]bool)
-	}
-	v.adopt(node)
-	if v.collapsed(node) != hidden {
-		v.revision++
-	}
+	choice := defaultAgentTab
 	if hidden {
-		v.hidden[node] = true
-		delete(v.shown, node)
-	} else {
-		delete(v.hidden, node)
-		if node.Parent != nil {
-			v.shown[node] = true
+		choice = minimizeAgentFamily
+	} else if node.Parent != nil {
+		choice = openAgentTab
+	}
+	v.setChoice(node, choice)
+}
+
+func (v *AgentViewState) setChoice(node *workspace.AgentNode, choice agentTabChoice) {
+	if v.choice(node) != choice {
+		v.revision++
+		if choice == defaultAgentTab {
+			delete(v.choices, node)
+		} else {
+			v.choices[node] = choice
 		}
 	}
 	if v.IsHidden(v.ActiveID()) {
@@ -212,10 +223,16 @@ func (v *AgentViewState) VisibleCount() int {
 	count := 0
 	var visit func(*workspace.AgentNode)
 	visit = func(node *workspace.AgentNode) {
-		if node == nil || v.collapsed(node) {
+		if node == nil {
 			return
 		}
-		count++
+		choice := v.choice(node)
+		if familyHidden(node, choice) {
+			return
+		}
+		if choice != minimizeAgentTab {
+			count++
+		}
 		for _, child := range node.Children {
 			visit(child)
 		}
@@ -231,8 +248,7 @@ func (v *AgentViewState) forgetSubtree(node *workspace.AgentNode) {
 	if v == nil || node == nil {
 		return
 	}
-	delete(v.hidden, node)
-	delete(v.shown, node)
+	delete(v.choices, node)
 	if v.selected == node {
 		v.ClearActive()
 	}
@@ -244,7 +260,8 @@ func (v *AgentViewState) forgetSubtree(node *workspace.AgentNode) {
 // MinimizeAgent changes only this shell's tab choice; backend work is untouched.
 func (m *App) MinimizeAgent(id string) { m.AgentView.SetHidden(id, true) }
 
-// RestoreAgent reveals only the selected path, preserving archived siblings.
+// RestoreAgent reveals the selected path, preserving archived siblings and
+// ancestors whose tabs were independently minimized.
 func (m *App) RestoreAgent(id string) {
 	if m.ws.AgentMgr() == nil {
 		return
@@ -254,7 +271,9 @@ func (m *App) RestoreAgent(id string) {
 		return
 	}
 	for current := node; current != nil; current = current.Parent {
-		m.AgentView.SetHidden(current.ID, false)
+		if current == node || familyHidden(current, m.AgentView.choice(current)) {
+			m.AgentView.SetHidden(current.ID, false)
+		}
 	}
 	m.AgentView.SetActive(id)
 }

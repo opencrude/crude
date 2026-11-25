@@ -22,15 +22,16 @@ import (
 // session storage, so each shell keeps its own choices while several shells
 // share one workspace. Inventory and canonical state stay with the workspace.
 type viewMemory struct {
-	Version         int        `json:"version"`
-	Layout          ToolLayout `json:"layout"`
-	MinimizedAgents []string   `json:"minimized_agents,omitempty"`
-	OpenedAgents    []string   `json:"opened_agents,omitempty"`
-	SelectedAgent   string     `json:"selected_agent,omitempty"`
-	FoldedAgents    []string   `json:"folded_agents,omitempty"`
-	ShowHiddenFiles *bool      `json:"show_hidden_files,omitempty"`
-	SidebarHidden   bool       `json:"sidebar_hidden,omitempty"`
-	Activity        string     `json:"activity,omitempty"`
+	Version            int        `json:"version"`
+	Layout             ToolLayout `json:"layout"`
+	MinimizedAgents    []string   `json:"minimized_agents,omitempty"`
+	OpenedAgents       []string   `json:"opened_agents,omitempty"`
+	MinimizedAgentTabs []string   `json:"minimized_agent_tabs,omitempty"`
+	SelectedAgent      string     `json:"selected_agent,omitempty"`
+	FoldedAgents       []string   `json:"folded_agents,omitempty"`
+	ShowHiddenFiles    *bool      `json:"show_hidden_files,omitempty"`
+	SidebarHidden      bool       `json:"sidebar_hidden,omitempty"`
+	Activity           string     `json:"activity,omitempty"`
 	// Panes is the editor work this client had open in each docked pane,
 	// in visual left-to-right, top-to-bottom order. PaneLayout restores the
 	// split tree that held them.
@@ -217,7 +218,7 @@ func (m *App) installViewMemory(memory viewMemory) {
 	if m.activityBar != nil {
 		m.activityBar.SetOrder(layout.Rail)
 	}
-	m.AgentView.Remember(memory.MinimizedAgents, memory.OpenedAgents)
+	m.AgentView.Remember(memory.MinimizedAgents, memory.OpenedAgents, memory.MinimizedAgentTabs)
 	m.rememberedAgent = memory.SelectedAgent
 	m.agentFolded = make(map[string]bool, len(memory.FoldedAgents))
 	for _, id := range memory.FoldedAgents {
@@ -289,7 +290,7 @@ func (m *App) captureViewMemory() viewMemory {
 	layout.PanelHeights, layout.Views = maps.Clone(m.workspacePanelHeights), maps.Clone(layout.Views)
 	layout.Rail = slices.Clone(layout.Rail)
 	memory := viewMemory{Version: viewMemoryFormat, Layout: layout, Activity: m.activityView.ID()}
-	memory.MinimizedAgents, memory.OpenedAgents = m.AgentView.Choices()
+	memory.MinimizedAgents, memory.OpenedAgents, memory.MinimizedAgentTabs = m.AgentView.Choices()
 	memory.SelectedAgent = m.AgentView.ActiveID()
 	if memory.SelectedAgent == "" {
 		memory.SelectedAgent = m.rememberedAgent

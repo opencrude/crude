@@ -3,6 +3,8 @@ package viewmodel
 import (
 	"fmt"
 
+	tea "charm.land/bubbletea/v2"
+
 	"crude/tui/cell"
 	"crude/tui/input"
 	"crude/tui/rendering"
@@ -660,13 +662,14 @@ type emptyMainPane struct {
 	selection int
 	hover     int
 	compact   bool
-	buttons   [2]*ui.Button
+	buttons   [3]*ui.Button
 }
 
 func newEmptyMainPane(id ui.ComponentID, group window.GroupID) *emptyMainPane {
 	e := &emptyMainPane{Base: ui.NewBase(id), group: group, hover: -1}
 	e.buttons[0] = ui.NewButton(ui.NewID(id, "session"), "New Session", "pane.new-session")
 	e.buttons[1] = ui.NewButton(ui.NewID(id, "file"), "Open File", "pane.open-file")
+	e.buttons[2] = ui.NewButton(ui.NewID(id, "close"), "Close Pane", "pane.close")
 	return e
 }
 func (e *emptyMainPane) SetTokens(t *ui.TokenSet) {
@@ -682,9 +685,12 @@ func (e *emptyMainPane) Measure(_ ui.LayoutContext, c ui.Constraints) ui.Size {
 }
 func (e *emptyMainPane) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	e.SetBounds(r)
-	y := max(1, (r.H-5)/2)
+	y := 0
+	if r.H > len(e.buttons) {
+		y = 1 + max(0, (r.H-6)/2)
+	}
 	for i, b := range e.buttons {
-		b.Layout(ctx, ui.Rect{X: max(0, (r.W-19)/2), Y: min(max(0, r.H-1), y+1+i), W: min(19, r.W), H: 1})
+		b.Layout(ctx, ui.Rect{X: max(0, (r.W-19)/2), Y: y + i, W: min(19, r.W), H: min(1, max(0, r.H-y-i))})
 	}
 }
 func (e *emptyMainPane) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext) {
@@ -699,8 +705,10 @@ func (e *emptyMainPane) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintC
 		title = "Empty pane · compact layout"
 	}
 	title = rendering.TruncateVisual(title, r.W, "")
-	y := max(0, (r.H-5)/2)
-	buf.WriteString(ox+r.X+max(0, (r.W-rendering.VisibleWidth(title))/2), oy+r.Y+y, title, e.tokens.Color(ui.ColorMuted), bg, 0)
+	y := e.buttons[0].Bounds().Y
+	if y > 0 {
+		buf.WriteString(ox+r.X+max(0, (r.W-rendering.VisibleWidth(title))/2), oy+r.Y+y-1, title, e.tokens.Color(ui.ColorMuted), bg, 0)
+	}
 	for i, b := range e.buttons {
 		c := ctx
 		c.Focused = ctx.Focused && i == e.selection
@@ -709,7 +717,7 @@ func (e *emptyMainPane) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintC
 	}
 	if r.H >= 8 {
 		hint := rendering.TruncateVisual("N session · O file · Tab choose", r.W, "")
-		buf.WriteString(ox+r.X+max(0, (r.W-rendering.VisibleWidth(hint))/2), oy+r.Y+min(r.H-1, y+5), hint, e.tokens.Color(ui.ColorMuted), bg, 0)
+		buf.WriteString(ox+r.X+max(0, (r.W-rendering.VisibleWidth(hint))/2), oy+r.Y+y+len(e.buttons)+1, hint, e.tokens.Color(ui.ColorMuted), bg, 0)
 	}
 }
 func (e *emptyMainPane) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
@@ -723,31 +731,43 @@ func (e *emptyMainPane) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult
 		}
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 	}
-	if evt.Kind == ui.EventMouseClick {
+	if evt.Kind == ui.EventMouseClick && evt.MouseClick.Button == tea.MouseLeft {
 		for i, b := range e.buttons {
 			if b.Bounds().Contains(ctx.LocalX, ctx.LocalY) {
 				e.selection = i
-				return ui.EventResult{Handled: true, Action: &ui.Action{ID: []string{"pane.new-session", "pane.open-file"}[i], Payload: e.group}}
+				return e.handleButton(ctx, evt)
 			}
 		}
 	}
 	if evt.Kind == ui.EventKey {
 		switch evt.Key.String() {
-		case "tab", "shift+tab", "up", "down", "left", "right":
-			e.selection = 1 - e.selection
+		case "tab", "down", "right":
+			e.selection = (e.selection + 1) % len(e.buttons)
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+		case "shift+tab", "up", "left":
+			e.selection = (e.selection + len(e.buttons) - 1) % len(e.buttons)
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 		case "n":
 			e.selection = 0
+			return ui.EventResult{Handled: true, Action: &ui.Action{ID: "pane.new-session", Payload: e.group}}
 		case "o":
 			e.selection = 1
+			return ui.EventResult{Handled: true, Action: &ui.Action{ID: "pane.open-file", Payload: e.group}}
 		case "enter", "space":
 		default:
 			return ui.EventResult{}
 		}
-		return ui.EventResult{Handled: true, Action: &ui.Action{ID: []string{"pane.new-session", "pane.open-file"}[e.selection], Payload: e.group}}
+		return e.handleButton(ctx, evt)
 	}
 	return ui.EventResult{}
 }
+func (e *emptyMainPane) handleButton(ctx ui.EventContext, evt ui.Event) ui.EventResult {
+	res := e.buttons[e.selection].Handle(ctx, evt)
+	if res.Action != nil {
+		res.Action.Payload = e.group
+	}
+	return res
+}
 func (*emptyMainPane) Semantics() ui.Semantics {
-	return ui.Semantics{Role: ui.RoleGroup, Label: "Empty pane: New Session or Open File"}
+	return ui.Semantics{Role: ui.RoleGroup, Label: "Empty pane: New Session, Open File, or Close Pane"}
 }

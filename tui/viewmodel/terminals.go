@@ -251,6 +251,10 @@ func (m *App) dockTerminal(id string) {
 // Placement consumes a detached inventory value. Connected creation crosses its
 // UI-applied inventory barrier before mounting; a private receipt is not a clock.
 func (m *App) dockTerminalInfo(info workspace.TerminalInfo) {
+	m.placeTerminalInDock(info, true)
+}
+
+func (m *App) placeTerminalInDock(info workspace.TerminalInfo, activate bool) {
 	if m.termDock == nil {
 		return
 	}
@@ -258,7 +262,6 @@ func (m *App) dockTerminalInfo(info workspace.TerminalInfo) {
 	m.releasePlacement("terminal/" + id)
 	screen := m.ensureTermScreen(id, info.DisplayName())
 	screen.SetNumber(info.Number)
-	m.lastTerminalID = id
 	screen.SetFloating(false)
 	screen.SetAttention(false)
 	if m.overlayHost != nil {
@@ -267,8 +270,12 @@ func (m *App) dockTerminalInfo(info workspace.TerminalInfo) {
 		m.suppressTermClose = ""
 	}
 	m.setTerminalPlacement(id, workspace.TerminalDocked)
+	if !activate {
+		m.termDock.MountInactive(id, screen)
+		return
+	}
+	m.lastTerminalID = id
 	m.termDock.Mount(id, screen)
-	m.termDock.ShowPanel(termdock.PanelTerminal)
 	m.setSessionDeckFocused(false)
 	m.setTermDockFocused(true)
 	m.FocusStack.Clear()

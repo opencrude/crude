@@ -133,8 +133,7 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 						return m, m.handleAgentTabClose(m.Win.ActiveIndex())
 					}
 					if m.emptyPaneActive() {
-						m.Win.RemoveEmptyGroup(m.Win.ActiveGroup())
-						m.focusMainGroup(m.Win.ActiveGroup())
+						m.closeEmptyPane(m.Win.ActiveGroup())
 						return m, nil
 					}
 					m.closeEditorTab()

@@ -1974,11 +1974,14 @@ func (m *App) forwardEventToWindowContent(fw *wm.FloatingWindow, msg tea.Msg) te
 }
 
 func (m *App) handleAgentTabClose(index int) tea.Cmd {
-	if index < 0 || index >= m.Win.TabCount() {
-		return nil
-	}
-	tab := m.Win.Tabs()[index]
-	if !tab.Closable {
+	return m.closeMainTab(index, false)
+}
+
+// closeMainTab is the per-resource policy for both single and bulk closes.
+// A batch closes only its targets and leaves navigation to the pane layout.
+func (m *App) closeMainTab(index int, batch bool) tea.Cmd {
+	tab, ok := m.Win.TabAt(index)
+	if !ok || !tab.Closable || tab.Pinned && m.Win.TabCount() > 1 {
 		return nil
 	}
 	// Release before a dirty-close modal captures its return focus. Otherwise
@@ -1986,13 +1989,14 @@ func (m *App) handleAgentTabClose(index int) tea.Cmd {
 	m.releaseTabBarFocus()
 	defer m.syncRootFocus()
 	if tab.Resource.Kind == window.ResourceLocalDiff {
-		m.closeLocalDiff(tab.ID)
+		m.removeLocalDiff(tab.ID, !batch)
 		return nil
 	}
 	if tab.Resource.Kind == window.ResourcePanel {
 		if id, ok := terminalIDFromPanel(tab.Resource.ID); ok {
-			m.dockTerminal(id)
-			m.hideWorkspacePanel()
+			if info, ok := m.terminalInfo(id); ok {
+				m.placeTerminalInDock(info, false)
+			}
 			m.forceFrame()
 			return nil
 		}
@@ -2004,7 +2008,7 @@ func (m *App) handleAgentTabClose(index int) tea.Cmd {
 		return nil
 	}
 	if tab.Resource.Kind == window.ResourceGitReview {
-		m.closeGitReview(tab.ID)
+		m.removeGitReview(tab.ID, !batch)
 		return nil
 	}
 	if isImageTab(&tab) {
@@ -2018,7 +2022,11 @@ func (m *App) handleAgentTabClose(index int) tea.Cmd {
 		// Closing an agent tab minimizes it: the orchestrator keeps
 		// running and the conversation survives. Terminating is an
 		// explicit action from the tab or Agents-panel context menu.
-		m.minimizeAgent(agentID)
+		if batch {
+			m.minimizeAgentView(agentID, minimizeAgentTab)
+		} else {
+			m.minimizeAgent(agentID)
+		}
 		m.handleTabSwitch()
 		if m.AgentView.VisibleCount() == 0 && m.EditorState.ActiveView == "" {
 			m.openLauncher()

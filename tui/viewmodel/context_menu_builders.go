@@ -487,6 +487,13 @@ func (m *App) buildAgentSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState
 			ui.ContextMenuItem{Label: "Copy model", Disabled: node.Model == "", Action: func() { m.copyToClipboard(node.Model) }},
 		)
 		st.Sections = append(st.Sections, ui.ContextMenuSection{SectionLabel: "Agent", Items: items})
+		// A minimized agent has no tab or pane to target. Open agent remains
+		// available; never substitute the currently focused pane.
+		if m.Win != nil {
+			if tab := m.Win.TabByTitle(m.agentTabTitle(node.ID)); tab != nil {
+				st.Sections = append(st.Sections, m.paneTabCloseSection(m.paneOwner(tab.ID, tab.Group)))
+			}
+		}
 	}
 	st.Sections = append(st.Sections, ui.ContextMenuSection{
 		SectionLabel: "Sessions",
@@ -642,6 +649,17 @@ func (m *App) buildSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	return st
 }
 
+// paneTabCloseSection operates on the pane that contains the named tab,
+// whether invoked on the tab strip or on that agent in the Agents list.
+func (m *App) paneTabCloseSection(owner paneMenuOwner, first ...ui.ContextMenuItem) ui.ContextMenuSection {
+	return ui.ContextMenuSection{SectionLabel: "Tabs", Items: append(first,
+		ui.ContextMenuItem{Label: "Close other tabs", Action: func() { m.closePaneTabs(owner, paneCloseOthers) }},
+		ui.ContextMenuItem{Label: "Close tabs to the left", Action: func() { m.closePaneTabs(owner, paneCloseLeft) }},
+		ui.ContextMenuItem{Label: "Close tabs to the right", Action: func() { m.closePaneTabs(owner, paneCloseRight) }},
+		ui.ContextMenuItem{Label: "Close all tabs", Action: func() { m.closePaneTabs(owner, paneCloseAll) }},
+	)}
+}
+
 // buildTabBarContextMenu creates the menu for right-click on a tab.
 func (m *App) buildTabBarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	if m.Win == nil || m.Win.TabCount() == 0 {
@@ -656,6 +674,16 @@ func (m *App) buildTabBarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	owner := m.paneOwner(tab.ID, tab.Group)
 
 	st := &ui.ContextMenuState{Title: "Tab"}
+	closeLabel, closeShortcut := "Close tab", m.menuShortcut("file.close")
+	if m.isAgentTabTitle(tab.Title) {
+		closeLabel = "Minimize"
+	} else if tab.Resource.Kind == window.ResourceDocument {
+		closeShortcut = m.menuShortcut("file.close", "editor.close")
+	}
+	st.Sections = append(st.Sections, m.paneTabCloseSection(owner, ui.ContextMenuItem{
+		Label: closeLabel, Detail: closeShortcut, Disabled: !tab.Closable,
+		Action: func() { m.runDetachedAsyncCmd(m.handleAgentTabClose(m.Win.IndexOf(tab.ID))) },
+	}))
 	st.Sections = append(st.Sections, m.paneMenuSections(tab.ID)...)
 
 	// Get tab-specific info.
@@ -665,20 +693,9 @@ func (m *App) buildTabBarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 			path = m.editorPathFromTabTitle(tab.Title)
 		}
 		st.Sections = append(st.Sections, ui.ContextMenuSection{
-			SectionLabel: "Tab",
-			Items: []ui.ContextMenuItem{
-				{Label: "Close tab", Detail: m.menuShortcut("file.close", "editor.close"), Action: func() {
-					m.runDetachedAsyncCmd(m.handleAgentTabClose(m.Win.IndexOf(tab.ID)))
-				}},
-				{Label: "Close other files", Action: func() { m.closePaneEditorTabs(owner, paneCloseOthers) }},
-				{Label: "Close files to the left", Action: func() { m.closePaneEditorTabs(owner, paneCloseLeft) }},
-				{Label: "Close files to the right", Action: func() { m.closePaneEditorTabs(owner, paneCloseRight) }},
-				{Label: "Close saved files", Action: func() { m.closePaneEditorTabs(owner, paneCloseSaved) }},
-				{Label: "Close all files", Action: func() { m.closePaneEditorTabs(owner, paneCloseAll) }},
-			},
-		}, ui.ContextMenuSection{
 			SectionLabel: "File",
 			Items: []ui.ContextMenuItem{
+				{Label: "Close saved files", Action: func() { m.closePaneTabs(owner, paneCloseSaved) }},
 				{Label: "Copy path", Action: func() {
 					m.copyToClipboard(path)
 				}},
@@ -698,9 +715,6 @@ func (m *App) buildTabBarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 		agentID := m.agentIDFromTabTitle(tab.Title)
 		errand := workspace.SessionIsErrand(m.ws.SessionsByAgent()[agentID])
 		items := []ui.ContextMenuItem{
-			{Label: "Minimize", Action: func() {
-				m.runDetachedAsyncCmd(m.handleAgentTabClose(m.Win.IndexOf(tab.ID)))
-			}},
 			{Label: "Continue run", Disabled: !m.canRetryAgentRecovery(agentID), Action: func() {
 				m.runDetachedAsyncCmd(m.retryAgentRecovery(agentID))
 			}},
@@ -714,7 +728,7 @@ func (m *App) buildTabBarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 			}})
 		}
 		st.Sections = append(st.Sections, ui.ContextMenuSection{
-			SectionLabel: "Tab",
+			SectionLabel: "Agent",
 			Items:        items,
 		})
 	}
@@ -730,7 +744,6 @@ func (m *App) buildTabBarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 			Items: []ui.ContextMenuItem{
 				{Label: "Open in window", Action: func() { m.openPanelAsWindow(id) }},
 				{Label: "Move to panel", Action: func() { m.dockPanel(id) }},
-				{Label: "Close tab", Action: func() { m.runDetachedAsyncCmd(m.handleAgentTabClose(m.Win.IndexOf(tab.ID))) }},
 			},
 		})
 	}
@@ -760,12 +773,6 @@ func (m *App) buildTabBarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 			{Label: "Copy path", Disabled: path == "", Action: func() { m.copyToClipboard(path) }},
 		}})
 	}
-	if tab.Resource.Kind == window.ResourceGitReview || tab.Resource.Kind == window.ResourceLocalDiff {
-		st.Sections = append(st.Sections, ui.ContextMenuSection{SectionLabel: "Tab", Items: []ui.ContextMenuItem{
-			{Label: "Close tab", Action: func() { m.runDetachedAsyncCmd(m.handleAgentTabClose(m.Win.IndexOf(tab.ID))) }},
-		}})
-	}
-
 	// Resource callbacks use the same exact owner fence as pane operations.
 	for si := range st.Sections {
 		for ii := range st.Sections[si].Items {

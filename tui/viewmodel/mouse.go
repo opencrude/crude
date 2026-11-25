@@ -611,6 +611,19 @@ func (m *App) dispatchMouseRightClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd
 		}
 	}
 
+	// Tab commands are anchored to the strip under the pointer. Opening
+	// their menu does not activate the tab or raise its pane window.
+	if st := m.buildTabBarContextMenu(mouse); st != nil {
+		if m.windowManager != nil {
+			for _, fw := range m.windowManager.Windows() {
+				if fw.Visible() && fw.Modal() {
+					return m, nil
+				}
+			}
+		}
+		return m, m.openContextMenuState(mouse, st)
+	}
+
 	// If a different floating window was hit (composer, command
 	// palette, find/replace, etc.), its text controls offer whole-text
 	// Copy/Cut; anything else keeps its own right-click behavior.
@@ -665,8 +678,6 @@ func (m *App) dispatchMouseRightClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd
 		st = m.buildEditorContextMenu(mouse)
 	case regionSidebar:
 		st = m.buildActivityRegionContextMenu(mouse)
-	case regionTabBar:
-		st = m.buildTabBarContextMenu(mouse)
 	case regionInput:
 		st = m.buildInputContextMenu(mouse)
 	case regionChat:
