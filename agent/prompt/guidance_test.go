@@ -76,7 +76,8 @@ func TestCanonicalBehaviorPromptDoesNotForkByModel(t *testing.T) {
 		!strings.Contains(profile, "&lt;small&gt; &amp; direct") {
 		t.Fatalf("editable profile overlay is not separated and escaped: %q", profile)
 	}
-	composed := ApplyRootOverlays(gpt, "Prefer <small> & direct changes", "Aster", `<available_agent_profiles></available_agent_profiles>`)
+	options.ProfileInstructions, options.AgentName, options.AgentCatalog = "Prefer <small> & direct changes", "Aster", `<available_agent_profiles></available_agent_profiles>`
+	composed := BuildRoot(options)
 	if !strings.HasSuffix(composed, "</crude_agent>") || strings.Count(composed, "</crude_agent>") != 1 ||
 		!strings.Contains(composed, profile) || !strings.Contains(composed, "<agent_identity>Your name is Aster.</agent_identity>") {
 		t.Fatalf("runtime overlays escaped the canonical root envelope: %q", composed)

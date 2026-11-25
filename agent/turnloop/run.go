@@ -545,8 +545,21 @@ steps:
 				// checkpoint replaces; the system message carries the current
 				// complete guidance instead of the run's initial render.
 				system := msgs[0]
-				if a.guidance != nil {
-					system.Content = provider.TextContent(a.guidance.basePrompt + "\n\n" + a.guidance.rendered)
+				checkpointGuidance := a.guidance.checkpointEpoch()
+				if a.CheckpointBasePrompt != nil {
+					base := a.CheckpointBasePrompt()
+					system.Content = provider.TextContent(base)
+					if checkpointGuidance != nil && checkpointGuidance.basePrompt != base {
+						rendered, err := a.renderProjectGuidance(ctx, checkpointGuidance.set, base)
+						if err != nil {
+							return false, err
+						}
+						checkpointGuidance.basePrompt, checkpointGuidance.rendered = base, rendered
+						checkpointGuidance.initialPrompt = base + "\n\n" + rendered
+					}
+				}
+				if checkpointGuidance != nil {
+					system.Content = provider.TextContent(checkpointGuidance.initialPrompt)
 				}
 				next := append([]provider.ChatMessage{system}, compacted...)
 				after := estimateCanonicalRequest(next, allTools, a.Model)
@@ -569,11 +582,7 @@ steps:
 					}
 				}
 				msgs = next
-				if a.guidance != nil {
-					// A checkpoint starts a new guidance epoch: later runs of this
-					// context keep this system prompt.
-					a.guidance.initialPrompt = system.ContentString()
-				}
+				a.guidance, systemPrompt = checkpointGuidance, system.ContentString()
 				if !runtimeNoticesAccepted && len(runtimeNoticeIDs) > 0 && a.RuntimeNoticesAccepted != nil {
 					a.RuntimeNoticesAccepted()
 					runtimeNoticesAccepted = true

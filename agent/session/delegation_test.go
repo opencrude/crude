@@ -125,21 +125,11 @@ func TestLiveDelegationToggleAtRequestAndExecutionBoundaries(t *testing.T) {
 	if !hasTool(first, "agent_start") {
 		t.Fatal("enabled request missing launch tool")
 	}
-	setEnabled := func(enabled bool) {
-		t.Helper()
-		settings := sess.SettingsSnapshot()
-		settings.SessionMultiAgent = &enabled
-		settings.Agents.Enabled = enabled
-		if err := sess.HandleSettingsSave(settings); err != nil {
-			t.Fatal(err)
-		}
-	}
-	setEnabled(false)
+	setEpochDelegation(t, sess, false)
 	releases <- struct{}{}
 	second := nextRequest()
-	if hasTool(second, "agent_start") {
-		t.Fatal("disabled request still advertises launches")
-	}
+	assertEpochPrefix(t, first, second)
+	assertEpochUpdate(t, second.Messages[len(first.Messages):], `type="solo"`)
 	for _, name := range []string{"agent_list", "agent_wait", "agent_control", "edit_file"} {
 		if !hasTool(second, name) {
 			t.Errorf("disabled request removed %s", name)
@@ -160,12 +150,11 @@ func TestLiveDelegationToggleAtRequestAndExecutionBoundaries(t *testing.T) {
 	if sess.SubAgentRunner() != nil {
 		t.Fatal("disabled stale call allocated a runner")
 	}
-	setEnabled(true)
+	setEpochDelegation(t, sess, true)
 	releases <- struct{}{}
 	third := nextRequest()
-	if !hasTool(third, "agent_start") {
-		t.Fatal("re-enabled active turn did not regain launch tool")
-	}
+	assertEpochPrefix(t, second, third)
+	assertEpochUpdate(t, third.Messages[len(second.Messages):], `type="orchestrator"`)
 	enabledNotice := false
 	for _, message := range third.Messages {
 		if message.Role == "user" && strings.Contains(message.ContentString(), "user has enabled multi-agent") {
@@ -178,6 +167,14 @@ func TestLiveDelegationToggleAtRequestAndExecutionBoundaries(t *testing.T) {
 	releases <- struct{}{}
 	waitTurnDone(t, sender, orch.ID)
 	waitAssistantCount(t, sess, 1)
+	if !orch.SubmitInput(provider.PlainInput("Continue.")) {
+		t.Fatal("follow-up not admitted")
+	}
+	fourth := nextRequest()
+	assertEpochPrefix(t, third, fourth)
+	assertEpochUpdate(t, fourth.Messages[len(third.Messages):])
+	releases <- struct{}{}
+	waitTurnDone(t, sender, orch.ID)
 	// A settings-origin refusal is not a failed child and persists as runtime
 	// context rather than being attributed to human chat.
 	for _, message := range sess.MessagesWithMeta() {

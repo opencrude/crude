@@ -24,15 +24,24 @@ sections below describe how.
 3. **The continuation keeps its contract.** Every request after a checkpoint
    carries the current system prompt and all tool definitions. Only the
    history is replaced.
-4. **No raw history behind a checkpoint.** A checkpoint written by Errand or by
+4. **The user's own words survive.** The checkpoint keeps earlier human
+   prompts verbatim, newest first, up to the retention budget (by default the
+   size of the checkpoint; the agent setting allows 1,000 to 200,000 tokens).
+   The prompt and steering of the turn in progress come first and stay pending.
+   Prompts that were already answered stay verbatim in one marked
+   `<answered_human_requests>` block, so their requirements still bind but are
+   not answered again. A child keeps its whole latest assignment when it fits.
+   An input too large for the budget is carried by the checkpoint text, and the
+   full original history stays archived.
+5. **No raw history behind a checkpoint.** A checkpoint written by Errand or by
    the serving model replaces the old history. Crude does not attach earlier
    raw messages or tool output behind it: that costs money, and the checkpoint
    already carries the state.
-5. **Manual compaction is authoritative.** A compact order from the user or the
+6. **Manual compaction is authoritative.** A compact order from the user or the
    main agent runs at the next loop boundary, also while the agent is running.
    Running work never makes Crude refuse it, and the user always sees the
    outcome.
-6. **Recover instead of stopping.** A recoverable failure (rate limit,
+7. **Recover instead of stopping.** A recoverable failure (rate limit,
    transient outage, rejected native artifact, output ceiling) is retried or
    adapted inside the loop. Only a run-level fault stops the run, and the run
    stays recoverable. User authority and short, plain messages stay intact.

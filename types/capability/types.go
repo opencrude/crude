@@ -300,6 +300,8 @@ type Action struct {
 }
 
 type RuntimeActor struct {
+	// CatalogOnly reads connected tools without starting hosts or refreshing connections.
+	CatalogOnly    bool
 	ID             string
 	RunID          string
 	RuntimeEpoch   uint64

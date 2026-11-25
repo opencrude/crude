@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	rootprompt "crude/agent/prompt"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
 	"crude/agent/turnloop"
@@ -419,7 +420,11 @@ func (s *Session) runPreparedCompaction(
 		revision, err = s.beginRootCompaction(agentID, source)
 		return err
 	}
-	result, err := compactAgent.CompactWithRequestID(ctx, active, s.systemPromptForModel(effectiveCfg.IsMultiAgentEnabled(), activeCfg.Model), operationID, trigger, emit)
+	optionsFor := func(cfg *Config) rootprompt.RootOptions {
+		return s.rootOptions(cfg, cfg.IsMultiAgentEnabled(), s.PlanMode(), cfg.ActiveDefaultCategory().Model, compactAgent.WorkDir)
+	}
+	epoch := newRootPromptEpoch(optionsFor(effectiveCfg), max(1, generation)+1)
+	result, err := compactAgent.CompactWithRequestID(ctx, active, epoch.base, operationID, trigger, emit)
 	if err != nil {
 		return s.finishManualCompactionError(ctx, emit, operationID, trigger, result, err)
 	}
@@ -440,6 +445,14 @@ func (s *Session) runPreparedCompaction(
 	if !contextUnchanged {
 		return s.finishManualCompactionError(ctx, emit, operationID, trigger, result, errors.New("active context changed before commit"))
 	}
+	// A settings save can finish while extraction is running. The new base is
+	// the contract at adoption, not the one the extractor started with.
+	if s.runtimeProfile != nil {
+		effectiveCfg = s.runtimeProfile.EffectiveConfig(agentID)
+	}
+	if current := optionsFor(effectiveCfg); current != epoch.baseOptions {
+		epoch = newRootPromptEpoch(current, nextGeneration)
+	}
 	record := compactionRecordFromData(s.sessionID, agentID, sessiondb.CompactionCompleted, commitData)
 	s.msgsMu.Lock()
 	_, err = s.publishRootContext(sessiondb.ContextPublication{
@@ -447,6 +460,10 @@ func (s *Session) runPreparedCompaction(
 		Mutation:   sessiondb.ContextMutation{Replace: &sessiondb.ContextReplacement{Generation: nextGeneration, Reason: trigger + "_compaction", Messages: canonicalContextMessages(recoveryArchiveMessages(result.Messages))}},
 		Compaction: &record, ArchivePrevious: true,
 	})
+	if err == nil {
+		// The serving agent loads guidance for its own model budget and active paths.
+		s.promptEpoch = epoch
+	}
 	s.msgsMu.Unlock()
 	if err != nil {
 		return s.finishManualCompactionError(ctx, emit, operationID, trigger, result, fmt.Errorf("persist compacted context: %w", err))

@@ -80,14 +80,13 @@ func (s *Session) loadPlanMode() error {
 	return nil
 }
 
-// planModeAllows is the runtime half of Plan mode, applied to the tools a
-// turn offers and again to every call. Scoped investigation operations go
-// through the separate investigation admission path, never ordinary dispatch.
+// planModeAllows checks calls, not declarations. Scoped operations go through
+// investigation admission; dynamic tools never run project or server code.
 func planModeAllows(tool string, metadata func(string) (tools.ToolMetadata, bool)) bool {
 	switch tool {
-	case "update_plan", "crude_control", "create_goal", "update_goal", "capability_activate", "mcp_read_resource", "mcp_get_prompt":
+	case "lsp", "update_plan", "crude_control", "create_goal", "update_goal", "capability_activate", "mcp_read_resource", "mcp_get_prompt":
 		return false
-	case "open_plan_investigation", "write_stdin":
+	case "open_plan_investigation", "write_stdin", "multi_tool_use.parallel":
 		return true
 	}
 	if strings.HasPrefix(tool, "mcp__") {
@@ -100,17 +99,7 @@ func planModeAllows(tool string, metadata func(string) (tools.ToolMetadata, bool
 	if metadata != nil {
 		described, known = metadata(tool)
 	}
-	return known && turnloop.PolicyAllowsMetadata(safety.ReadOnlyPolicy(), described)
-}
-
-func planModeTools(defs []tools.ToolDef, metadata func(string) (tools.ToolMetadata, bool)) []tools.ToolDef {
-	allowed := make([]tools.ToolDef, 0, len(defs))
-	for _, def := range defs {
-		if planModeAllows(def.Function.Name, metadata) {
-			allowed = append(allowed, def)
-		}
-	}
-	return allowed
+	return known && !described.Dynamic && turnloop.PolicyAllowsMetadata(safety.ReadOnlyPolicy(), described)
 }
 
 // planModeRefusal explains why a Plan mode call cannot run, or returns nil.

@@ -59,6 +59,12 @@ func (s *Session) bindAgentRuntime(ctx context.Context, live *turnloop.Agent, ac
 	s.mu.Unlock()
 	actor.Effects = effectsForPolicy(live.Policy)
 	actor.AllowedTools, actor.DeniedTools = turnloop.ModelToolSelection(actor.AllowedTools, actor.DeniedTools, live.Model)
+	// A temporary turn mode limits execution, not the root role's declarations.
+	declarationPolicy := live.Policy
+	if live.PlanInvestigation != nil {
+		declarationPolicy = safety.DefaultPolicy()
+	}
+	catalogEffects := effectsForPolicy(declarationPolicy)
 	previousPrepare := live.PrepareStep
 	previousFn := live.ToolFn
 	var boundEpoch uint64
@@ -98,8 +104,10 @@ func (s *Session) bindAgentRuntime(ctx context.Context, live *turnloop.Agent, ac
 		for _, text := range s.capabilitySharing.drain(actor.ID) {
 			notices = append(notices, runtimeMessage(text))
 		}
-		if runtime != nil && live.PlanInvestigation == nil {
-			prepared, err := runtime.Prepare(ctx, currentActor())
+		if runtime != nil {
+			catalogActor := currentActor()
+			catalogActor.Effects, catalogActor.CatalogOnly = catalogEffects, live.PlanInvestigation != nil
+			prepared, err := runtime.Prepare(ctx, catalogActor)
 			if err != nil {
 				s.logger.Warn("CAPABILITY", "prepare_failed", "error", err.Error())
 			} else {
@@ -107,7 +115,7 @@ func (s *Session) bindAgentRuntime(ctx context.Context, live *turnloop.Agent, ac
 				snapshot = prepared
 				mu.Unlock()
 				for _, tool := range prepared.Tools {
-					if !actorToolSelected(actor, tool.Name) || !turnloop.PolicyAllowsMetadata(live.Policy, tools.ToolMetadata{Name: tool.Name, Effect: tool.Effect, Scope: tool.Scope, Fingerprint: tool.Fingerprint, ServerRevision: tool.ServerRevision, Dynamic: true}) {
+					if !actorToolSelected(actor, tool.Name) || !turnloop.PolicyAllowsMetadata(declarationPolicy, tools.ToolMetadata{Name: tool.Name, Effect: tool.Effect, Scope: tool.Scope, Fingerprint: tool.Fingerprint, ServerRevision: tool.ServerRevision, Dynamic: true}) {
 						continue
 					}
 					definitions = appendUniqueDefinition(definitions, tools.ToolDef{Type: "function", Function: tools.ToolFuncDef{Name: tool.Name, Description: tool.Description, Parameters: tool.InputSchema}})
@@ -125,7 +133,7 @@ func (s *Session) bindAgentRuntime(ctx context.Context, live *turnloop.Agent, ac
 		for _, definition := range s.collaborationDefinitions(actor.ID) {
 			effect := collaborationEffect(definition.Function.Name)
 			selected := runtimeCollaborationToolSelected(actor, definition.Function.Name)
-			if selected && slices.Contains(actor.Effects, effect) {
+			if selected && slices.Contains(catalogEffects, effect) {
 				definitions = appendUniqueDefinition(definitions, definition)
 			}
 		}
@@ -173,10 +181,10 @@ func (s *Session) bindAgentRuntime(ctx context.Context, live *turnloop.Agent, ac
 		if !runtimeCollaborationToolSelected(actor, tool) {
 			return tools.ToolResult{}, fmt.Errorf("tool %q is excluded by the effective agent selection", tool)
 		}
+		if live.PlanInvestigation == nil && tool == "open_plan_investigation" {
+			return investigationDenied(PlanReviewError("Turn on Plan mode to open an investigation."))
+		}
 		if live.PlanInvestigation != nil {
-			if !planModeAllows(tool, live.ToolMetadata) {
-				return tools.ToolResult{}, fmt.Errorf("plan mode does not allow %s", tool)
-			}
 			// These routes check their exact source/run and investigation paths
 			// before any action. Ordinary source dispatch still has ReadOnlyPolicy.
 			if tool == "open_plan_investigation" || planInvestigationFileTool(tool) || planInvestigationCommandTool(tool) || tool == "write_stdin" {

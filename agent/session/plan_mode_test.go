@@ -1,15 +1,13 @@
 package session
 
 import (
-	"crude/types/command"
 	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
 	"crude/agent/provider"
+	"crude/types/command"
 )
 
 type planModeRequest struct {
@@ -41,22 +39,73 @@ func (r planModeRequest) offers(name string) bool {
 	return false
 }
 
-// Plan mode keeps ordinary source inspection and adds only scoped writes.
-func TestPlanModeTurnsOfferScopedInvestigationAndEndExplicitly(t *testing.T) {
-	requests := make(chan planModeRequest, 8)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body planModeRequest
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Error(err)
-			return
+func (r planModeRequest) hasUpdate(fragment string) bool {
+	for i, m := range r.Messages {
+		if m.Role == "user" && strings.HasPrefix(r.text(i), "<settings_update>") && strings.Contains(r.text(i), fragment) {
+			return true
 		}
-		requests <- body
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	t.Cleanup(server.Close)
+	}
+	return false
+}
+
+func TestPlanModeTurnsOfferScopedInvestigationAndEndExplicitly(t *testing.T) {
+	j := newEpochJourney(t)
+	runtime := epochRuntime{catalog: make(chan bool, 16)}
+	j.SetCapabilities(runtime, nil)
+	j.SetCodeIntelligence(&fakeCodeIntelligence{editor: true})
+	initial := j.start(t, "Inspect in normal mode.")
+	for _, name := range []string{"open_plan_investigation", "delete_file", "lsp", "mcp__editor__change", "agent_start", "capability_activate"} {
+		if !slices.ContainsFunc(initial.Tools, func(d provider.ToolDef) bool { return d.Function.Name == name }) {
+			t.Fatalf("test did not exercise declaration %q", name)
+		}
+	}
+	initial.tool("open_plan_investigation", "{}")
+	after := j.next(t)
+	assertToolReply := func(call epochCall, text string) {
+		t.Helper()
+		if !slices.ContainsFunc(call.Messages, func(m provider.ChatMessage) bool {
+			return m.Role == "tool" && strings.Contains(m.ContentString(), text)
+		}) {
+			t.Fatalf("missing tool refusal %q", text)
+		}
+	}
+	assertToolReply(after, "Turn on Plan mode")
+	j.finish(t, after, "Ready.")
+	if err := j.SetPlanMode(true); err != nil {
+		t.Fatal(err)
+	}
+	planned := j.start(t, "Plan the refactor.")
+	assertEpochPrefix(t, after.ChatRequest, planned.ChatRequest)
+	assertEpochUpdate(t, planned.Messages[len(after.Messages):], "<plan_mode>", "Keep the source unchanged")
+	planned.tool("delete_file", `{"path":"unchanged.go"}`)
+	refused := j.next(t)
+	assertToolReply(refused, "Plan mode does not allow delete_file")
+	j.finish(t, refused, "Proposed changes.")
+	if err := j.SetPlanMode(false); err != nil {
+		t.Fatal(err)
+	}
+	normal := j.start(t, "Implement it.")
+	assertEpochPrefix(t, refused.ChatRequest, normal.ChatRequest)
+	tail := normal.Messages[len(refused.Messages):]
+	assertEpochUpdate(t, tail, "<planning_contract>")
+	if !slices.ContainsFunc(tail, func(m provider.ChatMessage) bool { return strings.Contains(m.ContentString(), "turned Plan mode off") }) {
+		t.Fatal("missing ended notice")
+	}
+	j.finish(t, normal, "Done.")
+	if len(runtime.catalog) != 5 {
+		t.Fatalf("got %d catalog preparations, want one per request", len(runtime.catalog))
+	}
+	for _, want := range []bool{false, false, true, true, false} {
+		if got := <-runtime.catalog; got != want {
+			t.Fatal("Plan mode must only observe connected tools")
+		}
+	}
+}
+
+// Plan mode is a session setting: it survives resume.
+func TestPlanModeSurvivesResume(t *testing.T) {
 	home, dir := t.TempDir(), t.TempDir()
-	cfg := mediaAttributionConfig(server.URL, "plan-model", "openai")
+	cfg := mediaAttributionConfig("http://127.0.0.1:1", "plan-model", "openai")
 	s, err := NewWithSessionDir("", cfg, home, dir)
 	if err != nil {
 		t.Fatal(err)
@@ -69,52 +118,9 @@ func TestPlanModeTurnsOfferScopedInvestigationAndEndExplicitly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer resumed.Close()
 	if !resumed.PlanMode() {
 		t.Fatal("Plan mode did not survive resume")
-	}
-	resumed.Close()
-
-	sender := newMockEventSender()
-	o, err := s.NewOrchestrator(sender)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !o.SubmitInput(provider.PlainInput("plan the refactor")) {
-		t.Fatal("submit rejected")
-	}
-	planned := <-requests
-	waitTurnDone(t, sender, o.ID)
-	if !strings.Contains(planned.text(0), "<plan_mode>") || !strings.Contains(planned.text(0), "Keep the source unchanged") {
-		t.Fatal("Plan mode turn lacks the Plan mode contract")
-	}
-	for _, tool := range []string{"read_file", "question", "open_plan_investigation", "write_file", "edit_file"} {
-		if !planned.offers(tool) {
-			t.Fatalf("Plan mode turn lacks %s", tool)
-		}
-	}
-	for _, tool := range []string{"delete_file", "update_plan", "agent_start", "crude_control", "capability_activate"} {
-		if planned.offers(tool) {
-			t.Fatalf("Plan mode turn offers %s", tool)
-		}
-	}
-
-	if err := s.SetPlanMode(false); err != nil {
-		t.Fatal(err)
-	}
-	if !o.SubmitInput(provider.PlainInput("implement it")) {
-		t.Fatal("submit rejected")
-	}
-	normal := <-requests
-	waitTurnDone(t, sender, o.ID)
-	if strings.Contains(normal.text(0), "<plan_mode>") || !normal.offers("write_file") || normal.offers("open_plan_investigation") {
-		t.Fatal("normal turn after Plan mode is still restricted")
-	}
-	ended := false
-	for index := range normal.Messages {
-		ended = ended || strings.Contains(normal.text(index), "turned Plan mode off")
-	}
-	if !ended {
-		t.Fatal("first turn after Plan mode was not told the mode ended")
 	}
 }
 
@@ -133,6 +139,11 @@ func TestPlanModeRefusesMutationsAtExecution(t *testing.T) {
 		{"write_file", map[string]any{"path": "a.go"}, true},
 		{"update_plan", map[string]any{}, true},
 		{"crude_control", map[string]any{}, true},
+		// Declared on every root turn; Plan mode refuses them at execution.
+		{"delete_file", map[string]any{"path": "a.go"}, true},
+		{"agent_start", map[string]any{}, true},
+		{"capability_activate", map[string]any{}, true},
+		{"mcp__editor__change", map[string]any{}, true},
 	} {
 		err := planModeRefusal(test.tool, test.params, nil, nil, command.SyntaxPOSIX)
 		if (err != nil) != test.refused {

@@ -67,7 +67,7 @@ func TestPlanModeRecoveryKeepsStartingPolicyAndOriginalInput(t *testing.T) {
 			assertPolicy := func(request planModeRequest) {
 				t.Helper()
 				if !request.offers("write_file") ||
-					request.offers("open_plan_investigation") != test.planning ||
+					!request.offers("open_plan_investigation") ||
 					strings.Contains(request.text(0), "<plan_mode>") != test.planning {
 					t.Fatalf("provider request did not use starting Plan mode %v", test.planning)
 				}

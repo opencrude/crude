@@ -62,7 +62,7 @@ website, and lets Errand check the latest release at most once a day after a
 task. It tells the user about a newer release once, through the question tool,
 with the install command and choices to update later or skip; it never runs the
 update, records announced and skipped versions in memory, and does not check a
-`dev` source build. The flag is part of the session's system-prompt cache key.
+`dev` source build. Changing the workspace-agent role starts a new root prompt epoch.
 
 The same slot carries `prompt.WorkspaceAgentPeer` for every other root: it says
 that the workspace has one permanent Errand and that an agent finds it with
@@ -85,8 +85,8 @@ themselves. The current builders are prerequisites, not an enabled editor servic
 The stable environment projection names the resolved agent command shell in
 `<shell>` and describes that shell's syntax and runtime in `<platform_guidance>`:
 bash for Git Bash, PowerShell for PowerShell 7 or 5.1, cmd.exe for Command
-Prompt. It never describes cmd.exe while another shell runs commands. The shell
-is part of the root prompt cache key, so a settings change rebuilds the prompt.
+Prompt. It never describes cmd.exe while another shell runs commands. Changing the shell
+replaces the environment section in an appended settings update.
 On Windows, the Git Bash guidance tells agents to check which tool and helper
 executables that shell resolves before treating a failure as a task error. It
 prefers compatible installed tools and otherwise calls for a verified package
@@ -410,9 +410,26 @@ that generation. The run rereads every known scope. When the digest changed, the
 system prompt keeps the epoch's text and the current complete guidance arrives
 once as a context-only `GuidanceProjectionUpdate`, as a mid-run change does.
 A checkpoint (in-run, background-prepared or manual) uses the current guidance
-for its request and starts a new epoch with it. A base-prompt change (settings
-such as Plan mode, multi-agent or the shell) still rebuilds the prompt, and the
-next request misses the cache.
+for its request and starts a new epoch with it.
+
+The root also keeps the system prompt of its context generation across turns
+and retries. Changes to multi-agent mode, Plan mode, shell, profile instructions,
+agent name or profile catalog append one context-only `<settings_update>` at the
+next applicable request boundary. It carries only the changed named sections;
+an empty slot removes that section. Plan mode applies from the next turn. Neither
+mode changes tool declarations; the runtime enforces both at execution. A
+checkpoint starts a new generation with the current contracts in the system
+prompt instead of replaying old updates. When a model change or session resume
+keeps history from a previous prompt, one notice retires its settings updates.
+
+This follows [Claude Code's prompt caching practice](https://claude.dev/blog/lessons-from-building-claude-code-prompt-caching-is-everything/):
+append updates rather than rewriting the prefix and keep tools declared in Plan
+mode. [Codex's context updates](https://github.com/openai/codex/blob/9a8730f3/codex-rs/core/src/context_manager/updates.rs)
+likewise compare previous and next turn settings to append developer or user
+messages. A model switch, workspace switch, a real catalog change (such as a
+new MCP connection or a changed allow/deny list), or a session restart on a new
+build can still change the prefix. Stable request bytes do not guarantee that
+the provider retained its cache.
 
 These boundary checks are not a filesystem transaction covering external
 writers during a running tool call. A guidance mutation and other calls in the

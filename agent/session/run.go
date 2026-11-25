@@ -912,9 +912,12 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	investigationOwner := worktree.Owner{AgentID: o.ID, RunID: collaborationRun.ID}
 	if planMode {
 		ag.Policy = safety.ReadOnlyPolicy()
-		ag.PlanInvestigation = &turnloop.PlanInvestigationPolicy{HostCommand: func(toolCtx context.Context, tool string, params map[string]any) (*turnloop.PlanInvestigationHostRequest, error) {
-			return s.planInvestigationHostRequest(withPlanInvestigationCycle(toolCtx, planningCycle), sourceExecutionID, executionRoot, investigationOwner, tool, params)
-		}}
+		ag.PlanInvestigation = &turnloop.PlanInvestigationPolicy{
+			Allows: func(tool string) bool { return planModeAllows(tool, ag.ToolMetadata) },
+			HostCommand: func(toolCtx context.Context, tool string, params map[string]any) (*turnloop.PlanInvestigationHostRequest, error) {
+				return s.planInvestigationHostRequest(withPlanInvestigationCycle(toolCtx, planningCycle), sourceExecutionID, executionRoot, investigationOwner, tool, params)
+			},
+		}
 	}
 	ag.GuidancePaths = append([]string(nil), userInput.ActivePaths...)
 	ag.MaxOutputTokens = activeCfg.ModelMaxOutput
@@ -929,6 +932,15 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	ag.AgentID = turnloop.AgentID(o.ID)
 	ag.RunID = collaborationRun.ID
 	ag.TurnGeneration = turnGeneration
+	rootOptions := func(cfg *Config) rootprompt.RootOptions {
+		return s.rootOptions(cfg, cfg.IsMultiAgentEnabled(), planMode, ag.Model, ag.WorkDir)
+	}
+	var checkpointEpoch rootPromptEpoch
+	ag.CheckpointBasePrompt = func() string {
+		cfg := s.runtimeProfile.EffectiveConfig(o.ID)
+		checkpointEpoch = newRootPromptEpoch(rootOptions(cfg), 0)
+		return checkpointEpoch.base
+	}
 	var compactionRevision uint64
 	ag.PrepareCompaction = func(source turnloop.CompactionSource) error {
 		var err error
@@ -936,7 +948,14 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		return err
 	}
 	ag.CommitCompaction = func(commit turnloop.CompactionCommit) error {
-		return s.commitRootCompaction(o.ID, compactionRevision, commit)
+		if err := s.commitRootCompaction(o.ID, compactionRevision, commit); err != nil {
+			return err
+		}
+		s.msgsMu.Lock()
+		checkpointEpoch.generation = s.contextGeneration
+		s.promptEpoch = checkpointEpoch
+		s.msgsMu.Unlock()
+		return nil
 	}
 	ag.CompactionRequest = func() string { return o.takeCompactionRequest(turnGeneration) }
 	ag.Checkpoint = func(archive, active []provider.ChatMessage) error {
@@ -1002,37 +1021,21 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		current := s.runtimeProfile.EffectiveConfig(o.ID)
 		stepConfig = current
 		defs, notices := configuredOrchestratorTools(current, current.IsMultiAgentEnabled(), ag.Model), s.takeDelegationNotices()
-		if planMode {
-			category := current.ActiveDefaultCategory()
-			defs = append(defs, turnloop.FilterToolsForModel([]tools.ToolDef{tools.OpenPlanInvestigationTool}, category.AllowedTools, category.DeniedTools, "", false, ag.Model)...)
-		}
 		if planModeEnded {
 			planModeEnded = false
 			notices = append(notices, planModeEndedNotice())
 		}
-		return defs, append(notices, s.takeGoalNotices()...)
+		notices = append(notices, s.takeGoalNotices()...)
+		if update := s.rootSettingsUpdate(rootOptions(current)); update != nil {
+			notices = append(notices, *update)
+		}
+		return defs, notices
 	}
 	s.bindAgentRuntime(ctx, ag, captypes.RuntimeActor{ID: o.ID, SessionID: s.sessionID, AllowedTools: activeCfg.AllowedTools, DeniedTools: activeCfg.DeniedTools, SkillModes: activeCfg.SkillModes}, s.AgentName())
 	s.bindAgentControl(ctx, ag, userInput.ControlTarget)
+	s.bindCodeIntelligence(ag)
 	if !planMode {
-		// A project language server can run project plug-ins. Do not start
-		// one or probe source files as a side effect of investigation edits.
-		s.bindCodeIntelligence(ag)
 		s.bindPlanDiscipline(ag)
-	}
-	if planMode {
-		prepare := ag.PrepareStep
-		ag.PrepareStep = func() ([]tools.ToolDef, []provider.ChatMessage) {
-			defs, notices := prepare()
-			return planModeTools(defs, ag.ToolMetadata), notices
-		}
-		dispatch := ag.ToolFn
-		ag.ToolFn = func(toolCtx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
-			if !planModeAllows(tool, ag.ToolMetadata) {
-				return investigationDenied(PlanReviewError(fmt.Sprintf("Plan mode does not allow %s.", tool)))
-			}
-			return dispatch(toolCtx, tool, params)
-		}
 	}
 	defer s.FileOwnership().Release(turnloop.AgentID(o.ID))
 	var pendingCollaboration []collaboration.PendingDelivery
@@ -1085,7 +1088,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		return nil
 	}
 	var finalContent string
-	prompt := s.systemPromptForModelAtRoot(effectiveCfg.IsMultiAgentEnabled(), planMode, ag.Model, ag.WorkDir)
+	prompt := s.rootBase(rootOptions(effectiveCfg))
 
 	displayTracker := &displayMetaTracker{
 		metas: make(map[string]*sessiondb.DisplayMeta),
@@ -1217,7 +1220,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 			Generation:  turnGeneration, ProviderID: currentProvider.ID,
 			AccountID: currentProvider.AccountID, ModelID: currentProvider.Model,
 		}
-		return s.systemPromptForModelAtRoot(current.IsMultiAgentEnabled(), planMode, ag.Model, ag.WorkDir), nil
+		return s.rootBase(rootOptions(current)), nil
 	}
 	s.msgsMu.Lock()
 	if s.guidanceEpoch != nil && s.guidanceEpochGeneration == s.contextGeneration {

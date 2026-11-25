@@ -248,13 +248,20 @@ func (s *Service) Prepare(ctx context.Context, actor captypes.RuntimeActor) (cap
 	if err := ctx.Err(); err != nil {
 		return captypes.RuntimeSnapshot{}, err
 	}
-	if err := s.admitRun(ctx, actor); err != nil {
-		return captypes.RuntimeSnapshot{}, err
+	var recoveryNotices []string
+	if actor.CatalogOnly {
+		if err := s.validateRuntime(ctx, actor); err != nil {
+			return captypes.RuntimeSnapshot{}, err
+		}
+	} else {
+		if err := s.admitRun(ctx, actor); err != nil {
+			return captypes.RuntimeSnapshot{}, err
+		}
+		if err := s.prepareHosts(ctx, actor); err != nil {
+			return captypes.RuntimeSnapshot{}, err
+		}
+		recoveryNotices = s.recoverConnections(ctx, actor)
 	}
-	if err := s.prepareHosts(ctx, actor); err != nil {
-		return captypes.RuntimeSnapshot{}, err
-	}
-	recoveryNotices := s.recoverConnections(ctx, actor)
 	clients := s.actorClients(actor)
 	states := clients.Catalog()
 	refreshed := false
@@ -263,7 +270,7 @@ func (s *Service) Prepare(ctx context.Context, actor captypes.RuntimeActor) (cap
 	s.mu.RUnlock()
 	prepared := captypes.RuntimeSnapshot{Generation: generation, RunID: actor.RunID, TurnGeneration: actor.TurnGeneration, Notices: recoveryNotices}
 	for _, connection := range states {
-		if connection.State == "connected" && connection.Cached && !actor.DisabledForSession(connection.ID) {
+		if !actor.CatalogOnly && connection.State == "connected" && connection.Cached && !actor.DisabledForSession(connection.ID) {
 			if err := clients.Refresh(ctx, connection.ID); err != nil {
 				prepared.Notices = append(prepared.Notices, "MCP discovery needs attention: "+connection.ID+": "+err.Error())
 			} else {

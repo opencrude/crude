@@ -86,7 +86,9 @@ of guessing its capabilities.
   stays read-only. The agent can ask questions and propose a decision-complete
   `<proposed_plan>`; it cannot switch modes, delegate or run implementation
   controls. `open_plan_investigation` enables the scoped experiment described
-  below. Tool offering, permissions and dispatch all check the turn's mode.
+  below. Both modes declare the same tools, including `open_plan_investigation`.
+  The runtime refuses disallowed calls without executing them. A mode change
+  replaces the planning contract in a context-only message at the next turn.
 - The first turn after Plan mode is turned off receives a context-only notice
   that the mode ended.
 - `<proposed_plan>` renders as a titled **Proposed plan** section; live and

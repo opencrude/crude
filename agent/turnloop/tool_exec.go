@@ -47,6 +47,8 @@ type toolParamSchema struct {
 // PlanInvestigationPolicy asks the session owner whether a command needs
 // consent to run. The dispatcher rechecks scope and consent before launch.
 type PlanInvestigationPolicy struct {
+	// Allows checks the turn contract before any tool can ask for approval or dispatch.
+	Allows      func(string) bool
 	HostCommand func(context.Context, string, map[string]any) (*PlanInvestigationHostRequest, error)
 }
 
@@ -281,6 +283,10 @@ func (a *Agent) executeToolCall(ctx context.Context, tc provider.ToolCall, emit 
 		errHint = closestToolHint(tc.Function.Name, validationDefs)
 	} else {
 		errMsg = validateRequiredParams(tc.Function.Name, params, validationDefs)
+	}
+	if plan := a.PlanInvestigation; errMsg == "" && plan != nil && plan.Allows != nil && !plan.Allows(tc.Function.Name) {
+		errMsg = fmt.Sprintf("Plan mode does not allow %s.", tc.Function.Name)
+		errHint, errOutcome.State = prompt.HintPlanMode, toolresult.Denied
 	}
 	if errMsg == "" && tc.Function.Name == "apply_patch" {
 		errMsg = a.validatePatchPermissions(params)

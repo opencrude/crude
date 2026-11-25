@@ -22,7 +22,6 @@ import (
 	"crude/agent/tools"
 	"crude/agent/turnloop"
 	"crude/agent/websearch"
-	"crude/internal/buildinfo"
 	"crude/internal/clipboard"
 	"crude/internal/logger"
 	"crude/text/jsonrepair"
@@ -109,8 +108,7 @@ type Session struct {
 	displayMetas      []sessiondb.DisplayMeta
 	createdAts        []int64
 	msgsMu            sync.Mutex
-	systemPromptMu    sync.Mutex
-	systemPrompts     map[string]string
+	promptEpoch       rootPromptEpoch // guarded by msgsMu
 	activeContext     []provider.ChatMessage
 	contextRevision   uint64
 	contextGeneration uint64
@@ -750,9 +748,6 @@ func (s *Session) SetWorkDir(dir string) {
 	s.mu.Lock()
 	s.workDir = dir
 	s.mu.Unlock()
-	s.systemPromptMu.Lock()
-	s.systemPrompts = nil
-	s.systemPromptMu.Unlock()
 	s.guidanceMu.Lock()
 	s.guidanceCache = nil
 	s.guidanceMu.Unlock()
@@ -793,52 +788,15 @@ func (s *Session) systemPrompt(multiAgent bool) string {
 }
 
 func (s *Session) systemPromptForModel(multiAgent bool, model string) string {
-	root := ""
-	if s != nil {
-		root = s.WorkDir()
-	}
-	return s.systemPromptForModelAtRoot(multiAgent, false, model, root)
-}
-
-func (s *Session) systemPromptForModelAtRoot(multiAgent, planMode bool, model, root string) string {
-	if s == nil {
-		return rootprompt.BuildRoot(rootprompt.RootOptions{MultiAgent: multiAgent, PlanMode: planMode})
-	}
-	s.mu.Lock()
 	var cfg *Config
-	if s.cfg != nil {
-		cfg = copyConfig(s.cfg)
+	if s != nil {
+		s.mu.Lock()
+		if s.cfg != nil {
+			cfg = copyConfig(s.cfg)
+		}
+		s.mu.Unlock()
 	}
-	workspaceAgent := s.selectedMainAgent == CategoryErrand
-	s.mu.Unlock()
-	shell := s.agentShell()
-	s.systemPromptMu.Lock()
-	defer s.systemPromptMu.Unlock()
-	if s.systemPrompts == nil {
-		s.systemPrompts = make(map[string]string)
-	}
-	instructions := ""
-	if cfg != nil {
-		instructions = cfg.ActiveDefaultCategory().Instructions
-	}
-	catalog := ""
-	if multiAgent {
-		catalog = agentProfileCatalog(cfg)
-	}
-	key := fmt.Sprintf("%t:%t:%t:%s:%s:%s:%s:%+v", multiAgent, planMode, workspaceAgent, model, instructions, catalog, root, shell)
-	if prompt, ok := s.systemPrompts[key]; ok {
-		return prompt
-	}
-	// The prompt must advertise the same working directory tools resolve
-	// against; a stale cwd here misdirects the model after a workspace
-	// switch even when execution itself is correctly re-rooted.
-	prompt := rootprompt.BuildRoot(rootprompt.RootOptions{
-		MultiAgent: multiAgent, PlanMode: planMode, WorkDir: root, TempDir: s.TempDir(), Model: model,
-		WorkspaceAgent: workspaceAgent, Shell: shell, CrudeVersion: buildinfo.Version,
-	})
-	prompt = rootprompt.ApplyRootOverlays(prompt, instructions, setting.AgentNameForRole(s.selectedMainAgent, s.agentName), catalog)
-	s.systemPrompts[key] = prompt
-	return prompt
+	return rootprompt.BuildRoot(s.rootOptions(cfg, multiAgent, false, model, s.WorkDir()))
 }
 
 func (s *Session) SessionID() string {
