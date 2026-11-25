@@ -2,11 +2,8 @@ package viewmodel
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,6 +23,7 @@ import (
 	"crude/core/shellport"
 	"crude/core/shellport/remote"
 	"crude/internal/clientstate"
+	"crude/internal/providersim"
 	questionscreen "crude/tui/screens/question"
 	"crude/types/setting"
 	"crude/workspace"
@@ -216,28 +214,13 @@ func remoteJourneyCreate(t *testing.T, shell remoteJourneyShell) string {
 func TestRemoteAppJourneySharedStreamPrivateDraftsAndDetach(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	var calls atomic.Int32
-	release := make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	gate := providersim.NewGate()
+	server := providersim.New(t)
+	server.Respond(func(providersim.Request) providersim.Turn {
 		calls.Add(1)
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"shared prefix \"}}]}\n\n")
-		w.(http.Flusher).Flush()
-		select {
-		case <-release:
-		case <-r.Context().Done():
-			return
-		}
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"retained answer\"}}]}\n\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	t.Cleanup(server.Close)
-	t.Cleanup(func() {
-		select {
-		case <-release:
-		default:
-			close(release)
-		}
+		return providersim.Turn{}.WithTextDeltas("shared prefix ", "retained answer").WithoutUsage().WithGateAfter(chatFirstTextEvents, gate)
 	})
-	runtime := remoteJourneyRuntime(t, server.URL)
+	runtime := remoteJourneyRuntime(t, server.BaseURL(providersim.Chat))
 	root := t.TempDir()
 	one := newRemoteJourneyShell(t, runtime, root)
 	id := remoteJourneyCreate(t, one)
@@ -286,7 +269,7 @@ func TestRemoteAppJourneySharedStreamPrivateDraftsAndDetach(t *testing.T) {
 	if err := one.app.CloseWorkspaceAttachment(); err != nil {
 		t.Fatal(err)
 	}
-	close(release)
+	gate.Release()
 	remoteJourneyUntil(t, []remoteJourneyShell{two}, func() bool { return strings.Contains(ansi.Strip(two.app.View().RenderContent()), "retained answer") })
 	if calls.Load() != 1 {
 		t.Fatalf("provider executed %d requests, want exactly one", calls.Load())
@@ -394,32 +377,17 @@ func TestRemoteWorkspaceErrandIsEnsuredAndKeptOutOfAgentList(t *testing.T) {
 func TestRemoteAppJourneyQuestionResolvedFromPeerOnce(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var input struct {
-			Messages []struct {
-				Role string `json:"role"`
-			} `json:"messages"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-			t.Error(err)
-			return
-		}
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
 		calls.Add(1)
-		answered := false
-		for _, message := range input.Messages {
-			answered = answered || message.Role == "tool"
+		for _, message := range request.Messages {
+			if message.Role == "tool" {
+				return simulatedAnswer("PEER DECISION ACCEPTED")
+			}
 		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		if !answered {
-			args := `{"questions":[{"header":"Choice","question":"Choose a fixture answer","options":["Yes","No"]}]}`
-			payload, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"tool_calls": []any{map[string]any{"index": 0, "id": "fixture-question", "type": "function", "function": map[string]any{"name": "question", "arguments": args}}}}, "finish_reason": "tool_calls"}}})
-			fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", payload)
-		} else {
-			fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"PEER DECISION ACCEPTED\"}}]}\n\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-		}
-	}))
-	t.Cleanup(server.Close)
-	runtime := remoteJourneyRuntime(t, server.URL)
+		return simulatedCalls(providersim.ToolCall{ID: "fixture-question", Name: "question", Arguments: `{"questions":[{"header":"Choice","question":"Choose a fixture answer","options":["Yes","No"]}]}`})
+	})
+	runtime := remoteJourneyRuntime(t, server.BaseURL(providersim.Chat))
 	root := t.TempDir()
 	one := newRemoteJourneyShell(t, runtime, root)
 	id := remoteJourneyCreate(t, one)
@@ -447,15 +415,13 @@ func TestRemoteAppJourneyQuestionResolvedFromPeerOnce(t *testing.T) {
 func TestRemoteAppJourneyPeerStopRetainsAcceptedContent(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	gate := providersim.NewGate()
+	server := providersim.New(t)
+	server.Respond(func(providersim.Request) providersim.Turn {
 		calls.Add(1)
-		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ACCEPTED BEFORE PEER STOP\"}}]}\n\n")
-		w.(http.Flusher).Flush()
-		<-r.Context().Done()
-	}))
-	t.Cleanup(server.Close)
-	runtime := remoteJourneyRuntime(t, server.URL)
+		return simulatedAnswer("ACCEPTED BEFORE PEER STOP").WithGateAfter(chatFirstTextEvents, gate)
+	})
+	runtime := remoteJourneyRuntime(t, server.BaseURL(providersim.Chat))
 	root := t.TempDir()
 	one := newRemoteJourneyShell(t, runtime, root)
 	id := remoteJourneyCreate(t, one)

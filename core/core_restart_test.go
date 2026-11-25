@@ -5,11 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -18,6 +15,7 @@ import (
 	"crude/agent/session"
 	"crude/core/coreprotocol"
 	"crude/internal/buildinfo"
+	"crude/internal/providersim"
 	"crude/internal/retry"
 	"crude/types/control"
 	"crude/types/conversation"
@@ -31,58 +29,30 @@ func TestCoreRestartNaturalCheckpointColdSuccessorAndOneContinuation(t *testing.
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	first, second := make(chan struct{}), make(chan struct{})
-	releaseFirst, releaseSecond := make(chan struct{}), make(chan struct{})
-	var finishFirst, finishSecond sync.Once
-	t.Cleanup(func() {
-		finishFirst.Do(func() { close(releaseFirst) })
-		finishSecond.Do(func() { close(releaseSecond) })
-	})
+	firstGate, secondGate := providersim.NewGate(), providersim.NewGate()
+	defer firstGate.Release()
+	defer secondGate.Release()
 	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body struct {
-			Stream bool            `json:"stream"`
-			Tools  json.RawMessage `json:"tools"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Error(err)
-			return
-		}
-		if !body.Stream || len(body.Tools) == 0 || string(body.Tools) == "[]" {
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
+		if !request.Stream || len(request.Tools) == 0 {
 			// Retained memory maintenance uses the same configured fixture
-			// endpoint but is not another root turn. Let its owned nonstreaming
-			// extraction finish instead of deadlocking it on the successor gate.
-			content := `{"memories":[],"summary":{"title":"Checkpoint","summary":"No durable facts to extract from the fixture.","outcome":"in-progress","key_files":[]}}`
-			if body.Stream {
-				w.Header().Set("Content-Type", "text/event-stream")
-				message, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"content": content}, "finish_reason": "stop"}}})
-				_, _ = fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", message)
-			} else {
-				_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": content}}}})
-			}
-			return
+			// endpoint but is not another root turn. Do not gate extraction.
+			return providersim.Text(`{"memories":[],"summary":{"title":"Checkpoint","summary":"No durable facts to extract from the fixture.","outcome":"in-progress","key_files":[]}}`)
 		}
+		answer := providersim.Text("Durable checkpoint answer.")
 		switch calls.Add(1) {
 		case 1:
 			close(first)
-			select {
-			case <-releaseFirst:
-			case <-r.Context().Done():
-				return
-			}
+			return answer.WithGate(firstGate)
 		case 2:
 			close(second)
-			select {
-			case <-releaseSecond:
-			case <-r.Context().Done():
-				return
-			}
+			return answer.WithGate(secondGate)
 		default:
 			t.Error("restart produced more than the single authorized continuation")
+			return answer
 		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Durable checkpoint answer.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	t.Cleanup(server.Close)
+	})
 	agents := session.DefaultAgentsConfig()
 	profile := agents.Profiles["default"]
 	off := false
@@ -91,7 +61,7 @@ func TestCoreRestartNaturalCheckpointColdSuccessorAndOneContinuation(t *testing.
 	agents.Profiles["default"] = profile
 	cfg := &session.Config{Agents: agents, Accounts: map[string]provider.Account{
 		"checkpoint": {ID: "checkpoint", ProviderID: "openai", Connection: provider.Template{
-			Name: "Checkpoint fixture", ProviderURL: server.URL, APIStandard: "openai", AuthType: provider.AuthNone,
+			Name: "Checkpoint fixture", ProviderURL: server.BaseURL(providersim.Chat), APIStandard: "openai", AuthType: provider.AuthNone,
 		}},
 	}}
 	root, home := t.TempDir(), t.TempDir()
@@ -249,7 +219,7 @@ func TestCoreRestartNaturalCheckpointColdSuccessorAndOneContinuation(t *testing.
 	if err := <-waiter; err != nil {
 		t.Fatal(err)
 	}
-	finishFirst.Do(func() { close(releaseFirst) })
+	firstGate.Release()
 	for {
 		state, err := backend.GoalHandover(envelope.Request.ID)
 		if err != nil {
@@ -311,7 +281,7 @@ func TestCoreRestartNaturalCheckpointColdSuccessorAndOneContinuation(t *testing.
 	if shown, _ := reopened.Goal(); shown.Status != conversation.GoalPaused {
 		t.Fatal("repeat permit overwrote the newer user pause")
 	}
-	finishSecond.Do(func() { close(releaseSecond) })
+	secondGate.Release()
 }
 
 func TestCoreRestartOwnerMethodsAreJournalledExceptInspection(t *testing.T) {

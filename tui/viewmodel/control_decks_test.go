@@ -6,14 +6,12 @@ import (
 	"crude/core/coreprotocol"
 	"crude/core/shellport"
 	"crude/core/wiretest"
+	"crude/internal/providersim"
 	"crude/tui/screens/question"
 	"crude/tui/screens/sessionsettings"
 	"crude/tui/ui"
 	"crude/types/control"
 	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -160,36 +158,21 @@ func admitDeckController(t *testing.T, runtime *core.Runtime, root string) {
 
 func TestConnectedQuestionControlReceiptAndFailedAckRetainsDraft(t *testing.T) {
 	evidence := make(chan string, 2)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var input struct {
-			Messages []struct {
-				Role    string `json:"role"`
-				Content any    `json:"content"`
-			} `json:"messages"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-			t.Error(err)
-			return
-		}
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
 		answered := false
-		for _, m := range input.Messages {
-			answered = answered || m.Role == "tool"
+		for _, m := range request.Messages {
 			if m.Role == "tool" {
-				raw, _ := json.Marshal(m.Content)
-				evidence <- string(raw)
+				answered = true
+				evidence <- string(simulatedToolResult(m).Raw)
 			}
 		}
-		w.Header().Set("Content-Type", "text/event-stream")
 		if !answered {
-			args := `{"questions":[{"header":"Choice","question":"Choose fixture","options":["Yes","No"]}]}`
-			payload, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"tool_calls": []any{map[string]any{"index": 0, "id": "fixture-question", "type": "function", "function": map[string]any{"name": "question", "arguments": args}}}}, "finish_reason": "tool_calls"}}})
-			_, _ = fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", payload)
-		} else {
-			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"QUESTION RECEIPT ACCEPTED\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+			return simulatedCalls(providersim.ToolCall{ID: "fixture-question", Name: "question", Arguments: `{"questions":[{"header":"Choice","question":"Choose fixture","options":["Yes","No"]}]}`})
 		}
-	}))
-	defer server.Close()
-	runtime := remoteJourneyRuntime(t, server.URL)
+		return simulatedAnswer("QUESTION RECEIPT ACCEPTED")
+	})
+	runtime := remoteJourneyRuntime(t, server.BaseURL(providersim.Chat))
 	root := t.TempDir()
 	one := newRemoteJourneyShell(t, runtime, root)
 	id := remoteJourneyCreate(t, one)

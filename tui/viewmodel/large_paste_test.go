@@ -6,8 +6,6 @@ import (
 	"crude/types/setting"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -15,9 +13,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/agent/provider"
 	"crude/agent/sessiondb"
 	"crude/internal/clipboard"
+	"crude/internal/providersim"
 	"crude/tui/ui"
 	"crude/workspace"
 )
@@ -97,22 +95,11 @@ func TestPastedTextSendsCompleteContentButKeepsChatCompact(t *testing.T) {
 	t.Setenv("USERPROFILE", home)
 	content := strings.Repeat("Complete pasted diagnostic.\n", 1000) + "UNIQUE-DIAGNOSTIC-TAIL"
 	requests := make(chan string, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-		}
-		var text strings.Builder
-		for _, message := range request.Messages {
-			if message.Role == "user" {
-				text.WriteString(message.ContentString())
-			}
-		}
-		requests <- text.String()
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Received the complete diagnostic.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	defer server.Close()
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
+		requests <- simulatedUserText(r, "")
+		return simulatedAnswer("Received the complete diagnostic.")
+	})
 	app := newFullTestApp(t)
 	wsOf(app).Logger = stubLogger{}
 	wsOf(app).RootPath, wsOf(app).WorkspaceDir = t.TempDir(), t.TempDir()
@@ -121,7 +108,7 @@ func TestPastedTextSendsCompleteContentButKeepsChatCompact(t *testing.T) {
 	cfg := testAccountConfig()
 	account := cfg.Accounts["test"]
 	template := account.Connection
-	template.ProviderURL = server.URL
+	template.ProviderURL = server.BaseURL(providersim.Chat)
 	account.Connection = template
 	cfg.Accounts["test"] = account
 	cfg.Agents.Enabled = false

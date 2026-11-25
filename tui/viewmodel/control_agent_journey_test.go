@@ -1,16 +1,12 @@
 package viewmodel
 
 import (
-	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
 
-	"crude/agent/provider"
 	"crude/core/shellport"
+	"crude/internal/providersim"
 )
 
 // Exercise the complete product path: composer admission binds its shell, the
@@ -18,23 +14,16 @@ import (
 // shell, Update applies the effect and the following model request sees outcome.
 func TestConnectedRootAgentControlsOnlySubmittingShell(t *testing.T) {
 	var calls atomic.Int32
-	requests := make(chan provider.ChatRequest, 4)
-	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-			return
-		}
+	requests := make(chan providersim.Request, 4)
+	endpoint := providersim.New(t)
+	endpoint.Respond(func(request providersim.Request) providersim.Turn {
 		requests <- request
-		w.Header().Set("Content-Type", "text/event-stream")
 		if calls.Add(1) == 1 {
-			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"hide-tree\",\"type\":\"function\",\"function\":{\"name\":\"crude_control\",\"arguments\":\"{\\\"command\\\":\\\"tree.set_visible\\\",\\\"arguments\\\":{\\\"visible\\\":false}}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n")
-		} else {
-			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Tree hidden in this shell.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+			return simulatedCalls(providersim.ToolCall{ID: "hide-tree", Name: "crude_control", Arguments: `{"command":"tree.set_visible","arguments":{"visible":false}}`})
 		}
-	}))
-	defer endpoint.Close()
-	runtime := remoteJourneyRuntime(t, endpoint.URL)
+		return simulatedAnswer("Tree hidden in this shell.")
+	})
+	runtime := remoteJourneyRuntime(t, endpoint.BaseURL(providersim.Chat))
 	root := t.TempDir()
 	one := newRemoteJourneyShell(t, runtime, root)
 	id := remoteJourneyCreate(t, one)
@@ -58,7 +47,7 @@ func TestConnectedRootAgentControlsOnlySubmittingShell(t *testing.T) {
 	first := <-requests
 	advertised := false
 	for _, definition := range first.Tools {
-		if definition.Function.Name == "crude_control" {
+		if definition.Name == "crude_control" {
 			advertised = true
 		}
 	}
@@ -68,7 +57,7 @@ func TestConnectedRootAgentControlsOnlySubmittingShell(t *testing.T) {
 	second := <-requests
 	evidence := false
 	for _, message := range second.Messages {
-		if message.Role == "tool" && strings.Contains(message.ContentString(), `"state":"applied"`) {
+		if message.Role == "tool" && strings.Contains(simulatedText(message.Parts), `"state":"applied"`) {
 			evidence = true
 		}
 	}

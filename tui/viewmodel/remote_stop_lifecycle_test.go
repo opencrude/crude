@@ -1,11 +1,8 @@
 package viewmodel
 
 import (
-	"encoding/json"
 	"encoding/xml"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"reflect"
 	"strings"
 	"sync"
@@ -18,6 +15,7 @@ import (
 	"crude/agent/provider"
 	"crude/agent/session"
 	"crude/agent/sessiondb"
+	"crude/internal/providersim"
 	"crude/tui/chatprojection"
 	"crude/types/conversation"
 	"crude/types/recovery"
@@ -36,19 +34,14 @@ func TestRemoteAppJourneyRepeatedStopSteeringCompactionAndResume(t *testing.T) {
 			t.Logf("provider selections (%d normal requests): %q", normal.Load(), selectedRequests)
 		}
 	})
-	releaseSteering := make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-			return
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		if request.ToolChoice == "none" {
+	steeringGate := providersim.NewGate()
+	holdGate := providersim.NewGate()
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
+		if string(request.ToolChoice) == `"none"` {
 			extraction.Add(1)
 			text := "<<<intent>>>\nKeep the user's work and corrections.\n<<<work>>>\nAccepted transcript remains archived.\n<<<state>>>\nSafe checkpoint.\n<<<continuation>>>\nFollow new input without replaying effects."
-			_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":%q},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n", text)
-			return
+			return simulatedAnswer(text)
 		}
 		normal.Add(1)
 		latest := ""
@@ -58,7 +51,7 @@ func TestRemoteAppJourneyRepeatedStopSteeringCompactionAndResume(t *testing.T) {
 			if message.Role != "user" {
 				continue
 			}
-			text, steering := stopJourneyHumanText(message.ContentString())
+			text, steering := stopJourneyHumanText(simulatedText(message.Parts))
 			if strings.HasPrefix(text, "HOLD ") || strings.HasPrefix(text, "FOLLOW ") || text == "FAIL AUTH" {
 				latest = text
 				break
@@ -73,31 +66,20 @@ func TestRemoteAppJourneyRepeatedStopSteeringCompactionAndResume(t *testing.T) {
 		selectedRequests = append(selectedRequests, fmt.Sprintf("%s steering=%v", strings.Split(latest, "\n")[0], steering))
 		requestsMu.Unlock()
 		if latest == "FAIL AUTH" {
-			w.WriteHeader(http.StatusUnauthorized)
-			_, _ = fmt.Fprint(w, `{"error":{"type":"authentication_error","message":"test credential rejected"}}`)
-			return
+			return providersim.HTTPError(providersim.Auth).WithFaultMessage("test credential rejected")
 		}
 		if strings.HasPrefix(latest, "HOLD ") && !steering {
-			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ACCEPTED BEFORE STOP\"}}]}\n\n")
-			w.(http.Flusher).Flush()
+			gate := holdGate
 			if latest == "HOLD for genuine steering" {
-				select {
-				case <-releaseSteering:
-					_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-				case <-r.Context().Done():
-				}
-				return
+				gate = steeringGate
 			}
-			<-r.Context().Done()
-			return
+			return simulatedAnswer("ACCEPTED BEFORE STOP").WithGateAfter(chatFirstTextEvents, gate)
 		}
-		text := "FOLLOW-UP COMPLETED"
 		if steering {
-			text = "HUMAN STEERING REACHED THE MODEL"
+			return simulatedAnswer("HUMAN STEERING REACHED THE MODEL")
 		}
-		_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":%q},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n", text)
-	}))
-	t.Cleanup(server.Close)
+		return simulatedAnswer("FOLLOW-UP COMPLETED")
+	})
 	configure := func(cfg *session.Config) {
 		profile := cfg.Agents.Profiles["default"]
 		category := profile.Categories[session.CategoryDefault]
@@ -108,7 +90,7 @@ func TestRemoteAppJourneyRepeatedStopSteeringCompactionAndResume(t *testing.T) {
 		profile.Categories[session.CategoryDefault] = category
 		cfg.Agents.Profiles["default"] = profile
 	}
-	runtime := remoteJourneyRuntimeConfig(t, server.URL, configure)
+	runtime := remoteJourneyRuntimeConfig(t, server.BaseURL(providersim.Chat), configure)
 	root := t.TempDir()
 	one := newRemoteJourneyShell(t, runtime, root)
 	id := remoteJourneyCreate(t, one)
@@ -198,7 +180,7 @@ func TestRemoteAppJourneyRepeatedStopSteeringCompactionAndResume(t *testing.T) {
 	remoteJourneyUntil(t, shells, func() bool { return normal.Load() == 12 && one.app.ws.AgentMgr().Get(id).State.Streaming })
 	send(two, "this correction must reach the model, not just the journal")
 	remoteJourneyUntil(t, shells, func() bool { return one.app.ws.AgentMgr().Get(id).State.Messages.PendingSteeringCount() == 1 })
-	close(releaseSteering)
+	steeringGate.Release()
 	remoteJourneyUntil(t, shells, func() bool {
 		return normal.Load() == 13 && one.app.ws.AgentActivity(id).Status.Phase == statuscenter.AgentCompleted &&
 			strings.Contains(ansi.Strip(one.app.View().RenderContent()), "HUMAN STEERING REACHED THE MODEL") &&
@@ -242,7 +224,7 @@ func TestRemoteAppJourneyRepeatedStopSteeringCompactionAndResume(t *testing.T) {
 	if err := runtime.Close(); err != nil {
 		t.Fatal(err)
 	}
-	runtime = remoteJourneyRuntimeConfig(t, server.URL, configure)
+	runtime = remoteJourneyRuntimeConfig(t, server.BaseURL(providersim.Chat), configure)
 	resumed := newRemoteJourneyShell(t, runtime, root)
 	runAppCommand(t, resumed.app, resumed.app.launcherResumeSession(sessionID, nil))
 	remoteJourneyUntil(t, []remoteJourneyShell{resumed}, func() bool { return resumed.app.AgentView.ActiveID() != "" })
@@ -300,33 +282,20 @@ func TestStopJourneyProviderReadsCurrentHumanEnvelopeNotQuotedHistory(t *testing
 func TestRemoteAppJourneyStaleRunningShellSendsAfterPeerCompletion(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	var calls atomic.Int32
-	release := make(chan struct{})
-	var releaseOnce sync.Once
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		call := calls.Add(1)
-		w.Header().Set("Content-Type", "text/event-stream")
-		if call == 1 {
-			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"First turn accepted\"}}]}\n\n")
-			w.(http.Flusher).Flush()
-			select {
-			case <-release:
-			case <-r.Context().Done():
-				return
-			}
+	gate := providersim.NewGate()
+	server := providersim.New(t)
+	server.Respond(func(providersim.Request) providersim.Turn {
+		if calls.Add(1) == 1 {
+			return providersim.Turn{}.WithTextDeltas("First turn accepted", "FIRST TURN COMPLETED").WithoutUsage().WithGateAfter(chatFirstTextEvents, gate)
 		}
-		text := "FIRST TURN COMPLETED"
-		if call > 1 {
-			text = "STALE SHELL FOLLOW-UP COMPLETED"
-		}
-		_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":%q},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n", text)
-	}))
-	t.Cleanup(server.Close)
-	runtime := remoteJourneyRuntime(t, server.URL)
+		return simulatedAnswer("STALE SHELL FOLLOW-UP COMPLETED")
+	})
+	runtime := remoteJourneyRuntime(t, server.BaseURL(providersim.Chat))
 	root := t.TempDir()
 	one := newRemoteJourneyShell(t, runtime, root)
 	id := remoteJourneyCreate(t, one)
 	two := newRemoteJourneyShell(t, runtime, root)
-	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+	t.Cleanup(gate.Release)
 	shells := []remoteJourneyShell{one, two}
 	remoteJourneyUntil(t, shells, func() bool { return two.app.AgentView.ActiveID() == id })
 	one.app.Input.SetInput("Start the first turn")
@@ -335,7 +304,7 @@ func TestRemoteAppJourneyStaleRunningShellSendsAfterPeerCompletion(t *testing.T)
 	runAppCommand(t, one.app, cmd)
 	remoteJourneyUntil(t, shells, func() bool { return two.app.ws.AgentMgr().Get(id).State.Streaming })
 	one.app.Input.SetInput("private peer draft")
-	releaseOnce.Do(func() { close(release) })
+	gate.Release()
 	// Freeze two's replica while one observes actual terminal completion.
 	remoteJourneyUntil(t, []remoteJourneyShell{one}, func() bool { return one.app.ws.AgentActivity(id).Status.Phase == statuscenter.AgentCompleted })
 	if !two.app.ws.AgentMgr().Get(id).State.IsActive() {
@@ -366,41 +335,27 @@ func TestRemoteAppJourneyStaleRunningShellSendsAfterPeerCompletion(t *testing.T)
 func TestRemoteAppJourneyStaleIdleShellSteersPeerRun(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	var calls atomic.Int32
-	release := make(chan struct{})
-	var once sync.Once
+	gate := providersim.NewGate()
 	steeringObserved := make(chan bool, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-			return
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
+		if calls.Add(1) == 1 {
+			return providersim.Turn{}.WithTextDeltas("Peer work is running", "CORRECTION COMPLETED").WithoutUsage().WithGateAfter(chatFirstTextEvents, gate)
 		}
-		call := calls.Add(1)
-		w.Header().Set("Content-Type", "text/event-stream")
-		if call == 1 {
-			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Peer work is running\"}}]}\n\n")
-			w.(http.Flusher).Flush()
-			select {
-			case <-release:
-			case <-r.Context().Done():
-				return
-			}
-		} else {
-			found := false
-			for _, message := range request.Messages {
-				found = found || strings.Contains(message.ContentString(), `kind="human_steering"`) && strings.Contains(message.ContentString(), "Correction from stale idle shell")
-			}
-			steeringObserved <- found
+		found := false
+		for _, message := range request.Messages {
+			text := simulatedText(message.Parts)
+			found = found || strings.Contains(text, `kind="human_steering"`) && strings.Contains(text, "Correction from stale idle shell")
 		}
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"CORRECTION COMPLETED\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	t.Cleanup(server.Close)
-	runtime := remoteJourneyRuntime(t, server.URL)
+		steeringObserved <- found
+		return simulatedAnswer("CORRECTION COMPLETED")
+	})
+	runtime := remoteJourneyRuntime(t, server.BaseURL(providersim.Chat))
 	root := t.TempDir()
 	one := newRemoteJourneyShell(t, runtime, root)
 	id := remoteJourneyCreate(t, one)
 	two := newRemoteJourneyShell(t, runtime, root)
-	t.Cleanup(func() { once.Do(func() { close(release) }) })
+	t.Cleanup(gate.Release)
 	shells := []remoteJourneyShell{one, two}
 	remoteJourneyUntil(t, shells, func() bool { return two.app.AgentView.ActiveID() == id })
 	one.app.Input.SetInput("Start peer work")
@@ -461,7 +416,7 @@ func TestRemoteAppJourneyStaleIdleShellSteersPeerRun(t *testing.T) {
 	})
 	pending, _ := prompt(one)
 	readRow(one, pending)
-	once.Do(func() { close(release) })
+	gate.Release()
 	remoteJourneyUntil(t, shells, func() bool {
 		return calls.Load() == 2 && one.app.ws.AgentActivity(id).Status.Phase == statuscenter.AgentCompleted && two.app.ws.AgentActivity(id).Status.Phase == statuscenter.AgentCompleted
 	})
@@ -488,7 +443,7 @@ func TestRemoteAppJourneyStaleIdleShellSteersPeerRun(t *testing.T) {
 	if err := runtime.Close(); err != nil {
 		t.Fatal(err)
 	}
-	resumed := newRemoteJourneyShell(t, remoteJourneyRuntime(t, server.URL), root)
+	resumed := newRemoteJourneyShell(t, remoteJourneyRuntime(t, server.BaseURL(providersim.Chat)), root)
 	runAppCommand(t, resumed.app, resumed.app.launcherResumeSession(sessionID, nil))
 	remoteJourneyUntil(t, []remoteJourneyShell{resumed}, func() bool { return resumed.app.AgentView.ActiveID() != "" })
 	cold, ok := prompt(resumed)

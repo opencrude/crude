@@ -1,13 +1,9 @@
 package viewmodel
 
 import (
-	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -15,6 +11,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"crude/agent/provider"
+	"crude/internal/providersim"
 	"crude/types/statuscenter"
 )
 
@@ -27,34 +24,22 @@ func TestCompactionVisualAcceptance(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
-	release := make(chan struct{})
-	var once sync.Once
+	gate := providersim.NewGate()
 	var normal, extraction atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-			return
-		}
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
 		text := "Initial work completed. Full source remains archived."
-		if request.ToolChoice == "none" {
+		if string(request.ToolChoice) == `"none"` {
 			extraction.Add(1)
-			select {
-			case <-release:
-			case <-r.Context().Done():
-				return
-			}
-			text = "Retain accepted work and continue with queued human input."
+			return simulatedAnswer("Retain accepted work and continue with queued human input.").WithGate(gate)
 		} else if normal.Add(1) > 1 {
 			text = "Queued prompt executed exactly once after compaction."
 		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":%q},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n", text)
-	}))
-	t.Cleanup(server.Close)
-	runtime := remoteJourneyRuntime(t, server.URL)
+		return simulatedAnswer(text)
+	})
+	runtime := remoteJourneyRuntime(t, server.BaseURL(providersim.Chat))
 	shell := newRemoteJourneyShell(t, runtime, t.TempDir())
-	t.Cleanup(func() { once.Do(func() { close(release) }) })
+	t.Cleanup(gate.Release)
 	id := remoteJourneyCreate(t, shell)
 	shell.app.Tree.Visible = false
 	runAppCommand(t, shell.app, shell.app.submitPreparedInput(id, provider.UserInput{
@@ -62,7 +47,7 @@ func TestCompactionVisualAcceptance(t *testing.T) {
 		DisplayText: "Review the saved source evidence without deleting prior work.",
 	}, shell.app.Input.DraftRevision()))
 	remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool { return shell.app.ws.AgentActivity(id).Status.Phase == statuscenter.AgentCompleted })
-	model := &compactionVisualModel{App: shell.app, t: t, id: id, normal: &normal, extraction: &extraction, release: func() { once.Do(func() { close(release) }) }}
+	model := &compactionVisualModel{App: shell.app, t: t, id: id, normal: &normal, extraction: &extraction, release: gate.Release}
 	program := tea.NewProgram(model, tea.WithWidthMethod(ansi.GraphemeWidth))
 	shell.app.SetProgram(program)
 	if _, err := program.Run(); err != nil {

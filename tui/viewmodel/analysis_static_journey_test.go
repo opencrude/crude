@@ -2,9 +2,6 @@ package viewmodel
 
 import (
 	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,7 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/agent/provider"
+	"crude/internal/providersim"
 	"crude/tui/screens/shellfooter"
 	"crude/tui/screens/statusoverview"
 	"crude/tui/ui"
@@ -25,37 +22,23 @@ import (
 
 func TestConnectedAnalysisStaticOnlyKeepsEditingAndRejectsSessionProbe(t *testing.T) {
 	probeResult := make(chan string, 1)
-	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-			http.Error(w, "invalid fixture request", http.StatusBadRequest)
-			return
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
+	endpoint := providersim.New(t)
+	endpoint.Respond(func(request providersim.Request) providersim.Turn {
 		for _, message := range request.Messages {
-			if message.Role == "tool" && message.ToolCallID == "static-only-probe" {
-				probeResult <- message.ContentString()
-				_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Static only probe refused.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-				return
+			if message.Role == "tool" && simulatedToolResult(message).CallID == "static-only-probe" {
+				probeResult <- simulatedText(message.Parts)
+				return simulatedAnswer("Static only probe refused.")
 			}
 		}
 		advertised := false
 		for _, definition := range request.Tools {
-			advertised = advertised || definition.Function.Name == "lsp"
+			advertised = advertised || definition.Name == "lsp"
 		}
 		if !advertised {
 			t.Error("explicit session probe mode did not offer the lsp tool")
 		}
-		wire, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{
-			"delta": map[string]any{"tool_calls": []any{map[string]any{
-				"index": 0, "id": "static-only-probe", "type": "function",
-				"function": map[string]any{"name": "lsp", "arguments": `{"operation":"diagnostics","path":"main.go"}`},
-			}}}, "finish_reason": "tool_calls",
-		}}})
-		_, _ = fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", wire)
-	}))
-	defer endpoint.Close()
+		return simulatedCalls(providersim.ToolCall{ID: "static-only-probe", Name: "lsp", Arguments: `{"operation":"diagnostics","path":"main.go"}`})
+	})
 	root := t.TempDir()
 	path := filepath.Join(root, "main.go")
 	if err := os.WriteFile(path, []byte("package main\nvar Answer = 42\n"), 0600); err != nil {
@@ -63,7 +46,7 @@ func TestConnectedAnalysisStaticOnlyKeepsEditingAndRejectsSessionProbe(t *testin
 	}
 	server := &immediateTreeDiagRuntime{filePath: path, diags: []insight.LSPDiagnostic{{Severity: workspace.DiagError, Message: "must never be published"}}}
 	authority := make(chan *workspace.LSPManager, 1)
-	runtime := remoteJourneyRuntime(t, endpoint.URL, func(w *workspace.Workspace) {
+	runtime := remoteJourneyRuntime(t, endpoint.BaseURL(providersim.Chat), func(w *workspace.Workspace) {
 		w.LSPMgr.SetRuntime(server)
 		authority <- w.LSPMgr
 		// Deliberately no grantSemanticFixture: a configured server, enabled

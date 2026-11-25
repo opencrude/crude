@@ -2,16 +2,13 @@ package workspace
 
 import (
 	"context"
+	"crude/internal/providersim"
 	"crude/types/setting"
 	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 
 	"crude/agent/provider"
@@ -170,18 +167,13 @@ func TestResumedSessionReceivesPendingRestoreNotification(t *testing.T) {
 	if err := os.WriteFile(path, []byte("a=0\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		if requests.Add(1) == 1 {
-			arguments, _ := json.Marshal(map[string]string{"path": path, "old_string": "a=0", "new_string": "a=agent"})
-			_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_edit\",\"type\":\"function\",\"function\":{\"name\":\"edit_file\",\"arguments\":%q}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", string(arguments))
-			return
-		}
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"edited\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	defer server.Close()
-	cfg := historyE2EConfig(server.URL)
+	server := providersim.New(t)
+	arguments, _ := json.Marshal(map[string]string{"path": path, "old_string": "a=0", "new_string": "a=agent"})
+	server.Script(
+		providersim.CallTools(providersim.ToolCall{ID: "call_edit", Name: "edit_file", Arguments: string(arguments)}),
+		providersim.Text("edited"),
+	)
+	cfg := historyE2EConfig(server.BaseURL(providersim.Chat))
 	ws := NewWorkspace(project, "history-model", "tester", setting.Settings{}, &testLogger{})
 	t.Cleanup(ws.Close)
 	ws.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "on", UseGitIgnore: "on", SafetySnapshotBeforeRestore: "on", MaxFileSizeMB: 10}})

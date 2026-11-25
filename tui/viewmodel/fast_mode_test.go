@@ -2,9 +2,6 @@ package viewmodel
 
 import (
 	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/agent/session"
+	"crude/internal/providersim"
 	"crude/types/setting"
 	"crude/types/statuscenter"
 	"crude/workspace"
@@ -69,19 +67,18 @@ func TestFastCommandShowsFeedbackAndPersistentIndicators(t *testing.T) {
 
 func TestFastCommandConnectedShellsAndRequests(t *testing.T) {
 	tiers := make(chan string, 2)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
 		var body map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if err := json.Unmarshal(r.Raw, &body); err != nil {
 			t.Error(err)
-			return
+			return providersim.Turn{}
 		}
 		tier, _ := body["service_tier"].(string)
 		tiers <- tier
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	defer server.Close()
-	runtime := remoteJourneyRuntime(t, server.URL)
+		return simulatedAnswer("ok")
+	})
+	runtime := remoteJourneyRuntime(t, server.BaseURL(providersim.Chat))
 	root := t.TempDir()
 	one := newRemoteJourneyShell(t, runtime, root)
 	id := remoteJourneyCreate(t, one)

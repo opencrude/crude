@@ -1,11 +1,8 @@
 package core
 
 import (
-	"fmt"
-	"net/http"
-	"net/http/httptest"
+	"context"
 	"path/filepath"
-	"sync"
 	"testing"
 	"time"
 
@@ -13,6 +10,7 @@ import (
 	"crude/agent/provider"
 	"crude/agent/session"
 	"crude/core/coreprotocol"
+	"crude/internal/providersim"
 	"crude/types/setting"
 	"crude/workspace"
 )
@@ -20,22 +18,10 @@ import (
 func TestSubmitInputSteeringReceiptReplaysWithoutPublishingAnotherInput(t *testing.T) {
 	home := t.TempDir()
 	setCoreTestHome(t, home)
-	started := make(chan struct{}, 4)
-	release := make(chan struct{})
-	var once sync.Once
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		started <- struct{}{}
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"accepted work\"}}]}\n\n")
-		w.(http.Flusher).Flush()
-		select {
-		case <-release:
-		case <-r.Context().Done():
-			return
-		}
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	t.Cleanup(server.Close)
+	gate := providersim.NewGate()
+	server := providersim.New(t)
+	// Chat flushes an assistant-role event, then the first text delta.
+	server.Script(providersim.Text("accepted work").WithGateAfter(2, gate))
 	var store *collaboration.Store
 	runtime, err := New(func(root string) (*workspace.Workspace, error) {
 		ws := workspace.NewWorkspace(root, "routing-model", "tester", setting.Settings{}, coreTestLogger{})
@@ -47,7 +33,7 @@ func TestSubmitInputSteeringReceiptReplaysWithoutPublishingAnotherInput(t *testi
 		profile.Categories[session.CategoryDefault] = session.CategoryConfig{AccountID: "test", Model: "routing-model"}
 		agents.Profiles["default"] = profile
 		ws.SetBackendConfig(&session.Config{Agents: agents, Accounts: map[string]provider.Account{"test": {
-			ID: "test", ProviderID: "openai", APIKey: "test", Connection: provider.Template{Name: "Test", ProviderURL: server.URL, APIStandard: "openai", AuthType: provider.AuthProtocol},
+			ID: "test", ProviderID: "openai", APIKey: "test", Connection: provider.Template{Name: "Test", ProviderURL: server.BaseURL(providersim.Chat), APIStandard: "openai", AuthType: provider.AuthProtocol},
 		}}}, home)
 		store = ws.Collaboration
 		return ws, nil
@@ -56,7 +42,7 @@ func TestSubmitInputSteeringReceiptReplaysWithoutPublishingAnotherInput(t *testi
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = runtime.Close() })
-	t.Cleanup(func() { once.Do(func() { close(release) }) })
+	t.Cleanup(gate.Release)
 	client, err := runtime.Connect("routing-client")
 	if err != nil {
 		t.Fatal(err)
@@ -71,10 +57,10 @@ func TestSubmitInputSteeringReceiptReplaysWithoutPublishingAnotherInput(t *testi
 		t.Fatal(err)
 	}
 	callCore(t, client, "first", attached.WorkspaceID, coreprotocol.SubmitInput, coreprotocol.InputRequest{AgentID: created.OrchID, Text: "Work until I correct you"})
-	select {
-	case <-started:
-	case <-time.After(5 * time.Second):
-		t.Fatal("first turn did not reach the provider")
+	providerWait, cancelProviderWait := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancelProviderWait()
+	if err := gate.Wait(providerWait); err != nil {
+		t.Fatal("first turn did not reach the provider", err)
 	}
 	note := coreprotocol.InputRequest{AgentID: created.OrchID, Text: "Exact correction", DraftRevision: 9}
 	first := callCore(t, client, "correction", attached.WorkspaceID, coreprotocol.SubmitInput, note)

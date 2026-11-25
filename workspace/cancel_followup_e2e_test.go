@@ -1,15 +1,11 @@
 package workspace
 
 import (
-	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -18,43 +14,31 @@ import (
 	"crude/agent/provider"
 	"crude/agent/session"
 	"crude/agent/sessiondb"
+	"crude/internal/providersim"
 	recoverytypes "crude/types/recovery"
 	"crude/types/setting"
 )
 
 func TestWorkspaceStopRetainsOriginalAndCompletesFollowingTurns(t *testing.T) {
-	var calls atomic.Int32
-	requests := make(chan []provider.ChatMessage, 4)
-	releaseFirst := make(chan struct{})
-	var releaseOnce sync.Once
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body struct {
-			Messages []provider.ChatMessage `json:"messages"`
+	requests := make(chan providersim.Conversation, 4)
+	firstGate := providersim.NewGate()
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
+		requests <- request.Conversation
+		answer := providersim.Text("Your first message was hello how are you.")
+		if request.Index == 1 {
+			return answer.WithGate(firstGate)
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Errorf("decode request: %v", err)
-			return
-		}
-		requests <- body.Messages
-		if calls.Add(1) == 1 {
-			select {
-			case <-releaseFirst:
-			case <-r.Context().Done():
-				return
-			}
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Your first message was hello how are you.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	t.Cleanup(server.Close)
-	t.Cleanup(func() { releaseOnce.Do(func() { close(releaseFirst) }) })
+		return answer
+	})
+	t.Cleanup(firstGate.Release)
 	home, project := t.TempDir(), t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	ws := NewWorkspace(project, "history-model", "tester", setting.Settings{}, &testLogger{})
 	t.Cleanup(ws.Close)
 	ws.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}, Memory: setting.Memory{AutoExtract: "off", Consolidation: "off"}})
-	cfg := historyE2EConfig(server.URL)
+	cfg := historyE2EConfig(server.BaseURL(providersim.Chat))
 	cfg.Memory.AutoExtract, cfg.Memory.Consolidation = "off", "off"
 	frontend, err := ws.CreateSession(cfg, home)
 	if err != nil {
@@ -77,14 +61,14 @@ func TestWorkspaceStopRetainsOriginalAndCompletesFollowingTurns(t *testing.T) {
 			t.Fatalf("composer admission failed: %+v", result)
 		}
 	}
-	request := func() []provider.ChatMessage {
+	request := func() providersim.Conversation {
 		t.Helper()
 		select {
 		case messages := <-requests:
 			return messages
 		case <-time.After(5 * time.Second):
 			t.Fatal("provider request did not arrive")
-			return nil
+			return providersim.Conversation{}
 		}
 	}
 	settle := func(reason string) {
@@ -131,7 +115,7 @@ func TestWorkspaceStopRetainsOriginalAndCompletesFollowingTurns(t *testing.T) {
 		t.Fatal("Stop still accepted steering into the cancelled execution")
 	}
 	settle("cancelled")
-	releaseOnce.Do(func() { close(releaseFirst) })
+	firstGate.Release()
 	deadline := time.Now().Add(5 * time.Second)
 	var control collaboration.Event
 	for time.Now().Before(deadline) {
@@ -158,11 +142,11 @@ func TestWorkspaceStopRetainsOriginalAndCompletesFollowingTurns(t *testing.T) {
 		submit(fmt.Sprintf("workspace-next-%d", turn), text)
 		messages := request()
 		originalCount, controlCount := 0, 0
-		for _, message := range messages {
-			if message.ContentString() == "hello how are you" {
+		for _, text := range simConversationTexts(messages) {
+			if text == "hello how are you" {
 				originalCount++
 			}
-			controlCount += strings.Count(message.ContentString(), `event_id="`+control.ID+`"`)
+			controlCount += strings.Count(text, `event_id="`+control.ID+`"`)
 		}
 		if originalCount != 1 || controlCount != 1 {
 			t.Fatalf("workspace follow-up lost/duplicated first input or control: original=%d control=%d", originalCount, controlCount)
@@ -177,8 +161,8 @@ func TestWorkspaceStopRetainsOriginalAndCompletesFollowingTurns(t *testing.T) {
 			t.Fatalf("follow-up did not settle its collaboration run: participant=%+v err=%v", participant, err)
 		}
 	}
-	if calls.Load() != 3 {
-		t.Fatalf("workspace Stop/follow-up replayed historical requests: %d", calls.Load())
+	if len(server.Requests()) != 3 {
+		t.Fatalf("workspace Stop/follow-up replayed historical requests: %d", len(server.Requests()))
 	}
 }
 
@@ -190,55 +174,37 @@ func TestWorkspacePeerReferencesPreserveThreeActiveRoots(t *testing.T) {
 		t.Fatal(err)
 	}
 	started := make(chan int, 3)
-	release := make(chan struct{})
-	var once sync.Once
-	t.Cleanup(func() { once.Do(func() { close(release) }) })
+	gate := providersim.NewGate()
+	defer gate.Release()
 	var calls [3]atomic.Int32
 	requests := make(chan struct {
-		root     int
-		messages []provider.ChatMessage
+		root   int
+		dialog providersim.Conversation
 	}, 3)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body struct {
-			Messages []provider.ChatMessage `json:"messages"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Errorf("decode request: %v", err)
-			return
-		}
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
 		index := -1
 		for i := 0; i < 3; i++ {
-			for _, message := range body.Messages {
-				if message.ContentString() == fmt.Sprintf("original-%d", i) {
+			for _, text := range simConversationTexts(request.Conversation) {
+				if text == fmt.Sprintf("original-%d", i) {
 					index = i
 				}
 			}
 		}
 		if index < 0 {
 			t.Error("request lost its owning input")
-			return
+			return providersim.Turn{}
 		}
-		attempt := calls[index].Add(1)
-		if attempt == 1 {
+		if calls[index].Add(1) == 1 {
 			started <- index
-			select {
-			case <-release:
-			case <-r.Context().Done():
-				return
-			}
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		if attempt == 1 {
-			_, _ = fmt.Fprint(w, `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"read-evidence","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"evidence.txt\"}"}}]},"finish_reason":"tool_calls"}]}`+"\n\ndata: [DONE]\n\n")
-			return
+			return providersim.CallTools(providersim.ToolCall{ID: "read-evidence", Name: "read_file", Arguments: `{"path":"evidence.txt"}`}).WithGate(gate)
 		}
 		requests <- struct {
-			root     int
-			messages []provider.ChatMessage
-		}{index, body.Messages}
-		_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":%q},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n", fmt.Sprintf("completed root %d", index))
-	}))
-	t.Cleanup(server.Close)
+			root   int
+			dialog providersim.Conversation
+		}{index, request.Conversation}
+		return providersim.Text(fmt.Sprintf("completed root %d", index))
+	})
 	ws := NewWorkspace(project, "history-model", "tester", setting.Settings{}, &testLogger{})
 	t.Cleanup(ws.Close)
 	ws.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}})
@@ -246,7 +212,7 @@ func TestWorkspacePeerReferencesPreserveThreeActiveRoots(t *testing.T) {
 	var backends [3]*session.Session
 	sender := &historyE2ESender{events: make(chan historyE2EEvent, 2048)}
 	for i := range roots {
-		cfg := historyE2EConfig(server.URL)
+		cfg := historyE2EConfig(server.BaseURL(providersim.Chat))
 		cfg.Memory.AutoExtract, cfg.Memory.Consolidation = "off", "off"
 		frontend, err := ws.CreateSession(cfg, home)
 		if err != nil {
@@ -287,13 +253,13 @@ func TestWorkspacePeerReferencesPreserveThreeActiveRoots(t *testing.T) {
 		}
 		eventIDs[i] = published.Event.ID
 	}
-	once.Do(func() { close(release) })
+	gate.Release()
 	for range roots {
 		select {
 		case request := <-requests:
 			count := 0
-			for _, message := range request.messages {
-				count += strings.Count(message.ContentString(), `event_id="`+eventIDs[request.root]+`"`)
+			for _, text := range simConversationTexts(request.dialog) {
+				count += strings.Count(text, `event_id="`+eventIDs[request.root]+`"`)
 			}
 			if count != 1 {
 				t.Fatalf("root %d peer evidence count=%d", request.root, count)

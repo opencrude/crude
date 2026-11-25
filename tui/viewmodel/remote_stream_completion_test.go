@@ -1,11 +1,7 @@
 package viewmodel
 
 import (
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -13,6 +9,7 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/session"
+	"crude/internal/providersim"
 	"crude/types/conversation"
 	"crude/types/recovery"
 	"crude/types/statuscenter"
@@ -24,37 +21,27 @@ import (
 func TestRemoteRecoveredStreamCompletionMatchesColdResume(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	var requests atomic.Int32
-	finish := make(chan struct{})
-	var release sync.Once
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	gate := providersim.NewGate()
+	chunks := strings.SplitAfter(streamParityAnswer, "\n")
+	server := providersim.New(t)
+	server.Respond(func(providersim.Request) providersim.Turn {
 		if requests.Add(1) == 1 {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = fmt.Fprint(w, `{"error":{"message":"temporary provider outage"}}`)
-			return
+			return providersim.HTTPError(providersim.Overload).WithFaultMessage("temporary provider outage")
 		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		for _, token := range strings.SplitAfter(streamParityAnswer, "\n") {
-			_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":%q}}]}\n\n", token)
-			w.(http.Flusher).Flush()
-		}
-		select {
-		case <-finish:
-			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-		case <-r.Context().Done():
-		}
-	}))
-	t.Cleanup(server.Close)
+		// Hold the finish event after the role and all text events were sent.
+		return providersim.Turn{}.WithTextDeltas(chunks...).WithoutUsage().WithGateAfter(1+len(chunks), gate)
+	})
 	configure := func(cfg *session.Config) {
 		account := cfg.Accounts["test"]
 		account.Connection.Dialer = &provider.DialSettings{MaxAttempts: 1}
 		cfg.Accounts["test"] = account
 	}
-	runtime := remoteJourneyRuntimeConfig(t, server.URL, configure)
+	runtime := remoteJourneyRuntimeConfig(t, server.BaseURL(providersim.Chat), configure)
 	root := t.TempDir()
 	one := newRemoteJourneyShell(t, runtime, root)
 	id := remoteJourneyCreate(t, one)
 	two := newRemoteJourneyShell(t, runtime, root)
-	t.Cleanup(func() { release.Do(func() { close(finish) }) })
+	t.Cleanup(gate.Release)
 	shells := []remoteJourneyShell{one, two}
 	remoteJourneyUntil(t, shells, func() bool { return two.app.AgentView.ActiveID() == id })
 	for _, shell := range shells {
@@ -81,7 +68,7 @@ func TestRemoteRecoveredStreamCompletionMatchesColdResume(t *testing.T) {
 		}
 		return true
 	})
-	release.Do(func() { close(finish) })
+	gate.Release()
 	remoteJourneyUntil(t, shells, func() bool {
 		return one.app.ws.AgentActivity(id).Status.Phase == statuscenter.AgentCompleted &&
 			two.app.ws.AgentActivity(id).Status.Phase == statuscenter.AgentCompleted
@@ -121,7 +108,7 @@ func TestRemoteRecoveredStreamCompletionMatchesColdResume(t *testing.T) {
 	if err := runtime.Close(); err != nil {
 		t.Fatal(err)
 	}
-	runtime = remoteJourneyRuntimeConfig(t, server.URL, configure)
+	runtime = remoteJourneyRuntimeConfig(t, server.BaseURL(providersim.Chat), configure)
 	resumed := newRemoteJourneyShell(t, runtime, root)
 	runAppCommand(t, resumed.app, resumed.app.launcherResumeSession(sessionID, nil))
 	remoteJourneyUntil(t, []remoteJourneyShell{resumed}, func() bool { return resumed.app.AgentView.ActiveID() != "" })

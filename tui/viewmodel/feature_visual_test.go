@@ -391,19 +391,19 @@ func (m *featureVisualModel) journeyFeature(key, phase int) error {
 				if merged == split || (merged && (strings.Contains(report, "Shell memory") || strings.Contains(report, "Core memory"))) {
 					return fmt.Errorf("resource report mixes or lacks owners:\n%s", report)
 				}
-				markers := []string{"Crude memory"}
+				markers := []string{"Crude tree memory"}
 				if split {
-					markers = []string{"Shell memory"}
+					markers = []string{"Shell tree memory"}
 					if v.width >= 160 {
-						markers = append(markers, "Core memory")
+						markers = append(markers, "Core tree memory")
 					}
 				}
 				if err := featureVisualPaint(v, markers...); err != nil {
 					return err
 				}
 				paint := ansi.Strip(v.View().RenderContent())
-				if merged && (strings.Contains(paint, "Shell memory") || strings.Contains(paint, "Core memory")) ||
-					split && strings.Contains(paint, "Crude memory") {
+				if merged && (strings.Contains(paint, "Shell tree memory") || strings.Contains(paint, "Core tree memory")) ||
+					split && strings.Contains(paint, "Crude tree memory") {
 					return fmt.Errorf("%dx%d frame mixes resource owners:\n%s", v.width, v.height, paint)
 				}
 				return nil

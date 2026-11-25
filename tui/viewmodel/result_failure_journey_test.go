@@ -3,9 +3,6 @@ package viewmodel
 import (
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +13,7 @@ import (
 	"crude/agent/provider"
 	"crude/agent/session"
 	"crude/agent/sessiondb"
+	"crude/internal/providersim"
 	"crude/tui/chatprojection"
 	"crude/tui/theme"
 	"crude/types/conversation"
@@ -48,38 +46,31 @@ func TestRealFileFailuresKeepHintsPrivateAndMatchAfterResume(t *testing.T) {
 			}
 			var requests atomic.Int32
 			nextRequest := make(chan string, 1)
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-				body, _ := io.ReadAll(request.Body)
-				w.Header().Set("Content-Type", "text/event-stream")
+			server := providersim.New(t)
+			server.Respond(func(request providersim.Request) providersim.Turn {
 				requestIndex := requests.Add(1)
 				if requestIndex > 1 {
 					var requestBody struct {
 						Messages json.RawMessage `json:"messages"`
 					}
-					_ = json.Unmarshal(body, &requestBody)
+					_ = json.Unmarshal(request.Raw, &requestBody)
 					select {
 					case nextRequest <- string(requestBody.Messages):
 					default:
 					}
 				}
 				if requestIndex > 2 || requestIndex > 1 && !repeat {
-					_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"No file changed.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-					return
+					return simulatedAnswer("No file changed.")
 				}
-				var calls []map[string]any
 				if parallel {
-					args, _ := json.Marshal(map[string]any{"tool_uses": uses})
-					calls = append(calls, map[string]any{"index": 0, "id": "batch", "type": "function", "function": map[string]any{"name": "multi_tool_use.parallel", "arguments": string(args)}})
-				} else {
-					for i, use := range uses {
-						args, _ := json.Marshal(use["parameters"])
-						calls = append(calls, map[string]any{"index": i, "id": fmt.Sprintf("file-%d", i), "type": "function", "function": map[string]any{"name": strings.TrimPrefix(use["recipient_name"].(string), "functions."), "arguments": string(args)}})
-					}
+					return simulatedTool("batch", "multi_tool_use.parallel", map[string]any{"tool_uses": uses})
 				}
-				encoded, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"tool_calls": calls}, "finish_reason": "tool_calls"}}})
-				_, _ = fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", encoded)
-			}))
-			defer server.Close()
+				calls := make([]providersim.ToolCall, 0, len(uses))
+				for i, use := range uses {
+					calls = append(calls, simulatedCall(fmt.Sprintf("file-%d", i), strings.TrimPrefix(use["recipient_name"].(string), "functions."), use["parameters"]))
+				}
+				return simulatedCalls(calls...)
+			})
 			app := newFullTestApp(t)
 			wsOf(app).RootPath, wsOf(app).WorkspaceDir = project, t.TempDir()
 			wsOf(app).SessionsByID = make(map[string]*workspace.Session)
@@ -94,7 +85,7 @@ func TestRealFileFailuresKeepHintsPrivateAndMatchAfterResume(t *testing.T) {
 				cfg.Agents.Profiles[cfg.Agents.ActiveProfile] = profile
 			}
 			account := cfg.Accounts["test"]
-			account.Connection.ProviderURL = server.URL
+			account.Connection.ProviderURL = server.BaseURL(providersim.Chat)
 			cfg.Accounts["test"] = account
 			cfg.Agents.Enabled = false
 			owner, err := wsOf(app).CreateSession(cfg, t.TempDir())

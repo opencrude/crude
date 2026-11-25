@@ -1,10 +1,6 @@
 package viewmodel
 
 import (
-	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -12,7 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/agent/provider"
+	"crude/internal/providersim"
 )
 
 // Terminating a running agent removes it from every connected shell through
@@ -21,20 +17,13 @@ import (
 func TestRemoteAppJourneyTerminateRunningAgentWithoutResync(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-			return
-		}
+	gate := providersim.NewGate()
+	server := providersim.New(t)
+	server.Respond(func(providersim.Request) providersim.Turn {
 		requests.Add(1)
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"WORKING\"}}]}\n\n")
-		w.(http.Flusher).Flush()
-		<-r.Context().Done()
-	}))
-	t.Cleanup(server.Close)
-	runtime := remoteJourneyRuntimeConfig(t, server.URL, nil)
+		return simulatedAnswer("WORKING").WithGateAfter(chatFirstTextEvents, gate)
+	})
+	runtime := remoteJourneyRuntimeConfig(t, server.BaseURL(providersim.Chat), nil)
 	root := t.TempDir()
 	one := newRemoteJourneyShell(t, runtime, root)
 	id := remoteJourneyCreate(t, one)

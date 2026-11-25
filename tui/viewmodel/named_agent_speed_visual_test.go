@@ -1,9 +1,6 @@
 package viewmodel
 
 import (
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"testing"
 
@@ -11,6 +8,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"crude/agent/session"
+	"crude/internal/providersim"
 	"crude/types/setting"
 )
 
@@ -20,12 +18,8 @@ func TestNamedAgentSpeedVisualAcceptance(t *testing.T) {
 	if os.Getenv("CRUDE_VISUAL_NAMED_SPEED") != "1" {
 		t.Skip("dedicated terminal capture")
 	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	t.Cleanup(server.Close)
-	runtime := remoteJourneyRuntimeConfig(t, server.URL, func(cfg *session.Config) {
+	server := simulatedChat(t, simulatedAnswer("ok"))
+	runtime := remoteJourneyRuntimeConfig(t, server.BaseURL(providersim.Chat), func(cfg *session.Config) {
 		cfg.Agents.AgentProfiles["reviewer"] = setting.AgentProfile{Category: "researcher", Model: "review-model"}
 	})
 	shell := newRemoteJourneyShell(t, runtime, t.TempDir())

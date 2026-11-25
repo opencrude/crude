@@ -1,14 +1,9 @@
 package viewmodel
 
 import (
-	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -17,6 +12,7 @@ import (
 	"crude/agent/provider"
 	"crude/agent/session"
 	"crude/agent/sessiondb"
+	"crude/internal/providersim"
 	"crude/types/setting"
 	"crude/workspace"
 )
@@ -29,60 +25,31 @@ func TestEnableSubAgentsMidSessionSurfacesChildren(t *testing.T) {
 		var parentRequests atomic.Int32
 		var childRequests atomic.Int32
 		var parentAgentID atomic.Value
-		childFollowup := make(chan []provider.ChatMessage, 1)
-		releaseChildren := make(chan struct{})
-		var releaseOnce sync.Once
-		release := func() { releaseOnce.Do(func() { close(releaseChildren) }) }
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/models") {
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = fmt.Fprint(w, `{"data":[{"id":"parent-model"},{"id":"child-model"}]}`)
-				return
-			}
-			var request struct {
-				Model    string                 `json:"model"`
-				Messages []provider.ChatMessage `json:"messages"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-				if r.Context().Err() == nil {
-					t.Errorf("%s %s: %v", r.Method, r.URL.Path, err)
-				}
-				return
-			}
-			w.Header().Set("Content-Type", "text/event-stream")
+		childFollowup := make(chan []providersim.Message, 1)
+		childrenGate := providersim.NewGate()
+		server := providersim.New(t, providersim.WithModels(providersim.Chat, "parent-model", "child-model"))
+		server.Respond(func(request providersim.Request) providersim.Turn {
 			if request.Model == "child-model" {
-				select {
-				case <-releaseChildren:
-				case <-r.Context().Done():
-					return
-				}
 				if childRequests.Add(1) == 1 {
-					reportArgs, _ := json.Marshal(map[string]any{
+					return simulatedTool("report-1", "publish_report", map[string]any{
 						"recipient_ids": []string{parentAgentID.Load().(string)},
 						"kind":          "final",
 						"summary":       "Child evidence",
 						"body":          "child evidence",
-					})
-					_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"report-1\",\"type\":\"function\",\"function\":{\"name\":\"publish_report\",\"arguments\":%q}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", string(reportArgs))
-					return
+					}).WithGate(childrenGate)
 				}
 				childFollowup <- request.Messages
 			} else if parentRequests.Add(1) == 2 {
-				args, _ := json.Marshal(map[string]any{"name": "visible-child", "description": "Reply with child evidence.", "category": "researcher"})
-				_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"spawn-1\",\"type\":\"function\",\"function\":{\"name\":\"agent_start\",\"arguments\":%q}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", string(args))
-				return
+				return simulatedTool("spawn-1", "agent_start", map[string]string{"name": "visible-child", "description": "Reply with child evidence.", "category": "researcher"})
 			}
-			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"child evidence\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-		}))
-		defer server.Close()
-		// Release handlers before closing the server even when an assertion fails.
-		defer release()
+			return simulatedAnswer("child evidence")
+		})
 		home := t.TempDir()
 		t.Setenv("HOME", home)
 		t.Setenv("USERPROFILE", home)
 		off := false
 		cfg := &session.Config{
-			Accounts: map[string]provider.Account{"test": {ID: "test", ProviderID: "openai", Label: "Test", APIKey: "test", Connection: provider.Template{Name: "OpenAI", ProviderURL: server.URL, APIStandard: "openai", AuthType: provider.AuthProtocol}}},
+			Accounts: map[string]provider.Account{"test": {ID: "test", ProviderID: "openai", Label: "Test", APIKey: "test", Connection: provider.Template{Name: "OpenAI", ProviderURL: server.BaseURL(providersim.Chat), APIStandard: "openai", AuthType: provider.AuthProtocol}}},
 			Agents: session.AgentsConfig{Enabled: false, MaxConcurrent: 2, ActiveProfile: "default", Profiles: map[string]session.ProfileConfig{"default": {MultiAgent: &off, Categories: map[string]session.CategoryConfig{
 				session.CategoryDefault:    {AccountID: "test", Model: "parent-model", ModelSupportsTools: true},
 				session.CategoryResearcher: {AccountID: "test", Model: "child-model", ModelSupportsTools: true},
@@ -199,7 +166,7 @@ func TestEnableSubAgentsMidSessionSurfacesChildren(t *testing.T) {
 			t.Fatal("human steering could not target the exact active child")
 		}
 		// Let the real child finish, then verify its retained conversation and DB.
-		release()
+		childrenGate.Release()
 		deadline = time.After(10 * time.Second)
 		completed := false
 		for !completed {
@@ -220,7 +187,7 @@ func TestEnableSubAgentsMidSessionSurfacesChildren(t *testing.T) {
 		case messages := <-childFollowup:
 			found := false
 			for _, message := range messages {
-				content := message.ContentString()
+				content := simulatedText(message.Parts)
 				if strings.Contains(content, `origin="human"`) &&
 					strings.Contains(content, `kind="human_steering"`) &&
 					strings.Contains(content, "include the exact parser edge case") {

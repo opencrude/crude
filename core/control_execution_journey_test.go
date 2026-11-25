@@ -4,13 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,6 +15,7 @@ import (
 	"crude/agent/session"
 	"crude/agent/worktree"
 	"crude/core/coreprotocol"
+	"crude/internal/providersim"
 	"crude/types/control"
 	"crude/workspace"
 	"crude/workspace/document"
@@ -31,50 +28,36 @@ func TestControlExecutionConnectedSelectionAndChildIntegration(t *testing.T) {
 	fixture := controlExecutionFixture(t)
 	ws := fixture.ws
 	root, home := ws.RootPath, t.TempDir()
-	var calls atomic.Int32
 	var mu sync.Mutex
 	steps := map[string]int{}
-	rootReady, rootRelease := make(chan struct{}), make(chan struct{})
-	var release sync.Once
-	defer release.Do(func() { close(rootRelease) })
+	rootReady := make(chan struct{})
+	rootGate := providersim.NewGate()
+	defer rootGate.Release()
 	var parentID, selectedRoot string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
-		var body struct {
-			Messages []provider.ChatMessage `json:"messages"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Error(err)
-			return
-		}
-		raw, _ := json.Marshal(body)
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
 		key := "root"
-		if strings.Contains(string(raw), "CHILD_FIRST") {
+		if simConversationContains(request.Conversation, "CHILD_FIRST") {
 			key = "first"
 		}
-		if strings.Contains(string(raw), "CHILD_SECOND") {
+		if simConversationContains(request.Conversation, "CHILD_SECOND") {
 			key = "second"
 		}
 		mu.Lock()
 		step := steps[key]
 		steps[key]++
 		mu.Unlock()
-		w.Header().Set("Content-Type", "text/event-stream")
 		name := ""
 		params := map[string]any{}
 		if key == "root" {
 			if step == 0 {
 				name, params = "read_file", map[string]any{"path": "disk.txt"}
 			} else {
-				if !strings.Contains(string(raw), wireText(selectedRoot)) || !strings.Contains(string(raw), "human dirty") {
+				if !simConversationContains(request.Conversation, selectedRoot) || !simConversationContains(request.Conversation, "human dirty") {
 					t.Error("root request did not use selected checkout and dirty baseline")
 				}
 				close(rootReady)
-				select {
-				case <-rootRelease:
-				case <-r.Context().Done():
-					return
-				}
+				return providersim.Text("Finished.").WithGate(rootGate)
 			}
 		} else {
 			switch step {
@@ -87,13 +70,11 @@ func TestControlExecutionConnectedSelectionAndChildIntegration(t *testing.T) {
 			}
 		}
 		if name == "" {
-			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Finished.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-			return
+			return providersim.Text("Finished.")
 		}
 		args, _ := json.Marshal(params)
-		_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":%q,\"type\":\"function\",\"function\":{\"name\":%q,\"arguments\":%q}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", fmt.Sprintf("%s-%d", key, step), name, string(args))
-	}))
-	defer server.Close()
+		return providersim.CallTools(providersim.ToolCall{ID: fmt.Sprintf("%s-%d", key, step), Name: name, Arguments: string(args)})
+	})
 	agents := session.DefaultAgentsConfig()
 	profile := agents.Profiles["default"]
 	on := true
@@ -102,13 +83,13 @@ func TestControlExecutionConnectedSelectionAndChildIntegration(t *testing.T) {
 		profile.Categories[category] = session.CategoryConfig{AccountID: "test", Model: "test-model", ModelSupportsTools: true}
 	}
 	agents.Profiles["default"] = profile
-	cfg := &session.Config{Agents: agents, Accounts: map[string]provider.Account{"test": {ID: "test", ProviderID: "openai", APIKey: "test", Connection: provider.Template{Name: "test", ProviderURL: server.URL, APIStandard: "openai", AuthType: provider.AuthProtocol}}}}
+	cfg := &session.Config{Agents: agents, Accounts: map[string]provider.Account{"test": {ID: "test", ProviderID: "openai", APIKey: "test", Connection: provider.Template{Name: "test", ProviderURL: server.BaseURL(providersim.Chat), APIStandard: "openai", AuthType: provider.AuthProtocol}}}}
 	ws.SetBackendConfig(cfg, home)
 	runtime, err := New(func(string) (*workspace.Workspace, error) { return ws, nil }, filepath.Join(t.TempDir(), "receipts.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { release.Do(func() { close(rootRelease) }); _ = runtime.Close() }()
+	defer func() { rootGate.Release(); _ = runtime.Close() }()
 	c := controlWireClient(t, runtime, "execution-connected")
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
@@ -281,7 +262,7 @@ func TestControlExecutionConnectedSelectionAndChildIntegration(t *testing.T) {
 	if err != nil || len(artifact.Pins) != 1 || artifact.Pins[0].AgentID != parentID {
 		t.Fatal("live root moved with selection", artifact, err)
 	}
-	release.Do(func() { close(rootRelease) })
+	rootGate.Release()
 	// Workspace peers may review settled work for janitorial cleanup, even
 	// though they did not launch that child. The gateway still fences callers.
 	other, err := ws.Collaboration.RegisterAgent(ctx, collaboration.AgentRegistration{ID: "foreign-root", Name: "Foreign", SessionID: "foreign-session", OwnerInstance: "foreign-owner"})

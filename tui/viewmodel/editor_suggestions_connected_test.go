@@ -2,15 +2,9 @@ package viewmodel
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -22,6 +16,7 @@ import (
 	"crude/agent/provider"
 	"crude/agent/session"
 	"crude/core/shellport"
+	"crude/internal/providersim"
 	"crude/tui/editor"
 	"crude/tui/ui"
 	"crude/types/insight"
@@ -33,55 +28,16 @@ import (
 // injects a candidate or a result.
 
 type suggestionModel struct {
-	mu        sync.Mutex
-	inputs    []string
-	calls     atomic.Int32
-	cancelled atomic.Int32
-	// hold, when set, keeps every request open until its context ends.
-	hold   atomic.Bool
-	answer func(input string) string
+	sim  *providersim.Server
+	hold atomic.Bool
+	gate *providersim.Gate
 }
 
-func (s *suggestionModel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	s.calls.Add(1)
-	raw, _ := io.ReadAll(r.Body)
-	var body struct {
-		Messages []struct {
-			Role    string `json:"role"`
-			Content any    `json:"content"`
-		} `json:"messages"`
-	}
-	_ = json.Unmarshal(raw, &body)
-	input := ""
-	for _, m := range body.Messages {
-		if m.Role != "user" {
-			continue
-		}
-		switch content := m.Content.(type) {
-		case string:
-			input += content
-		case []any:
-			for _, part := range content {
-				if p, ok := part.(map[string]any); ok {
-					if text, ok := p["text"].(string); ok {
-						input += text
-					}
-				}
-			}
-		}
-	}
-	s.mu.Lock()
-	s.inputs = append(s.inputs, input)
-	s.mu.Unlock()
+func (s *suggestionModel) respond(answer func(string) string, r providersim.Request) providersim.Turn {
 	if s.hold.Load() {
-		<-r.Context().Done()
-		s.cancelled.Add(1)
-		return
+		return providersim.Turn{}.WithGate(s.gate)
 	}
-	content, _ := json.Marshal(s.answer(input))
-	w.Header().Set("Content-Type", "text/event-stream")
-	fmt.Fprintf(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":%s}}]}\n\n", content)
-	fmt.Fprint(w, "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":40,\"completion_tokens\":8}}\n\ndata: [DONE]\n\n")
+	return providersim.Text(answer(simulatedUserParts(r, "", ""))).WithUsage(providersim.Usage{Input: 40, Output: 8})
 }
 
 // suggestionRewrite answers with the request's editable region changed by fn.
@@ -109,10 +65,9 @@ type suggestionJourney struct {
 
 func newSuggestionJourney(t *testing.T, text string, answer func(string) string) *suggestionJourney {
 	t.Helper()
-	model := &suggestionModel{answer: answer}
-	server := httptest.NewServer(model)
-	t.Cleanup(server.Close)
-	runtime := remoteJourneyRuntimeConfig(t, server.URL, func(cfg *session.Config) {
+	model := &suggestionModel{sim: providersim.New(t), gate: providersim.NewGate()}
+	model.sim.Respond(func(r providersim.Request) providersim.Turn { return model.respond(answer, r) })
+	runtime := remoteJourneyRuntimeConfig(t, model.sim.BaseURL(providersim.Chat), func(cfg *session.Config) {
 		cfg.AccountManager = provider.NewAccountManager(cfg.Accounts, nil)
 	})
 	root := t.TempDir()
@@ -274,7 +229,7 @@ func TestConnectedSuggestionAskTabFollowAndDismiss(t *testing.T) {
 		j.settleEdits()
 	}
 	j.typeText("total")
-	if j.model.calls.Load() != 0 {
+	if len(j.model.sim.Requests()) != 0 {
 		t.Fatal("When I ask sent a request while the user typed")
 	}
 	j.key(askSuggestionKey)
@@ -288,8 +243,9 @@ func TestConnectedSuggestionAskTabFollowAndDismiss(t *testing.T) {
 	if paint := ansi.Strip(j.app.View().RenderContent()); !strings.Contains(paint, "total") || !strings.Contains(paint, "log(count") {
 		t.Fatalf("nearby change is not painted beside the code:\n%s", paint)
 	}
-	if !strings.Contains(j.model.inputs[0], "-count") || !strings.Contains(j.model.inputs[0], "+total") {
-		t.Fatalf("the user's rename was not in the request:\n%s", j.model.inputs[0])
+	input := simulatedUserParts(j.model.sim.Requests()[0], "", "")
+	if !strings.Contains(input, "-count") || !strings.Contains(input, "+total") {
+		t.Fatalf("the user's rename was not in the request:\n%s", input)
 	}
 
 	j.key(tea.KeyPressMsg{Code: tea.KeyTab})
@@ -303,8 +259,8 @@ func TestConnectedSuggestionAskTabFollowAndDismiss(t *testing.T) {
 	})
 	next, _ := j.shown()
 	saveUse := strings.LastIndex(j.ed.Value(), "count")
-	if next.Start != saveUse || next.End != saveUse+len("count") || j.model.calls.Load() != 1 {
-		t.Fatalf("follow-up = %+v, model calls = %d", next, j.model.calls.Load())
+	if next.Start != saveUse || next.End != saveUse+len("count") || len(j.model.sim.Requests()) != 1 {
+		t.Fatalf("follow-up = %+v, model calls = %d", next, len(j.model.sim.Requests()))
 	}
 
 	j.key(tea.KeyPressMsg{Code: tea.KeyEsc})
@@ -319,8 +275,8 @@ func TestConnectedSuggestionAskTabFollowAndDismiss(t *testing.T) {
 	// returns nothing and sends nothing.
 	j.app.scheduleSuggestion(j.ed, 0, false, true)
 	j.until("follow request answered", func() bool { return j.app.suggest.intent == nil && j.app.suggest.request == nil })
-	if _, ok := j.shown(); ok || j.model.calls.Load() != 1 {
-		t.Fatalf("a dismissed answer came back after release: calls=%d", j.model.calls.Load())
+	if _, ok := j.shown(); ok || len(j.model.sim.Requests()) != 1 {
+		t.Fatalf("a dismissed answer came back after release: calls=%d", len(j.model.sim.Requests()))
 	}
 }
 
@@ -333,12 +289,25 @@ func TestConnectedSuggestionCaretMoveCancelsTheRunningRequest(t *testing.T) {
 	j.caret(1, 0)
 	j.key(tea.KeyPressMsg{Code: tea.KeyEnd})
 	j.typeText("x")
-	j.until("request reached the model", func() bool { return j.model.calls.Load() == 1 })
+	j.until("request reached the model", func() bool { return len(j.model.sim.Requests()) == 1 })
 	if paint := ansi.Strip(j.app.View().RenderContent()); !strings.Contains(paint, "Errand …") {
 		t.Fatalf("the footer does not show that Errand is working:\n%s", paint)
 	}
 	j.key(tea.KeyPressMsg{Code: tea.KeyLeft})
-	j.until("model request cancelled", func() bool { return j.model.cancelled.Load() == 1 })
+	cancelled := make(chan struct{})
+	go func() {
+		if j.model.gate.WaitCanceled(t.Context()) == nil {
+			close(cancelled)
+		}
+	}()
+	j.until("model request cancelled", func() bool {
+		select {
+		case <-cancelled:
+			return true
+		default:
+			return false
+		}
+	})
 	j.until("core idle", func() bool { return j.app.suggest.request == nil && j.status().InFlight == 0 })
 	if _, ok := j.shown(); ok {
 		t.Fatal("a cancelled request showed a suggestion")
@@ -381,7 +350,7 @@ func TestConnectedSuggestionFocusLossAndDismissalMemory(t *testing.T) {
 	j.key(tea.KeyPressMsg{Code: tea.KeyBackspace})
 	j.settleEdits()
 	j.until("insertion shown again", func() bool { s, ok := j.shown(); return ok && s.Text == " := 0" })
-	calls := j.model.calls.Load()
+	calls := len(j.model.sim.Requests())
 
 	j.key(tea.KeyPressMsg{Code: tea.KeyEsc})
 	if _, ok := j.shown(); ok {
@@ -405,7 +374,7 @@ func TestConnectedSuggestionFocusLossAndDismissalMemory(t *testing.T) {
 	}
 	j.typeText(" sum")
 	j.until("suggestion after a real change", func() bool { s, ok := j.shown(); return ok && s.Text == " := 0" })
-	if j.model.calls.Load() < calls {
+	if len(j.model.sim.Requests()) < calls {
 		t.Fatal("request count went backwards")
 	}
 	if j.ed.Value() != "func total(xs []int) int {\n\t sum\n}\n" {

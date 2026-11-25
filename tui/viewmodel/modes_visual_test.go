@@ -1,14 +1,13 @@
 package viewmodel
 
 import (
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
+
+	"crude/internal/providersim"
 )
 
 // Driven through scripts/tuishot.sh with a private core and offline provider.
@@ -16,12 +15,9 @@ func TestModesVisualAcceptance(t *testing.T) {
 	if os.Getenv("CRUDE_VISUAL_MODES") != "1" {
 		t.Skip("dedicated terminal capture")
 	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"The scheduled check completed.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	t.Cleanup(server.Close)
-	runtime := remoteJourneyRuntime(t, server.URL)
+	server := providersim.New(t)
+	server.Respond(func(providersim.Request) providersim.Turn { return simulatedAnswer("The scheduled check completed.") })
+	runtime := remoteJourneyRuntime(t, server.BaseURL(providersim.Chat))
 	shell := newRemoteJourneyShell(t, runtime, t.TempDir())
 	id := remoteJourneyCreate(t, shell)
 	shell.app.Tree.Visible = false

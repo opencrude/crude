@@ -3,17 +3,14 @@ package workspace
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"crude/agent/provider"
 	"crude/agent/session"
+	"crude/internal/providersim"
 	"crude/types/setting"
 	"crude/workspace/localhistory"
 )
@@ -30,44 +27,41 @@ func TestCodexPatchProductionUndoRestoresMoveOverwriteAndDelete(t *testing.T) {
 		}
 	}
 	const patch = "*** Begin Patch\n*** Update File: source\n*** Move to: destination\n-old\n+new\n*** Delete File: delete\n*** Add File: added\n+created\n*** End Patch"
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request struct {
-			Tools []struct {
-				Type     string         `json:"type"`
-				Custom   map[string]any `json:"custom"`
-				Function map[string]any `json:"function"`
-			} `json:"tools"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-			return
-		}
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
 		found := false
 		for _, tool := range request.Tools {
-			if tool.Custom != nil {
+			var wire struct {
+				Type     string         `json:"type"`
+				Custom   map[string]any `json:"custom"`
+				Function struct {
+					Name string `json:"name"`
+				} `json:"function"`
+			}
+			if err := json.Unmarshal(tool.Raw, &wire); err != nil {
+				t.Error(err)
+				return providersim.Turn{}
+			}
+			if wire.Custom != nil {
 				t.Error("Chat gateway received unsupported custom tool")
 			}
-			if tool.Type == "function" && tool.Function["name"] == "apply_patch" {
+			if wire.Type == "function" && tool.Name == "apply_patch" {
 				found = true
 			}
-			if tool.Function["name"] == "edit_file" || tool.Function["name"] == "write_file" {
+			if wire.Function.Name == "edit_file" || wire.Function.Name == "write_file" {
 				t.Error("wrong editor interface")
 			}
 		}
 		if !found {
 			t.Error("patch tool not offered")
 		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		if requests.Add(1) == 1 {
+		if request.Index == 1 {
 			args, _ := json.Marshal(map[string]string{"input": patch})
-			_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"patch-1\",\"type\":\"function\",\"function\":{\"name\":\"apply_patch\",\"arguments\":%q}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", string(args))
-		} else {
-			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"patched\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+			return providersim.CallTools(providersim.ToolCall{ID: "patch-1", Name: "apply_patch", Arguments: string(args)})
 		}
-	}))
-	defer server.Close()
-	cfg := historyE2EConfig(server.URL)
+		return providersim.Text("patched")
+	})
+	cfg := historyE2EConfig(server.BaseURL(providersim.Chat))
 	profile := cfg.Agents.Profiles["default"]
 	cat := profile.Categories[session.CategoryDefault]
 	cat.Model = "gpt-5.5"

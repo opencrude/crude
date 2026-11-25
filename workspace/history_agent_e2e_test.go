@@ -2,21 +2,18 @@ package workspace
 
 import (
 	"context"
-	"crude/agent/turnloop"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"crude/agent/provider"
 	"crude/agent/session"
+	"crude/agent/turnloop"
+	"crude/internal/providersim"
 	"crude/types/recovery"
 	"crude/types/setting"
 	"crude/workspace/document"
@@ -115,17 +112,10 @@ func TestPromptWithFreshHistoryReachesProvider(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(project, "source.txt"), []byte("tracked before prompting\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests.Add(1)
-		var request provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-			return
-		}
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
 		seen := false
-		for _, msg := range request.Messages {
-			text := msg.ContentString()
+		for _, text := range simConversationTexts(request.Conversation) {
 			if strings.Contains(text, `"open_named_documents":[{"path":"source.txt"`) {
 				seen = true
 			}
@@ -136,17 +126,15 @@ func TestPromptWithFreshHistoryReachesProvider(t *testing.T) {
 		if !seen {
 			t.Error("the new turn did not receive the accepted open document metadata")
 		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ready\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	defer server.Close()
+		return providersim.Text("ready")
+	})
 	ws := NewWorkspace(project, "history-model", "tester", setting.Settings{}, &testLogger{})
 	t.Cleanup(ws.Close)
 	ws.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "on", UseGitIgnore: "on", MaxFileSizeMB: 10}})
 	if _, err := ws.LiveDocuments.Open(document.Owner{ClientID: "brief-shell", Epoch: 1}, "source.txt"); err != nil {
 		t.Fatal(err)
 	}
-	frontend, err := ws.CreateSession(historyE2EConfig(server.URL), home)
+	frontend, err := ws.CreateSession(historyE2EConfig(server.BaseURL(providersim.Chat)), home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,8 +148,8 @@ func TestPromptWithFreshHistoryReachesProvider(t *testing.T) {
 		t.Fatal("prompt was not admitted")
 	}
 	waitHistoryAgentDone(t, sender, orchestrator.ID)
-	if requests.Load() != 1 {
-		t.Fatalf("provider requests=%d, want 1", requests.Load())
+	if len(server.Requests()) != 1 {
+		t.Fatalf("provider requests=%d, want 1", len(server.Requests()))
 	}
 	records, err := ws.LocalHistory.Timeline(1)
 	if err != nil || len(records) != 1 {
@@ -197,27 +185,24 @@ func TestAgentUndoProductionPathPreservesExternalPreimage(t *testing.T) {
 	if err := os.WriteFile(path, []byte("a=0\nb=0\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		if requests.Add(1) == 1 {
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
+		if request.Index == 1 {
 			// This write occurs inside the live human-message scope but outside
 			// the agent tool. The tool's preimage must preserve it.
 			if err := os.WriteFile(path, []byte("a=0\nb=external\n"), 0o644); err != nil {
 				t.Errorf("external write: %v", err)
-				return
+				return providersim.Turn{}
 			}
 			arguments, _ := json.Marshal(map[string]string{
 				"path": path, "old_string": "a=0", "new_string": "a=agent",
 			})
-			_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_edit\",\"type\":\"function\",\"function\":{\"name\":\"edit_file\",\"arguments\":%q}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", string(arguments))
-			return
+			return providersim.CallTools(providersim.ToolCall{ID: "call_edit", Name: "edit_file", Arguments: string(arguments)})
 		}
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"edited\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	defer server.Close()
+		return providersim.Text("edited")
+	})
 
-	cfg := historyE2EConfig(server.URL)
+	cfg := historyE2EConfig(server.BaseURL(providersim.Chat))
 	ws := NewWorkspace(project, "history-model", "tester", setting.Settings{}, &testLogger{})
 	t.Cleanup(ws.Close)
 	ws.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "on", UseGitIgnore: "on", CaptureExternalChanges: "on", SafetySnapshotBeforeRestore: "on", MaxFileSizeMB: 10}})
@@ -298,22 +283,19 @@ func TestAgentUndoProductionPathGuardsPostToolExternalOverwrite(t *testing.T) {
 	if err := os.WriteFile(path, []byte("before\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		if requests.Add(1) == 1 {
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
+		if request.Index == 1 {
 			arguments, _ := json.Marshal(map[string]string{"path": path, "content": "agent\n"})
-			_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_write\",\"type\":\"function\",\"function\":{\"name\":\"write_file\",\"arguments\":%q}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", string(arguments))
-			return
+			return providersim.CallTools(providersim.ToolCall{ID: "call_write", Name: "write_file", Arguments: string(arguments)})
 		}
 		if err := os.WriteFile(path, []byte("external after tool\n"), 0o644); err != nil {
 			t.Errorf("external overwrite: %v", err)
-			return
+			return providersim.Turn{}
 		}
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"finished\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	defer server.Close()
-	cfg := historyE2EConfig(server.URL)
+		return providersim.Text("finished")
+	})
+	cfg := historyE2EConfig(server.BaseURL(providersim.Chat))
 	ws := NewWorkspace(project, "history-model", "tester", setting.Settings{}, &testLogger{})
 	t.Cleanup(ws.Close)
 	ws.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "on", UseGitIgnore: "on", CaptureExternalChanges: "on", SafetySnapshotBeforeRestore: "on", MaxFileSizeMB: 10}})
@@ -356,15 +338,10 @@ func TestHistoryStartFailurePausesBeforeProviderExecution(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	project := t.TempDir()
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requests.Add(1)
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer server.Close()
+	server := providersim.New(t)
 	ws := NewWorkspace(project, "history-model", "tester", setting.Settings{}, &testLogger{})
 	t.Cleanup(ws.Close)
-	frontend, err := ws.CreateSession(historyE2EConfig(server.URL), home)
+	frontend, err := ws.CreateSession(historyE2EConfig(server.BaseURL(providersim.Chat)), home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -388,8 +365,8 @@ func TestHistoryStartFailurePausesBeforeProviderExecution(t *testing.T) {
 				if !ok || status.State != recovery.NeedsAttention {
 					continue
 				}
-				if requests.Load() != 0 {
-					t.Fatalf("provider requests=%d", requests.Load())
+				if len(server.Requests()) != 0 {
+					t.Fatalf("provider requests=%d", len(server.Requests()))
 				}
 				if !frontend.backend.IsTurnActive() || frontend.backend.CancelRecoveryFor(orchestrator.ID, status.ID, status.Generation) != nil {
 					t.Fatal("blocked history task was killed or cannot be explicitly stopped")
@@ -419,13 +396,8 @@ func TestEnabledHistoryStoreOpenFailureBlocksProviderAndTools(t *testing.T) {
 		t.Fatal("second workspace did not preserve Local History open failure")
 	}
 	blocked.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "on"}})
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requests.Add(1)
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer server.Close()
-	frontend, err := blocked.CreateSession(historyE2EConfig(server.URL), home)
+	server := providersim.New(t)
+	frontend, err := blocked.CreateSession(historyE2EConfig(server.BaseURL(providersim.Chat)), home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -446,8 +418,8 @@ func TestEnabledHistoryStoreOpenFailureBlocksProviderAndTools(t *testing.T) {
 				if !ok || status.State != recovery.NeedsAttention {
 					continue
 				}
-				if requests.Load() != 0 {
-					t.Fatalf("provider requests=%d", requests.Load())
+				if len(server.Requests()) != 0 {
+					t.Fatalf("provider requests=%d", len(server.Requests()))
 				}
 				if !frontend.backend.IsTurnActive() || frontend.backend.CancelRecoveryFor(orchestrator.ID, status.ID, status.Generation) != nil {
 					t.Fatal("unavailable history task was killed or cannot be explicitly stopped")
@@ -487,20 +459,11 @@ func TestDisabledHistoryTurnStillExcludesRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	ws.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}})
-	providerStarted := make(chan struct{})
-	releaseProvider := make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		select {
-		case <-providerStarted:
-		default:
-			close(providerStarted)
-		}
-		<-releaseProvider
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"done\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	defer server.Close()
-	frontend, err := ws.CreateSession(historyE2EConfig(server.URL), home)
+	gate := providersim.NewGate()
+	server := providersim.New(t)
+	server.Script(providersim.Text("done").WithGate(gate))
+	defer gate.Release()
+	frontend, err := ws.CreateSession(historyE2EConfig(server.BaseURL(providersim.Chat)), home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -512,10 +475,10 @@ func TestDisabledHistoryTurnStillExcludesRestore(t *testing.T) {
 	if !frontend.backend.SubmitInput(orchestrator.ID, provider.PlainInput("read only turn")) {
 		t.Fatal("turn was not admitted")
 	}
-	select {
-	case <-providerStarted:
-	case <-time.After(3 * time.Second):
-		t.Fatal("provider did not start")
+	providerWait, cancelProviderWait := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancelProviderWait()
+	if err := gate.Wait(providerWait); err != nil {
+		t.Fatal("provider did not start", err)
 	}
 	restoreDone := make(chan error, 1)
 	go func() {
@@ -527,7 +490,7 @@ func TestDisabledHistoryTurnStillExcludesRestore(t *testing.T) {
 		t.Fatalf("restore crossed disabled-history activity lease: %v", err)
 	case <-time.After(50 * time.Millisecond):
 	}
-	close(releaseProvider)
+	gate.Release()
 	waitHistoryAgentDone(t, sender, orchestrator.ID)
 	select {
 	case err := <-restoreDone:
@@ -547,26 +510,26 @@ func TestAgentUndoTracksInsideAndOutsideFilesystemMutations(t *testing.T) {
 	insidePath := filepath.Join(project, "inside.txt")
 	outsidePath := filepath.Join(outside, "outside.txt")
 	unrelatedPath := filepath.Join(outside, "unrelated.txt")
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		if requests.Add(1) == 1 {
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
+		if request.Index == 1 {
 			insideArgs, _ := json.Marshal(map[string]string{"path": "inside.txt", "content": "inside agent change"})
 			outsideArgs, _ := json.Marshal(map[string]string{"path": outsidePath, "content": "outside agent change"})
-			_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_inside\",\"type\":\"function\",\"function\":{\"name\":\"write_file\",\"arguments\":%q}},{\"index\":1,\"id\":\"call_outside\",\"type\":\"function\",\"function\":{\"name\":\"write_file\",\"arguments\":%q}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", string(insideArgs), string(outsideArgs))
-			return
+			return providersim.CallTools(
+				providersim.ToolCall{ID: "call_inside", Name: "write_file", Arguments: string(insideArgs)},
+				providersim.ToolCall{ID: "call_outside", Name: "write_file", Arguments: string(outsideArgs)},
+			)
 		}
 		if err := os.WriteFile(unrelatedPath, []byte("unrelated external change"), 0o644); err != nil {
 			t.Errorf("write unrelated external file: %v", err)
-			return
+			return providersim.Turn{}
 		}
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"done\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	defer server.Close()
+		return providersim.Text("done")
+	})
 	ws := NewWorkspace(project, "history-model", "tester", setting.Settings{}, &testLogger{})
 	t.Cleanup(ws.Close)
 	ws.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "on", UseGitIgnore: "on", CaptureExternalChanges: "on", SafetySnapshotBeforeRestore: "on", MaxFileSizeMB: 10}})
-	frontend, err := ws.CreateSession(historyE2EConfig(server.URL), home)
+	frontend, err := ws.CreateSession(historyE2EConfig(server.BaseURL(providersim.Chat)), home)
 	if err != nil {
 		t.Fatal(err)
 	}

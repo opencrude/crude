@@ -2,15 +2,14 @@ package core
 
 import (
 	"context"
-	"crude/core/coreprotocol"
-	"crude/core/corewire"
-	"encoding/json"
 	"fmt"
 	"net"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
+
+	"crude/core/coreprotocol"
+	"crude/core/corewire"
 
 	"github.com/tinylib/msgp/msgp"
 )
@@ -19,13 +18,6 @@ func setCoreTestHome(t *testing.T, home string) {
 	t.Helper()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
-}
-
-// wireText returns value as it appears inside a JSON request body; Windows
-// path separators are escaped there.
-func wireText(value string) string {
-	encoded, _ := json.Marshal(value)
-	return strings.Trim(string(encoded), `"`)
 }
 
 // testPayload encodes a request value for tests that build requests by hand;

@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -15,6 +13,7 @@ import (
 	"crude/agent/provider"
 	"crude/agent/session"
 	"crude/core/coreprotocol"
+	"crude/internal/providersim"
 	"crude/types/setting"
 	"crude/workspace"
 )
@@ -43,13 +42,8 @@ func callCore(t *testing.T, c *Connection, id, ws, method string, value any) cor
 
 func TestRetainedTenClientsSameAgentAndOneSubmission(t *testing.T) {
 	setCoreTestHome(t, t.TempDir())
-	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"id\":\"response\",\"choices\":[{\"delta\":{\"content\":\"retained answer\"}}]}\n\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	defer server.Close()
+	server := providersim.New(t)
+	server.Script(providersim.Text("retained answer"))
 	root, home := t.TempDir(), t.TempDir()
 	var creations atomic.Int32
 	runtime, err := New(func(root string) (*workspace.Workspace, error) {
@@ -62,7 +56,7 @@ func TestRetainedTenClientsSameAgentAndOneSubmission(t *testing.T) {
 		profile.MultiAgent = &off
 		profile.Categories["default"] = session.CategoryConfig{AccountID: "test", Model: "test-model", ModelSupportsTools: true}
 		agents.Profiles["default"] = profile
-		ws.SetBackendConfig(&session.Config{Agents: agents, Accounts: map[string]provider.Account{"test": {ID: "test", ProviderID: "openai", APIKey: "test", Connection: provider.Template{Name: "test", ProviderURL: server.URL, APIStandard: "openai", AuthType: provider.AuthProtocol}}}}, home)
+		ws.SetBackendConfig(&session.Config{Agents: agents, Accounts: map[string]provider.Account{"test": {ID: "test", ProviderID: "openai", APIKey: "test", Connection: provider.Template{Name: "test", ProviderURL: server.BaseURL(providersim.Chat), APIStandard: "openai", AuthType: provider.AuthProtocol}}}}, home)
 		return ws, nil
 	}, filepath.Join(t.TempDir(), "receipts.db"))
 	if err != nil {
@@ -151,8 +145,8 @@ func TestRetainedTenClientsSameAgentAndOneSubmission(t *testing.T) {
 		case <-ticker.C:
 		}
 	}
-	if calls.Load() != 1 {
-		t.Fatalf("provider execution count: %d", calls.Load())
+	if len(server.Requests()) != 1 {
+		t.Fatalf("provider execution count: %d", len(server.Requests()))
 	}
 	replacement, err := runtime.Connect("client-0")
 	if err != nil {
@@ -168,7 +162,7 @@ func TestRetainedTenClientsSameAgentAndOneSubmission(t *testing.T) {
 			t.Fatal("lost receipt response")
 		}
 	}
-	if calls.Load() != 1 {
+	if len(server.Requests()) != 1 {
 		t.Fatal("reconnection replayed input")
 	}
 	stale := replacement.Call(context.Background(), coreprotocol.Request{ID: "stale", Owner: clients[0].Owner, WorkspaceID: ids[0], Method: coreprotocol.Snapshot, Payload: emptyPayload})

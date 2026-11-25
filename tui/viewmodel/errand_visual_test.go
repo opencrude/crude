@@ -3,18 +3,16 @@ package viewmodel
 import (
 	"context"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"crude/internal/providersim"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"
 )
@@ -30,32 +28,19 @@ func TestErrandAndTabTooltipVisualAcceptance(t *testing.T) {
 	if os.Getenv("CRUDE_VISUAL_ERRAND") != "1" {
 		t.Skip("dedicated sequential Errand and tooltip capture")
 	}
-	release := make(chan struct{})
-	var once sync.Once
-	defer once.Do(func() { close(release) })
-	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		if calls.Add(1) == 1 {
-			select {
-			case <-release:
-			case <-r.Context().Done():
-				return
-			}
-			errandToolReply(w, "question", map[string]any{"questions": []map[string]any{{
-				"header": "Install", "question": "Install the YAML language server for this user only?", "options": []string{"This user", "All users"},
-			}}}, 1)
-			return
-		}
-		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Setup stopped. Nothing was installed.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	t.Cleanup(server.Close)
+	gate := providersim.NewGate()
+	server := simulatedChat(t, errandToolReply("question", map[string]any{"questions": []map[string]any{{
+		"header": "Install", "question": "Install the YAML language server for this user only?", "options": []string{"This user", "All users"},
+	}}}, 1).WithGate(gate))
+	server.Respond(func(providersim.Request) providersim.Turn {
+		return simulatedAnswer("Setup stopped. Nothing was installed.")
+	})
 	root := t.TempDir()
 	file := filepath.Join(root, "settings.yaml")
 	if err := os.WriteFile(file, []byte("name: crude\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	shell := newRemoteJourneyShell(t, remoteJourneyRuntime(t, server.URL), root)
+	shell := newRemoteJourneyShell(t, remoteJourneyRuntime(t, server.BaseURL(providersim.Chat)), root)
 	app := shell.app
 	main := remoteJourneyCreate(t, shell)
 	runAppCommand(t, app, app.ensureWorkspaceErrand())
@@ -66,7 +51,7 @@ func TestErrandAndTabTooltipVisualAcceptance(t *testing.T) {
 	app.activateAgentWindowTab(main)
 	app.Input.SetInput("Main session draft stays here.")
 	runAppCommand(t, app, app.taskWorkspaceErrand("<tool_setup_task>Set up YAML</tool_setup_task>", "Set up 1 code intelligence tool: yaml-language-server."))
-	model := &errandVisualModel{App: app, release: func() { once.Do(func() { close(release) }) }, file: file}
+	model := &errandVisualModel{App: app, release: gate.Release, file: file}
 	program := tea.NewProgram(model, tea.WithWidthMethod(ansi.GraphemeWidth))
 	model.SetProgram(program)
 	ctx, cancel := context.WithCancel(t.Context())

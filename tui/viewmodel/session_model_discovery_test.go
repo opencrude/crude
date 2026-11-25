@@ -1,27 +1,22 @@
 package viewmodel
 
 import (
-	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"crude/agent/provider"
 	"crude/agent/session"
+	"crude/internal/providersim"
 	"crude/tui/screens/sessionsettings"
 	"crude/types/setting"
 	"crude/workspace"
 )
 
 func TestSessionModelsUseAccountEndpointAndOriginatingDeck(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":[{"id":"account-model"}]}`))
-	}))
-	defer server.Close()
+	server := providersim.New(t, providersim.WithModels(providersim.Chat, "account-model"))
 	app := newFullTestApp(t)
 	accounts := map[string]provider.Account{"work": {
 		ID: "work", ProviderID: "custom", Label: "Work", APIKey: "test",
-		Connection: provider.Template{Name: "Custom", ProviderURL: server.URL, APIStandard: "openai", AuthType: provider.AuthBearer},
+		Connection: provider.Template{Name: "Custom", ProviderURL: server.BaseURL(providersim.Chat), APIStandard: "openai", AuthType: provider.AuthBearer},
 	}}
 	wsOf(app).SetBackendConfig(&session.Config{Accounts: accounts}, t.TempDir())
 	settings := setting.Settings{AccountID: "work", ProviderID: "custom"}

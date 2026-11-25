@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"image"
 	"image/png"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -23,6 +21,7 @@ import (
 	"crude/agent/provider"
 	"crude/agent/session"
 	"crude/agent/sessiondb"
+	"crude/internal/providersim"
 	"crude/tui/input"
 	"crude/types/setting"
 	"crude/workspace"
@@ -248,17 +247,12 @@ func TestHistoryRecallToActualProviderRetainsMixedContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	requests := make(chan provider.ChatRequest, 2)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Error(err)
-		}
-		requests <- req
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Received exact media.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	defer server.Close()
+	requests := make(chan providersim.Request, 2)
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
+		requests <- r
+		return simulatedAnswer("Received exact media.")
+	})
 	app := newFullTestApp(t)
 	wsOf(app).Logger = stubLogger{}
 	wsOf(app).RootPath, wsOf(app).WorkspaceDir = t.TempDir(), t.TempDir()
@@ -266,7 +260,7 @@ func TestHistoryRecallToActualProviderRetainsMixedContent(t *testing.T) {
 	wsOf(app).SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}})
 	cfg := testAccountConfig()
 	account := cfg.Accounts["test"]
-	account.Connection.ProviderURL = server.URL
+	account.Connection.ProviderURL = server.BaseURL(providersim.Chat)
 	cfg.Accounts["test"] = account
 	cfg.Agents.Enabled = false
 	profile := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
@@ -297,7 +291,7 @@ func TestHistoryRecallToActualProviderRetainsMixedContent(t *testing.T) {
 	runAppCommand(t, app, edit)
 	_, send := app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	runAppCommand(t, app, send)
-	var request provider.ChatRequest
+	var request providersim.Request
 	select {
 	case request = <-requests:
 	case <-time.After(5 * time.Second):
@@ -309,12 +303,12 @@ func TestHistoryRecallToActualProviderRetainsMixedContent(t *testing.T) {
 		if message.Role != "user" {
 			continue
 		}
-		text.WriteString(message.ContentString())
-		for _, part := range message.Content.Parts() {
-			if part.Type == "image_url" && part.ImageURL != nil {
+		text.WriteString(simulatedText(message.Parts))
+		for _, part := range message.Parts {
+			if part.Kind == providersim.PartImage {
 				images++
 				want := "data:image/png;base64," + base64.StdEncoding.EncodeToString(encoded.Bytes())
-				if part.ImageURL.URL != want {
+				if part.ImageURL != want {
 					t.Fatal("provider received altered media bytes")
 				}
 			}

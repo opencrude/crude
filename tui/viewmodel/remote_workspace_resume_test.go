@@ -1,15 +1,13 @@
 package viewmodel
 
 import (
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"crude/internal/providersim"
 	"crude/tui/screens/termdock"
 	"crude/types/statuscenter"
 )
@@ -19,13 +17,9 @@ import (
 // going to the panel the user clicked in.
 func TestRemoteWorkspacePanelResumeHandsKeyboardToComposer(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ECHO\"}}]}\n\n")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	t.Cleanup(server.Close)
-	runtime := remoteJourneyRuntimeConfig(t, server.URL, nil)
+	server := providersim.New(t)
+	server.Respond(func(providersim.Request) providersim.Turn { return simulatedAnswer("ECHO") })
+	runtime := remoteJourneyRuntimeConfig(t, server.BaseURL(providersim.Chat), nil)
 	root := t.TempDir()
 	one := newRemoteJourneyShell(t, runtime, root)
 	id := remoteJourneyCreate(t, one)
@@ -45,7 +39,7 @@ func TestRemoteWorkspacePanelResumeHandsKeyboardToComposer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resumed := newRemoteJourneyShell(t, remoteJourneyRuntimeConfig(t, server.URL, nil), root)
+	resumed := newRemoteJourneyShell(t, remoteJourneyRuntimeConfig(t, server.BaseURL(providersim.Chat), nil), root)
 	app := resumed.app
 	app.toggleWorkspacePanel(termdock.PanelWorkspace)
 	if !app.termDockFocused {
