@@ -259,7 +259,7 @@ func TestCallCancellableKnownFinalFaultRetainedAfterLostAck(t *testing.T) {
 	var uncertain *UncertainError
 	var fault *coreprotocol.Fault
 	if !errors.As(err, &uncertain) || !uncertain.ResultKnown || uncertain.State != "completed_cleanup_unconfirmed" ||
-		!errors.As(err, &fault) || fault.Code != "read_failed" {
+		!errors.As(err, &fault) || fault.Code != "read_failed" || uncertain.ResultFault != fault {
 		t.Fatal("lost ACK discarded known original fault", err)
 	}
 }

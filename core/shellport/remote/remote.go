@@ -729,11 +729,14 @@ func (w *Workspace) applyState(batch publicationBatch) (shellport.ReplicaApplied
 		switch batch.topic {
 		case coreprotocol.TopicGit:
 			w.gitError = s.Fault
+			applied.Follow = append(applied.Follow, shellport.GitSnapshotChangedMsg{Owner: w, Stale: true})
 		case coreprotocol.TopicBoard:
 			w.boardError = s.Fault
+			applied.Follow = append(applied.Follow, shellport.BoardSnapshotFreshnessMsg{Owner: w, Stale: true})
+		default:
+			applied.Follow = append(applied.Follow, shellport.ReplicaFailureMsg{Owner: w, Operation: batch.topic, Error: s.Fault.Error()})
 		}
 		w.auxMu.Unlock()
-		applied.Follow = append(applied.Follow, shellport.ReplicaFailureMsg{Owner: w, Operation: batch.topic, Error: s.Fault.Error()})
 		return applied, nil
 	}
 	count := 0
@@ -805,9 +808,13 @@ func (w *Workspace) applyState(batch publicationBatch) (shellport.ReplicaApplied
 	case coreprotocol.TopicBoard:
 		if s.Board != nil {
 			w.auxMu.Lock()
+			recovered := w.boardError != nil
 			w.boardState = s.Board
 			w.boardError = nil
 			w.auxMu.Unlock()
+			if recovered {
+				applied.Follow = append(applied.Follow, shellport.BoardSnapshotFreshnessMsg{Owner: w, Snapshot: &s.Board.Snapshot})
+			}
 			valid = true
 		}
 	}

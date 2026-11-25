@@ -31,7 +31,14 @@ func serviceCall[I, O any, PI interface {
 		out, err := run(ctx, input)
 		result := response[O, PO](request, out)
 		if err != nil {
-			result.Error = &coreprotocol.Fault{Code: "service_failed", Message: err.Error()}
+			code := "service_failed"
+			switch request.Method {
+			case coreprotocol.GitFetch, coreprotocol.GitPull, coreprotocol.GitPush, coreprotocol.GitMerge:
+				if errors.Is(err, context.Canceled) {
+					code = "cancelled"
+				}
+			}
+			result.Error = &coreprotocol.Fault{Code: code, Message: err.Error()}
 		}
 		return result
 	}, true

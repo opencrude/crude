@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
 	"crude/core/shellport"
 	"crude/tui/screens/gitmerge"
 	"crude/tui/screens/gitpanel"
@@ -285,5 +288,113 @@ func TestSupersededGitMutationReleasesItsReadSlot(t *testing.T) {
 	}
 	if !app.gitSnapshotReady(time.Now().Add(time.Hour)) && app.gitSnapshotDue(time.Now().Add(time.Hour)) {
 		t.Fatal("silent reconciliation stays blocked")
+	}
+}
+
+type heldGitPush struct {
+	shellport.GitService
+	entered chan context.Context
+}
+
+func (s *heldGitPush) Push(ctx context.Context) error {
+	s.entered <- ctx
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func TestGitUserPushHasNoDeadlineAndStopCancelsIt(t *testing.T) {
+	app := gitSyncApp(t, newGitRepoFixture(t))
+	service := &heldGitPush{GitService: app.ws.Git(), entered: make(chan context.Context, 1)}
+	app.ws = &preparationPort{Workspace: app.ws, service: service}
+	t.Cleanup(app.cancelGitRemote)
+	pumpGit(t, app, app.openGitPanel(gitpanel.ModeChanges))
+	cmd, handled := app.handleGitPanelAction(ui.Action{ID: gitpanel.ActionPush})
+	if !handled || cmd == nil {
+		t.Fatal("Push did not start")
+	}
+	result := make(chan tea.Msg, 1)
+	go func() { result <- cmd() }()
+	var ctx context.Context
+	select {
+	case ctx = <-service.entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Push did not reach the Git service")
+	}
+	if _, deadline := ctx.Deadline(); deadline {
+		t.Fatal("a user-started push received a deadline before Stop")
+	}
+	app.paintShellFrame()
+	if plain := bufferPlain(app.mainSurf.Buffer()); !strings.Contains(plain, "Stop") {
+		t.Fatalf("a running push did not show Stop:\n%s", plain)
+	}
+	if _, handled := app.handleGitPanelAction(ui.Action{ID: gitpanel.ActionStopRemote}); !handled {
+		t.Fatal("Stop was not handled")
+	}
+	select {
+	case message := <-result:
+		stopped, ok := message.(sourceControlResultMsg)
+		if !ok || !errors.Is(stopped.err, context.Canceled) {
+			t.Fatalf("Stop result = %+v", message)
+		}
+		_, command := app.Update(stopped)
+		pumpGit(t, app, command)
+	case <-time.After(3 * time.Second):
+		t.Fatal("the Push command did not stop")
+	}
+	if app.gitPanel.RemoteBusy() != "" || app.gitPanel.RemoteError() != "" || app.operationIssue != nil {
+		t.Fatal("a stopped push left the panel busy or was reported as a failure")
+	}
+}
+
+type gitPushResultService struct {
+	shellport.GitService
+	result error
+	calls  int
+}
+
+func (s *gitPushResultService) Push(context.Context) error {
+	s.calls++
+	return s.result
+}
+
+func TestGitPushKeepsOriginalOutcomeWhenReceiptCleanupFails(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		known     bool
+		fault     *coreprotocol.Fault
+		cause     error
+		operation statuscenter.OperationState
+		inline    string
+	}{
+		{"unknown", false, nil, context.Canceled, statuscenter.OperationFailed, "Push outcome unknown."},
+		{"success", true, nil, &coreprotocol.Fault{Code: "cleanup_failed", Message: "the release failed"}, statuscenter.OperationSucceeded, ""},
+		{"refusal", true, &coreprotocol.Fault{Code: "service_failed", Message: "Push failed. The hook refused the push."}, context.Canceled, statuscenter.OperationFailed, "The hook refused the push."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app := gitSyncApp(t, newGitRepoFixture(t))
+			status := wsOf(app).Status
+			service := &gitPushResultService{GitService: app.ws.Git(), result: &coreclient.UncertainError{RequestID: "test-request", ResultKnown: tc.known, ResultFault: tc.fault, Cause: tc.cause}}
+			app.ws = &preparationPort{Workspace: app.ws, service: service}
+			cmd, handled := app.handleGitPanelAction(ui.Action{ID: gitpanel.ActionPush})
+			if !handled || cmd == nil {
+				t.Fatal("Push did not start")
+			}
+			pumpGit(t, app, cmd)
+			if got := app.gitPanel.RemoteError(); !strings.Contains(got, tc.inline) || (tc.inline == "" && got != "") || strings.Contains(got, "test-request") {
+				t.Fatalf("Git panel outcome = %q, want %q without the request ID", got, tc.inline)
+			}
+			if service.calls != 1 || app.gitPanel.RemoteBusy() != "" {
+				t.Fatal("the push replayed or did not settle")
+			}
+			for _, operation := range status.Operations() {
+				if operation.Label == "Push" {
+					if operation.State != tc.operation {
+						t.Fatalf("Push state = %q, want %q", operation.State, tc.operation)
+					}
+					return
+				}
+			}
+			t.Fatal("Push did not record an outcome")
+		})
 	}
 }

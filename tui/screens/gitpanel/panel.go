@@ -139,9 +139,11 @@ type Panel struct {
 	busy            string
 	errText         string
 	remoteErr       string
+	statusStale     bool
 	dockHeaderInset int
 	wide            bool
 	statusRow       ui.Rect
+	staleRow        ui.Rect
 	divider         int
 }
 
@@ -327,11 +329,21 @@ func OwnsFocus(id ui.ComponentID) bool {
 
 func (panel *Panel) Snapshot() workspace.GitSnapshot { return panel.snapshot }
 
+// SetStatusStale marks the current status out of date without replacing it.
+func (panel *Panel) SetStatusStale(stale bool) {
+	panel.statusStale = stale
+	if !panel.haveSnapshot {
+		text, _ := panel.emptyChangesText()
+		panel.preview.SetEmptyText(text)
+	}
+}
+
 func (panel *Panel) SetSnapshot(snapshot workspace.GitSnapshot) {
 	changed := !panel.haveSnapshot || !workspace.SameGitSnapshot(panel.snapshot, snapshot)
 	panel.snapshot, panel.haveSnapshot = snapshot, true
 	panel.loading = false
 	panel.errText = ""
+	panel.statusStale = false
 	if changed {
 		panel.sync()
 	} else {
@@ -668,6 +680,8 @@ func (panel *Panel) emptyChangesText() (string, ui.SemanticColor) {
 	switch {
 	case panel.errText != "" && !panel.haveSnapshot:
 		return panel.errText, ui.ColorError
+	case !panel.haveSnapshot && panel.statusStale:
+		return "No Git status yet.", ui.ColorMuted
 	case !panel.haveSnapshot:
 		return "Reading repository…", ui.ColorMuted
 	case panel.snapshot.RepositoryRoot == "":
@@ -725,6 +739,12 @@ func (panel *Panel) Layout(ctx ui.LayoutContext, bounds ui.Rect) {
 	panel.tabs.Layout(ctx, ui.Rect{W: max(0, width-panel.dockHeaderInset), H: min(ui.StripHeight, height)})
 	top := min(ui.StripHeight, height)
 	bodyH := max(0, height-top)
+	panel.staleRow = ui.Rect{}
+	if panel.statusStale && bodyH > 0 {
+		panel.staleRow = ui.Rect{X: 1, Y: top, W: max(0, width-2), H: 1}
+		top++
+		bodyH--
+	}
 	panel.wide = width >= wideWidth && bodyH >= 4
 	leftW := width
 	panel.divider = -1
@@ -827,9 +847,18 @@ func (panel *Panel) Paint(buf *surface.CellBuffer, originX, originY int, ctx ui.
 	ui.FillRect(buf, originX, originY, bounds, cell.BlankCell(bg))
 	x, y := originX+bounds.X, originY+bounds.Y
 	panel.writingRule.SetFrame(ctx.Frame)
+	if row := panel.staleRow; !row.Empty() {
+		const state = "Git status is not up to date."
+		const full = state + " Press Ctrl+R to refresh."
+		text := state
+		if rendering.VisibleWidth(full) <= row.W {
+			text = full
+		}
+		buf.WriteString(x+row.X, y+row.Y, rendering.TruncateVisual(text, row.W, "…"), tokens.Color(ui.ColorWarning), bg, 0)
+	}
 	panel.paintStatus(buf, x, y)
 	if panel.mode == ModeHistory && panel.wide {
-		panel.paintCommitHeader(buf, x+panel.divider+1, y+min(ui.StripHeight, bounds.H), max(0, bounds.W-panel.divider-1))
+		panel.paintCommitHeader(buf, x+panel.divider+1, y+panel.statusRow.Y, max(0, bounds.W-panel.divider-1))
 	}
 }
 

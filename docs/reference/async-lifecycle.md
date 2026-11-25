@@ -2,10 +2,13 @@
 
 > Status: Current reference — UI-thread I/O, generation boundaries, shutdown ordering and resource lifetimes.
 
-Every asynchronous operation has an owner, a generation, cancellation, a
-timeout, stale-result rejection and user-visible failure semantics. Moving
-blocking work into a different callback without those is not an asynchronous
-architecture. Terminal and network lifetimes are specified in
+Every asynchronous operation has an owner, a generation, cancellation,
+stale-result rejection and user-visible failure semantics. Background work
+without a user watching it has a bound. A user-started operation with a visible
+**Stop** control runs until it finishes or the user stops it; its owner still
+cancels it at workspace switch or shutdown. Moving blocking work into a
+different callback does not establish ownership. Terminal and network lifetimes
+are specified in
 [in-app terminals](in-app-terminals.md) and [network transport](network.md).
 
 ## The Update goroutine
@@ -81,6 +84,10 @@ subprocess rather than a process-name search.
   Git read RPCs use the shared cancel-and-join exchange. Cancelling the shell's
   await alone does not retire a core job; exact admitted-job cancellation and
   final-result acknowledgement release that read's repository ownership.
+  The Git topic waits for the repository lane on the actor's context, then
+  bounds only the read. Each worker still conflates queued refreshes. A Git
+  or Board topic read fault keeps its last successful data and shows an inline
+  warning in that panel. It does not open a dialog or report a failed mutation.
 
 - **Comparison preparation and search have explicit owners.** Git change sets,
   historical commits, disk/saved and shared/private snapshots carry tab/request

@@ -15,6 +15,15 @@ type SettingsChangedMsg struct{}
 type GitSnapshotChangedMsg struct {
 	Owner    Workspace
 	Snapshot workspace.GitSnapshot
+	// Stale reports that the topic read failed; keep the displayed snapshot.
+	Stale bool
+}
+
+// BoardSnapshotFreshnessMsg changes the freshness of the Board's latest page.
+type BoardSnapshotFreshnessMsg struct {
+	Owner    Workspace
+	Stale    bool
+	Snapshot *workspace.BoardSnapshot
 }
 
 // ReplicaFailureMsg reports a queued mutation failure on its exact attachment.

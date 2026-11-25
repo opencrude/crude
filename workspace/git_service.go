@@ -90,8 +90,8 @@ type GitService struct {
 	// is reused by HEAD.
 	historyHead string
 	history     []GitCommitSummary
-	// remote serializes network operations (fetch, pull, push) separately from
-	// gate, so background fetches never hold status reads behind the network.
+	// remote serializes network operations separately from repository access.
+	// Commands that need both lanes acquire remote before gate.
 	remote chan struct{}
 	// autoFetchPaused stops background fetches after a credential failure
 	// until a remote operation the user started succeeds.
@@ -102,8 +102,7 @@ func NewGitService(root string) *GitService {
 	return &GitService{root: root, gate: make(chan struct{}, 1), remote: make(chan struct{}, 1), sourceID: rand.Text()}
 }
 
-// The repository lane includes queue time in the caller's deadline. A fetch,
-// hook or filter cannot keep cancelled status/review requests stuck on a mutex.
+// The repository lane waits only as long as the caller's context allows.
 func (s *GitService) lock(ctx context.Context) error {
 	if s == nil {
 		return errors.New("git service is unavailable")
@@ -127,13 +126,22 @@ func (s *GitService) unlock() { <-s.gate }
 
 // Snapshot reads status, branch, and recent history without mutating the repo.
 func (s *GitService) Snapshot(ctx context.Context) (GitSnapshot, error) {
-	if s == nil {
-		return GitSnapshot{}, errors.New("git service is unavailable")
-	}
+	return s.SnapshotWithReadTimeout(ctx, 0)
+}
+
+// SnapshotWithReadTimeout bounds the repository read, excluding the wait for
+// the repository lane. The caller's context still governs both phases. A
+// nonpositive read timeout leaves the caller's context unchanged.
+func (s *GitService) SnapshotWithReadTimeout(ctx context.Context, readTimeout time.Duration) (GitSnapshot, error) {
 	if err := s.lock(ctx); err != nil {
 		return GitSnapshot{}, err
 	}
 	defer s.unlock()
+	if readTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, readTimeout)
+		defer cancel()
+	}
 
 	repo, root, err := s.open()
 	if err != nil {
@@ -279,6 +287,12 @@ func (s *GitService) Checkout(ctx context.Context, branch string) error {
 	if branch == "" {
 		return errors.New("branch is empty")
 	}
+	// Native push reads HEAD itself to honor push.default and remote config.
+	// Serialize switching HEAD against it without making status wait for push.
+	if err := s.lockRemote(ctx, "switch"); err != nil {
+		return err
+	}
+	defer s.unlockRemote()
 	if strings.Contains(branch, "/") {
 		if err := s.mutate(ctx, "switch", "-c", shortRemoteBranch(branch), "--track", branch); err == nil {
 			return nil
@@ -309,13 +323,12 @@ func (s *GitService) mutate(ctx context.Context, args ...string) error {
 	return s.run(ctx, args...)
 }
 
-// readHead fills the branch identity. It returns the local reference that
-// @{upstream} resolves to, or "" when the remote's fetch refspecs do not map it.
-func (s *GitSnapshot) readHead(repo *git.Repository) {
+// readHead fills the branch identity and returns a fetchable upstream remote.
+func (s *GitSnapshot) readHead(repo *git.Repository) string {
 	head, err := repo.Head()
 	if err != nil {
 		s.Branch = "No commits"
-		return
+		return ""
 	}
 	s.Head = head.Hash().String()
 	if head.Name().IsBranch() {
@@ -326,17 +339,21 @@ func (s *GitSnapshot) readHead(repo *git.Repository) {
 
 	cfg, err := repo.Config()
 	if err != nil || !head.Name().IsBranch() {
-		return
+		return ""
 	}
 	branch := cfg.Branches[s.Branch]
 	if branch == nil || branch.Merge == "" {
-		return
+		return ""
 	}
 	if branch.Remote == "" || branch.Remote == "." {
 		s.Upstream = branch.Merge.Short()
-		return
+		return ""
 	}
 	s.Upstream = branch.Remote + "/" + branch.Merge.Short()
+	if strings.HasPrefix(branch.Remote, "-") {
+		return ""
+	}
+	return branch.Remote
 }
 
 func projectGitChanges(root string, status git.Status) []GitChange {

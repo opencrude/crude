@@ -55,14 +55,23 @@ func (m *App) applyReplicaChanges(msg shellport.ReplicaChangesMsg) tea.Cmd {
 		commands = append(commands, m.presentAgentReduction(reduction))
 	}
 	for _, follow := range applied.Follow {
-		if git, ok := follow.(shellport.GitSnapshotChangedMsg); ok {
-			if git.Owner == m.ws && m.presentGitSnapshot(git.Snapshot) {
+		switch change := follow.(type) {
+		case shellport.GitSnapshotChangedMsg:
+			if change.Owner != m.ws || m.gitPanel == nil {
+				continue
+			}
+			m.gitPanel.SetStatusStale(change.Stale)
+			if !change.Stale && m.presentGitSnapshot(change.Snapshot) {
 				commands = append(commands, m.prepareGitChangesIfVisible())
 			}
-			continue
+		case shellport.BoardSnapshotFreshnessMsg:
+			if change.Owner == m.ws && (change.Stale || m.boardBrowser != nil) {
+				m.ensureBoardBrowser().UpdateTopicStatus(change.Stale, change.Snapshot)
+			}
+		default:
+			_, command := m.update(follow)
+			commands = append(commands, command)
 		}
-		_, command := m.update(follow)
-		commands = append(commands, command)
 	}
 	if m.ActiveSession != nil && m.ws.SessionsByID()[m.ActiveSession.SessionID] != m.ActiveSession {
 		m.ActiveSession = nil

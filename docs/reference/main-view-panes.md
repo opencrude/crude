@@ -768,8 +768,9 @@ workspace database, so its cost grows with the number of saved workspaces.
   outstanding calculation. One current preparation plus a coalesced replacement
   prevents overlapping change-set scans. History previews and commit tabs fence
   their own requests independently. Shutdown cancels and joins owned comparison
-  and search work; workspace switches invalidate it. All repository consumers
-  share one context-aware serialization lane, including queue time in deadlines.
+  and search work; workspace switches invalidate it. Working-tree reads and
+  writes share a cancellable repository lane. A pushed Git status refresh waits for
+  that lane, then starts its read timeout.
   A batched review loads up to 400 files and 64 MiB in total and returns an explicit
   per-file reason for every omitted path. Commit review has the same byte bound.
   Paint streams visible graphemes without materializing entire minified lines;
@@ -798,8 +799,14 @@ workspace database, so its cost grows with the number of saved workspaces.
   `gitmerge` resolver dialog chooses ours/theirs/both per conflict (diff3 and
   CRLF aware) and writes through `Workspace.ResolveGitConflict` with a Local
   History safety snapshot. Remote commands run with `GIT_TERMINAL_PROMPT=0`;
-  an authentication failure is reported, never prompted on the TTY. Results
-  carry their own sequence and are dropped when stale.
+  an authentication failure is reported, never prompted on the TTY. Fetch,
+  Pull, Push, and Merge run until they finish or the user selects **Stop**.
+  Push waits for the repository's hooks and reports a hook refusal as a push
+  failure. Fetch and Push do not hold the repository lane during network work
+  or hooks. A failed background status read leaves the last Git status visible
+  and labels it as out of date in the panel, without opening a dialog. The
+  next successful read clears the warning. Results carry their own sequence
+  and are dropped when stale.
 - Remote tracking stays current without a manual Fetch: each core workspace
   actor runs `GitService.StartAutoFetch` (10 s after open, then every 3 minutes,
   backing off to 30 minutes while the remote is unreachable). It fetches only the

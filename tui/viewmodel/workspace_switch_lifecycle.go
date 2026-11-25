@@ -216,6 +216,8 @@ func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
 		m.gitPanel.SetSnapshot(workspace.GitSnapshot{})
 		m.gitPanel.SetPrepared(nil)
 		m.gitPanel.SetMessage("")
+		m.gitPanel.SetRemoteBusy("")
+		m.gitPanel.SetRemoteError("")
 	}
 	m.gitPrepareInFlight, m.gitPrepareDirty = false, false
 	m.gitPrepareGen++

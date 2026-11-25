@@ -30,6 +30,19 @@ func (c *Client) CallCancellableWithProgress(ctx context.Context, workspaceID, m
 }
 
 func (c *Client) callCancellable(ctx context.Context, workspaceID, method string, in coreprotocol.Value, out coreprotocol.Target, cleanupTimeout time.Duration, progress func(string)) error {
+	err := c.callJoinedJob(ctx, workspaceID, method, in, out, cleanupTimeout, progress)
+	// A cancelled read no longer needs its result. Never hide an uncertain
+	// outcome or an unconfirmed release, even if the caller has stopped.
+	var uncertain *UncertainError
+	if ctx.Err() != nil && !errors.As(err, &uncertain) {
+		return ctx.Err()
+	}
+	return err
+}
+
+// callJoinedJob asks the core to stop the admitted job on cancellation. It
+// returns the original job's result, even when completion races with Stop.
+func (c *Client) callJoinedJob(ctx context.Context, workspaceID, method string, in coreprotocol.Value, out coreprotocol.Target, cleanupTimeout time.Duration, progress func(string)) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -49,7 +62,7 @@ func (c *Client) callCancellable(ctx context.Context, workspaceID, method string
 	admitted, finished := make(chan struct{}), make(chan struct{})
 	helperDone := make(chan error, 1)
 	go func() {
-		helperDone <- c.cancelRead(ctx, runCtx, cancelRun, workspaceID, id, admitted, finished, cleanupTimeout)
+		helperDone <- c.cancelJob(ctx, runCtx, cancelRun, workspaceID, id, admitted, finished, cleanupTimeout)
 	}()
 	seenAdmission := false
 	err := c.callJoined(runCtx, workspaceID, method, id, in, out, func() {
@@ -66,6 +79,7 @@ func (c *Client) callCancellable(ctx context.Context, workspaceID, method string
 		var fault *coreprotocol.Fault
 		if errors.As(err, &uncertain) {
 			known = uncertain.ResultKnown
+			fault = uncertain.ResultFault
 		} else if errors.As(err, &fault) {
 			known = true
 		}
@@ -73,21 +87,14 @@ func (c *Client) callCancellable(ctx context.Context, workspaceID, method string
 		if known {
 			state = "completed_cleanup_unconfirmed"
 		}
-		return &UncertainError{RequestID: id, Cause: fmt.Errorf("cancel and join: %w", errors.Join(cancelErr, err)), State: state, ResultKnown: known}
+		return &UncertainError{RequestID: id, Cause: fmt.Errorf("cancel and join: %w", errors.Join(cancelErr, err)), State: state, ResultKnown: known, ResultFault: fault}
 	}
-	if err != nil {
-		var uncertain *UncertainError
-		if ctx.Err() != nil && !errors.As(err, &uncertain) {
-			return ctx.Err()
-		}
-		return err
-	}
-	return ctx.Err()
+	return err
 }
 
-// cancelRead does not infer admission from progress or a delay. The actor FIFO
+// cancelJob does not infer admission from progress or a delay. The actor FIFO
 // sees cancellation only after the original request has actually been enqueued.
-func (c *Client) cancelRead(caller, run context.Context, cancelRun context.CancelFunc, workspaceID, id string, admitted, finished <-chan struct{}, cleanupTimeout time.Duration) error {
+func (c *Client) cancelJob(caller, run context.Context, cancelRun context.CancelFunc, workspaceID, id string, admitted, finished <-chan struct{}, cleanupTimeout time.Duration) error {
 	select {
 	case <-finished:
 		return nil
@@ -158,7 +165,10 @@ func (c *Client) callJoined(ctx context.Context, workspaceID, method, id string,
 	return err
 }
 
-type finalCleanupError struct{ cause error }
+type finalCleanupError struct {
+	cause error
+	fault *coreprotocol.Fault
+}
 
 func (e *finalCleanupError) Error() string {
 	return "known final result; cleanup unconfirmed: " + e.cause.Error()

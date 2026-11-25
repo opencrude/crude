@@ -44,6 +44,8 @@ type Screen struct {
 	sequence        uint64
 	loading         bool
 	errorText       string
+	statusStale     bool
+	latestPage      bool
 	actionSpecs     []ui.ActionBarButton
 	narrowActions   *ui.List
 	dockHeaderInset int
@@ -118,6 +120,7 @@ func (s *Screen) Request(operation string) Request {
 	if operation == "mark-read" {
 		request.Through = s.snapshot.Page.Snapshot
 	}
+	s.latestPage = request.Query == "" && request.Thread == "" && operation != "next" && operation != "mark-read"
 	return request
 }
 
@@ -133,6 +136,24 @@ func (s *Screen) Apply(sequence uint64, snapshot workspace.BoardSnapshot, err er
 	}
 	s.snapshot = snapshot
 	s.updateRows()
+}
+
+// UpdateTopicStatus retains the view on failure and refreshes the latest page
+// on recovery, without rewriting an explicit search, thread or historical page.
+func (s *Screen) UpdateTopicStatus(stale bool, recovered *workspace.BoardSnapshot) {
+	s.statusStale = stale
+	if recovered != nil && s.latestPage {
+		s.sequence++
+		s.errorText = ""
+		s.Apply(s.sequence, *recovered, nil)
+	}
+}
+
+// FinishUnavailableTopicRead ends loading without hiding the retained page.
+func (s *Screen) FinishUnavailableTopicRead(sequence uint64) {
+	if sequence == s.sequence {
+		s.loading = false
+	}
 }
 
 func (s *Screen) updateRows() {
@@ -397,6 +418,10 @@ func (s *Screen) Paint(buffer *surface.CellBuffer, originX, originY int, _ ui.Pa
 	if len(s.snapshot.Participants) == 0 && len(s.snapshot.Page.Events) == 0 &&
 		!s.loading && s.errorText == "" {
 		text = "No workspace agents or communication yet."
+	}
+	if s.statusStale && s.errorText == "" {
+		text = "Board is not up to date. Crude checks it again when it changes."
+		role = ui.ColorWarning
 	}
 	if rect.W > 0 && rect.H > 0 && (s.statusY > 0 || s.dockHeaderInset == 0) {
 		buffer.WriteString(originX+rect.X, originY+rect.Y+s.statusY,
