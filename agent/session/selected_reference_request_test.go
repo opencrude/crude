@@ -3,10 +3,6 @@ package session
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -19,12 +15,13 @@ import (
 	"crude/agent/plan"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
+	"crude/internal/providersim"
 	recoverytypes "crude/types/recovery"
 )
 
 func TestSelectedReferenceSnapshotPrecedesAdmissionReceipt(t *testing.T) {
-	capture := newRequestCapture(t, "reference-admission-preimage", "data: {\"choices\":[{\"delta\":{\"content\":\"complete\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	cfg := modelAttributionConfig(capture.server.URL, "reference-admission-preimage")
+	capture := newRequestCapture(t, "complete")
+	cfg := modelAttributionConfig(capture.BaseURL(providersim.Chat), "reference-admission-preimage")
 	s, err := NewWithSessionDir("reference-admission-preimage", cfg, t.TempDir(), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -83,13 +80,12 @@ func TestSelectedReferenceSnapshotPrecedesAdmissionReceipt(t *testing.T) {
 	close(release)
 	released = true
 	waitTurnDone(t, sender, o.ID)
-	capture.mu.Lock()
-	defer capture.mu.Unlock()
-	if len(capture.requests) != 1 {
-		t.Fatalf("request count = %d", len(capture.requests))
+	observed := capture.Requests()
+	if len(observed) != 1 {
+		t.Fatalf("request count = %d", len(observed))
 	}
 	var text strings.Builder
-	for _, part := range capture.requests[0].Parts {
+	for _, part := range flattenParts(simRawRequest(observed[0])) {
 		if value, ok := part["text"].(string); ok {
 			text.WriteString(value)
 			text.WriteByte('\n')
@@ -102,24 +98,17 @@ func TestSelectedReferenceSnapshotPrecedesAdmissionReceipt(t *testing.T) {
 
 func TestPreparedInputEnrichmentReachesLocallyAdmittedRequestExactlyOnce(t *testing.T) {
 	requests := make(chan map[string]any, 2)
-	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Errorf("decode request: %v", err)
-			return
+	server := providersim.New(t)
+	gate := providersim.NewGate()
+	server.Respond(func(request providersim.Request) providersim.Turn {
+		requests <- simRawRequest(request)
+		if request.Index == 1 {
+			return providersim.HTTPError(providersim.BadGateway).WithGate(gate)
 		}
-		requests <- body
-		if calls.Add(1) == 1 {
-			<-r.Context().Done()
-			return
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"complete\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	t.Cleanup(server.Close)
+		return providersim.Text("complete")
+	})
 	home, directory, project := t.TempDir(), t.TempDir(), t.TempDir()
-	cfg := mediaAttributionConfig(server.URL, "selected-reference-request", "openai", provider.ModalityImage)
+	cfg := mediaAttributionConfig(server.BaseURL(providersim.Chat), "selected-reference-request", "openai", provider.ModalityImage)
 	s, err := NewWithSessionDir("selected-reference", cfg, home, directory)
 	if err != nil {
 		t.Fatal(err)
@@ -242,8 +231,8 @@ func TestPreparedInputEnrichmentReachesLocallyAdmittedRequestExactlyOnce(t *test
 	}
 	defer resumed.Close()
 	resumed.SetWorkDir(project)
-	if calls.Load() != 1 {
-		t.Fatalf("Stop/passive resume started replacement work: %d requests", calls.Load())
+	if len(server.Requests()) != 1 {
+		t.Fatalf("Stop/passive resume started replacement work: %d requests", len(server.Requests()))
 	}
 	for _, ref := range refs {
 		if err := sessiondb.DeletePromptReference(resumed.db, ref.ID); err != nil {
@@ -281,8 +270,8 @@ func TestPreparedInputEnrichmentReachesLocallyAdmittedRequestExactlyOnce(t *test
 			}
 		}
 	}
-	if count != 1 || calls.Load() != 2 {
-		t.Fatalf("retained original/request count: originals=%d calls=%d", count, calls.Load())
+	if count != 1 || len(server.Requests()) != 2 {
+		t.Fatalf("retained original/request count: originals=%d calls=%d", count, len(server.Requests()))
 	}
 }
 
@@ -290,16 +279,16 @@ func TestSelectedReferencePreparationFailurePreservesInputWithoutEffects(t *test
 	for _, failure := range []string{"missing", "inactive", "foreign", "unreadable", "unsupported-kind", "unsupported-model", "explicit-empty-model", "unsupported-protocol", "reference-load", "closed-memory", "unreadable-summaries"} {
 		t.Run(failure, func(t *testing.T) {
 			var calls atomic.Int32
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			server := providersim.New(t)
+			server.Respond(func(providersim.Request) providersim.Turn {
 				calls.Add(1)
-				w.Header().Set("Content-Type", "text/event-stream")
-				_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"must not run\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-			}))
-			t.Cleanup(server.Close)
+				return providersim.Text("must not run").WithoutUsage()
+			})
+
 			home, directory, project := t.TempDir(), t.TempDir(), t.TempDir()
-			cfg := mediaAttributionConfig(server.URL, "selected-reference-failure-"+failure, "openai", provider.ModalityImage)
+			cfg := mediaAttributionConfig(server.BaseURL(providersim.Chat), "selected-reference-failure-"+failure, "openai", provider.ModalityImage)
 			if failure == "unsupported-protocol" {
-				cfg.Accounts["account"] = provider.Account{ID: "account", ProviderID: "custom", APIKey: "fixture", Connection: provider.Template{Name: "Local", ProviderURL: server.URL, APIStandard: "anthropic", AuthType: provider.AuthProtocol}}
+				cfg.Accounts["account"] = provider.Account{ID: "account", ProviderID: "custom", APIKey: "fixture", Connection: provider.Template{Name: "Local", ProviderURL: server.BaseURL(providersim.Messages), APIStandard: "anthropic", AuthType: provider.AuthProtocol}}
 				category := cfg.Agents.Profiles["default"].Categories[CategoryDefault]
 				category.ModelModalities = []string{provider.ModalityAudio}
 				cfg.Agents.Profiles["default"].Categories[CategoryDefault] = category
@@ -400,8 +389,8 @@ func TestSelectedReferencePreparationFailurePreservesInputWithoutEffects(t *test
 					t.Fatal("preparation failure did not surface NeedsAttention")
 				}
 			}
-			if status.Detail == "" || status.Action == "" || calls.Load() != 0 {
-				t.Fatalf("preparation was not actionable/fail-closed: %+v requests=%d", status, calls.Load())
+			if status.Detail == "" || status.Action == "" || len(server.Requests()) != 0 {
+				t.Fatalf("preparation was not actionable/fail-closed: %+v requests=%d", status, len(server.Requests()))
 			}
 			if failure == "closed-memory" && !strings.Contains(status.Detail, "recall workspace memory") {
 				t.Fatalf("closed memory did not fail at enabled recall: %+v", status)
@@ -464,8 +453,8 @@ func TestSelectedReferencePreparationFailurePreservesInputWithoutEffects(t *test
 					}
 				}
 			}
-			if count != 1 || (captured.InternalID != "" && capturedCount != 1) || calls.Load() != 0 {
-				t.Fatalf("Stop/resume lost original/selection or ran work: originals=%d selections=%d requests=%d", count, capturedCount, calls.Load())
+			if count != 1 || (captured.InternalID != "" && capturedCount != 1) || len(server.Requests()) != 0 {
+				t.Fatalf("Stop/resume lost original/selection or ran work: originals=%d selections=%d requests=%d", count, capturedCount, len(server.Requests()))
 			}
 		})
 	}
@@ -473,9 +462,9 @@ func TestSelectedReferencePreparationFailurePreservesInputWithoutEffects(t *test
 
 func TestSelectedReferenceCapabilityRepairReusesCapturedPreimage(t *testing.T) {
 	const model = "selected-known-media-repair"
-	capture := newRequestCapture(t, model, "data: {\"choices\":[{\"delta\":{\"content\":\"repaired request completed\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+	capture := newRequestCapture(t, "repaired request completed")
 	provider.SetModelCap(model, false, true)
-	cfg := modelAttributionConfig(capture.server.URL, model)
+	cfg := modelAttributionConfig(capture.BaseURL(providersim.Chat), model)
 	s, err := NewWithSessionDir("selected-media-repair", cfg, t.TempDir(), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -567,9 +556,7 @@ func TestSelectedReferenceCapabilityRepairReusesCapturedPreimage(t *testing.T) {
 		t.Fatal("exact unrepaired Continue was rejected")
 	}
 	status = awaitAttention(status.Attempt)
-	capture.mu.Lock()
-	requestCount := len(capture.requests)
-	capture.mu.Unlock()
+	requestCount := len(capture.Requests())
 	if requestCount != 0 {
 		t.Fatalf("unrepaired Continue issued %d weakened requests", requestCount)
 	}
@@ -599,14 +586,13 @@ waitCompletion:
 			t.Fatal("explicit repair did not complete the original input")
 		}
 	}
-	capture.mu.Lock()
-	defer capture.mu.Unlock()
-	if len(capture.requests) != 1 {
-		t.Fatalf("repaired request count = %d", len(capture.requests))
+	observed := capture.Requests()
+	if len(observed) != 1 {
+		t.Fatalf("repaired request count = %d", len(observed))
 	}
 	var text strings.Builder
 	images := 0
-	for _, part := range capture.requests[0].Parts {
+	for _, part := range flattenParts(simRawRequest(observed[0])) {
 		if value, ok := part["text"].(string); ok {
 			text.WriteString(value)
 			text.WriteByte('\n')

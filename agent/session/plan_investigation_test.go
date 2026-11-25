@@ -2,17 +2,12 @@ package session
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -21,6 +16,7 @@ import (
 	"crude/agent/sessiondb"
 	"crude/agent/worktree"
 	"crude/internal/logger"
+	"crude/internal/providersim"
 	"crude/types/control"
 	"crude/types/conversation"
 	recoverytypes "crude/types/recovery"
@@ -37,23 +33,15 @@ func TestPlanModeRecoveryKeepsStartingPolicyAndOriginalInput(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			requests := make(chan planModeRequest, 4)
-			var calls atomic.Int32
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				var body planModeRequest
-				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-					t.Error(err)
-					return
+			held := providersim.NewGate()
+			server := providersim.New(t)
+			server.Respond(func(request providersim.Request) providersim.Turn {
+				requests <- simDecodeRequest[planModeRequest](t, request)
+				if request.Index == 1 {
+					return providersim.HTTPError(providersim.BadGateway).WithGate(held)
 				}
-				attempt := calls.Add(1)
-				requests <- body
-				if attempt == 1 {
-					<-r.Context().Done()
-					return
-				}
-				w.Header().Set("Content-Type", "text/event-stream")
-				_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Finished.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-			}))
-			t.Cleanup(server.Close)
+				return providersim.Text("Finished.")
+			})
 			nextRequest := func() planModeRequest {
 				t.Helper()
 				select {
@@ -73,7 +61,7 @@ func TestPlanModeRecoveryKeepsStartingPolicyAndOriginalInput(t *testing.T) {
 				}
 			}
 			home, directory, project := t.TempDir(), t.TempDir(), t.TempDir()
-			cfg := mediaAttributionConfig(server.URL, "recovery-plan-mode", "openai")
+			cfg := mediaAttributionConfig(server.BaseURL(providersim.Chat), "recovery-plan-mode", "openai")
 			s, err := NewWithSessionDir("", cfg, home, directory)
 			if err != nil {
 				t.Fatal(err)
@@ -123,7 +111,7 @@ func TestPlanModeRecoveryKeepsStartingPolicyAndOriginalInput(t *testing.T) {
 			}
 			t.Cleanup(resumed.Close)
 			resumed.SetWorkDir(project)
-			if resumed.PlanMode() == test.planning || calls.Load() != 1 {
+			if resumed.PlanMode() == test.planning || len(server.Requests()) != 1 {
 				t.Fatal("passive resume changed the next-turn setting or contacted the provider")
 			}
 			sender := newMockEventSender()

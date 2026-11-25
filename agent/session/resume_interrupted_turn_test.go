@@ -1,18 +1,15 @@
 package session
 
 import (
-	"fmt"
-	"net/http"
-	"net/http/httptest"
+	"context"
 	"path/filepath"
 	"slices"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
+	"crude/internal/providersim"
 )
 
 // A turn that is still open when Crude exits after an earlier resume must not
@@ -20,25 +17,12 @@ import (
 // transcript projection, so the next recovery checkpoint dropped provider replay
 // facts and conflicted with the immutable identities on the following restart.
 func TestResumedSessionReopensAfterInterruptedTurn(t *testing.T) {
-	var calls atomic.Int32
-	arrived, release := make(chan struct{}, 4), make(chan struct{})
-	var releaseOnce sync.Once
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if calls.Add(1) == 2 {
-			arrived <- struct{}{}
-			select {
-			case <-release:
-			case <-r.Context().Done():
-			}
-			return
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"accepted answer\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	t.Cleanup(server.Close)
-	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+	gate := providersim.NewGate()
+	server := providersim.New(t)
+	answerTurn := providersim.Text("accepted answer").WithoutUsage()
+	server.Script(answerTurn, answerTurn.WithGate(gate))
 	home, directory, project := t.TempDir(), t.TempDir(), t.TempDir()
-	cfg := modelAttributionConfig(server.URL, "resume-interrupted-turn")
+	cfg := modelAttributionConfig(server.BaseURL(providersim.Chat), "resume-interrupted-turn")
 	submit := func(s *Session, o *Orchestrator, input provider.UserInput) {
 		t.Helper()
 		intent, err := s.PrepareInputAdmission(o.ID, input, 1)
@@ -85,9 +69,9 @@ func TestResumedSessionReopensAfterInterruptedTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	submit(resumed, o, provider.UserInput{InternalID: "second-input", Text: "second"})
-	select {
-	case <-arrived:
-	case <-time.After(5 * time.Second):
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	if err := gate.Wait(ctx); err != nil {
 		t.Fatal("interrupted turn request did not arrive")
 	}
 	// Capture the committed state while the turn is open, as a crash or forced

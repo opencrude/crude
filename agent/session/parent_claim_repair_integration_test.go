@@ -3,10 +3,7 @@ package session
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"html"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -19,6 +16,7 @@ import (
 	"crude/agent/provider"
 	"crude/agent/tools"
 	"crude/agent/turnloop"
+	"crude/internal/providersim"
 )
 
 func TestParentClaimRepairToolProjectsOnlyCommittedNarrowScope(t *testing.T) {
@@ -180,24 +178,20 @@ func TestChildScopeRejectionKeepsLoopAliveAndParentWidensLiveScope(t *testing.T)
 	const content = "written by the child\n"
 	type providerCall struct {
 		request provider.ChatRequest
-		reply   chan map[string]any
+		reply   chan providersim.Turn
 	}
 	rootCalls, childCalls := make(chan providerCall, 8), make(chan providerCall, 8)
 	var rootRequests, childRequests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		call := providerCall{request: request, reply: make(chan map[string]any, 1)}
+	server := providersim.New(t)
+	server.Respond(func(wire providersim.Request) providersim.Turn {
+		request := simDecodeRequest[provider.ChatRequest](t, wire)
+		call := providerCall{request: request, reply: make(chan providersim.Turn, 1)}
 		var calls chan providerCall
 		switch request.Model {
 		case rootModel:
 			if rootRequests.Add(1) > 4 {
 				// New addressed reports/outcomes may legitimately wake the idle root.
-				call.reply <- map[string]any{"content": "Child evidence received."}
+				call.reply <- providersim.Text("Child evidence received.")
 			} else {
 				calls = rootCalls
 			}
@@ -206,42 +200,24 @@ func TestChildScopeRejectionKeepsLoopAliveAndParentWidensLiveScope(t *testing.T)
 			calls = childCalls
 		default:
 			t.Errorf("unexpected provider model %q", request.Model)
-			w.WriteHeader(http.StatusBadRequest)
-			return
+			return providersim.HTTPError(providersim.InvalidRequest)
 		}
 		if calls != nil {
 			select {
 			case calls <- call:
-			case <-r.Context().Done():
-				return
+			case <-t.Context().Done():
+				return providersim.HTTPError(providersim.InvalidRequest)
 			case <-time.After(5 * time.Second):
 				t.Error("provider request was not observed within its bound")
-				return
+				return providersim.HTTPError(providersim.InvalidRequest)
 			}
 		}
-		select {
-		case delta := <-call.reply:
-			finish := "stop"
-			if _, ok := delta["tool_calls"]; ok {
-				finish = "tool_calls"
-			}
-			frame, err := json.Marshal(map[string]any{"choices": []any{map[string]any{"delta": delta, "finish_reason": finish}}})
-			if err != nil {
-				t.Error(err)
-				return
-			}
-			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", frame)
-		case <-r.Context().Done():
-		case <-time.After(5 * time.Second):
-			t.Error("scripted provider response was not released within its bound")
-		}
-	}))
-	defer server.Close()
+		return simReply(t, call.reply)
+	})
 
 	home, project := t.TempDir(), t.TempDir()
 	sessions := filepath.Join(home, "sessions")
-	cfg := modelAttributionConfig(server.URL, rootModel)
+	cfg := modelAttributionConfig(server.BaseURL(providersim.Chat), rootModel)
 	applySessionMultiAgent(cfg, true)
 	profile := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
 	profile.Categories[CategoryCrafter] = CategoryConfig{AccountID: "account", Model: childModel}
@@ -285,14 +261,7 @@ func TestChildScopeRejectionKeepsLoopAliveAndParentWidensLiveScope(t *testing.T)
 			return providerCall{}
 		}
 	}
-	tool := func(index int, id, name string, params map[string]any) map[string]any {
-		t.Helper()
-		arguments, err := json.Marshal(params)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return map[string]any{"index": index, "id": id, "type": "function", "function": map[string]any{"name": name, "arguments": string(arguments)}}
-	}
+
 	toolMessage := func(request provider.ChatRequest, id string) provider.ChatMessage {
 		t.Helper()
 		var found []provider.ChatMessage
@@ -331,9 +300,9 @@ func TestChildScopeRejectionKeepsLoopAliveAndParentWidensLiveScope(t *testing.T)
 	}
 
 	first := next(rootCalls, "root launch")
-	first.reply <- map[string]any{"tool_calls": []any{tool(0, "claim-launch", "agent_start", map[string]any{
+	first.reply <- providersim.CallTools(simToolArgs("claim-launch", "agent_start", map[string]any{
 		"description": task, "category": CategoryCrafter, "isolation": "shared", "file_ownership": []string{"allowed.txt"},
-	})}}
+	}))
 	initialChild := next(childCalls, "child first request")
 	second := next(rootCalls, "root receives allocated child")
 	var launched struct {
@@ -347,10 +316,10 @@ func TestChildScopeRejectionKeepsLoopAliveAndParentWidensLiveScope(t *testing.T)
 	}
 	scratch := filepath.Join(s.TempDir(), "agents", launched.AgentID, "write_picker.ps1")
 	outside := filepath.Join(project, "outside.txt")
-	initialChild.reply <- map[string]any{"tool_calls": []any{
-		tool(0, "scratch-write", "write_file", map[string]any{"path": scratch, "content": "scratch\n"}),
-		tool(1, "outside-write", "write_file", map[string]any{"path": "outside.txt", "content": content}),
-	}}
+	initialChild.reply <- providersim.CallTools(
+		simToolArgs("scratch-write", "write_file", map[string]any{"path": scratch, "content": "scratch\n"}),
+		simToolArgs("outside-write", "write_file", map[string]any{"path": "outside.txt", "content": content}),
+	)
 	// The loop is sacred: the child makes its next request with both results.
 	childAfterRejection := next(childCalls, "child continues after its rejected write")
 	result(childAfterRejection.request, "scratch-write")
@@ -376,7 +345,7 @@ func TestChildScopeRejectionKeepsLoopAliveAndParentWidensLiveScope(t *testing.T)
 	}
 	noOpenIncident("after rejected write")
 
-	second.reply <- map[string]any{"tool_calls": []any{tool(0, "inspect-child", "agent_inspect", map[string]any{"agent_id": launched.AgentID})}}
+	second.reply <- providersim.CallTools(simToolArgs("inspect-child", "agent_inspect", map[string]any{"agent_id": launched.AgentID}))
 	third := next(rootCalls, "root inspects its running child")
 	var inspection struct {
 		Agent    collaboration.Agent   `json:"agent"`
@@ -400,11 +369,11 @@ func TestChildScopeRejectionKeepsLoopAliveAndParentWidensLiveScope(t *testing.T)
 	for _, claim := range inspection.Claims {
 		versions[claim.ID] = claim.Version
 	}
-	third.reply <- map[string]any{"tool_calls": []any{tool(0, "widen-child", "agent_update_claims", map[string]any{
+	third.reply <- providersim.CallTools(simToolArgs("widen-child", "agent_update_claims", map[string]any{
 		"agent_id": launched.AgentID, "runtime_epoch": inspection.Agent.RuntimeEpoch,
 		"run_id": inspection.Run.ID, "expected_run_version": inspection.Run.Version,
 		"expected_versions": versions, "paths": []string{"allowed.txt", "outside.txt"},
-	})}}
+	}))
 	fourth := next(rootCalls, "root receives live scope update")
 	var widened collaboration.UpdateClaimsResult
 	decode(result(fourth.request, "widen-child"), &widened)
@@ -414,21 +383,21 @@ func TestChildScopeRejectionKeepsLoopAliveAndParentWidensLiveScope(t *testing.T)
 	if !s.FileOwnership().WriteScopeAllows(turnloop.AgentID(launched.AgentID), outside) {
 		t.Fatal("live scope update did not reach the running child's write guard")
 	}
-	fourth.reply <- map[string]any{"content": "Scope widened; the child keeps working."}
+	fourth.reply <- providersim.Text("Scope widened; the child keeps working.")
 
-	childAfterRejection.reply <- map[string]any{"tool_calls": []any{tool(0, "outside-retry", "write_file", map[string]any{"path": "outside.txt", "content": content})}}
+	childAfterRejection.reply <- providersim.CallTools(simToolArgs("outside-retry", "write_file", map[string]any{"path": "outside.txt", "content": content}))
 	reportCall := next(childCalls, "child publishes required final report")
 	result(reportCall.request, "outside-retry")
 	if data, err := os.ReadFile(outside); err != nil || string(data) != content {
 		t.Fatalf("retry inside the widened scope did not write: %q %v", data, err)
 	}
-	reportCall.reply <- map[string]any{"tool_calls": []any{tool(0, "final-report", "publish_report", map[string]any{
+	reportCall.reply <- providersim.CallTools(simToolArgs("final-report", "publish_report", map[string]any{
 		"recipient_ids": []string{root.ID}, "run_id": launched.RunID, "request_id": "claim-launch", "kind": "final",
 		"summary": "Wrote outside.txt after the parent widened scope.", "body": "The first outside write was rejected without effect; the retry succeeded.",
-	})}}
+	}))
 	lastChild := next(childCalls, "child receives final report publication")
 	result(lastChild.request, "final-report")
-	lastChild.reply <- map[string]any{"content": "Done."}
+	lastChild.reply <- providersim.Text("Done.")
 	joined := make(chan struct{})
 	go func() { s.SubAgentRunner().Wait(); close(joined) }()
 	select {

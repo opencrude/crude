@@ -2,10 +2,6 @@ package session
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,29 +9,28 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
+	"crude/internal/providersim"
 	"crude/types/conversation"
 )
 
 func TestScheduledLoopRunsInSessionAndCoalescesBusyOccurrences(t *testing.T) {
 	requests := make(chan provider.ChatRequest, 8)
-	replies := make(chan struct{}, 8)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-			return
+	server := providersim.New(t)
+	firstGate, secondGate := providersim.NewGate(), providersim.NewGate()
+	server.Respond(func(wire providersim.Request) providersim.Turn {
+		requests <- simDecodeRequest[provider.ChatRequest](t, wire)
+		turn := providersim.Text("checked")
+		switch wire.Index {
+		case 1:
+			return turn.WithGate(firstGate)
+		case 2:
+			return turn.WithGate(secondGate)
+		default:
+			return turn
 		}
-		requests <- request
-		select {
-		case <-replies:
-			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"checked\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-		case <-r.Context().Done():
-		}
-	}))
-	t.Cleanup(server.Close)
+	})
 	home := t.TempDir()
-	cfg := modelAttributionConfig(server.URL, "loop-model")
+	cfg := modelAttributionConfig(server.BaseURL(providersim.Chat), "loop-model")
 	s, err := NewWithSessionDir("", cfg, home, filepath.Join(home, "sessions"))
 	if err != nil {
 		t.Fatal(err)
@@ -92,13 +87,13 @@ func TestScheduledLoopRunsInSessionAndCoalescesBusyOccurrences(t *testing.T) {
 		t.Fatal("a second iteration ran while the agent was busy")
 	case <-time.After(700 * time.Millisecond):
 	}
-	replies <- struct{}{}
+	firstGate.Release()
 	waitTurnDone(t, sender, o.ID)
 	_ = nextRequest()
 	if err := s.ChangeLoop("pause", loop.ID); err != nil {
 		t.Fatal(err)
 	}
-	replies <- struct{}{}
+	secondGate.Release()
 	waitTurnDone(t, sender, o.ID)
 	select {
 	case <-requests:
@@ -212,21 +207,11 @@ func TestLoopStopAndExpiryRemainVisibleAndDoNotRestart(t *testing.T) {
 }
 
 func TestLoopStopCancelsTheRealTurnAndPausesSchedule(t *testing.T) {
-	requests := make(chan struct{}, 2)
-	release := make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		requests <- struct{}{}
-		select {
-		case <-r.Context().Done():
-		case <-release:
-		}
-	}))
-	t.Cleanup(func() {
-		close(release)
-		server.Close()
-	})
+	gate := providersim.NewGate()
+	server := providersim.New(t)
+	server.Script(providersim.HTTPError(providersim.BadGateway).WithGate(gate))
 	home := t.TempDir()
-	s, err := NewWithSessionDir("", modelAttributionConfig(server.URL, "loop-model"), home, filepath.Join(home, "sessions"))
+	s, err := NewWithSessionDir("", modelAttributionConfig(server.BaseURL(providersim.Chat), "loop-model"), home, filepath.Join(home, "sessions"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,10 +229,10 @@ func TestLoopStopCancelsTheRealTurnAndPausesSchedule(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case <-requests:
-	case <-time.After(8 * time.Second):
-		t.Fatal("scheduled turn never reached the provider")
+	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+	defer cancel()
+	if err := gate.Wait(ctx); err != nil {
+		t.Fatalf("loop did not start: %v", err)
 	}
 	if cancelled, _ := s.CancelOrchestrator(o.ID); !cancelled {
 		t.Fatal("Stop did not cancel the running scheduled turn")

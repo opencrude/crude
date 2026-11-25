@@ -5,13 +5,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -19,6 +19,7 @@ import (
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
 	"crude/agent/tools"
+	"crude/internal/providersim"
 )
 
 // ─── media fixture helpers ───────────────────────────────────────────────────
@@ -61,55 +62,11 @@ func mediaFixtures(t *testing.T, dir string) map[string]string {
 
 // ─── request capture harness ─────────────────────────────────────────────────
 
-type capturedRequest struct {
-	Model string
-	Body  map[string]any
-	Parts []map[string]any // flattened content parts of every non-system message
-}
-
-type requestCapture struct {
-	mu       sync.Mutex
-	requests []capturedRequest
-	server   *httptest.Server
-}
-
-func newRequestCapture(t *testing.T, model string, streamBody string) *requestCapture {
+func newRequestCapture(t *testing.T, reply string) *providersim.Server {
 	t.Helper()
-	capture := &requestCapture{}
-	capture.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, err := readAllBody(r)
-		if err != nil {
-			t.Errorf("read body: %v", err)
-			return
-		}
-		var decoded map[string]any
-		if err := json.Unmarshal(body, &decoded); err != nil {
-			t.Errorf("decode request: %v", err)
-			return
-		}
-		capture.mu.Lock()
-		capture.requests = append(capture.requests, capturedRequest{Model: model, Body: decoded, Parts: flattenParts(decoded)})
-		capture.mu.Unlock()
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, streamBody)
-	}))
-	t.Cleanup(capture.server.Close)
-	return capture
-}
-
-func readAllBody(r *http.Request) ([]byte, error) {
-	defer r.Body.Close()
-	var buf strings.Builder
-	buf.Grow(4096)
-	tmp := make([]byte, 4096)
-	for {
-		n, err := r.Body.Read(tmp)
-		buf.Write(tmp[:n])
-		if err != nil {
-			break
-		}
-	}
-	return []byte(buf.String()), nil
+	server := providersim.New(t)
+	server.Script(providersim.Text(reply))
+	return server
 }
 
 // flattenParts extracts every content part across messages, so assertions can
@@ -174,28 +131,16 @@ func mediaAttributionConfig(baseURL, model, standard string, modalities ...strin
 func TestE2EReadImageAttachesWhenCapabilityEnabled(t *testing.T) {
 	project := t.TempDir()
 	fixtures := mediaFixtures(t, project)
-	var requestCount atomic.Int32
 	requests := make(chan map[string]any, 2)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		var body map[string]any
-		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
-			t.Errorf("decode request: %v", err)
-			return
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
+		requests <- simRawRequest(request)
+		if request.Index == 1 {
+			return providersim.CallTools(simToolArgs("call_image", "read_file", map[string]any{"path": fixtures["fun-screenshot.png"]}))
 		}
-		requests <- body
-		w.Header().Set("Content-Type", "text/event-stream")
-		if requestCount.Add(1) == 1 {
-			arguments, _ := json.Marshal(map[string]string{"path": fixtures["fun-screenshot.png"]})
-			_, _ = fmt.Fprintf(w,
-				"data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_image\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":%q}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n",
-				string(arguments),
-			)
-			return
-		}
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"image inspected\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	defer server.Close()
-	cfg := mediaAttributionConfig(server.URL, "vision-model", "openai", provider.ModalityImage)
+		return providersim.Text("image inspected")
+	})
+	cfg := mediaAttributionConfig(server.BaseURL(providersim.Chat), "vision-model", "openai", provider.ModalityImage)
 	home := t.TempDir()
 	sessionDir := filepath.Join(t.TempDir(), "sessions")
 	sess, err := NewWithSessionDir("media-e2e", cfg, home, sessionDir)
@@ -264,28 +209,22 @@ func TestE2EOpenAIReadFileDeliversEveryEnabledModalitySameTurn(t *testing.T) {
 				t.Fatal(err)
 			}
 			requests := make(chan map[string]any, 2)
-			var calls atomic.Int32
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-				var body map[string]any
-				if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
-					t.Errorf("decode request: %v", err)
-					return
-				}
-				requests <- body
-				w.Header().Set("Content-Type", "text/event-stream")
-				if calls.Add(1) == 1 {
-					arguments, _ := json.Marshal(map[string]string{"path": testCase.fixture.name})
-					_, _ = fmt.Fprintf(w,
-						"data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_media\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":%q}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n",
-						string(arguments),
-					)
-					return
-				}
-				_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"media inspected\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-			}))
-			defer server.Close()
+			var baseURL string
+			if testCase.modality == provider.ModalityVideo {
+				baseURL = newChatVideoGateway(t, testCase.fixture.name, requests)
+			} else {
+				server := providersim.New(t)
+				server.Respond(func(request providersim.Request) providersim.Turn {
+					requests <- simRawRequest(request)
+					if request.Index == 1 {
+						return providersim.CallTools(simToolArgs("call_media", "read_file", map[string]any{"path": testCase.fixture.name}))
+					}
+					return providersim.Text("media inspected")
+				})
+				baseURL = server.BaseURL(providersim.Chat)
+			}
 
-			cfg := mediaAttributionConfig(server.URL, "e2e-"+strings.ToLower(testCase.name), "openai", testCase.modality)
+			cfg := mediaAttributionConfig(baseURL, "e2e-"+strings.ToLower(testCase.name), "openai", testCase.modality)
 			sess, err := NewWithSessionDir("all-media", cfg, t.TempDir(), filepath.Join(t.TempDir(), "sessions"))
 			if err != nil {
 				t.Fatal(err)
@@ -417,9 +356,8 @@ func TestE2EReadImageRefusedWithoutCapability(t *testing.T) {
 	project := t.TempDir()
 	fixtures := mediaFixtures(t, project)
 
-	sse := "data: {\"choices\":[{\"delta\":{\"content\":\"done\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
-	capture := newRequestCapture(t, "text-model", sse)
-	cfg := mediaAttributionConfig(capture.server.URL, "text-model", "openai") // no modalities
+	capture := newRequestCapture(t, "done")
+	cfg := mediaAttributionConfig(capture.BaseURL(providersim.Chat), "text-model", "openai") // no modalities
 	home := t.TempDir()
 	sessionDir := filepath.Join(t.TempDir(), "sessions")
 	sess, err := NewWithSessionDir("media-e2e-text", cfg, home, sessionDir)
@@ -443,37 +381,17 @@ func TestE2EReadImageRefusedWithoutCapability(t *testing.T) {
 func TestE2EPDFReadUsesDocumentWhenCapabilityEnabled(t *testing.T) {
 	project := t.TempDir()
 	fixtures := mediaFixtures(t, project)
-	var requestCount atomic.Int32
 	requests := make(chan map[string]any, 2)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		var body map[string]any
-		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
-			t.Errorf("decode request: %v", err)
-			return
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
+		requests <- simRawRequest(request)
+		if request.Index == 1 {
+			return providersim.CallTools(simToolArgs("toolu_pdf", "read_file", map[string]any{"path": fixtures["report.pdf"]})).
+				WithUsage(providersim.Usage{Input: 10, Output: 7})
 		}
-		requests <- body
-		w.Header().Set("Content-Type", "text/event-stream")
-		if requestCount.Add(1) == 1 {
-			arguments, _ := json.Marshal(map[string]string{"path": fixtures["report.pdf"]})
-			_, _ = fmt.Fprintf(w,
-				"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":10,\"output_tokens\":1}}}\n\n"+
-					"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_pdf\",\"name\":\"read_file\",\"input\":{}}}\n\n"+
-					"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":%q}}\n\n"+
-					"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":7}}\n\n"+
-					"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
-				string(arguments),
-			)
-			return
-		}
-		_, _ = fmt.Fprint(w,
-			"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":20,\"output_tokens\":1}}}\n\n"+
-				"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"+
-				"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"pdf inspected\"}}\n\n"+
-				"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":3}}\n\n"+
-				"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
-	}))
-	defer server.Close()
-	cfg := mediaAttributionConfig(server.URL, "pdf-model", "anthropic", provider.ModalityImage, provider.ModalityPDF)
+		return providersim.Text("pdf inspected").WithUsage(providersim.Usage{Input: 20, Output: 3})
+	})
+	cfg := mediaAttributionConfig(server.BaseURL(providersim.Messages), "pdf-model", "anthropic", provider.ModalityImage, provider.ModalityPDF)
 	home := t.TempDir()
 	sessionDir := filepath.Join(t.TempDir(), "sessions")
 	sess, err := NewWithSessionDir("media-e2e-pdf", cfg, home, sessionDir)
@@ -538,9 +456,8 @@ func TestE2EUnsupportedMediaGetsExplicitRefusal(t *testing.T) {
 	project := t.TempDir()
 	fixtures := mediaFixtures(t, project)
 
-	sse := "data: {\"choices\":[{\"delta\":{\"content\":\"done\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
-	capture := newRequestCapture(t, "image-only-model", sse)
-	cfg := mediaAttributionConfig(capture.server.URL, "image-only-model", "openai", provider.ModalityImage)
+	capture := newRequestCapture(t, "done")
+	cfg := mediaAttributionConfig(capture.BaseURL(providersim.Chat), "image-only-model", "openai", provider.ModalityImage)
 	home := t.TempDir()
 	sessionDir := filepath.Join(t.TempDir(), "sessions")
 	sess, err := NewWithSessionDir("media-e2e-mixed", cfg, home, sessionDir)
@@ -746,9 +663,8 @@ func TestE2EWorkspaceSwitchReRootsToolExecution(t *testing.T) {
 		}
 	}
 
-	sse := "data: {\"choices\":[{\"delta\":{\"content\":\"done\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
-	capture := newRequestCapture(t, "cwd-model", sse)
-	cfg := mediaAttributionConfig(capture.server.URL, "cwd-model", "openai")
+	capture := newRequestCapture(t, "done")
+	cfg := mediaAttributionConfig(capture.BaseURL(providersim.Chat), "cwd-model", "openai")
 	if runtime.GOOS == "windows" {
 		cfg.Agents.Shell = "cmd" // the test commands are cmd.exe command lines
 	}
@@ -833,9 +749,8 @@ func TestE2ERelativePathsResolveAgainstWorkspaceRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sse := "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
-	capture := newRequestCapture(t, "cwd-model", sse)
-	cfg := mediaAttributionConfig(capture.server.URL, "cwd-model", "openai")
+	capture := newRequestCapture(t, "ok")
+	cfg := mediaAttributionConfig(capture.BaseURL(providersim.Chat), "cwd-model", "openai")
 	if runtime.GOOS == "windows" {
 		cfg.Agents.Shell = "cmd" // the test commands are cmd.exe command lines
 	}
@@ -910,4 +825,36 @@ func chdirTemp(t *testing.T, dir string) func() {
 			t.Fatalf("restore cwd: %v", err)
 		}
 	}
+}
+
+// OpenRouter's Chat video_url extension has no counterpart in the pinned OpenAI
+// ChatCompletionRequestUserMessageContentPart union. Keep this gateway request
+// capture separate from the native image, audio and file journeys above.
+func newChatVideoGateway(t *testing.T, name string, requests chan<- map[string]any) string {
+	t.Helper()
+	sim := providersim.New(t)
+	sim.Script(providersim.CallTools(simToolArgs("call_media", "read_file", map[string]any{"path": name})))
+	forward := simChatForwarder(t, sim)
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		raw, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Errorf("read gateway video request: %v", err)
+			return
+		}
+		var body map[string]any
+		if err := json.Unmarshal(raw, &body); err != nil {
+			t.Errorf("decode request: %v", err)
+			return
+		}
+		requests <- body
+		if calls.Add(1) == 1 {
+			forward(w, request, raw)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"media inspected\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+	}))
+	t.Cleanup(server.Close)
+	return server.URL
 }

@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,10 +16,10 @@ import (
 	"time"
 
 	"crude/agent/collaboration"
-	"crude/agent/provider"
 	"crude/agent/sessiondb"
 	"crude/agent/turnloop"
 	"crude/agent/worktree"
+	"crude/internal/providersim"
 	"crude/types/setting"
 )
 
@@ -82,23 +80,17 @@ func TestWorktreeRealChildLaunchesPreserveImmutableAssignmentAndIsolateEffects(t
 		}
 		return "pwd; cat " + strings.Join(paths, " ")
 	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		var body struct {
-			Messages []provider.ChatMessage `json:"messages"`
-		}
-		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-			t.Error(err)
-			return
-		}
-		encoded, _ := json.Marshal(body)
+	server := providersim.New(t)
+	server.Respond(func(req providersim.Request) providersim.Turn {
+		encoded := string(req.Raw)
 		key := "first"
-		if strings.Contains(string(encoded), "SECOND_CHILD") {
+		if strings.Contains(encoded, "SECOND_CHILD") {
 			key = "second"
 		}
 		mu.Lock()
 		step := steps[key]
 		steps[key]++
-		requests[key] = append(requests[key], string(encoded))
+		requests[key] = append(requests[key], encoded)
 		mu.Unlock()
 		calls.Add(1)
 		var name string
@@ -132,9 +124,7 @@ func TestWorktreeRealChildLaunchesPreserveImmutableAssignmentAndIsolateEffects(t
 			// exact parent. These fixtures use the session root collaborator ID.
 			name, params = "publish_report", map[string]any{"kind": "final", "recipient_ids": []string{"worktree-parent"}, "summary": key + " isolated proof", "body": "Isolated effects verified."}
 		default:
-			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Finished isolated proof.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-			return
+			return providersim.Text("Finished isolated proof.").WithoutUsage()
 		}
 		if key == "first" {
 			if step == 5 {
@@ -154,11 +144,9 @@ func TestWorktreeRealChildLaunchesPreserveImmutableAssignmentAndIsolateEffects(t
 			}
 		}
 		args, _ := json.Marshal(params)
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":%q,\"type\":\"function\",\"function\":{\"name\":%q,\"arguments\":%q}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", fmt.Sprintf("%s-%d", key, step), name, string(args))
-	}))
-	defer server.Close()
-	cfg := modelAttributionConfig(server.URL, "worktree-model")
+		return providersim.CallTools(providersim.ToolCall{ID: fmt.Sprintf("%s-%d", key, step), Name: name, Arguments: string(args)}).WithoutUsage()
+	})
+	cfg := modelAttributionConfig(server.BaseURL(providersim.Chat), "worktree-model")
 	profile := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
 	profile.Categories[CategoryCrafter] = CategoryConfig{AccountID: "account", Model: "worktree-model"}
 	cfg.Agents.Profiles[cfg.Agents.ActiveProfile] = profile

@@ -14,18 +14,16 @@ import (
 	"crude/agent/provider"
 	"crude/agent/safety"
 	"crude/agent/turnloop"
+	"crude/internal/providersim"
 	"crude/types/setting"
 )
 
 func TestPermissionReviewerTransportHasNoLifetimeCallCap(t *testing.T) {
 	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := providersim.New(t)
+	server.Respond(func(wire providersim.Request) providersim.Turn {
 		calls.Add(1)
-		var request map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-			return
-		}
+		request := simRawRequest(wire)
 		if request["model"] != "review-model" || request["max_tokens"] != float64(96) || request["reasoning_effort"] != "low" || request["tools"] != nil {
 			t.Errorf("unbounded/wrong reviewer request: %+v", request)
 		}
@@ -33,11 +31,10 @@ func TestPermissionReviewerTransportHasNoLifetimeCallCap(t *testing.T) {
 		if len(messages) != 2 {
 			t.Error("reviewer received conversation history")
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"{\"decision\":\"allow\",\"reason\":\"routine project edit\"}"},"finish_reason":"stop"}],"usage":{"prompt_tokens":110,"completion_tokens":15}}`)
-	}))
-	defer server.Close()
-	s, a := newReviewerTestSession(t, server.URL)
+		return providersim.Text(`{"decision":"allow","reason":"routine project edit"}`)
+	})
+
+	s, a := newReviewerTestSession(t, server.BaseURL(providersim.Chat))
 	review := s.permissionReviewer(a)
 	events := []turnloop.AgentEvent{}
 	emit := func(evt turnloop.AgentEvent) { events = append(events, evt) }
@@ -62,19 +59,15 @@ func TestPermissionReviewerTransportHasNoLifetimeCallCap(t *testing.T) {
 
 func TestPermissionReviewerSendsConfiguredFastTier(t *testing.T) {
 	tiers := make(chan string, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-			return
-		}
+	server := providersim.New(t)
+	server.Respond(func(wire providersim.Request) providersim.Turn {
+		request := simRawRequest(wire)
 		tier, _ := request["service_tier"].(string)
 		tiers <- tier
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"{\"decision\":\"allow\",\"reason\":\"routine\"}"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5}}`)
-	}))
-	defer server.Close()
-	s, a := newReviewerTestSession(t, server.URL)
+		return providersim.Text(`{"decision":"allow","reason":"routine"}`).WithUsage(providersim.Usage{Input: 10, Output: 5})
+	})
+
+	s, a := newReviewerTestSession(t, server.BaseURL(providersim.Chat))
 	s.cfg.Safety.AutoPermission.ServiceTier = "fast"
 	result := s.permissionReviewer(a)(t.Context(), provider.ToolCall{Function: provider.FunctionCall{Name: "edit_file"}},
 		map[string]any{"path": "main.go", "old_string": "old", "new_string": "new"}, safety.RiskProjectWrite, func(turnloop.AgentEvent) {})
@@ -107,13 +100,10 @@ func newReviewerTestSession(t *testing.T, url string) (*Session, *turnloop.Agent
 func TestPermissionReviewerUsesConfiguredRecovery(t *testing.T) {
 	var calls atomic.Int32
 	var budgets []int
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := providersim.New(t, providersim.WithChatGateway("review-model", providersim.DeepSeek))
+	server.Respond(func(wire providersim.Request) providersim.Turn {
 		call := calls.Add(1)
-		var request map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-			return
-		}
+		request := simRawRequest(wire)
 		budgets = append(budgets, int(request["max_tokens"].(float64)))
 		if request["reasoning_effort"] != "low" {
 			t.Errorf("attempt %d reasoning_effort=%v", call, request["reasoning_effort"])
@@ -124,16 +114,15 @@ func TestPermissionReviewerUsesConfiguredRecovery(t *testing.T) {
 		if call > 1 && request["response_format"] != nil {
 			t.Error("auto format did not fall back after the first technical failure")
 		}
-		w.Header().Set("Content-Type", "application/json")
 		if call < 3 {
-			_, _ = fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"","reasoning_content":"still reasoning"},"finish_reason":"length"}],"usage":{"prompt_tokens":100,"completion_tokens":96}}`)
-			return
+			return providersim.Reasoning("still reasoning", "", "").WithFinish(providersim.FinishLength).
+				WithUsage(providersim.Usage{Input: 100, Output: 96})
 		}
-		_, _ = fmt.Fprint(w, "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"```json\\n{\\\"decision\\\":\\\"allow\\\",\\\"reason\\\":\\\"routine project edit\\\"}\\n```\"},\"finish_reason\":\"end_turn\"}],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":24}}")
-	}))
-	defer server.Close()
+		return providersim.Text("```json\n{\"decision\":\"allow\",\"reason\":\"routine project edit\"}\n```").
+			WithUsage(providersim.Usage{Input: 100, Output: 24})
+	})
 
-	s, a := newReviewerTestSession(t, server.URL)
+	s, a := newReviewerTestSession(t, server.BaseURL(providersim.Chat))
 	s.cfg.Safety.AutoPermission.ResponseFormat = setting.AutoPermissionFormatAuto
 	s.cfg.Safety.AutoPermission.MaxAttempts = 3
 	s.cfg.Safety.AutoPermission.RetryTokenGrowth = setting.AutoPermissionGrowth4x
@@ -165,14 +154,16 @@ func TestPermissionReviewerFailsToHuman(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var calls atomic.Int32
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server := providersim.New(t)
+			server.Respond(func(providersim.Request) providersim.Turn {
 				calls.Add(1)
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(tc.status)
-				_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"role": "assistant", "content": tc.body}, "finish_reason": "stop"}}})
-			}))
-			defer server.Close()
-			s, a := newReviewerTestSession(t, server.URL)
+				if tc.status != 200 {
+					return providersim.HTTPError(providersim.Overload)
+				}
+				return providersim.Text(tc.body)
+			})
+
+			s, a := newReviewerTestSession(t, server.BaseURL(providersim.Chat))
 			got := s.permissionReviewer(a)(t.Context(), provider.ToolCall{Function: provider.FunctionCall{Name: "write_file"}}, map[string]any{"path": "main.go", "content": "package main"}, safety.RiskProjectWrite, func(turnloop.AgentEvent) {})
 			if got.Decision != "ask" || calls.Load() != 1 {
 				t.Fatalf("failure did not ask once: %+v calls=%d", got, calls.Load())
@@ -184,21 +175,11 @@ func TestPermissionReviewerFailsToHuman(t *testing.T) {
 func TestPermissionReviewerDropsStaleAndTimedOutDecisions(t *testing.T) {
 	for _, mode := range []string{"disable-reenable", "timeout", "cancel"} {
 		t.Run(mode, func(t *testing.T) {
-			arrived := make(chan struct{})
-			release := make(chan struct{})
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				close(arrived)
-				select {
-				case <-release:
-				case <-r.Context().Done():
-					return
-				}
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"{\"decision\":\"allow\",\"reason\":\"ok\"}"},"finish_reason":"stop"}]}`)
-			}))
-			defer server.Close()
-			defer close(release)
-			s, a := newReviewerTestSession(t, server.URL)
+			gate := providersim.NewGate()
+			server := providersim.New(t)
+			server.Script(providersim.Text(`{"decision":"allow","reason":"ok"}`).WithGate(gate))
+
+			s, a := newReviewerTestSession(t, server.BaseURL(providersim.Chat))
 			s.cfg.Safety.AutoPermission.TimeoutSeconds = 1
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
@@ -206,10 +187,10 @@ func TestPermissionReviewerDropsStaleAndTimedOutDecisions(t *testing.T) {
 			go func() {
 				done <- s.permissionReviewer(a)(ctx, provider.ToolCall{Function: provider.FunctionCall{Name: "write_file"}}, map[string]any{"path": "main.go", "content": "package main"}, safety.RiskProjectWrite, func(turnloop.AgentEvent) {})
 			}()
-			select {
-			case <-arrived:
-			case <-time.After(3 * time.Second):
-				t.Fatal("review request not started")
+			arrival, stopWaiting := context.WithTimeout(t.Context(), 3*time.Second)
+			defer stopWaiting()
+			if err := gate.Wait(arrival); err != nil {
+				t.Fatalf("review request not started: %v", err)
 			}
 			switch mode {
 			case "disable-reenable":
@@ -219,7 +200,7 @@ func TestPermissionReviewerDropsStaleAndTimedOutDecisions(t *testing.T) {
 				s.UpdateWorkspaceDefaults(app)
 				app.Safety.AutoPermission.Enabled = "on"
 				s.UpdateWorkspaceDefaults(app)
-				release <- struct{}{}
+				gate.Release()
 			case "cancel":
 				cancel()
 			}
@@ -406,24 +387,15 @@ func TestPermissionReviewerUsesDecisionModelFromOllamaList(t *testing.T) {
 
 func TestPermissionReviewerInheritsWorkspaceErrandWithoutBorrowingSessionOverrides(t *testing.T) {
 	requests := make(chan string, 2)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request struct {
-			Model string
-			Tools []json.RawMessage
-		}
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-			return
-		}
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
 		requests <- request.Model
 		if len(request.Tools) != 0 {
 			t.Error("permission review inherited Errand's tools")
 		}
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"{\"decision\":\"allow\",\"reason\":\"routine edit\"}"},"finish_reason":"stop"}]}`)
-	}))
-	defer server.Close()
-	s, a := newReviewerTestSession(t, server.URL)
+		return providersim.Text(`{"decision":"allow","reason":"routine edit"}`)
+	})
+	s, a := newReviewerTestSession(t, server.BaseURL(providersim.Chat))
 	settings := s.cfg.Safety.AutoPermission
 	settings.AccountID, settings.Model = "", ""
 	s.cfg.Safety.AutoPermission = settings

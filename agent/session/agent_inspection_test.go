@@ -1,10 +1,8 @@
 package session
 
 import (
+	"context"
 	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -16,6 +14,7 @@ import (
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
 	"crude/agent/turnloop"
+	"crude/internal/providersim"
 )
 
 func TestAgentInspectExplainsFinishedPeerWakeWithoutOpeningSession(t *testing.T) {
@@ -157,20 +156,10 @@ func TestAgentInspectExplainsFinishedPeerWakeWithoutOpeningSession(t *testing.T)
 }
 
 func TestAgentInspectRealHumanRunDoesNotGuessUnrecordedTrigger(t *testing.T) {
-	entered, release := make(chan struct{}), make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		close(entered)
-		select {
-		case <-release:
-		case <-r.Context().Done():
-			return
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"finished human task\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":15,\"completion_tokens\":4}}\n\ndata: [DONE]\n\n")
-	}))
-	defer server.Close()
-	defer close(release)
-	s, err := NewWithSessionDir("human-observe", modelAttributionConfig(server.URL, "inspection-model"), t.TempDir(), t.TempDir())
+	gate := providersim.NewGate()
+	server := providersim.New(t)
+	server.Script(providersim.Text("finished human task").WithUsage(providersim.Usage{Input: 15, Output: 4}).WithGate(gate))
+	s, err := NewWithSessionDir("human-observe", modelAttributionConfig(server.BaseURL(providersim.Chat), "inspection-model"), t.TempDir(), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,16 +180,16 @@ func TestAgentInspectRealHumanRunDoesNotGuessUnrecordedTrigger(t *testing.T) {
 	if result := s.CommitInputAdmission(t.Context(), intent); result.Status != InputAdmissionAccepted {
 		t.Fatal(result)
 	}
-	select {
-	case <-entered:
-	case <-time.After(5 * time.Second):
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	if err := gate.Wait(ctx); err != nil {
 		t.Fatal("human turn never reached provider")
 	}
 	view, err := s.inspectAgent(t.Context(), store, orchestrator.ID)
 	if err != nil || view.Run == nil || view.Run.State.Terminal() || view.Trigger.Available || view.Trigger.Note == "" || view.RecentWork.Input == nil || view.RecentWork.Input.MessageID != input.InternalID || view.RecentWork.Input.Preview != input.Text {
 		t.Fatal("active human input missing or unrecorded run link guessed", view, err)
 	}
-	release <- struct{}{}
+	gate.Release()
 	waitTurnDone(t, sender, orchestrator.ID)
 	view, err = s.inspectAgent(t.Context(), store, orchestrator.ID)
 	if err != nil || view.Run != nil || !view.Trigger.Available || view.Trigger.InputID != input.InternalID || view.Trigger.Preview != input.Text {

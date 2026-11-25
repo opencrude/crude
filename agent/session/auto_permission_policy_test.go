@@ -1,7 +1,6 @@
 package session
 
 import (
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,6 +11,7 @@ import (
 	"crude/agent/provider"
 	"crude/agent/safety"
 	"crude/agent/turnloop"
+	"crude/internal/providersim"
 )
 
 func TestReviewerOptInScopeAndExistingGrantSpendNothing(t *testing.T) {
@@ -45,19 +45,13 @@ func TestReviewerOptInScopeAndExistingGrantSpendNothing(t *testing.T) {
 
 func TestReviewerUnresolvedDenyModeNeverRequiresHumanInput(t *testing.T) {
 	var calls atomic.Int32
-	mode := "ask"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := providersim.New(t)
+	server.Respond(func(providersim.Request) providersim.Turn {
 		calls.Add(1)
-		w.Header().Set("Content-Type", "application/json")
-		if mode == "malformed" {
-			_, _ = fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"not json"},"finish_reason":"stop"}]}`)
-			return
-		}
-		_, _ = fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"{\"decision\":\"ask\",\"reason\":\"intent is unclear\"}"},"finish_reason":"stop"}]}`)
-	}))
-	defer server.Close()
+		return providersim.Text(`{"decision":"ask","reason":"intent is unclear"}`).WithoutUsage()
+	})
 
-	s, a := newReviewerTestSession(t, server.URL)
+	s, a := newReviewerTestSession(t, server.BaseURL(providersim.Chat))
 	s.cfg.Safety.AutoPermission.UnresolvedMode = "deny"
 	call := provider.ToolCall{Function: provider.FunctionCall{Name: "edit_file"}}
 	params := map[string]any{"path": "main.go", "old_string": "old", "new_string": "new"}
@@ -65,7 +59,10 @@ func TestReviewerUnresolvedDenyModeNeverRequiresHumanInput(t *testing.T) {
 		t.Fatalf("model ask did not fail closed without a human: %+v", got)
 	}
 
-	mode = "malformed"
+	server.Respond(func(providersim.Request) providersim.Turn {
+		calls.Add(1)
+		return providersim.Text("not json").WithoutUsage()
+	})
 	if got := s.permissionReviewer(a)(t.Context(), call, params, safety.RiskProjectWrite, func(turnloop.AgentEvent) {}); got.Decision != "deny" || !strings.Contains(got.Reason, "valid answer") {
 		t.Fatalf("exhausted review did not fail closed without a human: %+v", got)
 	}
@@ -82,13 +79,12 @@ func TestReviewerUnresolvedDenyModeNeverRequiresHumanInput(t *testing.T) {
 
 func TestReviewerDenialModeHasNoConcurrentLifetimeCap(t *testing.T) {
 	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := providersim.New(t)
+	server.Respond(func(providersim.Request) providersim.Turn {
 		calls.Add(1)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"{\"decision\":\"deny\",\"reason\":\"suspicious edit\"}"},"finish_reason":"stop"}]}`)
-	}))
-	defer server.Close()
-	s, a := newReviewerTestSession(t, server.URL)
+		return providersim.Text(`{"decision":"deny","reason":"suspicious edit"}`).WithoutUsage()
+	})
+	s, a := newReviewerTestSession(t, server.BaseURL(providersim.Chat))
 	call := provider.ToolCall{Function: provider.FunctionCall{Name: "edit_file"}}
 	params := map[string]any{"path": "main.go", "old_string": "old", "new_string": "new"}
 	s.cfg.Safety.AutoPermission.DenyMode = "ask"
@@ -115,14 +111,13 @@ func TestReviewerDenialModeHasNoConcurrentLifetimeCap(t *testing.T) {
 
 func TestRootAndChildReviewersRemainIndependentWithoutLifetimeCaps(t *testing.T) {
 	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := providersim.New(t)
+	server.Respond(func(providersim.Request) providersim.Turn {
 		calls.Add(1)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"{\"decision\":\"allow\",\"reason\":\"routine edit\"}"},"finish_reason":"stop"}]}`)
-	}))
-	defer server.Close()
+		return providersim.Text(`{"decision":"allow","reason":"routine edit"}`).WithoutUsage()
+	})
 
-	s, root := newReviewerTestSession(t, server.URL)
+	s, root := newReviewerTestSession(t, server.BaseURL(providersim.Chat))
 	child := &turnloop.Agent{AgentID: "child", Depth: 1, TurnGeneration: 1}
 	rootReview := s.permissionReviewer(root)
 	childReview := s.permissionReviewer(child)

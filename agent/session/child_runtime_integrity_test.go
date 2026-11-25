@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -22,6 +20,7 @@ import (
 	"crude/agent/sessiondb"
 	"crude/agent/tools"
 	"crude/agent/turnloop"
+	"crude/internal/providersim"
 	recoverytypes "crude/types/recovery"
 )
 
@@ -181,26 +180,18 @@ func TestChildCommittedContextAdoptionRejectsChangedOrReorderedSource(t *testing
 }
 
 func TestChildRuntimeReceiptImmediatelyPreparesCompactionFromExactSource(t *testing.T) {
-	var calls atomic.Int32
-	entered, release := make(chan struct{}), make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		if calls.Add(1) != 1 {
+	entered, gate := make(chan struct{}), providersim.NewGate()
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
+		if request.Index != 1 {
 			t.Error("child receipt/compaction boundary requested another stochastic answer")
-			w.WriteHeader(http.StatusInternalServerError)
-			return
+			return providersim.HTTPError(providersim.InvalidRequest)
 		}
 		close(entered)
-		select {
-		case <-release:
-		case <-request.Context().Done():
-			return
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"accepted before peer receipt\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	t.Cleanup(server.Close)
+		return providersim.Text("accepted before peer receipt").WithGate(gate)
+	})
 	home := t.TempDir()
-	cfg := modelAttributionConfig(server.URL, "child-notice-compaction")
+	cfg := modelAttributionConfig(server.BaseURL(providersim.Chat), "child-notice-compaction")
 	threshold := 20
 	profile := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
 	profile.Categories[CategoryResearcher] = CategoryConfig{
@@ -218,11 +209,7 @@ func TestChildRuntimeReceiptImmediatelyPreparesCompactionFromExactSource(t *test
 	runner := NewSubAgentRunner(s, 1)
 	s.subAgentSup = runner
 	t.Cleanup(func() {
-		select {
-		case <-release:
-		default:
-			close(release)
-		}
+		gate.Release()
 	})
 	result, err := runner.StartAgent(t.Context(), map[string]any{"category": CategoryResearcher, "description": "retain peer notice before compaction", "isolation": "shared"})
 	if err != nil {
@@ -275,7 +262,7 @@ func TestChildRuntimeReceiptImmediatelyPreparesCompactionFromExactSource(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	close(release)
+	gate.Release()
 	select {
 	case err := <-prepared:
 		if err != nil {
@@ -301,8 +288,8 @@ func TestChildRuntimeReceiptImmediatelyPreparesCompactionFromExactSource(t *test
 			t.Fatal("compaction admission truncated or replaced peer evidence")
 		}
 	}
-	if counts[note.Event.ID] != 1 || calls.Load() != 1 {
-		t.Fatalf("receipt/compaction lost or replayed work: note=%d calls=%d", counts[note.Event.ID], calls.Load())
+	if counts[note.Event.ID] != 1 || len(server.Requests()) != 1 {
+		t.Fatalf("receipt/compaction lost or replayed work: note=%d calls=%d", counts[note.Event.ID], len(server.Requests()))
 	}
 	var admissions int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM collaboration_admissions WHERE agent_id=? AND event_id=?`, identity.AgentID, note.Event.ID).Scan(&admissions); err != nil || admissions != 1 {
@@ -385,12 +372,12 @@ func newParkedChildFixture(t *testing.T) *parkedChildFixture {
 	t.Helper()
 	f := &parkedChildFixture{home: t.TempDir()}
 	f.sessions = filepath.Join(f.home, "sessions")
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := providersim.New(t)
+	server.Respond(func(providersim.Request) providersim.Turn {
 		f.requests.Add(1)
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	t.Cleanup(server.Close)
-	f.cfg = modelAttributionConfig(server.URL, "child-stop-model")
+		return providersim.HTTPError(providersim.InvalidRequest)
+	})
+	f.cfg = modelAttributionConfig(server.BaseURL(providersim.Chat), "child-stop-model")
 	profile := f.cfg.Agents.Profiles[f.cfg.Agents.ActiveProfile]
 	profile.Categories[CategoryResearcher] = CategoryConfig{AccountID: "account", Model: "child-stop-model"}
 	f.cfg.Agents.Profiles[f.cfg.Agents.ActiveProfile] = profile
@@ -737,34 +724,28 @@ func TestChildStopDuringFailedTerminalSettlementRetriesOnlyPersistence(t *testin
 			t.Setenv("HOME", home)
 			t.Setenv("USERPROFILE", home)
 			var requests, effects, acknowledgements atomic.Int32
-			entered, release := make(chan struct{}), make(chan struct{})
+			entered, gate := make(chan struct{}), providersim.NewGate()
 			var handle *turnloop.SubAgentHandle
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.Header().Set("Content-Type", "text/event-stream")
+			server := providersim.New(t)
+			server.Respond(func(request providersim.Request) providersim.Turn {
 				switch requests.Add(1) {
 				case 1:
 					close(entered)
-					<-release
-					_, _ = fmt.Fprint(w, `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"settlement-read","type":"function","function":{"name":"list_directory","arguments":"{\"path\":\".\"}"}}]},"finish_reason":"tool_calls"}]}`+"\n\ndata: [DONE]\n\n")
+					return simTool("settlement-read", "list_directory", `{"path":"."}`).WithGate(gate)
 				case 2:
 					runID, _ := handle.RunIdentity()
-					args, err := json.Marshal(map[string]any{
+					return providersim.CallTools(simToolArgs("settlement-report", "publish_report", map[string]any{
 						"recipient_ids": []string{string(handle.Spec.ParentID)}, "run_id": runID, "kind": "final",
 						"summary": "child accepted report", "body": "The one directory read completed.",
-					})
-					if err != nil {
-						t.Error(err)
-					}
-					_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"settlement-report\",\"type\":\"function\",\"function\":{\"name\":\"publish_report\",\"arguments\":%q}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", args)
+					}))
 				case 3:
-					_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"child accepted final output\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+					return providersim.Text("child accepted final output")
 				default:
 					t.Error("terminal persistence retry requested another child answer")
-					w.WriteHeader(http.StatusInternalServerError)
+					return providersim.HTTPError(providersim.InvalidRequest)
 				}
-			}))
-			t.Cleanup(server.Close)
-			cfg := modelAttributionConfig(server.URL, "child-settlement-"+failure)
+			})
+			cfg := modelAttributionConfig(server.BaseURL(providersim.Chat), "child-settlement-"+failure)
 			profile := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
 			profile.Categories[CategoryResearcher] = CategoryConfig{AccountID: "account", Model: "child-settlement-" + failure}
 			cfg.Agents.Profiles[cfg.Agents.ActiveProfile] = profile
@@ -803,11 +784,7 @@ func TestChildStopDuringFailedTerminalSettlementRetriesOnlyPersistence(t *testin
 			runner.SetOrchestratorID(s.sessionID)
 			runner.SetSender(sender)
 			t.Cleanup(func() {
-				select {
-				case <-release:
-				default:
-					close(release)
-				}
+				gate.Release()
 			})
 			result, err := runner.StartAgent(t.Context(), map[string]any{"category": CategoryResearcher, "description": "retain this assignment through failed final settlement", "isolation": "shared"})
 			if err != nil {
@@ -849,13 +826,9 @@ func TestChildStopDuringFailedTerminalSettlementRetriesOnlyPersistence(t *testin
 			t.Cleanup(func() {
 				_, _ = faultDB.Exec(`DROP TRIGGER IF EXISTS reject_terminal_settlement`)
 				_, _ = faultDB.Exec(`DROP TRIGGER IF EXISTS reject_terminal_mirror`)
-				select {
-				case <-release:
-				default:
-					close(release)
-				}
+				gate.Release()
 			})
-			close(release)
+			gate.Release()
 			first := waitTerminalSettlementAttention(t, baseSender, identity.AgentID)
 			before, err := sessiondb.LoadMessagesWithMeta(handle.DB)
 			if err != nil || !slices.ContainsFunc(before, func(row sessiondb.MessageWithMeta) bool {
@@ -957,23 +930,24 @@ func TestCheckedTerminalSettlementPreservesSuccessfulStopAndPassiveResume(t *tes
 func checkChildActiveStop(t *testing.T, rejectTerminal, lateSteering bool) {
 	t.Helper()
 	var requests, effects atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
+	server := providersim.New(t, providersim.WithChatGateway("active-child-stop-model", providersim.DeepSeek))
+	partial := providersim.NewGate()
+	server.Respond(func(request providersim.Request) providersim.Turn {
 		switch requests.Add(1) {
 		case 1:
-			_, _ = fmt.Fprint(w, `data: {"choices":[{"delta":{"content":"accepted child work","reasoning_content":"accepted child reasoning","tool_calls":[{"index":0,"id":"child-read-once","type":"function","function":{"name":"list_directory","arguments":"{\"path\":\".\"}"}}]},"finish_reason":"tool_calls"}]}`+"\n\ndata: [DONE]\n\n")
+			return simTool("child-read-once", "list_directory", `{"path":"."}`).
+				WithText("accepted child work").WithReasoning("accepted child reasoning", "", "")
 		case 2:
-			_, _ = fmt.Fprint(w, `data: {"choices":[{"delta":{"content":"accepted second partial"}}]}`+"\n\n")
-			w.(http.Flusher).Flush()
-			<-request.Context().Done()
+			// Chat emits the role frame followed by the accepted text delta.
+			return providersim.Text("accepted second partial").WithGateAfter(2, partial)
 		default:
 			t.Error("Stop or passive resume launched a replacement provider request")
+			return providersim.HTTPError(providersim.InvalidRequest)
 		}
-	}))
-	t.Cleanup(server.Close)
+	})
 	home := t.TempDir()
 	directory := filepath.Join(home, "sessions")
-	cfg := modelAttributionConfig(server.URL, "active-child-stop-model")
+	cfg := modelAttributionConfig(server.BaseURL(providersim.Chat), "active-child-stop-model")
 	profile := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
 	profile.Categories[CategoryResearcher] = CategoryConfig{AccountID: "account", Model: "active-child-stop-model"}
 	cfg.Agents.Profiles[cfg.Agents.ActiveProfile] = profile

@@ -3,8 +3,6 @@ package session
 import (
 	"context"
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +13,7 @@ import (
 	"crude/agent/collaboration"
 	"crude/agent/tools"
 	"crude/agent/turnloop"
+	"crude/internal/providersim"
 )
 
 type assignmentEventSender struct {
@@ -60,11 +59,9 @@ func TestChildAssignmentChatShowsAuthoredTextNotProviderEnvelope(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	t.Cleanup(server.Close)
-	cfg := modelAttributionConfig(server.URL, "assignment-model")
+	// This attempt must stop before contacting the provider.
+	server := providersim.New(t)
+	cfg := modelAttributionConfig(server.BaseURL(providersim.Chat), "assignment-model")
 	profile := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
 	profile.Categories[CategoryResearcher] = CategoryConfig{AccountID: "account", Model: "assignment-model"}
 	cfg.Agents.Profiles[cfg.Agents.ActiveProfile] = profile

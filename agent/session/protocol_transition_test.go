@@ -4,18 +4,15 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"crude/agent/provider"
+	"crude/internal/providersim"
 	"crude/types/setting"
 )
 
@@ -29,34 +26,37 @@ func TestAllWireTransitionsResumeAndContinueTheToolLoop(t *testing.T) {
 				}
 				const model = "gpt-protocol-transition-test"
 				provider.SetModelContext(model, 1_000_000)
-				var mu sync.Mutex
 				protocol := source.Info().ID
-				var bodies []map[string]any
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					body, err := io.ReadAll(r.Body)
-					if err != nil {
-						t.Error(err)
-						return
-					}
-					var wire map[string]any
-					if err := json.Unmarshal(body, &wire); err != nil {
-						t.Error(err)
-						return
-					}
-					mu.Lock()
-					defer mu.Unlock()
-					bodies = append(bodies, wire)
-					requestIndex := len(bodies)
-					validateSessionTransitionWire(t, protocol, wire)
-					if requestIndex%2 == 0 && !bytes.Contains(body, []byte("transition_evidence")) {
+				sim := providersim.New(t)
+				endpoint, setWire := simStableEndpoint(t, sim, sessionSimWire(protocol))
+				sim.Respond(func(request providersim.Request) providersim.Turn {
+					validateSessionTransitionWire(t, sessionSimProtocol(request.Wire), simRawRequest(request))
+					if request.Index%2 == 0 && !bytes.Contains(request.Raw, []byte("transition_evidence")) {
 						t.Error("real file-tool result missing from next model request")
 					}
-					writeTransitionResponse(w, protocol, requestIndex)
-				}))
-				defer server.Close()
-				cfg := modelAttributionConfig(server.URL, model)
+					if request.Index%2 == 0 {
+						turn := providersim.Text(fmt.Sprintf("complete-answer-%d", request.Index))
+						switch request.Wire {
+						case providersim.Gemini:
+							turn = turn.WithReasoning("private trace", "c2lnLXRleHQ=", "")
+						case providersim.Interactions:
+							turn = turn.WithReasoning("", "c2lnLXRob3VnaHQ=", "")
+						}
+						return turn
+					}
+					turn := simTool(fmt.Sprintf("read-%d", request.Index), "read_file", `{"path":"a.go"}`)
+					switch request.Wire {
+					case providersim.Responses, providersim.Codex:
+						return turn
+					case providersim.Gemini, providersim.Interactions:
+						turn = turn.WithReasoning("", "c2lnLWNhbGw=", "")
+					}
+					return turn.WithText("tool commentary")
+				})
+				cfg := modelAttributionConfig(endpoint, model)
 				pc := cfg.Accounts["account"].Connection
 				pc.APIStandard = protocol
+				pc.Protocol = &provider.ProtocolSettings{Store: new(false)}
 				a := cfg.Accounts["account"]
 				a.Connection = pc
 				cfg.Accounts["account"] = a
@@ -96,14 +96,11 @@ func TestAllWireTransitionsResumeAndContinueTheToolLoop(t *testing.T) {
 				if err != nil || !bytes.Equal(before, after) {
 					t.Fatal("passive resume rewrote canonical history")
 				}
-				mu.Lock()
-				count := len(bodies)
-				protocol = target.Info().ID
-				mu.Unlock()
-				if count != 2 {
+				if len(sim.Requests()) != 2 {
 					t.Fatal("resume made a provider request")
 				}
 				pc.APIStandard = target.Info().ID
+				setWire(sessionSimWire(pc.APIStandard))
 				account := cfg.Accounts["account"]
 				account.Connection = pc
 				cfg.Accounts["account"] = account
@@ -152,8 +149,10 @@ func TestAllWireTransitionsResumeAndContinueTheToolLoop(t *testing.T) {
 				if err != nil || !bytes.Equal(prefix, before) {
 					t.Fatal("wire/config switch changed accepted history")
 				}
-				mu.Lock()
-				defer mu.Unlock()
+				var bodies []map[string]any
+				for _, request := range sim.Requests() {
+					bodies = append(bodies, simRawRequest(request))
+				}
 				if len(bodies) != 10 {
 					t.Fatalf("agentic loop did not complete all turns: requests=%d", len(bodies))
 				}
@@ -189,71 +188,6 @@ func TestAllWireTransitionsResumeAndContinueTheToolLoop(t *testing.T) {
 				}
 			})
 		}
-	}
-}
-
-func writeTransitionResponse(w http.ResponseWriter, protocol string, index int) {
-	callID := fmt.Sprintf("read-%d", index)
-	text := fmt.Sprintf("complete-answer-%d", index)
-	tool := index%2 == 1
-	w.Header().Set("Content-Type", "application/json")
-	switch protocol {
-	case "openai":
-		message := map[string]any{"role": "assistant", "content": text}
-		reason := "stop"
-		if tool {
-			message["content"] = "tool commentary"
-			message["tool_calls"] = []any{map[string]any{"id": callID, "type": "function", "function": map[string]any{"name": "read_file", "arguments": `{"path":"a.go"}`}}}
-			reason = "tool_calls"
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": message, "finish_reason": reason}}})
-	case "openai-responses", "codex":
-		output := []any{map[string]any{"type": "message", "id": fmt.Sprintf("message-%d", index), "role": "assistant", "status": "completed", "phase": "final_answer", "content": []any{map[string]any{"type": "output_text", "text": text, "annotations": []any{}}}}}
-		if tool {
-			output = []any{map[string]any{"type": "function_call", "call_id": callID, "name": "read_file", "arguments": `{"path":"a.go"}`, "status": "completed"}}
-		}
-		response := map[string]any{"id": fmt.Sprintf("response-%d", index), "status": "completed", "store": false, "output": output}
-		w.Header().Set("Content-Type", "text/event-stream")
-		encoded, _ := json.Marshal(response)
-		_, _ = fmt.Fprintf(w, "data: {\"type\":\"response.completed\",\"response\":%s}\n\n", encoded)
-	case "anthropic":
-		content := []any{map[string]any{"type": "text", "text": text}}
-		reason := "end_turn"
-		if tool {
-			content = []any{map[string]any{"type": "text", "text": "tool commentary"}, map[string]any{"type": "tool_use", "id": callID, "name": "read_file", "input": map[string]any{"path": "a.go"}}}
-			reason = "tool_use"
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"type": "message", "id": fmt.Sprintf("message-%d", index), "role": "assistant", "content": content, "stop_reason": reason})
-	case "ollama":
-		message := map[string]any{"role": "assistant", "content": text}
-		if tool {
-			message["content"] = "tool commentary"
-			message["tool_calls"] = []any{map[string]any{"id": callID, "function": map[string]any{"name": "read_file", "arguments": map[string]any{"path": "a.go"}}}}
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"model": "gpt-protocol-transition-test", "done": true, "message": message, "done_reason": "stop"})
-	case "gemini":
-		parts := []any{map[string]any{"text": "private trace", "thought": true}, map[string]any{"text": text, "thoughtSignature": "c2lnLXRleHQ="}}
-		if tool {
-			parts = []any{map[string]any{"text": "tool commentary"}, map[string]any{"functionCall": map[string]any{"id": callID, "name": "read_file", "args": map[string]any{"path": "a.go"}}, "thoughtSignature": "c2lnLWNhbGw="}}
-		}
-		chunk, _ := json.Marshal(map[string]any{"candidates": []any{map[string]any{"content": map[string]any{"role": "model", "parts": parts}, "finishReason": "STOP"}},
-			"usageMetadata": map[string]any{"promptTokenCount": 10, "candidatesTokenCount": 5}})
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprintf(w, "data: %s\n\n", chunk)
-	case "gemini-interactions":
-		steps := []any{map[string]any{"type": "thought", "signature": "c2lnLXRob3VnaHQ="}, map[string]any{"type": "model_output", "content": []any{map[string]any{"type": "text", "text": text}}}}
-		status := "completed"
-		if tool {
-			steps = []any{map[string]any{"type": "model_output", "content": []any{map[string]any{"type": "text", "text": "tool commentary"}}},
-				map[string]any{"type": "function_call", "id": callID, "name": "read_file", "arguments": map[string]any{"path": "a.go"}, "signature": "c2lnLWNhbGw="}}
-			status = "requires_action"
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		for index, step := range steps {
-			encoded, _ := json.Marshal(map[string]any{"event_type": "step.start", "index": index, "step": step})
-			_, _ = fmt.Fprintf(w, "event: step.start\ndata: %s\n\nevent: step.stop\ndata: {\"event_type\":\"step.stop\",\"index\":%d}\n\n", encoded, index)
-		}
-		_, _ = fmt.Fprintf(w, "event: interaction.completed\ndata: {\"event_type\":\"interaction.completed\",\"interaction\":{\"status\":%q,\"usage\":{\"total_input_tokens\":10,\"total_output_tokens\":5}}}\n\n", status)
 	}
 }
 

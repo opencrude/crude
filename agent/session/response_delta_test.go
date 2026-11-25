@@ -3,20 +3,17 @@ package session
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
+	"crude/internal/providersim"
 	"crude/types/setting"
 )
 
@@ -27,92 +24,27 @@ func TestResponsesDeltaSessionToolsTurnsAndPassiveResume(t *testing.T) {
 	}
 	const model = "gpt-delta-e2e"
 	provider.SetModelContext(model, 1_000_000)
-	var requests atomic.Int32
-	var mu sync.Mutex
-	stored := make(map[string][]json.RawMessage)
-	var sizes []int
-	var initialSystem provider.ChatMessage
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			t.Error(err)
-			return
-		}
-		var wire struct {
-			Previous string            `json:"previous_response_id"`
-			Input    []json.RawMessage `json:"input"`
-		}
-		if err := json.Unmarshal(body, &wire); err != nil {
-			t.Error(err)
-			return
-		}
-		index := int(requests.Add(1))
-		mu.Lock()
-		defer mu.Unlock()
-		sizes = append(sizes, len(body))
-		effective := append([]json.RawMessage(nil), wire.Input...)
-		if wire.Previous != "" {
-			prefix, ok := stored[wire.Previous]
-			if !ok {
-				t.Error("unknown previous response")
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
-			effective = append(append([]json.RawMessage(nil), prefix...), wire.Input...)
-		}
-		switch index {
-		case 1:
-			if wire.Previous != "" {
-				t.Error("first request did not seed complete context")
-			}
-			var system struct {
-				Role    string
-				Content []struct{ Text string }
-			}
-			if err := json.Unmarshal(wire.Input[0], &system); err != nil {
-				t.Error(err)
-				return
-			}
-			initialSystem = provider.NewTextMessage(system.Role, system.Content[0].Text)
-		case 2:
-			var result struct {
-				Type   string
-				CallID string `json:"call_id"`
-				Output string
-			}
-			if len(wire.Input) != 1 {
-				t.Errorf("tool round re-uploaded %d input items", len(wire.Input))
-			} else if err := json.Unmarshal(wire.Input[0], &result); err != nil {
-				t.Error(err)
-			}
-			if wire.Previous != "response-1" || result.CallID != "read-1" || !strings.Contains(result.Output, "actual_project") {
-				t.Errorf("missing exact real file-tool result: %+v", result)
-			}
-		case 3:
-			if wire.Previous != "response-2" || len(wire.Input) > 3 {
-				t.Errorf("resumed turn uploaded old history: previous=%q items=%d", wire.Previous, len(wire.Input))
-			}
-		case 4:
-			if wire.Previous != "" || len(body) < sizes[0]/2 {
-				t.Error("model change incorrectly reused another model's response")
-			}
-		case 5:
-			if wire.Previous != "response-4" || len(wire.Input) > 3 {
-				t.Error("new model did not establish its own delta chain")
-			}
-		}
-		var output json.RawMessage
-		if index == 1 {
-			output = json.RawMessage(`{"type":"function_call","id":"fc-1","name":"read_file","call_id":"read-1","arguments":"{\"path\":\"a.go\"}","status":"completed"}`)
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
+		var turn providersim.Turn
+		if r.Index == 1 {
+			turn = simTool("read-1", "read_file", `{"path":"a.go"}`)
 		} else {
-			output = json.RawMessage(fmt.Sprintf(`{"type":"message","id":"m-%d","role":"assistant","status":"completed","content":[{"type":"output_text","text":"done-%d"}]}`, index, index))
+			turn = providersim.Text(fmt.Sprintf("done-%d", r.Index))
 		}
-		stored[fmt.Sprintf("response-%d", index)] = append(effective, output)
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprintf(w, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"response-%d\",\"status\":\"in_progress\",\"store\":true,\"output\":[]}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"store\":true,\"output\":[%s],\"usage\":{\"input_tokens\":100000,\"output_tokens\":10,\"input_tokens_details\":{\"cached_tokens\":90000}}}}\n\n", index, output)
-	}))
-	defer server.Close()
-	cfg := modelAttributionConfig(server.URL, model)
+		return turn.WithUsage(providersim.Usage{Input: 100_000, Output: 10, Cached: 90_000})
+	})
+	modelRequests := func() []providersim.Request {
+		var requests []providersim.Request
+		for _, request := range server.Requests() {
+			if request.Method == http.MethodPost {
+				requests = append(requests, request)
+			}
+		}
+		return requests
+	}
+
+	cfg := modelAttributionConfig(server.BaseURL(providersim.Responses), model)
 	pc := cfg.Accounts["account"].Connection
 	pc.APIStandard = "openai-responses"
 	a := cfg.Accounts["account"]
@@ -137,38 +69,70 @@ func TestResponsesDeltaSessionToolsTurnsAndPassiveResume(t *testing.T) {
 	}
 	waitTurnDone(t, sender, orch.ID, turnTimeout)
 	waitAssistantCount(t, s, 1)
-	if requests.Load() != 2 {
-		t.Fatalf("tool loop requests=%d", requests.Load())
+	if len(modelRequests()) != 2 {
+		t.Fatalf("tool loop requests=%d", len(modelRequests()))
 	}
 	s.msgsMu.Lock()
 	active := append([]provider.ChatMessage(nil), s.activeContext...)
 	s.msgsMu.Unlock()
-	verify := func(active []provider.ChatMessage, id string) {
+	requests := modelRequests()
+	first := simDecodeRequest[struct{ Input []json.RawMessage }](t, requests[0])
+	initialSystem := simDecodeRequest[struct {
+		Role    string
+		Content []struct{ Text string }
+	}](t, providersim.Request{Raw: first.Input[0]})
+	system := provider.NewTextMessage(initialSystem.Role, initialSystem.Content[0].Text)
+	if requests[0].PreviousResponseID != "" {
+		t.Fatal("first request did not seed complete context")
+	}
+	second := simDecodeRequest[struct {
+		Input []struct {
+			Type   string
+			CallID string `json:"call_id"`
+			Output string
+		}
+	}](t, requests[1])
+	if len(second.Input) != 1 || requests[1].PreviousResponseID != simStoredResponseID(requests[0]) ||
+		second.Input[0].Type != "function_call_output" || second.Input[0].CallID != "read-1" ||
+		!strings.Contains(second.Input[0].Output, "actual_project") {
+		t.Fatalf("missing exact real file-tool result: %+v", second.Input)
+	}
+	verify := func(active []provider.ChatMessage, last providersim.Request) {
 		t.Helper()
-		body, err := (&provider.OpenAIResponsesStandard{}).EncodeRequest(&provider.ChatRequest{Model: model, Messages: append([]provider.ChatMessage{initialSystem}, active...)})
+		body, err := (&provider.OpenAIResponsesStandard{}).EncodeRequest(&provider.ChatRequest{Model: model, Messages: append([]provider.ChatMessage{system}, active...)})
 		if err != nil {
 			t.Fatal(err)
 		}
-		var full struct {
-			Input []json.RawMessage `json:"input"`
+		full := simDecodeRequest[struct{ Input []json.RawMessage }](t, providersim.Request{Raw: body})
+		var effective []json.RawMessage
+		for _, request := range modelRequests() {
+			stored := fetchSimStoredResponse(t, server, request)
+			input := simDecodeRequest[struct{ Input []json.RawMessage }](t, request)
+			if stored.Previous != request.PreviousResponseID {
+				t.Fatal("stored response did not retain its previous-response link")
+			}
+			if stored.Previous == "" {
+				effective = nil
+			}
+			effective = append(effective, input.Input...)
+			effective = append(effective, stored.Output...)
+			if request.Index == last.Index {
+				break
+			}
 		}
-		if err := json.Unmarshal(body, &full); err != nil {
-			t.Fatal(err)
-		}
-		mu.Lock()
-		expected, _ := json.Marshal(stored[id])
-		mu.Unlock()
+		expected, _ := json.Marshal(effective)
 		actual, _ := json.Marshal(full.Input)
 		var x, y any
 		if json.Unmarshal(expected, &x) != nil || json.Unmarshal(actual, &y) != nil || !reflect.DeepEqual(x, y) {
 			t.Fatal("delta-resolved server context differs from complete authoritative local context")
 		}
 	}
-	verify(active, "response-2")
+	verify(active, requests[1])
 	state, found, err := sessiondb.LoadContextState(s.db, s.sessionID, s.sessionID)
 	if err != nil || !found || state.Messages[len(state.Messages)-1].ResponseReference == nil {
 		t.Fatalf("continuation was not durably persisted: found=%v err=%v", found, err)
 	}
+	beforeReopen := len(server.Requests())
 	dbPath := s.dbPath
 	s.Close()
 	resumed, err := ResumeSessionWithDir(dbPath, cfg, home, sessions)
@@ -177,7 +141,7 @@ func TestResponsesDeltaSessionToolsTurnsAndPassiveResume(t *testing.T) {
 	}
 	defer resumed.Close()
 	resumed.SetWorkDir(root)
-	if requests.Load() != 2 {
+	if len(server.Requests()) != beforeReopen {
 		t.Fatal("passive resume made a provider request")
 	}
 	resumed.msgsMu.Lock()
@@ -201,7 +165,12 @@ func TestResponsesDeltaSessionToolsTurnsAndPassiveResume(t *testing.T) {
 	resumed.msgsMu.Lock()
 	restored = append([]provider.ChatMessage(nil), resumed.activeContext...)
 	resumed.msgsMu.Unlock()
-	verify(restored, "response-3")
+	requests = modelRequests()
+	if len(requests) != 3 || requests[2].PreviousResponseID != simStoredResponseID(requests[1]) ||
+		len(simDecodeRequest[struct{ Input []json.RawMessage }](t, requests[2]).Input) > 3 {
+		t.Fatal("resumed turn uploaded old history rather than the retained delta")
+	}
+	verify(restored, requests[2])
 	const otherModel = "gpt-other-delta-e2e"
 	provider.SetModelContext(otherModel, 1_000_000)
 	settings := resumed.SettingsSnapshot()
@@ -218,10 +187,53 @@ func TestResponsesDeltaSessionToolsTurnsAndPassiveResume(t *testing.T) {
 		waitTurnDone(t, sender, orch.ID, turnTimeout)
 		waitAssistantCount(t, resumed, count)
 	}
-	mu.Lock()
-	defer mu.Unlock()
-	if len(sizes) != 5 || sizes[1]*4 >= sizes[0] || sizes[2]*4 >= sizes[0] || sizes[4]*4 >= sizes[3] {
+	requests = modelRequests()
+	if len(requests) != 5 {
+		t.Fatalf("want five requests, got %d", len(requests))
+	}
+	sizes := make([]int, 5)
+	for i, request := range requests {
+		sizes[i] = len(request.Raw)
+	}
+	if requests[3].PreviousResponseID != "" || sizes[3] < sizes[0]/2 {
+		t.Fatal("model change incorrectly reused another model's response")
+	}
+	if requests[4].PreviousResponseID != simStoredResponseID(requests[3]) ||
+		len(simDecodeRequest[struct{ Input []json.RawMessage }](t, requests[4]).Input) > 3 {
+		t.Fatal("new model did not establish its own delta chain")
+	}
+	if sizes[1]*4 >= sizes[0] || sizes[2]*4 >= sizes[0] || sizes[4]*4 >= sizes[3] {
 		t.Fatalf("insufficient actual upload reduction: %v", sizes)
 	}
 	t.Logf("HTTP payload bytes: initial=%d tool delta=%d resumed-turn delta=%d", sizes[0], sizes[1], sizes[2])
+}
+
+// The simulator journals the request index used in its deterministic response ID.
+func simStoredResponseID(r providersim.Request) string { return fmt.Sprintf("resp_sim_%d", r.Index) }
+
+type simStoredResponse struct {
+	Previous string `json:"previous_response_id"`
+	Output   []json.RawMessage
+}
+
+func fetchSimStoredResponse(t *testing.T, server *providersim.Server, r providersim.Request) simStoredResponse {
+	t.Helper()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet,
+		server.BaseURL(providersim.Responses)+"/responses/"+simStoredResponseID(r), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var stored simStoredResponse
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("fetch stored response %s: %s", simStoredResponseID(r), response.Status)
+	}
+	if err := json.NewDecoder(response.Body).Decode(&stored); err != nil {
+		t.Fatal(err)
+	}
+	return stored
 }

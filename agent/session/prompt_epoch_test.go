@@ -3,9 +3,6 @@ package session
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
@@ -13,13 +10,14 @@ import (
 
 	"crude/agent/hostshell"
 	"crude/agent/provider"
+	"crude/internal/providersim"
 	captypes "crude/types/capability"
 	"crude/types/setting"
 )
 
 type epochCall struct {
 	provider.ChatRequest
-	reply chan func(http.ResponseWriter)
+	reply chan providersim.Turn
 }
 type epochJourney struct {
 	*Session
@@ -32,33 +30,25 @@ func newEpochJourney(t *testing.T) *epochJourney {
 	t.Helper()
 	j := &epochJourney{calls: make(chan epochCall), sender: newMockEventSender()}
 	stop := make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var call epochCall
-		if err := json.NewDecoder(r.Body).Decode(&call.ChatRequest); err != nil {
-			t.Error(err)
-			return
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
+		if request.Model == "epoch-extractor" {
+			return providersim.Text("<<<intent>>>\n- Retain request\n<<<work>>>\n- Reviewed earlier evidence\n<<<state>>>\n- Unchanged\n<<<continuation>>>\n- Continue current task")
 		}
-		if call.Model == "epoch-extractor" {
-			writeAdaptiveCompactionSSE(t, w, "<<<intent>>>\n- Retain request\n<<<work>>>\n- Reviewed earlier evidence\n<<<state>>>\n- Unchanged\n<<<continuation>>>\n- Continue current task")
-			return
-		}
-		call.reply = make(chan func(http.ResponseWriter), 1)
+		call := epochCall{ChatRequest: simDecodeRequest[provider.ChatRequest](t, request), reply: make(chan providersim.Turn, 1)}
 		select {
 		case j.calls <- call:
 		case <-stop:
-			return
-		case <-r.Context().Done():
-			return
+			return providersim.HTTPError(providersim.InvalidRequest)
 		}
 		select {
-		case write := <-call.reply:
-			write(w)
+		case reply := <-call.reply:
+			return reply
 		case <-stop:
-		case <-r.Context().Done():
+			return providersim.HTTPError(providersim.InvalidRequest)
 		}
-	}))
-	t.Cleanup(server.Close)
-	cfg := modelAttributionConfig(server.URL, "epoch-model")
+	})
+	cfg := modelAttributionConfig(server.BaseURL(providersim.Chat), "epoch-model")
 	// Exhaust the transport budget so a gateway error exercises the run supervisor.
 	account := cfg.Accounts["account"]
 	account.Connection.Dialer = &provider.DialSettings{MaxAttempts: 1}
@@ -117,20 +107,17 @@ func (j *epochJourney) start(t *testing.T, text string) epochCall {
 	return j.next(t)
 }
 
-func (c epochCall) answer(t *testing.T, text string) {
-	c.reply <- func(w http.ResponseWriter) { writeAdaptiveCompactionSSE(t, w, text) }
+func (c epochCall) answer(text string) {
+	c.reply <- providersim.Text(text)
 }
 
 func (c epochCall) tool(name, args string) {
-	c.reply <- func(w http.ResponseWriter) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":%q,\"type\":\"function\",\"function\":{\"name\":%q,\"arguments\":%q}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", name+"-call", name, args)
-	}
+	c.reply <- simTool(name+"-call", name, args)
 }
 
 func (j *epochJourney) finish(t *testing.T, c epochCall, text string) {
 	t.Helper()
-	c.answer(t, text)
+	c.answer(text)
 	waitTransitionTurn(t, j.sender, j.owner)
 }
 
@@ -251,11 +238,8 @@ func TestRootRetryKeepsPromptAndAnnouncesSettings(t *testing.T) {
 	j := newEpochJourney(t)
 	first := j.start(t, "Continue if the connection drops.")
 	setEpochDelegation(t, j.Session, true)
-	first.reply <- func(w http.ResponseWriter) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusRequestTimeout)
-		fmt.Fprint(w, `{"error":{"type":"invalid_request_error","message":"stream error: stream disconnected before completion: stream closed before response.completed"}}`)
-	}
+	first.reply <- providersim.HTTPError(providersim.RequestTimeout).
+		WithFaultMessage("stream error: stream disconnected before completion: stream closed before response.completed")
 	next := j.next(t)
 	assertEpochPrefix(t, first.ChatRequest, next.ChatRequest)
 	assertEpochUpdate(t, next.Messages[len(first.Messages):], `type="orchestrator"`)

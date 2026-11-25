@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"html"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -19,6 +17,7 @@ import (
 	"crude/agent/sessiondb"
 	"crude/agent/turnloop"
 	"crude/internal/logger"
+	"crude/internal/providersim"
 	"crude/text/anchor"
 	"crude/types/control"
 	"crude/types/conversation"
@@ -41,25 +40,23 @@ func latestReview(t *testing.T, s *Session) conversation.PlanRevision {
 func TestPlanReviewRootCompletionUsesStartingMode(t *testing.T) {
 	requests := make(chan planModeRequest, 4)
 	replies := make(chan string)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body planModeRequest
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Error(err)
-			return
+	stopGate := providersim.NewGate()
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
+		requests <- simDecodeRequest[planModeRequest](t, request)
+		if request.Index == 4 {
+			// The fourth turn is stopped before any model output. Do not let
+			// its responder consume the next turn's reply.
+			return providersim.HTTPError(providersim.BadGateway).WithGate(stopGate)
 		}
-		requests <- body
 		select {
 		case answer := <-replies:
-			frame, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{
-				"delta": map[string]string{"content": answer}, "finish_reason": "stop",
-			}}})
-			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", frame)
-		case <-r.Context().Done():
+			return providersim.Text(answer)
+		case <-t.Context().Done():
+			return providersim.HTTPError(providersim.InvalidRequest)
 		}
-	}))
-	t.Cleanup(server.Close)
-	s, err := NewWithSessionDir("", mediaAttributionConfig(server.URL, "plan-review-model", "openai"), t.TempDir(), t.TempDir())
+	})
+	s, err := NewWithSessionDir("", mediaAttributionConfig(server.BaseURL(providersim.Chat), "plan-review-model", "openai"), t.TempDir(), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,11 +150,11 @@ func TestPlanReviewChildProposalDoesNotCreateRootRevision(t *testing.T) {
 	if err := h.session.SetPlanMode(true); err != nil {
 		t.Fatal(err)
 	}
-	call.reply <- map[string]any{"tool_calls": []any{wireTool("report", "publish_report", map[string]any{
+	call.reply <- providersim.CallTools(simToolArgs("report", "publish_report", map[string]any{
 		"recipient_ids": []string{h.root.ID}, "kind": "final", "summary": "Done.", "body": "Done.",
-	})}}
+	}))
 	last := h.next(h.children, "child receives its report")
-	last.reply <- map[string]any{"content": planReply("# Child work\n\nChange nothing.")}
+	last.reply <- providersim.Text(planReply("# Child work\n\nChange nothing."))
 	joined := make(chan struct{})
 	go func() { h.session.SubAgentRunner().Wait(); close(joined) }()
 	select {
@@ -287,12 +284,11 @@ func reviewFixture(t *testing.T, plan string) (*Session, *mockEventSender) {
 
 func reviewSessionFixture(t *testing.T) (*Session, *mockEventSender) {
 	t.Helper()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Acknowledged.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	t.Cleanup(server.Close)
-	s, err := NewWithSessionDir("", mediaAttributionConfig(server.URL, "review-test-model", "openai"), t.TempDir(), t.TempDir())
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
+		return providersim.Text("Acknowledged.")
+	})
+	s, err := NewWithSessionDir("", mediaAttributionConfig(server.BaseURL(providersim.Chat), "review-test-model", "openai"), t.TempDir(), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -556,18 +552,12 @@ func TestPlanNewSessionHandoffFirstTurnRemainsImplementation(t *testing.T) {
 	const plan = "# Fresh implementation\n\n- Use these exact steps."
 	source, _ := reviewFixture(t, plan)
 	requests := make(chan planModeRequest, 4)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body planModeRequest
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Error(err)
-			return
-		}
-		requests <- body
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Acknowledged.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	t.Cleanup(server.Close)
-	destination, err := NewWithSessionDir("", mediaAttributionConfig(server.URL, "review-handoff-mode", "openai"), t.TempDir(), t.TempDir())
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
+		requests <- simDecodeRequest[planModeRequest](t, request)
+		return providersim.Text("Acknowledged.")
+	})
+	destination, err := NewWithSessionDir("", mediaAttributionConfig(server.BaseURL(providersim.Chat), "review-handoff-mode", "openai"), t.TempDir(), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}

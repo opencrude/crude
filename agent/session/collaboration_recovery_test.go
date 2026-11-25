@@ -1,9 +1,6 @@
 package session
 
 import (
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -11,6 +8,7 @@ import (
 
 	"crude/agent/collaboration"
 	"crude/agent/provider"
+	"crude/internal/providersim"
 )
 
 func TestPassiveResumeAdmitsOldEvidenceBeforeNewPeerWake(t *testing.T) {
@@ -21,14 +19,14 @@ func TestPassiveResumeAdmitsOldEvidenceBeforeNewPeerWake(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			var calls atomic.Int32
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			server := providersim.New(t)
+			server.Respond(func(providersim.Request) providersim.Turn {
 				calls.Add(1)
-				w.Header().Set("Content-Type", "text/event-stream")
-				_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Retained evidence handled.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-			}))
-			t.Cleanup(server.Close)
+				return providersim.Text("Retained evidence handled.").WithoutUsage()
+			})
+
 			home, project := t.TempDir(), t.TempDir()
-			cfg := modelAttributionConfig(server.URL, "passive-boundary-model")
+			cfg := modelAttributionConfig(server.BaseURL(providersim.Chat), "passive-boundary-model")
 			before, err := NewWithSessionDir("", cfg, home, home)
 			if err != nil {
 				t.Fatal(err)

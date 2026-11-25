@@ -6,8 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,6 +16,7 @@ import (
 	"crude/agent/sessiondb"
 	"crude/agent/worktree"
 	"crude/internal/logger"
+	"crude/internal/providersim"
 	"crude/types/command"
 	"crude/types/conversation"
 )
@@ -310,18 +309,13 @@ func TestInvestigationEvidenceBoundsAndDistinguishesInconclusiveResults(t *testi
 
 func TestInvestigationEvidenceReachesInSessionImplementationInput(t *testing.T) {
 	const plan = "# Repair in this session"
-	requests := make(chan []provider.ChatMessage, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body struct{ Messages []provider.ChatMessage }
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Error(err)
-		}
-		requests <- body.Messages
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Done.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	t.Cleanup(server.Close)
-	s, err := NewWithSessionDir("", mediaAttributionConfig(server.URL, "review-test-model", "openai"), t.TempDir(), t.TempDir())
+	requests := make(chan []providersim.Message, 1)
+	server := providersim.New(t)
+	server.Respond(func(req providersim.Request) providersim.Turn {
+		requests <- req.Messages
+		return providersim.Text("Done.").WithoutUsage()
+	})
+	s, err := NewWithSessionDir("", mediaAttributionConfig(server.BaseURL(providersim.Chat), "review-test-model", "openai"), t.TempDir(), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -367,7 +361,7 @@ func TestInvestigationEvidenceReachesInSessionImplementationInput(t *testing.T) 
 	case messages := <-requests:
 		var sawHandoff bool
 		for _, msg := range messages {
-			if msg.Role == "user" && strings.Contains(msg.ContentString(), out.Text) {
+			if msg.Role == "user" && strings.Contains(simText(msg.Parts), out.Text) {
 				sawHandoff = true
 			}
 		}

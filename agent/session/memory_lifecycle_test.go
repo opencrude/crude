@@ -2,15 +2,12 @@ package session
 
 import (
 	"context"
-	"io"
-	"net/http"
-	"net/http/httptest"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"crude/agent/memory"
 	"crude/agent/provider"
+	"crude/internal/providersim"
 )
 
 func TestMemoryShutdownCancelsMaintenanceDelay(t *testing.T) {
@@ -40,15 +37,10 @@ func TestMemoryShutdownFinishesDurableTurnMirror(t *testing.T) {
 }
 
 func TestMemoryMaintenanceRecoversSameSessionShortTurn(t *testing.T) {
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests.Add(1)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"{\"memories\":[]}"},"finish_reason":"stop"}]}`)
-	}))
-	defer server.Close()
+	server := providersim.New(t)
+	server.Script(providersim.Text(`{"memories":[]}`).WithoutUsage())
 	store := newTestMemoryStore(t)
-	cfg := modelAttributionConfig(server.URL, "test-model")
+	cfg := modelAttributionConfig(server.BaseURL(providersim.Chat), "test-model")
 	cfg.Memory.Consolidation = "off"
 	s := &Session{sessionID: "resumed", memoryStore: store, cfg: cfg}
 	if err := store.RecordTurn(context.Background(), memory.TurnRecord{SessionID: s.sessionID, Turn: 1, UserText: "pending short turn", AssistantText: "completed answer"}); err != nil {
@@ -59,35 +51,25 @@ func TestMemoryMaintenanceRecoversSameSessionShortTurn(t *testing.T) {
 		t.Fatalf("same-session maintenance skipped short turn: watermark=%d", watermark)
 	}
 	s.finishMemoryJobs()
-	if requests.Load() != 1 {
-		t.Fatalf("expected recovery request only, got %d requests", requests.Load())
+	if got := len(server.Requests()); got != 1 {
+		t.Fatalf("expected recovery request only, got %d requests", got)
 	}
 }
 
 func TestMemoryShutdownCancelsProviderAndPreservesPendingTurns(t *testing.T) {
-	started, cancelled := make(chan struct{}, 1), make(chan struct{}, 1)
-	release := make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.Copy(io.Discard, r.Body)
-		started <- struct{}{}
-		select {
-		case <-r.Context().Done():
-			cancelled <- struct{}{}
-		case <-release:
-		}
-	}))
-	defer server.Close()
-	defer close(release)
+	gate := providersim.NewGate()
+	server := providersim.New(t)
+	server.Script(providersim.Text(`{"memories":[]}`).WithoutUsage().WithGate(gate))
 	store := newTestMemoryStore(t)
-	s := &Session{sessionID: "closing", memoryStore: store, cfg: modelAttributionConfig(server.URL, "test-model")}
+	s := &Session{sessionID: "closing", memoryStore: store, cfg: modelAttributionConfig(server.BaseURL(providersim.Chat), "test-model")}
 	if err := store.RecordTurn(context.Background(), memory.TurnRecord{SessionID: s.sessionID, Turn: 3, UserText: "remember pending turn", AssistantText: "completed answer"}); err != nil {
 		t.Fatal(err)
 	}
 	s.maybeExtractMemories(3)
 	defer s.finishMemoryJobs()
-	select {
-	case <-started:
-	case <-time.After(5 * time.Second):
+	arrival, cancelArrival := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancelArrival()
+	if err := gate.Wait(arrival); err != nil {
 		t.Fatal("memory provider request did not start")
 	}
 	start := time.Now()
@@ -95,9 +77,9 @@ func TestMemoryShutdownCancelsProviderAndPreservesPendingTurns(t *testing.T) {
 	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
 		t.Fatalf("shutdown waited for provider: %s", elapsed)
 	}
-	select {
-	case <-cancelled:
-	case <-time.After(time.Second):
+	cancelled, cancelWait := context.WithTimeout(t.Context(), time.Second)
+	defer cancelWait()
+	if err := gate.WaitCanceled(cancelled); err != nil {
 		t.Fatal("provider request outlived memory shutdown")
 	}
 	if watermark := s.extractWatermark(context.Background(), store, s.sessionID); watermark != 0 {

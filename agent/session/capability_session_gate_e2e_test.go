@@ -18,6 +18,7 @@ import (
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
 	"crude/agent/turnloop"
+	"crude/internal/providersim"
 	captypes "crude/types/capability"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -80,17 +81,13 @@ func TestSessionCapabilityGateAppliesToRunningAgent(test *testing.T) {
 	}
 	requests := make(chan map[string]any, 16)
 	var requestCount atomic.Int32
-	providerServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		var body map[string]any
-		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
-			return
-		}
+	providerServer := providersim.New(test)
+	providerServer.Respond(func(request providersim.Request) providersim.Turn {
+		body := simRawRequest(request)
 		requests <- body
-		writer.Header().Set("Content-Type", "text/event-stream")
 		index := int(requestCount.Add(1)) - 1
 		if index >= len(steps) {
-			_, _ = fmt.Fprint(writer, "data: {\"choices\":[{\"delta\":{\"content\":\"Done.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-			return
+			return providersim.Text("Done.")
 		}
 		current := steps[index]
 		if current.before != nil {
@@ -101,10 +98,9 @@ func TestSessionCapabilityGateAppliesToRunningAgent(test *testing.T) {
 			arguments = map[string]any{}
 		}
 		encoded, _ := json.Marshal(arguments)
-		_, _ = fmt.Fprintf(writer, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":%q,\"type\":\"function\",\"function\":{\"name\":%q,\"arguments\":%q}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", fmt.Sprintf("gate-%d", index), current.name, string(encoded))
-	}))
-	defer providerServer.Close()
-	config := modelAttributionConfig(providerServer.URL, "capability-gate-model")
+		return simTool(fmt.Sprintf("gate-%d", index), current.name, string(encoded))
+	})
+	config := modelAttributionConfig(providerServer.BaseURL(providersim.Chat), "capability-gate-model")
 	config.Capabilities = settings
 	home, directory := test.TempDir(), filepath.Join(test.TempDir(), "sessions")
 	owner, err = NewWithSessionDir("capability-gate", config, home, directory)

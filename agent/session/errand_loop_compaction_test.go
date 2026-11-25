@@ -1,10 +1,6 @@
 package session
 
 import (
-	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +11,7 @@ import (
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
 	"crude/agent/turnloop"
+	"crude/internal/providersim"
 )
 
 // When the workspace Errand's agentic loop ends (the model answers without
@@ -30,30 +27,21 @@ func TestErrandCompactsWhenItsAgenticLoopEnds(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var turns, extractions atomic.Int32
 			var compactedBeforeAnswer atomic.Bool
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				var body struct{ Messages []provider.ChatMessage }
-				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-					t.Error(err)
-					return
-				}
-				w.Header().Set("Content-Type", "text/event-stream")
-				if len(body.Messages) > 0 && strings.Contains(body.Messages[len(body.Messages)-1].ContentString(), "<<<intent>>>") {
+			server := providersim.New(t)
+			server.Respond(func(req providersim.Request) providersim.Turn {
+				if len(req.Messages) > 0 && strings.Contains(simText(req.Messages[len(req.Messages)-1].Parts), "<<<intent>>>") {
 					extractions.Add(1)
-					encoded, _ := json.Marshal("<<<intent>>>\n- inspect the workspace\n<<<work>>>\n- read notes.txt\n<<<state>>>\n- clean\n<<<continuation>>>\n- None")
-					_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":%s},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n", encoded)
-					return
+					return providersim.Text("<<<intent>>>\n- inspect the workspace\n<<<work>>>\n- read notes.txt\n<<<state>>>\n- clean\n<<<continuation>>>\n- None").WithoutUsage()
 				}
 				if turns.Add(1) == 1 {
-					_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call1\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"notes.txt\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n")
-					return
+					return providersim.CallTools(providersim.ToolCall{ID: "call1", Name: "read_file", Arguments: `{"path":"notes.txt"}`}).WithoutUsage()
 				}
 				if extractions.Load() != 0 {
 					compactedBeforeAnswer.Store(true)
 				}
-				_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Checked.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-			}))
-			defer server.Close()
-			cfg := modelAttributionConfig(server.URL, "errand-model")
+				return providersim.Text("Checked.").WithoutUsage()
+			})
+			cfg := modelAttributionConfig(server.BaseURL(providersim.Chat), "errand-model")
 			profile := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
 			profile.Categories[CategoryErrand] = CategoryConfig{AccountID: "account", Model: "errand-model"}
 			cfg.Agents.Profiles[cfg.Agents.ActiveProfile] = profile

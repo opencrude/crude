@@ -3,9 +3,6 @@ package session
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sync"
@@ -16,6 +13,7 @@ import (
 	"crude/agent/collaboration"
 	"crude/agent/provider"
 	"crude/agent/turnloop"
+	"crude/internal/providersim"
 	"crude/types/conversation"
 )
 
@@ -32,7 +30,7 @@ type childWireHarness struct {
 
 type wireCall struct {
 	body  map[string]any
-	reply chan map[string]any
+	reply chan providersim.Turn
 }
 
 const wireRootModel, wireChildModel = "wire-root", "wire-child"
@@ -40,55 +38,26 @@ const wireRootModel, wireChildModel = "wire-root", "wire-child"
 func newChildWireHarness(t *testing.T, role CategoryConfig) *childWireHarness {
 	h := &childWireHarness{t: t, rootCalls: make(chan wireCall, 8), children: make(chan wireCall, 8)}
 	var rootRequests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		call := wireCall{body: body, reply: make(chan map[string]any, 1)}
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
+		call := wireCall{body: simRawRequest(request), reply: make(chan providersim.Turn, 1)}
 		target := h.children
-		if body["model"] == wireRootModel {
+		if request.Model == wireRootModel {
 			if rootRequests.Add(1) > 2 {
-				call.reply <- map[string]any{"content": "Noted."}
-				target = nil
-			} else {
-				target = h.rootCalls
+				return providersim.Text("Noted.")
 			}
+			target = h.rootCalls
 		}
-		if target != nil {
-			select {
-			case target <- call:
-			case <-r.Context().Done():
-				return
-			}
-		}
-		var delta map[string]any
 		select {
-		case delta = <-call.reply:
-		case <-r.Context().Done():
-			return
-		case <-time.After(5 * time.Second):
-			t.Error("scripted provider reply was not released")
-			return
+		case target <- call:
+		case <-t.Context().Done():
+			return providersim.HTTPError(providersim.InvalidRequest)
 		}
-		if status, ok := delta["status"].(int); ok {
-			w.WriteHeader(status)
-			_, _ = fmt.Fprint(w, `{"error":{"type":"authentication_error","message":"credentials rejected"}}`)
-			return
-		}
-		finish := "stop"
-		if _, ok := delta["tool_calls"]; ok {
-			finish = "tool_calls"
-		}
-		frame, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"delta": delta, "finish_reason": finish}}})
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", frame)
-	}))
-	t.Cleanup(server.Close)
+		return simReply(t, call.reply)
+	})
 
 	home, project := t.TempDir(), t.TempDir()
-	cfg := modelAttributionConfig(server.URL, wireRootModel)
+	cfg := modelAttributionConfig(server.BaseURL(providersim.Chat), wireRootModel)
 	applySessionMultiAgent(cfg, true)
 	profile := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
 	profile.Categories[CategoryCrafter] = role
@@ -130,17 +99,12 @@ func (h *childWireHarness) next(calls <-chan wireCall, phase string) wireCall {
 	}
 }
 
-func wireTool(id, name string, params map[string]any) map[string]any {
-	arguments, _ := json.Marshal(params)
-	return map[string]any{"index": 0, "id": id, "type": "function", "function": map[string]any{"name": name, "arguments": string(arguments)}}
-}
-
 // launch starts one child from the real root and returns its agent ID.
 func (h *childWireHarness) launch(params map[string]any) string {
 	h.t.Helper()
 	params["description"], params["category"], params["isolation"] = "Report a fact.", CategoryCrafter, "shared"
 	first := h.next(h.rootCalls, "root launch")
-	first.reply <- map[string]any{"tool_calls": []any{wireTool("launch", "agent_start", params)}}
+	first.reply <- providersim.CallTools(simToolArgs("launch", "agent_start", params))
 	second := h.next(h.rootCalls, "root receives launch")
 	var launched struct {
 		AgentID string `json:"agent_id"`
@@ -155,17 +119,17 @@ func (h *childWireHarness) launch(params map[string]any) string {
 	if launched.AgentID == "" {
 		h.t.Fatal("launch returned no agent id")
 	}
-	second.reply <- map[string]any{"content": "Launched."}
+	second.reply <- providersim.Text("Launched.")
 	return launched.AgentID
 }
 
 func (h *childWireHarness) finish(call wireCall, rootID string) {
 	h.t.Helper()
-	call.reply <- map[string]any{"tool_calls": []any{wireTool("report", "publish_report", map[string]any{
+	call.reply <- providersim.CallTools(simToolArgs("report", "publish_report", map[string]any{
 		"recipient_ids": []string{rootID}, "kind": "final", "summary": "Done.", "body": "Done.",
-	})}}
+	}))
 	last := h.next(h.children, "child receives its report")
-	last.reply <- map[string]any{"content": "Done."}
+	last.reply <- providersim.Text("Done.")
 	joined := make(chan struct{})
 	go func() { h.session.SubAgentRunner().Wait(); close(joined) }()
 	select {
@@ -195,7 +159,7 @@ func TestChildRequestsCarryConfiguredThinkingAndSamplingOnEveryPath(t *testing.T
 
 	first := h.next(h.children, "child first request")
 	requireSettings(t, "first request", first.body, wireChildModel, "high", 0.25)
-	first.reply <- map[string]any{"status": http.StatusUnauthorized}
+	first.reply <- providersim.HTTPError(providersim.Auth).WithFaultMessage("credentials rejected")
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		h.session.recoveryMu.Lock()
@@ -219,7 +183,7 @@ func TestChildRequestsCarryConfiguredThinkingAndSamplingOnEveryPath(t *testing.T
 	if _, err := h.session.configureChild(ctx, h.root.ID, map[string]any{"agent_id": child, "model": "wire-child-2", "thinking_effort": "low"}); err != nil {
 		t.Fatalf("parent configure: %v", err)
 	}
-	continued.reply <- map[string]any{"tool_calls": []any{wireTool("look", "read_file", map[string]any{"path": "missing.txt"})}}
+	continued.reply <- providersim.CallTools(simToolArgs("look", "read_file", map[string]any{"path": "missing.txt"}))
 	switched := h.next(h.children, "child request after model switch")
 	// A different model resolves its own sampling; the role's applied to the old one.
 	requireSettings(t, "switched request", switched.body, "wire-child-2", "low", nil)
@@ -265,7 +229,7 @@ func TestParkedChildIsActionableOnlyAfterAttemptTeardown(t *testing.T) {
 	var once sync.Once
 	unblock := func() { once.Do(release) }
 	defer unblock()
-	first.reply <- map[string]any{"status": http.StatusUnauthorized}
+	first.reply <- providersim.HTTPError(providersim.Auth).WithFaultMessage("credentials rejected")
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		if _, active := runner.mgr.Active(turnloop.AgentID(child)); !active {

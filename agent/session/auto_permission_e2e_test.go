@@ -1,10 +1,6 @@
 package session
 
 import (
-	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -13,32 +9,24 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
+	"crude/internal/providersim"
 	"crude/types/setting"
 )
 
 func TestAutoPermissionRealTurnWritesAndPersistsReviewProvenance(t *testing.T) {
 	var rootCalls, reviewCalls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-			return
-		}
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
 		if request.Model == "review-model" {
 			reviewCalls.Add(1)
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"{\"decision\":\"allow\",\"reason\":\"routine file creation\"}"},"finish_reason":"stop"}],"usage":{"prompt_tokens":80,"completion_tokens":12}}`)
-			return
+			return providersim.Text(`{"decision":"allow","reason":"routine file creation"}`).WithUsage(providersim.Usage{Input: 80, Output: 12})
 		}
-		w.Header().Set("Content-Type", "text/event-stream")
 		if rootCalls.Add(1) == 1 {
-			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"create-1\",\"type\":\"function\",\"function\":{\"name\":\"write_file\",\"arguments\":\"{\\\"path\\\":\\\"hello.txt\\\",\\\"content\\\":\\\"hello from reviewed tool\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":20}}\n\ndata: [DONE]\n\n")
-			return
+			return providersim.CallTools(providersim.ToolCall{ID: "create-1", Name: "write_file", Arguments: `{"path":"hello.txt","content":"hello from reviewed tool"}`}).WithUsage(providersim.Usage{Input: 100, Output: 20})
 		}
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"created\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":140,\"completion_tokens\":5}}\n\ndata: [DONE]\n\n")
-	}))
-	defer server.Close()
-	cfg := modelAttributionConfig(server.URL, "main-model")
+		return providersim.Text("created").WithUsage(providersim.Usage{Input: 140, Output: 5})
+	})
+	cfg := modelAttributionConfig(server.BaseURL(providersim.Chat), "main-model")
 	cfg.Safety.AutoPermission = setting.AutoPermission{Enabled: "on", Provider: "openrouter", AccountID: "account", Model: "review-model"}
 	home, directory, root := t.TempDir(), t.TempDir(), t.TempDir()
 	s, err := NewWithSessionDir("review-e2e", cfg, home, directory)

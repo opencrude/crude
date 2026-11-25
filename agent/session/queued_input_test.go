@@ -3,9 +3,6 @@ package session
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -14,18 +11,19 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
+	"crude/internal/providersim"
 )
 
 func TestQueuedInputSurvivesCloseAndPassiveResume(t *testing.T) {
 	home, dir := t.TempDir(), t.TempDir()
 	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := providersim.New(t)
+	server.Respond(func(providersim.Request) providersim.Turn {
 		calls.Add(1)
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"queued answer\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	t.Cleanup(server.Close)
-	cfg := modelAttributionConfig(server.URL, "queue-model")
+		return providersim.Text("queued answer").WithoutUsage()
+	})
+
+	cfg := modelAttributionConfig(server.BaseURL(providersim.Chat), "queue-model")
 	s, err := NewWithSessionDir("queue-resume", cfg, home, dir)
 	if err != nil {
 		t.Fatal(err)

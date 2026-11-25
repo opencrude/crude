@@ -2,10 +2,7 @@ package session
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"reflect"
 	"strings"
 	"sync/atomic"
@@ -16,6 +13,7 @@ import (
 	"crude/agent/sessiondb"
 	"crude/agent/tools"
 	"crude/agent/turnloop"
+	"crude/internal/providersim"
 	recoverytypes "crude/types/recovery"
 )
 
@@ -25,28 +23,23 @@ func TestParallelCheckpointsRetainImmutableContextAcrossCompletion(t *testing.T)
 	for _, native := range []bool{false, true} {
 		for _, child := range []bool{false, true} {
 			t.Run(fmt.Sprintf("native=%t/child=%t", native, child), func(t *testing.T) {
-				var requests, effects atomic.Int32
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					w.Header().Set("Content-Type", "text/event-stream")
-					if requests.Add(1) > 1 {
-						_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"finished\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-						return
+				var effects atomic.Int32
+				server := providersim.New(t)
+				server.Respond(func(request providersim.Request) providersim.Turn {
+					if request.Index > 1 {
+						return providersim.Text("finished")
 					}
-					var calls []map[string]any
 					if native {
 						args := `{"tool_uses":[{"recipient_name":"functions.read_file","parameters":{"path":"slow"}},{"recipient_name":"functions.read_file","parameters":{"path":"fast"}}]}`
-						calls = append(calls, map[string]any{"index": 0, "id": "batch", "type": "function", "function": map[string]any{"name": "multi_tool_use.parallel", "arguments": args}})
-					} else {
-						for i, path := range []string{"slow", "fast"} {
-							calls = append(calls, map[string]any{"index": i, "id": path, "type": "function", "function": map[string]any{"name": "read_file", "arguments": fmt.Sprintf(`{"path":%q}`, path)}})
-						}
+						return simTool("batch", "multi_tool_use.parallel", args)
 					}
-					body, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"tool_calls": calls}, "finish_reason": "tool_calls"}}})
-					_, _ = fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", body)
-				}))
-				defer server.Close()
+					return providersim.CallTools(
+						providersim.ToolCall{ID: "slow", Name: "read_file", Arguments: `{"path":"slow"}`},
+						providersim.ToolCall{ID: "fast", Name: "read_file", Arguments: `{"path":"fast"}`},
+					)
+				})
 				home := t.TempDir()
-				s, err := NewWithSessionDir("", modelAttributionConfig(server.URL, "checkpoint-test"), home, home)
+				s, err := NewWithSessionDir("", modelAttributionConfig(server.BaseURL(providersim.Chat), "checkpoint-test"), home, home)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -75,7 +68,7 @@ func TestParallelCheckpointsRetainImmutableContextAcrossCompletion(t *testing.T)
 				}
 				run := newRecoveryRunState(provider.PlainInput("task"), &sessiondb.RecoveryCheckpoint{Archive: state.Messages, ActiveContext: state.Messages, ContextOwnerID: owner, ContextRevision: state.Revision, ContextGeneration: 1, ContextReason: "test"})
 				status := recoverytypes.Status{ID: "incident", AgentID: owner, Generation: 1}
-				a := turnloop.NewAgent(provider.FromPreset("openai-chat", "key", server.URL), "checkpoint-test", s.logger)
+				a := turnloop.NewAgent(provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat)), "checkpoint-test", s.logger)
 				a.FilteredTools = append(append([]tools.ToolDef(nil), tools.AgentTools...), tools.ParallelTool())
 				a.ContextArchive, a.FrozenPrefix = state.Messages, state.Messages
 				fastSaved := make(chan struct{}, 1)
@@ -166,7 +159,7 @@ func TestParallelCheckpointsRetainImmutableContextAcrossCompletion(t *testing.T)
 					if err := restored.restoreRecoveryTranscript(&checkpoint); err != nil {
 						t.Fatalf("passive in-flight recovery: %v", err)
 					}
-					if effects.Load() != 2 || requests.Load() != 1 {
+					if effects.Load() != 2 || len(server.Requests()) != 1 {
 						t.Fatal("passive recovery replayed execution")
 					}
 				}
@@ -180,8 +173,8 @@ func TestParallelCheckpointsRetainImmutableContextAcrossCompletion(t *testing.T)
 				if err := a.RunFailure(); err != nil {
 					t.Fatalf("valid tool completion entered recovery: %v", err)
 				}
-				if requests.Load() != 2 || effects.Load() != 2 {
-					t.Fatalf("requests=%d effects=%d", requests.Load(), effects.Load())
+				if len(server.Requests()) != 2 || effects.Load() != 2 {
+					t.Fatalf("requests=%d effects=%d", len(server.Requests()), effects.Load())
 				}
 				current, _, err := sessiondb.LoadContextState(db, owner, owner)
 				if err != nil {

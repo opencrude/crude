@@ -3,8 +3,6 @@ package session
 import (
 	"context"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -13,6 +11,7 @@ import (
 	"crude/agent/collaboration"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
+	"crude/internal/providersim"
 	recoverytypes "crude/types/recovery"
 )
 
@@ -137,12 +136,10 @@ func TestCommitInputAdmissionDuplicateReturnsSameReceipt(t *testing.T) {
 }
 
 func TestAcceptedInputStartsFromItsDurableAdmissionCheckpoint(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"accepted\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	defer server.Close()
-	s, err := NewWithSessionDir("admission-checkpoint", modelAttributionConfig(server.URL, "admission-checkpoint"), t.TempDir(), t.TempDir())
+	server := providersim.New(t)
+	server.Respond(func(providersim.Request) providersim.Turn { return providersim.Text("accepted").WithoutUsage() })
+
+	s, err := NewWithSessionDir("admission-checkpoint", modelAttributionConfig(server.BaseURL(providersim.Chat), "admission-checkpoint"), t.TempDir(), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,13 +240,13 @@ func TestAcceptedTurnCannotRollBackLateControlContext(t *testing.T) {
 
 func TestAdmittedInputMirrorsItsOwningTurnBeforeCompletion(t *testing.T) {
 	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := providersim.New(t)
+	server.Respond(func(providersim.Request) providersim.Turn {
 		attempt := calls.Add(1)
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":%q},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n", fmt.Sprintf("answer %d", attempt))
-	}))
-	t.Cleanup(server.Close)
-	cfg := modelAttributionConfig(server.URL, "turn-mirror-model")
+		return providersim.Text(fmt.Sprintf("answer %d", attempt)).WithoutUsage()
+	})
+
+	cfg := modelAttributionConfig(server.BaseURL(providersim.Chat), "turn-mirror-model")
 	cfg.Memory.Consolidation = "off"
 	s, err := NewWithSessionDir("", cfg, t.TempDir(), t.TempDir())
 	if err != nil {

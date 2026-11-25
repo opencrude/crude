@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,6 +11,7 @@ import (
 	"crude/agent/provider"
 	"crude/agent/tools"
 	"crude/agent/turnloop"
+	"crude/internal/providersim"
 	"crude/types/setting"
 )
 
@@ -134,21 +133,16 @@ func TestMemoryAgentDisableStopsBackgroundJobsAndRecall(t *testing.T) {
 }
 
 func TestMemoryAgentUsesEditedInstructionsAndOutputLimit(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Errorf("decode request: %v", err)
+	server := providersim.New(t)
+	server.Respond(func(req providersim.Request) providersim.Turn {
+		if req.Model != "memory-model" || req.OutputLimit != "56" || !strings.Contains(fmt.Sprint(req.Conversation), "agent_profile_instructions") || !strings.Contains(fmt.Sprint(req.Conversation), "Use factual summaries") {
+			t.Errorf("Memory Agent settings were ignored: %+v", req.Conversation)
 		}
-		if request["model"] != "memory-model" || request["max_tokens"] != float64(56) || !strings.Contains(fmt.Sprint(request["messages"]), "agent_profile_instructions") || !strings.Contains(fmt.Sprint(request["messages"]), "Use factual summaries") {
-			t.Errorf("Memory Agent settings were ignored: %+v", request)
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"done\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	defer server.Close()
+		return providersim.Text("done").WithoutUsage()
+	})
 	cfg := testConfig()
 	template := cfg.Accounts["account"].Connection
-	template.ProviderURL = server.URL + "/v1"
+	template.ProviderURL = server.BaseURL(providersim.Chat)
 	a := cfg.Accounts["account"]
 	a.Connection = template
 	cfg.Accounts["account"] = a

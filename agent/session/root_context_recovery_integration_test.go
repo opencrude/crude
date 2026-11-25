@@ -3,9 +3,6 @@ package session
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -18,6 +15,7 @@ import (
 	"crude/agent/collaboration"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
+	"crude/internal/providersim"
 	"crude/types/conversation"
 	recoverytypes "crude/types/recovery"
 )
@@ -28,21 +26,20 @@ func TestRootStopDuringFailedTerminalSettlementRetriesOnlyPersistence(t *testing
 			home, project := t.TempDir(), t.TempDir()
 			t.Setenv("HOME", home)
 			t.Setenv("USERPROFILE", home)
-			var requests, acknowledgements atomic.Int32
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.Header().Set("Content-Type", "text/event-stream")
-				switch requests.Add(1) {
+			var acknowledgements atomic.Int32
+			server := providersim.New(t)
+			server.Respond(func(request providersim.Request) providersim.Turn {
+				switch request.Index {
 				case 1:
-					_, _ = fmt.Fprint(w, `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"root-settlement-read","type":"function","function":{"name":"list_directory","arguments":"{\"path\":\".\"}"}}]},"finish_reason":"tool_calls"}]}`+"\n\ndata: [DONE]\n\n")
+					return simTool("root-settlement-read", "list_directory", `{"path":"."}`)
 				case 2:
-					_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"root accepted final output\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+					return providersim.Text("root accepted final output")
 				default:
 					t.Error("stopped root persistence retry requested another provider answer")
-					w.WriteHeader(http.StatusInternalServerError)
+					return providersim.HTTPError(providersim.InvalidRequest)
 				}
-			}))
-			t.Cleanup(server.Close)
-			cfg := modelAttributionConfig(server.URL, "root-settlement-"+failure)
+			})
+			cfg := modelAttributionConfig(server.BaseURL(providersim.Chat), "root-settlement-"+failure)
 			s, err := NewWithSessionDir("", cfg, home, filepath.Join(home, "sessions"))
 			if err != nil {
 				t.Fatal(err)
@@ -128,7 +125,7 @@ func TestRootStopDuringFailedTerminalSettlementRetriesOnlyPersistence(t *testing
 				if err != nil {
 					t.Fatal(err)
 				}
-				if requests.Load() != 2 || acknowledgements.Load() != 0 || root.TurnActive() {
+				if len(server.Requests()) != 2 || acknowledgements.Load() != 0 || root.TurnActive() {
 					t.Fatal("passive root resume executed terminal work")
 				}
 			}
@@ -154,8 +151,8 @@ func TestRootStopDuringFailedTerminalSettlementRetriesOnlyPersistence(t *testing
 			root.turnMu.Lock()
 			generation := root.turnGeneration
 			root.turnMu.Unlock()
-			if requests.Load() != 2 || sender.toolStarts.Load() != 1 || sender.toolResults.Load() != 1 || acknowledgements.Load() != 1 || generation != first.Generation {
-				t.Fatalf("root storage retry replayed work or invented finalization: requests=%d tools=%d/%d acknowledgements=%d generation=%d", requests.Load(), sender.toolStarts.Load(), sender.toolResults.Load(), acknowledgements.Load(), generation)
+			if len(server.Requests()) != 2 || sender.toolStarts.Load() != 1 || sender.toolResults.Load() != 1 || acknowledgements.Load() != 1 || generation != first.Generation {
+				t.Fatalf("root storage retry replayed work or invented finalization: requests=%d tools=%d/%d acknowledgements=%d generation=%d", len(server.Requests()), sender.toolStarts.Load(), sender.toolResults.Load(), acknowledgements.Load(), generation)
 			}
 		})
 	}
@@ -282,14 +279,9 @@ func TestRecoveryContinuationPublishesCanonicalSnapshotOnce(t *testing.T) {
 }
 
 func TestPassiveRootResumeReconcilesSemanticArchiveByID(t *testing.T) {
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requests.Add(1)
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer server.Close()
+	server := providersim.New(t)
 	home, directory := t.TempDir(), filepath.Join(t.TempDir(), "sessions")
-	cfg := modelAttributionConfig(server.URL, "passive-root-archive")
+	cfg := modelAttributionConfig(server.BaseURL(providersim.Chat), "passive-root-archive")
 	s, err := NewWithSessionDir("passive-root-archive", cfg, home, directory)
 	if err != nil {
 		t.Fatal(err)
@@ -403,7 +395,7 @@ func TestPassiveRootResumeReconcilesSemanticArchiveByID(t *testing.T) {
 			resumed.Close()
 			t.Fatalf("missing outcome was not durably reconciled: %+v", unknown)
 		}
-		if requests.Load() != 0 || resumed.SubAgentRunner() != nil {
+		if len(server.Requests()) != 0 || resumed.SubAgentRunner() != nil {
 			resumed.Close()
 			t.Fatal("passive resume started execution")
 		}
@@ -418,14 +410,9 @@ func TestPassiveRootResumeReconcilesSemanticArchiveByID(t *testing.T) {
 func TestPassiveRootResumePreservesNewerCommittedContext(t *testing.T) {
 	for _, mutation := range []string{"context-only", "compaction"} {
 		t.Run(mutation, func(t *testing.T) {
-			var requests atomic.Int32
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				requests.Add(1)
-				w.WriteHeader(http.StatusInternalServerError)
-			}))
-			defer server.Close()
+			server := providersim.New(t)
 			home, directory := t.TempDir(), filepath.Join(t.TempDir(), "sessions")
-			cfg := modelAttributionConfig(server.URL, "passive-newer-context")
+			cfg := modelAttributionConfig(server.BaseURL(providersim.Chat), "passive-newer-context")
 			s, err := NewWithSessionDir("passive-newer-context", cfg, home, directory)
 			if err != nil {
 				t.Fatal(err)
@@ -490,7 +477,7 @@ func TestPassiveRootResumePreservesNewerCommittedContext(t *testing.T) {
 			if retained.ContextRevision != current.Revision || retained.ContextGeneration != newer.Generation || !reflect.DeepEqual(retained.ActiveContext, newer.Messages) || !reflect.DeepEqual(retained.Archive, archive) {
 				t.Fatalf("recovery envelope did not retain exact source ownership: %+v", retained)
 			}
-			if requests.Load() != 0 || resumed.SubAgentRunner() != nil {
+			if len(server.Requests()) != 0 || resumed.SubAgentRunner() != nil {
 				t.Fatal("passive resume started execution")
 			}
 			if mutation == "compaction" {

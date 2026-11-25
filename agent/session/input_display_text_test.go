@@ -1,16 +1,14 @@
 package session
 
 import (
-	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
+	"crude/internal/providersim"
 )
 
 // A prepared input (a skill invocation, Errand's work order) shows its
@@ -19,16 +17,12 @@ import (
 // XML work order.
 func TestPreparedInputTranscriptShowsDisplayTextAndModelGetsText(t *testing.T) {
 	requests := make(chan string, 4)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body map[string]any
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		raw, _ := json.Marshal(body["messages"])
-		requests <- string(raw)
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Done.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	t.Cleanup(server.Close)
-	s, err := NewWithSessionDir("display-text", modelAttributionConfig(server.URL, "display-text"), t.TempDir(), t.TempDir())
+	server := providersim.New(t)
+	server.Respond(func(req providersim.Request) providersim.Turn {
+		requests <- fmt.Sprint(req.Messages)
+		return providersim.Text("Done.").WithoutUsage()
+	})
+	s, err := NewWithSessionDir("display-text", modelAttributionConfig(server.BaseURL(providersim.Chat), "display-text"), t.TempDir(), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}

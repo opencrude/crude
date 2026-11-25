@@ -2,14 +2,13 @@ package session
 
 import (
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
+	"crude/internal/providersim"
 	"crude/types/conversation"
 )
 
@@ -46,14 +45,12 @@ func TestGoalTransitionRows(t *testing.T) {
 // the value changes; a reopened session lists the same rows and its loaded
 // goal produces no spurious "Goal set" row.
 func TestStatusRowsAreRecordedOnceAndSurviveReopen(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	defer server.Close()
+	server := providersim.New(t)
+	server.Respond(func(providersim.Request) providersim.Turn { return providersim.Text("ok").WithoutUsage() })
+
 	home := t.TempDir()
 	dir := filepath.Join(home, "sessions")
-	cfg := modelAttributionConfig(server.URL, "rows-model")
+	cfg := modelAttributionConfig(server.BaseURL(providersim.Chat), "rows-model")
 	s, err := NewWithSessionDir("", cfg, home, dir)
 	if err != nil {
 		t.Fatal(err)

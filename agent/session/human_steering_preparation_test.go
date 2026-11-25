@@ -3,72 +3,43 @@ package session
 import (
 	"bytes"
 	"encoding/base64"
-	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"crude/agent/collaboration"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
+	"crude/internal/providersim"
 	recoverytypes "crude/types/recovery"
 )
 
 func TestHumanSteeringPreparationRequestJourneys(t *testing.T) {
 	for _, outcome := range []string{"valid", "unreadable-media", "unsupported-model", "unsupported-protocol"} {
 		t.Run(outcome, func(t *testing.T) {
-			var calls atomic.Int32
 			requests := make(chan map[string]any, 4)
-			releaseFirst, releaseSecond := make(chan struct{}), make(chan struct{})
-			firstReleased, secondReleased := false, false
-			defer func() {
-				if !firstReleased {
-					close(releaseFirst)
+			firstGate, secondGate := providersim.NewGate(), providersim.NewGate()
+			server := providersim.New(t)
+			server.Respond(func(request providersim.Request) providersim.Turn {
+				requests <- simRawRequest(request)
+				turn := providersim.Text("accepted response")
+				if request.Index == 1 {
+					return turn.WithGate(firstGate)
 				}
-				if !secondReleased {
-					close(releaseSecond)
+				if request.Index == 2 && outcome == "valid" {
+					return turn.WithGate(secondGate)
 				}
-			}()
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				var body map[string]any
-				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-					t.Errorf("decode steering request: %v", err)
-					return
-				}
-				attempt := calls.Add(1)
-				requests <- body
-				if attempt == 1 || (attempt == 2 && outcome == "valid") {
-					release := releaseFirst
-					if attempt == 2 {
-						release = releaseSecond
-					}
-					select {
-					case <-release:
-					case <-r.Context().Done():
-						return
-					}
-				}
-				w.Header().Set("Content-Type", "text/event-stream")
-				if outcome == "unsupported-protocol" {
-					_, _ = fmt.Fprint(w, "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"accepted response\"}}\n\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\ndata: {\"type\":\"message_stop\"}\n\n")
-					return
-				}
-				_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"accepted response\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-			}))
-			t.Cleanup(server.Close)
+				return turn
+			})
 			home, directory, project := t.TempDir(), t.TempDir(), t.TempDir()
-			protocol := "openai"
+			protocol, wire := "openai", providersim.Chat
 			if outcome == "unsupported-protocol" {
-				protocol = "anthropic"
+				protocol, wire = "anthropic", providersim.Messages
 			}
-			cfg := mediaAttributionConfig(server.URL, "human-steering-"+outcome, protocol, provider.ModalityImage)
+			cfg := mediaAttributionConfig(server.BaseURL(wire), "human-steering-"+outcome, protocol, provider.ModalityImage)
 			category := cfg.Agents.Profiles["default"].Categories[CategoryDefault]
 			if outcome == "unsupported-model" {
 				category.ModelModalities = []string{}
@@ -145,8 +116,7 @@ func TestHumanSteeringPreparationRequestJourneys(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			close(releaseFirst)
-			firstReleased = true
+			firstGate.Release()
 			awaitAttention := func(after time.Time) recoverytypes.Status {
 				t.Helper()
 				deadline := time.After(5 * time.Second)
@@ -209,15 +179,15 @@ func TestHumanSteeringPreparationRequestJourneys(t *testing.T) {
 			}
 			if outcome != "valid" {
 				status := awaitAttention(time.Time{})
-				if calls.Load() != 1 {
-					t.Fatalf("failed steering issued a weakened provider request: %d", calls.Load())
+				if len(server.Requests()) != 1 {
+					t.Fatalf("failed steering issued a weakened provider request: %d", len(server.Requests()))
 				}
 				if s.RetryRecoveryFor(o.ID, status.ID, status.Generation) != nil {
 					t.Fatal("exact Continue was rejected")
 				}
 				status = awaitAttention(status.UpdatedAt)
-				if calls.Load() != 1 {
-					t.Fatalf("unrepaired Continue bypassed selected data: %d", calls.Load())
+				if len(server.Requests()) != 1 {
+					t.Fatalf("unrepaired Continue bypassed selected data: %d", len(server.Requests()))
 				}
 				if outcome == "unsupported-protocol" {
 					if !strings.Contains(status.Detail, "protocol \"anthropic\"") || !strings.Contains(status.Detail, "video") {
@@ -276,8 +246,8 @@ func TestHumanSteeringPreparationRequestJourneys(t *testing.T) {
 							}
 						}
 					}
-					if count != 1 || selectedCount != 1 || calls.Load() != 1 {
-						t.Fatalf("passive resume lost/replayed steering: originals=%d selections=%d requests=%d", count, selectedCount, calls.Load())
+					if count != 1 || selectedCount != 1 || len(server.Requests()) != 1 {
+						t.Fatalf("passive resume lost/replayed steering: originals=%d selections=%d requests=%d", count, selectedCount, len(server.Requests()))
 					}
 					return
 				}
@@ -325,8 +295,7 @@ func TestHumanSteeringPreparationRequestJourneys(t *testing.T) {
 				}); err != nil {
 					t.Fatal(err)
 				}
-				close(releaseSecond)
-				secondReleased = true
+				secondGate.Release()
 				select {
 				case body := <-requests:
 					assertRequest(body)
