@@ -25,6 +25,7 @@ type Renderer struct {
 	extScroll  *ui.ScrollModel
 	paneScroll *ui.ScrollModel
 	sync       *MessageSync
+	compact    *CompactToolRows // allocated only by a compact child view
 	theme      *theme.Theme
 	sourceID   uint64
 	// renderSeq stamps every item render. It never repeats within this
@@ -231,6 +232,8 @@ func (r *Renderer) nextMsgID() string {
 }
 
 func (r *Renderer) bumpVersion() {
+	// Direct renderer mutations have no workspace sync result.
+	r.compact = nil
 	r.sync.BumpVersion()
 }
 
@@ -377,7 +380,7 @@ func (r *Renderer) AppendToken(token string) {
 		return
 	}
 	last.Content += token
-	r.bumpVersion()
+	r.sync.BumpVersion() // assistant text has no compact tool rows
 	last.CachedLines = nil
 
 	r.vl.InvalidateItem(last.InternalID)
@@ -805,6 +808,7 @@ func (r *Renderer) InvalidateCache() {
 // InvalidateWidthProfile drops every width-derived row, wrap, and virtual-list
 // measurement. Unlike InvalidateCache, this includes completed static messages.
 func (r *Renderer) InvalidateWidthProfile() {
+	r.compact = nil
 	r.markdownReflow = markdownReflowCache{}
 	for _, msg := range r.sync.Messages {
 		msg.CachedLines = nil
@@ -926,6 +930,7 @@ func (r *Renderer) SourceGeneration() uint64 { return r.sync.SourceGeneration() 
 // InvalidateSource releases the cursor binding when a pane is rebound to a
 // different Conversation. The next sync still diffs stable rows normally.
 func (r *Renderer) InvalidateSource() {
+	r.compact = nil
 	r.sync.sourceSet = false
 	r.markdownReflow = markdownReflowCache{}
 }
@@ -1000,6 +1005,7 @@ func (r *Renderer) SyncMessages(messages []conversation.ChatMessage, sourceVersi
 		return
 	}
 	if generationChanged {
+		r.compact = nil
 		r.markdownReflow = markdownReflowCache{}
 	}
 	r.applySyncResult(result, cursorOwnerID)
@@ -1057,6 +1063,7 @@ func (r *Renderer) applySyncResult(result SyncResult, cursorOwnerID string) {
 		}
 		r.PresentThinkingPane(id, paneID)
 	}
+	r.syncCompactTools(result)
 }
 
 func (r *Renderer) RemoveMessage(idx int) {
@@ -1893,6 +1900,7 @@ func (r *Renderer) RebuildItems() {
 }
 
 func (r *Renderer) InvalidateAllMessages() {
+	r.compact = nil
 	r.streamCache = streamBodyCache{}
 	r.lazyWidthReflow = false
 	perf.MarkCacheInvalidation()

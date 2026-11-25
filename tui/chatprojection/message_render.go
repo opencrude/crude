@@ -21,6 +21,7 @@ type messageLines struct {
 	lines          []string
 	native         []PaintLine
 	frameSensitive bool
+	syntaxPending  bool
 }
 
 // withCursor places the streaming caret right after the last streamed text,

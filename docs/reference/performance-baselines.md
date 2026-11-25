@@ -39,6 +39,32 @@ on a faster processor is a useful contention test, not T470 certification.
 
 ## Dense child panes and retained surface fills (2026-11-25)
 
+`BenchmarkDenseChildPaneUpdate` measures a warm compact child's sync and first
+paint after a text append or a completed command. The history has 100 expanded,
+syntax-highlighted Go diffs and 100 settled commands with 512 output lines
+each. The third case puts this child above 2,000 parent messages and advances
+the blink phase before exporting the actual parent row snapshot at 80×24.
+The new result arrives for an existing call; input delivery and restoring
+that call for the next iteration are outside the timer.
+
+| Stage | Before, ns/op | Before, B/op; allocs/op | After, ns/op | After, B/op; allocs/op |
+|---|---:|---:|---:|---:|
+| Streamed text | 51,908,640–167,914,290 | 17,560,255–17,565,723; 37,283–37,287 | 48,240–1,225,400 | 8,632–8,633; 59 |
+| New command result | 52,435,060–185,997,280 | 17,771,886–17,776,830; 37,226–37,232 | 489,210–1,835,810 | 225,768–226,314; 99–100 |
+| Offscreen result and blink, through parent export | 55,227,250–75,997,500 | 17,786,965–17,793,604; 37,281–37,288 | 497,640–722,070 | 264,355–264,880; 164 |
+
+Native Windows/amd64, Go 1.27.4, i7-9850H, `GOMAXPROCS=2`, five runs of ten
+updates per case. Both cohorts ran in the shared checkout based on `8bd24c58`;
+the after cohort had the per-message cache but not the later pending-syntax
+notification. All diffs in this fixture fit the synchronous lexer budget.
+Other builds ran on the workstation. The gate limits bytes and allocations,
+not timing. The compact renderer now uses the sync's changed
+IDs and retains the two dot shapes only for animated rows. A text delta does
+not rebuild tool blocks. A geometry change can still move the later blocks'
+line offsets; it does not reparse their results. Source replacement and width
+changes still require a new layout. These are projection measurements, not
+terminal writes or live outlier measurements.
+
 `BenchmarkDenseChildPaneSync` uses the tick's unchanged-source sync entry point
 with four warm children, 2,000 messages plus one active tool per child. It
 retains its zero-byte, zero-allocation path; it does not measure initial

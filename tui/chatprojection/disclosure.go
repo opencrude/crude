@@ -127,6 +127,9 @@ func (r *Renderer) ToggleDisclosure(msgID string) {
 		return
 	}
 	r.expanded[msgID] = r.disclosureState(msg) != DisclosureExpanded
+	if r.compact != nil {
+		r.compact.invalidate(r.compact.byID[msgID])
+	}
 	msg.CachedLines = nil
 	r.InvalidateItem(msgID)
 	if msg.Role == conversation.RoleThinking && msg.ThinkingActive && msg.ThinkingDisplay.Kind.HasCompactPreview() {
