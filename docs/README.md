@@ -161,6 +161,8 @@ documents to read before changing each area.
 
 ### Plans (active work only)
 
+- [Provider compaction handoff](plans/provider-compaction-handoff.md) lists the
+  pushed changes, failing checks, and remaining wire and retry work.
 - [Complete editor experience](plans/editor-parity.md) — audited gaps, one complete
   target UX, implementation owners and behavioral acceptance for later agents.
 
