@@ -13,6 +13,9 @@ import (
 // NativeCheckpointRequest contains the canonical conversation and the portable
 // handoff instructions. The synthetic challenge contains no session content.
 type NativeCheckpointRequest struct {
+	InputTokens                                                int
+	Boundary                                                   BoundaryTurn
+	Receipt                                                    *ThresholdReceipt
 	Owner                                                      string
 	Explicit                                                   bool
 	Model                                                      string
@@ -33,6 +36,8 @@ type NativeCheckpointRequest struct {
 // the caller writes a full portable checkpoint. Transient marks a fallback
 // after an outage of this route, so the route should not write it either.
 type NativeCheckpointResult struct {
+	Turn      bool
+	Receipt   *ThresholdReceipt
 	Message   ChatMessage
 	Fallback  string
 	Changed   bool
@@ -52,6 +57,9 @@ func (p *Provider) nativeReady(ctx context.Context, model string) error {
 	return nil
 }
 func withCompactHeaders(c *Client) *Client {
+	return withBetaHeader(c, compactBeta)
+}
+func withBetaHeader(c *Client, beta string) *Client {
 	clone := *c
 	source := c.headerSource
 	clone.headerSource = func(ctx context.Context) (http.Header, error) {
@@ -60,11 +68,11 @@ func withCompactHeaders(c *Client) *Client {
 			return nil, err
 		}
 		h = h.Clone()
-		if !strings.Contains(","+h.Get("anthropic-beta")+",", ","+compactBeta+",") {
+		if !strings.Contains(","+h.Get("anthropic-beta")+",", ","+beta+",") {
 			if prior := h.Get("anthropic-beta"); prior != "" {
-				h.Set("anthropic-beta", prior+","+compactBeta)
+				h.Set("anthropic-beta", prior+","+beta)
 			} else {
-				h.Set("anthropic-beta", compactBeta)
+				h.Set("anthropic-beta", beta)
 			}
 		}
 		return h, nil
@@ -133,8 +141,13 @@ func (p *Provider) NativeCheckpoint(ctx context.Context, r NativeCheckpointReque
 			return fallback(nativeOptionsReason, true)
 		}
 	}
+	edits := p.configuredThreshold("")
 	for key := range p.extraBody {
 		switch key {
+		case "context_management":
+			if edits == nil {
+				return fallback(nativeOptionsReason, true)
+			}
 		case "provider", "service_tier":
 		default:
 			return fallback(nativeOptionsReason, true)
@@ -184,15 +197,18 @@ func (p *Provider) NativeCheckpoint(ctx context.Context, r NativeCheckpointReque
 	initial := cache.fact(key)
 	fact := initial
 	defaultPath := op.path
-	if responses && fact.method == proto.Info().ChatPath {
-		op.path = fact.method
+	// The standalone operation has no context_management parameter. Do not
+	// silently discard other configured edits to make that operation fit.
+	alternate := responses && (edits == nil || edits.ordinary == nil)
+	if responses && (!alternate || fact.method == proto.Info().ChatPath) {
+		op.path = proto.Info().ChatPath
 		op.codec = &triggerWire{enc: proto}
 	}
 	// A missing standalone operation, or an explicit refusal of the option,
 	// proves that no work was done. The other Responses operation may exist.
 	missing := func(err error) bool {
 		var status *StatusError
-		return responses && (compactRejection(err) || errors.As(err, &status) && (status.StatusCode == 404 || status.StatusCode == 405))
+		return responses && !continuationUnavailable(err) && (compactRejection(err) || errors.As(err, &status) && (status.StatusCode == 404 || status.StatusCode == 405))
 	}
 	switchOperation := func() {
 		if op.path == defaultPath {
@@ -210,14 +226,14 @@ func (p *Provider) NativeCheckpoint(ctx context.Context, r NativeCheckpointReque
 		}
 		return NativeCheckpointResult{Fallback: "Native compaction could not be verified. Crude will check again later.", Transient: true}, nil
 	}
-	if fact.fresh() && fact.state == supportUnavailable {
+	if fact.fresh() && fact.state == supportUnavailable && r.Receipt == nil {
 		return fallback("This route did not support native compaction at its last check.", false)
 	}
 	req := &ChatRequest{Model: r.Model, Messages: FilterReplayMessages(r.Messages, p), Tools: r.Tools, MaxOutputTokens: r.Limit, ResponseContinuationScope: p.ResponseContinuationScope(r.Model)}
 	// A small proven delta is safe as the first real attempt. A stale anchor
 	// rejection must never trigger an automatic full-history upload.
 	anchored := false
-	if pl := PlanResponseContinuation(req); pl.PreviousResponseID != "" && responses {
+	if pl := PlanResponseContinuation(req); pl.PreviousResponseID != "" && alternate {
 		b, e := op.codec.compactBody(req, r.Directive, c.requestExtras)
 		if e == nil {
 			raw, _ := json.Marshal(b)
@@ -250,6 +266,35 @@ func (p *Provider) NativeCheckpoint(ctx context.Context, r NativeCheckpointReque
 		}
 		return NativeCheckpointResult{Fallback: failure.text, Changed: initial.failures == 0, Transient: failure.cause != nil}, nil
 	}
+	threshold := func() (NativeCheckpointResult, error) {
+		op.path = thresholdMethod
+		if r.Receipt != nil {
+			if len(r.Receipt.seal) == 0 {
+				return fallback("The provider returned a reply without a usable checkpoint.", true)
+			}
+			if r.Receipt.generation != flight.generation {
+				return fallback("The compaction check changed during the request.", true)
+			}
+			w, e := r.Receipt.window(p, r.Messages)
+			if e != nil {
+				return fallback("The provider checkpoint no longer matches this conversation.", true)
+			}
+			if e := cache.guardAttempt(ctx, attempt, flight, false, true); e != nil {
+				return p.earlierAttempt(e, fallback, false)
+			}
+			return op.export(ctx, w, false, fail, record)
+		}
+		if !fact.fresh() || fact.method != thresholdMethod {
+			if e := record(supportCandidate, nil); e != nil {
+				return zero, e
+			}
+		}
+		return op.threshold(ctx, attempt, cache, flight, fail, record)
+	}
+	if r.Receipt != nil || fact.fresh() && fact.method == thresholdMethod {
+		return threshold()
+	}
+	thresholdDeclared := edits != nil && edits.declared
 	verified := fact.fresh() && fact.state == supportVerified && fact.failures == 0
 	if !verified && (!anchored || fact.failures > 0) {
 		op.stage("Checking native compaction")
@@ -257,36 +302,49 @@ func (p *Provider) NativeCheckpoint(ctx context.Context, r NativeCheckpointReque
 		defer cancel()
 		advertised := false
 		// After a failure the declaration was not enough: test the route.
-		if proto.Info().ID == "anthropic" && fact.failures == 0 {
-			yes, known, e := c.advertisedCompaction(probeCtx, r.Model)
+		if proto.Info().ID == "anthropic" && (fact.failures == 0 || fact.method == thresholdMethod) {
+			decl, e := c.advertisedCompaction(probeCtx, r.Model)
+			thresholdDeclared = thresholdDeclared || decl.threshold
 			if e != nil {
 				return fail(e, true)
 			}
-			if known && !yes {
+			if decl.demand != nil && !*decl.demand {
+				if thresholdDeclared {
+					return threshold()
+				}
 				if e = record(supportUnavailable, nil); e != nil {
 					return zero, e
 				}
 				return fallback("The model does not advertise native compaction support.", true)
 			}
-			advertised = yes
+			advertised = decl.demand != nil && *decl.demand
 		}
 		if !advertised {
 			probe := &ChatRequest{Model: r.Model, Messages: []ChatMessage{NewTextMessage("user", r.ProbeSource)}, MaxOutputTokens: min(512, r.Limit)}
 			w, e := op.post(probeCtx, probe, r.ProbeSource, "compaction_probe")
 			// A probe is synthetic, so a normal answer or an unusable item may
 			// also try the other operation without risk to the user's data.
-			if e != nil && RejectedAccount(e) == nil && (missing(e) || responses && (errors.Is(e, errNoWindow) || errors.Is(e, errIgnoredCompaction))) {
+			if e != nil && alternate && RejectedAccount(e) == nil && (missing(e) || responses && (errors.Is(e, errNoWindow) || errors.Is(e, errIgnoredCompaction))) {
 				switchOperation()
 				w, e = op.post(probeCtx, probe, r.ProbeSource, "compaction_probe")
 			}
 			if e != nil {
+				if thresholdDeclared && RejectedAccount(e) == nil && (missing(e) || compactRejection(e) || errors.Is(e, errNoWindow) || errors.Is(e, errIgnoredCompaction)) {
+					return threshold()
+				}
 				return fail(e, true)
 			}
 			text, e := op.follow(probeCtx, w, r.ProbeQuestion, min(96, r.Limit), "compaction_probe_replay")
 			if e != nil {
+				if thresholdDeclared && RejectedAccount(e) == nil && compactRejection(e) {
+					return threshold()
+				}
 				return fail(e, true)
 			}
 			if text != r.ProbeAnswer {
+				if thresholdDeclared {
+					return threshold()
+				}
 				return fail(errIgnoredCompaction, true)
 			}
 			if e = record(supportVerified, nil); e != nil {
@@ -301,22 +359,34 @@ func (p *Provider) NativeCheckpoint(ctx context.Context, r NativeCheckpointReque
 		return p.earlierAttempt(err, fallback, cache.fact(key).failures == 0)
 	}
 	w, err := op.post(ctx, req, r.Directive, "native_compaction")
-	if err != nil && !verified && RejectedAccount(err) == nil && missing(err) {
+	if err != nil && !verified && alternate && RejectedAccount(err) == nil && missing(err) {
 		// An unverified anchored attempt reached a missing operation; resend
 		// the same small delta to the other one.
 		switchOperation()
 		w, err = op.post(ctx, req, r.Directive, "native_compaction")
 	}
 	if err != nil {
-		var rejection *StatusError
-		var first *firstEventRateLimit
-		if errors.As(err, &first) || errors.As(err, &rejection) && definiteRefusal(rejection.StatusCode) {
+		if confirmedNativeRejection(err) {
 			if e := cache.releaseRejected(attempt, flight); e != nil {
 				return zero, e
+			}
+			// A real request with a stored prefix can discover a missing
+			// operation without a synthetic probe. After a definite refusal,
+			// use the declared threshold on the pending turn, just as in
+			// discovery. Never do this for a lost prefix or an uncertain write.
+			if thresholdDeclared && RejectedAccount(err) == nil && !continuationUnavailable(err) && (missing(err) || compactRejection(err)) {
+				return threshold()
 			}
 		}
 		return fail(err, false)
 	}
+	return op.export(ctx, w, verified, fail, record)
+}
+
+func (op *compactExchange) export(ctx context.Context, w nativeWindow, verified bool, fail func(error, bool) (NativeCheckpointResult, error), record func(string, error) error) (NativeCheckpointResult, error) {
+	r, p := op.request, op.provider
+	var err error
+	var zero NativeCheckpointResult
 	text := w.text
 	if text == "" || !verified || r.ValidatePortable(text) != nil {
 		op.stage("Reading the provider checkpoint")
@@ -361,45 +431,65 @@ func (p *Provider) earlierAttempt(err error, fallback func(string, bool) (Native
 	return fallback("An earlier native compaction request for this conversation did not finish.", unreported)
 }
 
-func (c *Client) advertisedCompaction(ctx context.Context, model string) (bool, bool, error) {
+type compactDeclaration struct {
+	demand    *bool
+	threshold bool
+}
+
+func (c *Client) advertisedCompaction(ctx context.Context, model string) (compactDeclaration, error) {
 	if strings.ContainsAny(model, "/\\?#%") || model == "." || model == ".." {
-		return false, false, nil
+		return compactDeclaration{}, nil
 	}
 	resp, err := c.do(ctx, http.MethodGet, joinPath(c.base, "models/"+model), nil)
 	if err != nil {
-		return false, false, err
+		return compactDeclaration{}, err
 	}
 	defer resp.Body.Close()
 	if (resp.StatusCode == 404 || resp.StatusCode == 405) && !strings.EqualFold(resp.Header.Get("x-should-retry"), "false") {
-		return false, false, nil
+		return compactDeclaration{}, nil
 	}
 	if resp.StatusCode/100 != 2 {
-		return false, false, readStatusError(resp, 8192)
+		return compactDeclaration{}, readStatusError(resp, 8192)
 	}
 	raw, err := readBounded(resp.Body, 64<<10)
 	if err != nil {
-		return false, false, err
+		return compactDeclaration{}, err
 	}
 	var m struct {
 		ID           string
 		Capabilities struct {
+			ContextManagement struct {
+				Supported *bool
+				Compact   struct{ Supported bool } `json:"compact_20260112"`
+			} `json:"context_management"`
 			Compaction *struct {
 				Supported *bool
 				Summarize struct{ Supported *bool }
 			}
 		}
 	}
-	if json.Unmarshal(raw, &m) != nil || m.ID != model || m.Capabilities.Compaction == nil {
-		return false, false, nil
+	if json.Unmarshal(raw, &m) != nil || m.ID != model {
+		return compactDeclaration{}, nil
 	}
+	cm := m.Capabilities.ContextManagement
+	threshold := cm.Compact.Supported && (cm.Supported == nil || *cm.Supported)
 	v := m.Capabilities.Compaction
+	if v == nil {
+		return compactDeclaration{threshold: threshold}, nil
+	}
 	if v.Supported != nil && !*v.Supported {
-		return false, true, nil
+		return compactDeclaration{demand: v.Supported, threshold: threshold}, nil
 	}
 	if v.Summarize.Supported != nil {
-		return *v.Summarize.Supported, true, nil
+		return compactDeclaration{demand: v.Summarize.Supported, threshold: threshold}, nil
 	}
-	return false, false, nil
+	return compactDeclaration{threshold: threshold}, nil
+}
+
+func confirmedNativeRejection(err error) bool {
+	var status *StatusError
+	var first *firstEventRateLimit
+	return errors.As(err, &first) || errors.As(err, &status) && definiteRefusal(status.StatusCode)
 }
 
 // A gateway timeout, conflict, or nonstandard 4xx may follow accepted work.

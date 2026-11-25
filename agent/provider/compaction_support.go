@@ -20,6 +20,7 @@ const (
 	CompactionProviderOnly = "provider"
 	// CompactionErrandOnly skips native discovery as well as native compaction.
 	CompactionErrandOnly = "errand"
+	supportCandidate     = "candidate" // Positive declaration, not a verified checkpoint.
 	supportVerified      = "verified"
 	supportUnavailable   = "unavailable"
 	supportCooling       = "cooling"
@@ -83,10 +84,11 @@ type supportFact struct {
 	failures                      int
 }
 type supportFlight struct {
-	ctx     context.Context
-	cancel  context.CancelCauseFunc
-	account string
-	done    chan struct{}
+	ctx        context.Context
+	cancel     context.CancelCauseFunc
+	account    string
+	generation uint64
+	done       chan struct{}
 }
 type supportCache struct {
 	observations atomic.Pointer[[]CompactionObservation]
@@ -95,6 +97,7 @@ type supportCache struct {
 	db           *sql.DB
 	facts        map[string]supportFact
 	flights      map[string]*supportFlight
+	generations  map[string]uint64
 }
 
 var volatileSupport supportCache
@@ -165,7 +168,7 @@ func (c *supportCache) begin(ctx context.Context, key, account string) (*support
 		c.flights = map[string]*supportFlight{}
 	}
 	op, cancel := context.WithCancelCause(ctx)
-	f := &supportFlight{account: account, done: make(chan struct{}), ctx: op, cancel: cancel}
+	f := &supportFlight{account: account, generation: c.generations[account], done: make(chan struct{}), ctx: op, cancel: cancel}
 	c.flights[key] = f
 	return f, true
 }
@@ -197,7 +200,7 @@ func (c *supportCache) recordWithDelay(key string, flight *supportFlight, p *Pro
 	switch state {
 	case supportVerified:
 		f.expires = now.Add(7 * 24 * time.Hour).Unix()
-	case supportUnavailable:
+	case supportCandidate, supportUnavailable:
 		f.expires = now.Add(24 * time.Hour).Unix()
 	default:
 		f.state, f.expires = prior.state, prior.expires
@@ -307,7 +310,7 @@ func (c *supportCache) publishObservations() {
 		status, until := f.state, f.expires
 		if f.retryAt > now {
 			status, until = supportCooling, f.retryAt
-		} else if f.failures != 0 {
+		} else if f.failures != 0 || f.state == supportCandidate {
 			continue
 		}
 		if until > now {
@@ -332,6 +335,10 @@ func (c *supportCache) cancelFlights(account string) {
 	c.cancelFlightsLocked(account)
 }
 func (c *supportCache) cancelFlightsLocked(account string) {
+	if c.generations == nil {
+		c.generations = make(map[string]uint64)
+	}
+	c.generations[account]++
 	for k, f := range c.flights {
 		if f.account == account {
 			f.cancel(errAccountChanged)

@@ -98,7 +98,7 @@ func (c *runtimeUploadController) TakeQueued() []RuntimeMessage {
 }
 
 func (c *runtimeUploadController) requestRestartLocked() bool {
-	if c.restartRequested || c.accepted || c.outputStarted || len(c.queued) == 0 {
+	if c.cancel == nil || c.restartRequested || c.accepted || c.outputStarted || len(c.queued) == 0 {
 		return false
 	}
 	if c.total > 0 && c.uploaded*100 > c.total*runtimeUploadRestartPercent {

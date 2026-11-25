@@ -186,6 +186,7 @@ func encodeResponsesInput(messages []ChatMessage, start int) ([]any, error) {
 			}
 		}
 	}
+	systemPrefix := 0
 	for _, msg := range messages[start:] {
 		if item := nativeItem(msg, "openai-responses"); item != nil {
 			var window []json.RawMessage
@@ -216,6 +217,12 @@ func encodeResponsesInput(messages []ChatMessage, start int) ([]any, error) {
 					return nil, fmt.Errorf("decode preserved OpenAI response item: %w", err)
 				}
 				switch descriptor.Type {
+				case "compaction":
+					// Stateless replay may discard everything before the latest
+					// checked seal. A stored-id delta is never manually pruned.
+					if start == 0 && msg.nativeReplay {
+						input = input[:systemPrefix]
+					}
 				case "message":
 					preservedMessage = true
 				case "function_call", "custom_tool_call":
@@ -282,6 +289,9 @@ func encodeResponsesInput(messages []ChatMessage, start int) ([]any, error) {
 			}
 		}
 
+		if start == 0 && msg.Role == "system" && len(input) == 1 {
+			systemPrefix = 1
+		}
 		if msg.Role == "assistant" {
 			for _, call := range msg.ToolCalls {
 				if preservedCalls[call.ID] {
@@ -315,27 +325,25 @@ func encodeResponsesContent(msg ChatMessage) ([]any, error) {
 			if msg.Role == "assistant" {
 				continue
 			}
+			var imageURL, detail string
+			if part.ImageURL != nil {
+				imageURL, detail = part.ImageURL.URL, part.ImageURL.Detail
+			}
 			if len(part.Data) > 0 {
-				// Inline media attachment from the tool boundary.
-				dataURL := "data:" + part.MimeType + ";base64," + base64.StdEncoding.EncodeToString(part.Data)
-				content = append(content, map[string]any{
-					"type":      "input_image",
-					"image_url": dataURL,
-				})
-				continue
-			}
-			if part.ImageURL == nil || part.ImageURL.URL == "" {
+				imageURL = mediaDataURL(part)
+			} else if imageURL == "" {
 				return nil, fmt.Errorf("OpenAI image content is missing a URL")
-			}
-			if err := validateOpenAIImageURL(part.ImageURL.URL); err != nil {
+			} else if err := validateOpenAIImageURL(imageURL); err != nil {
 				return nil, err
 			}
-			image := map[string]any{
-				"type":      "input_image",
-				"image_url": part.ImageURL.URL,
+			// Responses InputImageContent requires detail. Its documented
+			// default is auto. Tool-result images use a separate optional field.
+			if detail == "" && msg.Role != "tool" {
+				detail = "auto"
 			}
-			if part.ImageURL.Detail != "" {
-				image["detail"] = part.ImageURL.Detail
+			image := map[string]any{"type": "input_image", "image_url": imageURL}
+			if detail != "" {
+				image["detail"] = detail
 			}
 			content = append(content, image)
 		case "document":
@@ -660,6 +668,7 @@ func responseOutputItemComplete(status string) bool {
 }
 
 type openAIResponsesStreamDecoder struct {
+	sawSeal            bool
 	seenProviderItems  map[string]struct{}
 	pendingCustomCalls map[string]bool
 	content            strings.Builder
@@ -805,6 +814,9 @@ func (d *openAIResponsesStreamDecoder) decodeOutputItem(index int, raw json.RawM
 
 	var update StreamUpdate
 	if done {
+		if item.Type == "compaction" {
+			d.sawSeal = true
+		}
 		itemID := item.ID
 		if itemID == "" {
 			itemID = fmt.Sprintf("%s:%d", item.Type, index)
@@ -961,6 +973,33 @@ func (d *openAIResponsesStreamDecoder) decodeTerminalResponse(response *openAIRe
 					update.Reasoning = append(update.Reasoning, d.reasoningDelta(index, partIndex, reasoning.Raw, part.Text, true))
 				}
 			}
+		}
+	}
+	// Arrival order of output_item.done need not be output_index order. The
+	// terminal snapshot is the authority for a window with a seal. An empty
+	// or inconsistent snapshot cannot authorize exporting opaque items.
+	if d.sawSeal || lastSeal(update.ProviderItems) >= 0 {
+		update.ReplaceProviderItems = true
+		update.ProviderItems = nil
+		seen := map[string]bool{}
+		for index, raw := range response.Output {
+			var item struct{ Type, ID string }
+			if err := json.Unmarshal(raw, &item); err != nil {
+				return StreamUpdate{}, err
+			}
+			id := item.ID
+			if id == "" {
+				id = fmt.Sprintf("%s:%d", item.Type, index)
+			}
+			if seen[id] {
+				break
+			}
+			seen[id] = true
+			update.ProviderItems = append(update.ProviderItems, Item{Standard: "openai-responses", Type: item.Type, Data: bytes.Clone(raw)})
+		}
+		if len(seen) != len(d.seenProviderItems) || len(seen) != len(response.Output) || lastSeal(update.ProviderItems) < 0 || incomplete {
+			update.ProviderItems = nil
+			update.ContinuationID = ""
 		}
 	}
 	if !incomplete {

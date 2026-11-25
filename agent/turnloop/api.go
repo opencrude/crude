@@ -41,6 +41,7 @@ func (e *streamPanicError) Error() string {
 }
 
 type completionResult struct {
+	checkpointUsage            *provider.TokenUsage
 	Content                    string
 	ReasoningContent           string
 	ReasoningDuration          time.Duration
@@ -123,6 +124,7 @@ func (a *Agent) completeStream(
 }
 
 type completionRequestOptions struct {
+	boundary        provider.ClientOption
 	toolChoice      any
 	maxOutputTokens int
 	maxAttempts     int
@@ -207,6 +209,9 @@ func (a *Agent) completeStreamWithOptions(
 		return completionResult{}, err
 	}
 
+	if requestOptions.boundary != nil {
+		requestOptions.boundary(client)
+	}
 	streamStart := time.Now()
 	a.logger.Info("LLM", "prompt", "model", a.Model, "protocol", a.Provider.ProtocolID(), "msgs", len(msgs), "tools", len(tools))
 
@@ -214,7 +219,7 @@ func (a *Agent) completeStreamWithOptions(
 		ctx, client, &req, prefixHash, streamStart,
 		emit, emitThinking, onToolCallStart, onToolCallDelta,
 	)
-	if consumeErr != nil && !result.hasOutput() && ctx.Err() == nil {
+	if requestOptions.boundary == nil && consumeErr != nil && !result.hasOutput() && ctx.Err() == nil {
 		if portable, ok := a.Provider.RecoverNativeReplay(msgs, consumeErr); ok {
 			if a.Provider.PortableReplayTooLarge(canonical, provider.FilterReplayMessages(portable, a.Provider)) {
 				return result, provider.ErrCheckpointReplayNeedsCompaction
@@ -403,6 +408,9 @@ func (a *Agent) consumeStream(
 			finish()
 			return result, err
 		}
+		if update.CheckpointUsage != nil {
+			result.checkpointUsage = update.CheckpointUsage
+		}
 		if update.Usage != nil {
 			result.Usage = *update.Usage
 		}
@@ -417,6 +425,9 @@ func (a *Agent) consumeStream(
 		}
 		if update.FinishReason != "" {
 			result.FinishReason = update.FinishReason
+		}
+		if update.ReplaceProviderItems {
+			result.ProviderItems = nil
 		}
 		if len(update.ProviderItems) > 0 {
 			result.ProviderItems = append(result.ProviderItems, update.ProviderItems...)

@@ -263,6 +263,14 @@ func (p *Provider) requestExtras() map[string]any {
 		}
 	}
 	mergeExtras(merged, p.extraBody, nestedExtraKeys(proto))
+	// An explicit threshold is boundary policy, not a second server schedule.
+	if edits := p.configuredThreshold(""); edits != nil {
+		if edits.ordinary != nil {
+			merged["context_management"] = edits.ordinary
+		} else {
+			delete(merged, "context_management")
+		}
+	}
 	// Generic extras cannot silently re-enable an explicit Off or ZDR choice.
 	if settings := p.protocolSettings; settings != nil && proto != nil && proto.Info().Options.Store && (settings.Store != nil || settings.ZeroDataRetention) {
 		merged["store"] = settings.ResolveStore(proto.Info().Options.StoreDefault)
