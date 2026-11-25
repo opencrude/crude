@@ -72,7 +72,7 @@ func (s *CodexStandard) compactBody(req *ChatRequest, directive string, extras m
 	if instructions == "" {
 		instructions = directive
 	}
-	wire["instructions"], wire["input"] = instructions, input
+	wire["instructions"], wire["input"] = instructions, codexTypedInput(input)
 	return wire, nil
 }
 
@@ -109,7 +109,40 @@ func (s *CodexStandard) EncodeRequest(req *ChatRequest) ([]byte, error) {
 	if _, ok := wire["instructions"]; !ok {
 		wire["instructions"], wire["input"] = codexExtractInstructions(wire["input"])
 	}
+	wire["input"] = codexTypedInput(wire["input"])
 	return json.Marshal(wire)
+}
+
+// codexTypedInput gives every message the typed form that the Codex client
+// sends (openai/codex codex-rs/protocol/src/models.rs, ResponseItem::Message):
+// type "message" and a list of content parts. Public Responses also accepts
+// the role/content shorthand, but this backend's own client never sends it.
+func codexTypedInput(input any) any {
+	items, ok := input.([]any)
+	if !ok {
+		return input
+	}
+	for _, item := range items {
+		msg, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		role, ok := msg["role"].(string)
+		if !ok {
+			continue
+		}
+		if _, typed := msg["type"]; !typed {
+			msg["type"] = "message"
+		}
+		if text, ok := msg["content"].(string); ok {
+			part := "input_text"
+			if role == "assistant" {
+				part = "output_text"
+			}
+			msg["content"] = []any{map[string]any{"type": part, "text": text}}
+		}
+	}
+	return items
 }
 
 // codexExtractInstructions pulls the system/developer text out of the Responses
