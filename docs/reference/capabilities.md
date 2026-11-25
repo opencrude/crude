@@ -198,7 +198,8 @@ protocol responses and bounded evidence still apply.
 ## Transports and recovery
 
 - MCP OAuth uses the existing **Sign in** and **Open browser** controls. In
-  **Edit connection**, select OAuth and enter either the public HTTPS **Metadata URL** or a pre-registered **OAuth client ID**. A metadata
+  **Edit connection**, select OAuth and enter either the public HTTPS **Metadata
+  URL** or a pre-registered **OAuth client ID**. A metadata
   document must describe the same public client and allow the native loopback
   return path `/callback` on `127.0.0.1` with an ephemeral port. If the server
   does not advertise metadata support, Crude can use dynamic registration when
