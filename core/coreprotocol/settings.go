@@ -152,9 +152,10 @@ type SettingsFetchResult struct {
 	Accounts                 map[string]AccountView           `json:"accounts"`
 	ProxyCredentialsPresent  bool                             `json:"proxy_credentials_present"`
 	ConnectionSecretsPresent map[string]bool                  `json:"connection_secrets_present"`
-	// ConnectionSecretFields reports exactly which write-only connection fields
-	// hold a value, so shells can show and keep each one without receiving it.
-	ConnectionSecretFields map[string]ConnectionSecretPresence `json:"connection_secret_fields,omitempty"`
+	// Presence belongs to the layer it describes. An override can clear or set
+	// a field without changing the application registration of the same ID.
+	ApplicationConnectionSecretFields map[string]ConnectionSecretPresence `json:"application_connection_secret_fields,omitempty"`
+	ConnectionSecretFields            map[string]ConnectionSecretPresence `json:"connection_secret_fields,omitempty"` // effective
 	// Both inventories are detected on the core host. A local attachment may
 	// supply a different search environment for the new terminal's executable.
 	TerminalShells []setting.TerminalShell `json:"terminal_shells,omitempty"`
@@ -188,6 +189,8 @@ type CapabilityResult struct {
 	Snapshot captypes.Snapshot `json:"snapshot"`
 	Entries  []captypes.Entry  `json:"entries,omitempty"`
 	Content  string            `json:"content,omitempty"`
+	// ConnectionSecretFields describes Snapshot.Settings, never an independent settings read.
+	ConnectionSecretFields map[string]ConnectionSecretPresence `json:"connection_secret_fields,omitempty"`
 }
 type CapabilityPreviewResult struct {
 	Preview captypes.AcquisitionPreview `json:"preview"`

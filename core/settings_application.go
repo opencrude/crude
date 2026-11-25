@@ -233,7 +233,8 @@ func (a *actor) prepareApplicationSettings(request coreprotocol.Request) (func(c
 
 func publicCapabilityResult(s captypes.Snapshot, entries []captypes.Entry, content string) coreprotocol.CapabilityResult {
 	revision := entityRevision(s.Settings)
-	s.Settings = publicCapabilities(s.Settings)
+	presence := make(map[string]coreprotocol.ConnectionSecretPresence)
+	s.Settings = publicCapabilities(s.Settings, presence)
 	s.Entries = publicCapabilityEntries(s.Entries)
 	entries = publicCapabilityEntries(entries)
 	s.Error = ""
@@ -244,7 +245,7 @@ func publicCapabilityResult(s captypes.Snapshot, entries []captypes.Entry, conte
 	}
 	// Detached connection tests and auth state can contain credential diagnostics.
 	// Structured content is restricted to non-secret data reads by the caller.
-	return coreprotocol.CapabilityResult{Revision: revision, Snapshot: s, Entries: entries, Content: content}
+	return coreprotocol.CapabilityResult{Revision: revision, Snapshot: s, ConnectionSecretFields: presence, Entries: entries, Content: content}
 }
 
 func publicCapabilityEntries(entries []captypes.Entry) []captypes.Entry {
@@ -277,6 +278,9 @@ func resolveConnectionSecrets(in *coreprotocol.CapabilityActionRequest, before c
 	}
 	old := before.Connections[in.Action.ID]
 	updates := in.ConnectionSecrets
+	if updates.CredentialRef.Keep && (value.OAuthClientID != old.OAuthClientID || value.OAuthIssuer != old.OAuthIssuer) {
+		return errors.New("OAuth client ID or issuer changed; enter the secret reference again or clear it")
+	}
 	var err error
 	if value.URL, err = resolveSecret(updates.Endpoint, old.URL); err != nil {
 		return err

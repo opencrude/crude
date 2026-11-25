@@ -297,29 +297,33 @@ func (w *Workspace) MarkBoardRead(ctx context.Context, through int64) error {
 
 func (w *Workspace) CapabilityRuntimeSnapshot(ctx context.Context) (captypes.Snapshot, error) {
 	result, err := w.rpc().CapabilityRuntimeSnapshot(ctx)
-	return result.Snapshot, err
+	return editableCapabilitySnapshot(result), err
 }
 
 func (w *Workspace) CapabilitySnapshot(ctx context.Context) (captypes.Snapshot, error) {
 	result, err := w.rpc().CapabilitySnapshot(ctx)
-	return result.Snapshot, err
+	return editableCapabilitySnapshot(result), err
+}
+
+func editableCapabilitySnapshot(result coreprotocol.CapabilityResult) captypes.Snapshot {
+	markStoredConnections(result.Snapshot.Settings, result.ConnectionSecretFields)
+	return result.Snapshot
 }
 
 // CapabilityAction converts edited connection/source values into write-only
 // updates against the replica the edit started from.
 func (w *Workspace) CapabilityAction(ctx context.Context, action captypes.Action) (captypes.Snapshot, []captypes.Entry, string, error) {
-	base := w.capabilityBase()
 	request := coreprotocol.CapabilityActionRequest{Action: action}
 	if action.Connection != nil && (action.Operation == "save-connection" || action.Operation == "test") {
 		conn := *action.Connection
-		request.ConnectionSecrets = connectionSecrets(conn, base.connections[conn.ID], base.presence[conn.ID])
+		request.ConnectionSecrets = connectionSecrets(conn, w.capabilityBase(action.Scope).Connections[conn.ID])
 		conn.Args, conn.Environment, conn.Headers, conn.SecretRefs, conn.CredentialRef = nil, nil, nil, nil, ""
 		conn.URL = ""
 		request.Action.Connection = &conn
 	}
 	if action.Source != nil && action.Operation == "save-source" {
 		source := *action.Source
-		if before, ok := base.sources[source.ID]; ok && before.Location == source.Location {
+		if before, ok := w.capabilityBase(action.Scope).Sources[source.ID]; ok && before.Location == source.Location {
 			request.SourceLocation.Keep = true
 		} else {
 			location := source.Location
@@ -333,27 +337,21 @@ func (w *Workspace) CapabilityAction(ctx context.Context, action captypes.Action
 		return captypes.Snapshot{}, nil, "", err
 	}
 	w.refreshSettings()
-	return result.Snapshot, result.Entries, result.Content, nil
+	return editableCapabilitySnapshot(result), result.Entries, result.Content, nil
 }
 
-// capabilityState is captured when an action is issued; Capability actions
-// run on command goroutines, so the replica is read under the settings lock.
-type capabilityState struct {
-	connections map[string]captypes.ConnectionConfig
-	sources     map[string]captypes.SourceConfig
-	presence    map[string]coreprotocol.ConnectionSecretPresence
-}
-
-func (w *Workspace) capabilityBase() capabilityState {
+// The installed wire projection is immutable. Match public endpoint and source
+// URLs against the same layer the core will use for Keep.
+func (w *Workspace) capabilityBase(scope captypes.Scope) captypes.Settings {
 	w.settingsMu.RLock()
 	defer w.settingsMu.RUnlock()
-	fetch := w.settings.current.fetch
-	caps := fetch.Effective.Capabilities
-	return capabilityState{connections: maps.Clone(caps.Connections),
-		sources: maps.Clone(caps.Sources), presence: maps.Clone(fetch.ConnectionSecretFields)}
+	if scope == captypes.ScopeApplication {
+		return w.settings.current.fetch.Application.Capabilities
+	}
+	return w.settings.current.fetch.Effective.Capabilities
 }
 
-func connectionSecrets(conn, before captypes.ConnectionConfig, present coreprotocol.ConnectionSecretPresence) coreprotocol.ConnectionSecretUpdates {
+func connectionSecrets(conn, before captypes.ConnectionConfig) coreprotocol.ConnectionSecretUpdates {
 	var out coreprotocol.ConnectionSecretUpdates
 	if before.ID != "" && conn.URL == before.URL {
 		out.Endpoint.Keep = true
@@ -361,15 +359,17 @@ func connectionSecrets(conn, before captypes.ConnectionConfig, present coreproto
 		url := conn.URL
 		out.Endpoint.Value = &url
 	}
-	if present.Args && slices.Equal(conn.Args, storedArgs) {
+	// The marker belongs to the edited snapshot. A separate settings fetch
+	// may be older or newer; it must never turn a marker into a replacement.
+	if slices.Equal(conn.Args, storedArgs) {
 		out.Args.Keep = true
 	} else if len(conn.Args) != 0 {
 		out.Args.Value = slices.Clone(conn.Args)
 	}
-	out.Environment = mapUpdate(conn.Environment, present.Environment)
-	out.Headers = mapUpdate(conn.Headers, present.Headers)
-	out.SecretRefs = mapUpdate(conn.SecretRefs, present.SecretRefs)
-	if present.CredentialRef && conn.CredentialRef == StoredSecret {
+	out.Environment = mapUpdate(conn.Environment)
+	out.Headers = mapUpdate(conn.Headers)
+	out.SecretRefs = mapUpdate(conn.SecretRefs)
+	if conn.CredentialRef == StoredSecret {
 		out.CredentialRef.Keep = true
 	} else if conn.CredentialRef != "" {
 		ref := conn.CredentialRef
@@ -382,8 +382,8 @@ var storedArgs = []string{StoredSecret}
 
 func storedMap() map[string]string { return map[string]string{storedKey: StoredSecret} }
 
-func mapUpdate(value map[string]string, present bool) coreprotocol.SecretMap {
-	if present && len(value) == 1 && value[storedKey] == StoredSecret {
+func mapUpdate(value map[string]string) coreprotocol.SecretMap {
+	if len(value) == 1 && value[storedKey] == StoredSecret {
 		return coreprotocol.SecretMap{Keep: true}
 	}
 	if len(value) == 0 {
@@ -392,11 +392,13 @@ func mapUpdate(value map[string]string, present bool) coreprotocol.SecretMap {
 	return coreprotocol.SecretMap{Value: maps.Clone(value)}
 }
 
-// markStoredCapabilities shows each redacted connection field as stored.
-func markStoredCapabilities(caps captypes.Settings, presence map[string]coreprotocol.ConnectionSecretPresence) captypes.Settings {
-	caps = captypes.Clone(caps)
-	for id, conn := range caps.Connections {
-		p := presence[id]
+// markStoredConnections installs write-only markers on a detached projection.
+func markStoredConnections(caps captypes.Settings, presence map[string]coreprotocol.ConnectionSecretPresence) {
+	for id, p := range presence {
+		conn, ok := caps.Connections[id]
+		if !ok {
+			continue
+		}
 		if p.Args {
 			conn.Args = slices.Clone(storedArgs)
 		}
@@ -414,7 +416,6 @@ func markStoredCapabilities(caps captypes.Settings, presence map[string]coreprot
 		}
 		caps.Connections[id] = conn
 	}
-	return caps
 }
 
 // ---- Files and project search --------------------------------------------

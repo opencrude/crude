@@ -77,7 +77,7 @@ func (a *actor) executeOwner(request coreprotocol.Request) (coreprotocol.Respons
 		}
 		return response(request, out), true
 	case coreprotocol.WorkspaceOverrides:
-		return response(request, coreprotocol.OverridesResult{Overrides: a.ws.LoadWorkspaceOverrides(), AgentDefaults: a.ws.WorkspaceAgentDefaults()}), true
+		return response(request, coreprotocol.OverridesResult{Overrides: publicWorkspaceOverrides(a.ws.LoadWorkspaceOverrides()), AgentDefaults: a.ws.WorkspaceAgentDefaults()}), true
 	}
 	return coreprotocol.Response{}, false
 }

@@ -44,7 +44,7 @@ func (a *actor) prepareWorkspacePreferences(request coreprotocol.Request) (func(
 		if retained.Err != nil {
 			return fault(request, "save_failed", retained.Err.Error())
 		}
-		return response(request, coreprotocol.WorkspacePreferencesResult{Effective: publicApp(retained.Effective), Overrides: retained.Overrides})
+		return response(request, coreprotocol.WorkspacePreferencesResult{Effective: publicApp(retained.Effective), Overrides: publicWorkspaceOverrides(retained.Overrides)})
 	}
 	apply := func(result coreprotocol.Response) {
 		if result.Error == nil {

@@ -972,7 +972,7 @@ func mcpConnectionFields(value captypes.ConnectionConfig) []*ui.FieldState {
 	transport := ui.SegmentedFieldState("transport", "Runs as", []ui.FormOption{{ID: "http", Label: "Remote server"}, {ID: "stdio", Label: "Local process"}}, mapDefault(value.Transport, "http"),
 		"Remote uses streamable HTTP; Local launches an executable on the core host.")
 	auth := ui.SegmentedFieldState("auth", "Sign in", []ui.FormOption{{ID: "none", Label: "None"}, {ID: "oauth", Label: "OAuth"}}, mapDefault(value.Auth, "none"), "OAuth sign-in is always an explicit step you start.")
-	clientSecret := ui.PasswordFieldState("oauth-secret-ref", "OAuth client secret reference", "", "Use secret:NAME. Leave blank to keep it, or enter - to clear it.")
+	clientSecret := ui.PasswordFieldState("oauth-secret-ref", "Secret reference", "", "secret:NAME. Blank keeps. - clears.")
 	if value.CredentialRef != "" {
 		clientSecret.Placeholder = "Stored"
 	}
@@ -985,10 +985,10 @@ func mcpConnectionFields(value captypes.ConnectionConfig) []*ui.FieldState {
 		ui.TextFieldState("url", "Endpoint", value.URL, "The server's HTTPS URL. Credentials are bound to this exact endpoint."),
 		table("headers", "Headers", "Add header", value.Headers, "Non-secret headers; put tokens in Secret references.", "Header", "Value"),
 		auth,
-		ui.TextFieldState("oauth-client", "OAuth client ID", value.OAuthClientID, "Enter a registered client ID, or leave blank."),
-		ui.TextFieldState("oauth-issuer", "OAuth issuer URL", value.OAuthIssuer, "Required with a client secret. Enter the issuer that registered the client."),
+		ui.TextFieldState("oauth-client", "OAuth client ID", value.OAuthClientID, "Leave ID and URL blank to register."),
+		ui.TextFieldState("oauth-metadata", "Metadata URL", value.OAuthMetadataURL, "Use a public HTTPS metadata document."),
+		ui.TextFieldState("oauth-issuer", "OAuth issuer URL", value.OAuthIssuer, "Enter the issuer for this client ID."),
 		clientSecret,
-		ui.TextFieldState("oauth-metadata", "OAuth client metadata URL", value.OAuthMetadataURL, "Use a public HTTPS document. Leave both client fields blank to register."),
 		ui.TextFieldState("oauth-scopes", "OAuth scopes", strings.Join(value.OAuthScopes, " "), "Space- or comma-separated scopes to request at sign-in."),
 		ui.SeparatorFieldState("mcp-local", "Local process"),
 		ui.TextFieldState("command", "Executable", value.Command, "Executable on PATH or an absolute path; launched without a shell."),

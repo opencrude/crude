@@ -222,3 +222,127 @@ func TestCapabilityFetchedSecretKeepRoundtrip(t *testing.T) {
 		t.Fatal("source location bytes lost")
 	}
 }
+
+func TestCapabilityPresenceFollowsEachRedactedProjection(t *testing.T) {
+	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", setting.Settings{}, coreTestLogger{})
+	defer ws.Close()
+	conn := captypes.ConnectionConfig{
+		ID: "one", Name: "Client", Transport: "http", URL: "https://mcp.example.test",
+		Auth: "oauth", OAuthClientID: "app-client", OAuthIssuer: "https://issuer.example.test",
+		CredentialRef: "secret:FIXTURE_PRIVATE_REF", Scope: captypes.ScopeApplication,
+	}
+	app := ws.AppDefaults()
+	app.Capabilities.Connections[conn.ID] = conn
+	ws.SetAppDefaults(app)
+	if err := ws.WorkspaceDB.SetSetting("workspace_settings", `{"capabilities":{"connections":{"one":{"scope":"workspace","credential_ref":"","headers":{"X-Test":"FIXTURE_PRIVATE_HEADER"}}}}}`); err != nil {
+		t.Fatal(err)
+	}
+	a := &actor{ws: ws}
+	fetch := fetchSettingsForTest(t, a)
+	if fetch.ApplicationConnectionSecretFields["one"] != (coreprotocol.ConnectionSecretPresence{CredentialRef: true}) ||
+		fetch.ConnectionSecretFields["one"] != (coreprotocol.ConnectionSecretPresence{Headers: true}) {
+		t.Fatal("the application and workspace saw the wrong stored fields")
+	}
+	if fetch.Application.Capabilities.Connections["one"].CredentialRef != "" ||
+		len(fetch.Effective.Capabilities.Connections["one"].Headers) != 0 ||
+		strings.Contains(string(fetch.Overrides.Capabilities), "FIXTURE_PRIVATE") {
+		t.Fatal("settings fetch exposed a private value")
+	}
+
+	// The service can have a different observation than settings.fetch. Never
+	// mark its public snapshot with fields from either independent settings layer.
+	cfg := ws.LoadAppSettings().Capabilities
+	conn.CredentialRef = ""
+	conn.Args = []string{"FIXTURE_PRIVATE_ARGUMENT"}
+	conn.SecretRefs = map[string]string{"HEADER": "secret:FIXTURE_PRIVATE_HEADER"}
+	cfg.Connections["one"] = conn
+	if _, err := ws.CapabilitySnapshot(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := ws.Capabilities.Configure(t.Context(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	for _, method := range []string{coreprotocol.CapabilitySnapshot, coreprotocol.CapabilityRuntime, coreprotocol.CapabilityAction} {
+		payload := emptyPayload
+		if method != coreprotocol.CapabilityRuntime {
+			payload = mustTestPayload(coreprotocol.CapabilityActionRequest{Action: captypes.Action{Operation: "snapshot"}})
+		}
+		run, _, _ := a.prepareSettings(coreprotocol.Request{Method: method, Payload: payload})
+		out := run(t.Context())
+		if out.Error != nil || strings.Contains(string(out.Payload), "FIXTURE_PRIVATE") {
+			t.Fatalf("%s failed or exposed private bytes", method)
+		}
+		var result coreprotocol.CapabilityResult
+		if err := coreprotocol.Decode(out.Payload, &result); err != nil {
+			t.Fatal(err)
+		}
+		if result.ConnectionSecretFields["one"] != (coreprotocol.ConnectionSecretPresence{Args: true, SecretRefs: true}) {
+			t.Fatalf("%s did not describe the exact snapshot", method)
+		}
+	}
+}
+
+func TestCapabilityKeepRefusesStaleOAuthIdentity(t *testing.T) {
+	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", setting.Settings{}, coreTestLogger{})
+	defer ws.Close()
+	app := ws.AppDefaults()
+	current := captypes.ConnectionConfig{
+		ID: "one", Name: "Client", Transport: "http", URL: "https://mcp.example.test",
+		Auth: "oauth", OAuthClientID: "current-client", OAuthIssuer: "https://current.example.test",
+		CredentialRef: "secret:CURRENT", Scope: captypes.ScopeApplication,
+	}
+	app.Capabilities.Connections[current.ID] = current
+	ws.SetAppDefaults(app)
+	a := &actor{ws: ws}
+	for _, changed := range []string{"issuer", "client"} {
+		conn := current
+		conn.CredentialRef = ""
+		if changed == "issuer" {
+			conn.OAuthIssuer = "https://earlier.example.test"
+		} else {
+			conn.OAuthClientID = "earlier-client"
+		}
+		in := coreprotocol.CapabilityActionRequest{
+			Action:            captypes.Action{Operation: "save-connection", Scope: captypes.ScopeApplication, ID: current.ID, Connection: &conn},
+			ConnectionSecrets: coreprotocol.ConnectionSecretUpdates{Endpoint: coreprotocol.SecretString{Keep: true}, CredentialRef: coreprotocol.SecretString{Keep: true}},
+		}
+		run, _, _ := a.prepareSettings(coreprotocol.Request{Method: coreprotocol.CapabilityAction, Payload: mustTestPayload(in)})
+		out := run(t.Context())
+		if out.Error == nil || out.Error.Code != "invalid_request" || !strings.Contains(out.Error.Message, "reference") {
+			t.Fatalf("Keep did not reject an obsolete %s before persistence", changed)
+		}
+	}
+}
+
+func TestWorkspaceOverrideRepliesNeverExposeConnectionSecrets(t *testing.T) {
+	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", setting.Settings{}, coreTestLogger{})
+	defer ws.Close()
+	const stored = `{"capabilities":{"connections":{"one":{"scope":"workspace","disabled":false,"credential_ref":"secret:FIXTURE_PRIVATE_REF","headers":{"X-Test":"FIXTURE_PRIVATE_HEADER"}}}}}`
+	if err := ws.WorkspaceDB.SetSetting("workspace_settings", stored); err != nil {
+		t.Fatal(err)
+	}
+	a := &actor{ws: ws}
+	read, _ := a.executeOwner(coreprotocol.Request{Method: coreprotocol.WorkspaceOverrides, Payload: emptyPayload})
+	work, apply, _ := a.prepareWorkspacePreferences(coreprotocol.Request{
+		Method: coreprotocol.WorkspaceOverridesSet, Payload: mustTestPayload(coreprotocol.WorkspacePreferencesRequest{
+			Edits: []setting.Edit{{Path: []string{"theme", "preset"}, After: []byte(`"light"`)}},
+		}),
+	})
+	save := work(t.Context())
+	for method, out := range map[string]coreprotocol.Response{coreprotocol.WorkspaceOverrides: read, coreprotocol.WorkspaceOverridesSet: save} {
+		if out.Error != nil {
+			t.Fatal(out.Error)
+		}
+		if strings.Contains(string(out.Payload), "FIXTURE_PRIVATE") {
+			t.Errorf("%s exposed private workspace connection fields", method)
+		}
+		if !strings.Contains(string(out.Payload), `"disabled":false`) {
+			t.Errorf("%s dropped an explicit workspace setting", method)
+		}
+	}
+	apply(save)
+	effective := ws.LoadAppSettings()
+	if effective.Theme.Preset != "light" || effective.Capabilities.Connections["one"].CredentialRef != "secret:FIXTURE_PRIVATE_REF" {
+		t.Fatal("unrelated Save did not preserve the workspace reference")
+	}
+}

@@ -52,9 +52,18 @@ func publicURL(raw string) string {
 	return u.String()
 }
 
-func publicCapabilities(value captypes.Settings) captypes.Settings {
+func publicCapabilities(value captypes.Settings, presence map[string]coreprotocol.ConnectionSecretPresence) captypes.Settings {
 	value = captypes.Clone(value)
 	for id, conn := range value.Connections {
+		if presence != nil {
+			fields := coreprotocol.ConnectionSecretPresence{
+				Args: len(conn.Args) != 0, Environment: len(conn.Environment) != 0, Headers: len(conn.Headers) != 0,
+				SecretRefs: len(conn.SecretRefs) != 0, CredentialRef: conn.CredentialRef != "",
+			}
+			if fields != (coreprotocol.ConnectionSecretPresence{}) {
+				presence[id] = fields
+			}
+		}
 		conn.Environment, conn.Headers, conn.SecretRefs = nil, nil, nil
 		conn.CredentialRef = ""
 		conn.URL = publicURL(conn.URL)
@@ -71,8 +80,16 @@ func publicCapabilities(value captypes.Settings) captypes.Settings {
 	return value
 }
 
-// Redact the sparse layer without round-tripping through the resolved structs:
-// their required fields and zero-valued Acquisition would invent overrides.
+// publicWorkspaceOverrides detaches the public connection/source projection.
+// The sparse layer must not round-trip through resolved settings: required
+// fields and zero-valued Acquisition would invent overrides.
+func publicWorkspaceOverrides(value setting.WorkspaceOverrides) setting.WorkspaceOverrides {
+	if len(value.Capabilities) != 0 {
+		value.Capabilities = publicCapabilityOverrides(value.Capabilities)
+	}
+	return value
+}
+
 func publicCapabilityOverrides(raw json.RawMessage) json.RawMessage {
 	var groups map[string]json.RawMessage
 	if json.Unmarshal(raw, &groups) != nil {
@@ -137,13 +154,17 @@ func publicCapabilityFields(path []string, fields map[string]json.RawMessage) {
 }
 
 func publicApp(value setting.App) setting.App {
+	return publicAppWithPresence(value, nil)
+}
+
+func publicAppWithPresence(value setting.App, presence map[string]coreprotocol.ConnectionSecretPresence) setting.App {
 	// Detach nested maps before any projection transformation.
 	raw, _ := json.Marshal(value)
 	var out setting.App
 	_ = json.Unmarshal(raw, &out)
 	out.Accounts = nil
 	out.Network.ProxyURL = publicURL(out.Network.ProxyURL)
-	out.Capabilities = publicCapabilities(out.Capabilities)
+	out.Capabilities = publicCapabilities(out.Capabilities, presence)
 	return out
 }
 
@@ -154,7 +175,7 @@ func publicSession(value setting.Settings) coreprotocol.SessionSettingsDTO {
 	_ = json.Unmarshal(raw, &out)
 	out.APIKey, out.ProviderAPIKey = "", ""
 	out.ProviderURL = publicURL(out.ProviderURL)
-	out.Capabilities = publicCapabilities(out.Capabilities)
+	out.Capabilities = publicCapabilities(out.Capabilities, nil)
 	// Category keys are excluded from JSON by the domain contract.
 	raw, _ = json.Marshal(overrides)
 	var detachedOverrides map[string]setting.Category
@@ -247,12 +268,13 @@ func (a *actor) captureSettings() (coreprotocol.SettingsFetchResult, setting.Age
 	// its native-root observation and live policy. Re-merging stored choices
 	// here would reauthorize a replaced folder in every shell projection.
 	effective := a.ws.LoadAppSettings()
-	// Sparse raw JSON must be sanitized independently; never send the raw DB overlay.
-	publicOverrides := overrides
-	if len(overrides.Capabilities) != 0 {
-		publicOverrides.Capabilities = publicCapabilityOverrides(overrides.Capabilities)
+	out := coreprotocol.SettingsFetchResult{
+		ApplicationRevision: entityRevision(app), WorkspaceRevision: entityRevision(overrides), CapabilitiesRevision: entityRevision(effective.Capabilities),
+		Overrides: publicWorkspaceOverrides(overrides), Accounts: make(map[string]coreprotocol.AccountView), ConnectionSecretsPresent: make(map[string]bool),
+		ApplicationConnectionSecretFields: make(map[string]coreprotocol.ConnectionSecretPresence), ConnectionSecretFields: make(map[string]coreprotocol.ConnectionSecretPresence),
 	}
-	out := coreprotocol.SettingsFetchResult{ApplicationRevision: entityRevision(app), WorkspaceRevision: entityRevision(overrides), CapabilitiesRevision: entityRevision(effective.Capabilities), Application: publicApp(app), Effective: publicApp(effective), Overrides: publicOverrides, Accounts: make(map[string]coreprotocol.AccountView), ConnectionSecretsPresent: make(map[string]bool)}
+	out.Application = publicAppWithPresence(app, out.ApplicationConnectionSecretFields)
+	out.Effective = publicAppWithPresence(effective, out.ConnectionSecretFields)
 	if u, err := url.Parse(app.Network.ProxyURL); err == nil {
 		out.ProxyCredentialsPresent = u.User != nil || u.RawQuery != ""
 	}
@@ -260,12 +282,8 @@ func (a *actor) captureSettings() (coreprotocol.SettingsFetchResult, setting.Age
 	for id, account := range app.Accounts {
 		out.Accounts[id] = publicAccount(account)
 	}
-	out.ConnectionSecretFields = make(map[string]coreprotocol.ConnectionSecretPresence)
-	// Effective connections include workspace-bound registrations.
-	for id, conn := range effective.Capabilities.Connections {
-		out.ConnectionSecretsPresent[id] = len(conn.Environment)+len(conn.Headers)+len(conn.SecretRefs) != 0 || conn.CredentialRef != ""
-		out.ConnectionSecretFields[id] = coreprotocol.ConnectionSecretPresence{Args: len(conn.Args) != 0, Environment: len(conn.Environment) != 0,
-			Headers: len(conn.Headers) != 0, SecretRefs: len(conn.SecretRefs) != 0, CredentialRef: conn.CredentialRef != ""}
+	for id, p := range out.ConnectionSecretFields {
+		out.ConnectionSecretsPresent[id] = p.Environment || p.Headers || p.SecretRefs || p.CredentialRef
 	}
 	defaults := setting.CloneApp(setting.App{Agents: a.ws.WorkspaceAgentDefaults()}).Agents
 	return out, defaults

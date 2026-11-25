@@ -46,7 +46,9 @@ type CapabilityResultMsg struct {
 var nextCapabilityRequest atomic.Uint64
 
 func (m *Model) SetCapabilitySnapshot(snapshot capability.Snapshot) {
-	if snapshot.Generation < m.capabilitySnapshot.Generation {
+	// Before the first observation the form already has settings.fetch. An
+	// absent catalog cannot replace those registrations with an empty map.
+	if snapshot.Generation == 0 || snapshot.Generation < m.capabilitySnapshot.Generation {
 		return
 	}
 	encoded, err := json.Marshal(snapshot)
