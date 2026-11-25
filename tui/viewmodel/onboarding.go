@@ -25,8 +25,13 @@ type onboardingState struct {
 	prompt     *aiSetupReminder
 	setupModel *settingsui.Model
 	setupGen   uint64
-	checking   bool
-	trust      workspaceTrustState
+	// errandModel is the Settings model of a setup route that has reached
+	// Main Agent. Its first successful save with a Main Agent model moves the
+	// route on to Errand's model.
+	errandModel *settingsui.Model
+	errandGen   uint64
+	checking    bool
+	trust       workspaceTrustState
 }
 
 type aiSetupReminder struct {
@@ -182,8 +187,17 @@ func (m *App) maybeShowAISetupReminder() {
 	})
 }
 
+// aiSetupDetail asks for the two models that most Crude features use. Errand
+// does background work for every session, so a fast, low-cost model there
+// keeps that work quick and cheap.
+// The whole text always shows; the frame grows instead of cutting it.
+const aiSetupDetail = "Add an account, then select models for Main Agent and Errand.\n" +
+	"Errand does background work: checkpoints, code suggestions, memory and language-server checks. " +
+	"A fast, low-cost model is a good choice for Errand. Until you select one, Errand uses the Main Agent model.\n" +
+	"You can edit files without AI."
+
 func (m *App) aiSetupReminderFrame() *ui.ComponentWidget {
-	detail := "Add your LLM provider account. Select the model for Main Agent. AI sessions are not available until setup is completed. You can use the file editor without AI."
+	detail := aiSetupDetail
 	if prompt := m.onboarding.prompt; prompt != nil {
 		if prompt.busy {
 			detail = "Saving your reminder preference…"
@@ -193,7 +207,7 @@ func (m *App) aiSetupReminderFrame() *ui.ComponentWidget {
 	}
 	frame := ui.BuildConfirmFrame(m.Theme, ui.ConfirmFrameSpec{
 		Title: "Set up AI", Question: "No AI account is configured.", Detail: detail,
-		Severity: ui.ConfirmPromptInfo, Width: min(70, max(36, m.width-4)), FocusedIndex: 1, DetailMaxLines: 5,
+		Severity: ui.ConfirmPromptInfo, Width: min(70, max(36, m.width-4)), FocusedIndex: 1,
 		Buttons: []ui.ConfirmButtonSpec{
 			{Label: "Do not show this again", ActionID: ui.ConfirmActionNo},
 			{Label: "OK", ActionID: ui.ConfirmActionYes},
@@ -259,7 +273,11 @@ func (m *App) showAISetup(settings setting.App) tea.Cmd {
 		return nil
 	}
 	if len(settings.Accounts) != 0 {
-		return m.openApplicationMainAgent()
+		cmd := m.openApplicationMainAgent()
+		if body := m.settingsSurface(m.overlayHost.Window(ui.OverlayWorkspaceSettings)); body != nil {
+			m.onboarding.errandModel, m.onboarding.errandGen = body.Model(), m.workspaceSwitchGen.Load()
+		}
+		return cmd
 	}
 	m.openApplicationAccounts()
 	if body := m.settingsSurface(m.overlayHost.Window(ui.OverlayWorkspaceSettings)); body != nil {
@@ -283,10 +301,40 @@ func (m *App) continueOnboardingAccount(result settingsui.AccountChangeResultMsg
 	}
 	m.onboarding.setupModel = nil
 	cmd := body.ShowMainAgentForAccount(result.Change.ID)
+	m.onboarding.errandModel, m.onboarding.errandGen = result.Target, result.WorkspaceGeneration
 	if frame, ok := window.Content.(*ui.WindowFrameWidget); ok {
 		frame.Host().MarkLayout()
 		frame.Host().Layout()
 	}
 	window.MarkContentDirty()
 	return cmd
+}
+
+// continueOnboardingErrand runs after a setup route's Settings save has
+// installed the saved model in body. Once Main Agent has a saved model, the
+// route opens Errand's model, unless the user already chose one. Opening the
+// editor neither applies nor saves a role.
+func (m *App) continueOnboardingErrand(saved *settingsui.Model, body *settingsui.WorkspaceSettingsSurface) {
+	state := &m.onboarding
+	if saved == nil || saved != state.errandModel || state.errandGen != m.workspaceSwitchGen.Load() || body == nil {
+		return
+	}
+	agents := m.ws.LoadAppSettings().Agents
+	if agents.Categories["default"].Model == "" {
+		// Another page was saved first; keep waiting for the Main Agent model.
+		state.errandModel = body.Model()
+		return
+	}
+	state.errandModel = nil
+	if agents.Categories[setting.ErrandRoleID].Model != "" {
+		return
+	}
+	m.runDetachedAsyncCmd(body.ShowErrandSetup())
+	if window := m.overlayHost.Window(ui.OverlayWorkspaceSettings); window != nil {
+		if frame, ok := window.Content.(*ui.WindowFrameWidget); ok {
+			frame.Host().MarkLayout()
+			frame.Host().Layout()
+		}
+		window.MarkContentDirty()
+	}
 }

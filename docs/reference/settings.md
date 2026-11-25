@@ -199,6 +199,11 @@ Existing in-project switch confirmation and dirty-work protection remain unchang
 See [startup admission](core-client-protocol.md#startup-before-workspace-attachment) for navigation-only locations and request bounds.
 
 After attachment, a shell can show **Set up AI** when no saved account exists.
+It asks for an account and for two models: one for Main Agent and one for Errand.
+It says why: Errand does the background work of every session (checkpoints,
+code suggestions, memory and language-server checks), so a fast, low-cost model
+keeps that work quick and cheap. Until the user selects one, Errand uses the
+Main Agent model. The text always shows in full; the frame grows instead.
 The reminder reads committed state and appears at most once per shell launch.
 It has exactly two buttons: **Do not show this again** and **OK**.
 OK has initial focus and opens the native Add Account form directly.
@@ -216,6 +221,10 @@ Only this setup route continues from successful account Save to the Main Agent m
 The draft offers the new account without saving a role choice.
 **Apply agent** stages the explicit model choice, and ordinary Settings **Save** persists it.
 Account or model errors retain the correct draft, and cancellation leaves project files available.
+When a setup route's Settings Save first commits a Main Agent model, setup opens
+Errand's **Model** tab, unless Errand already has its own model. The field says
+why a fast, low-cost model is a good choice. Opening the tab saves nothing; Errand
+keeps using the Main Agent model until its own choice is applied and saved.
 Setup neither creates a session nor starts inference or retries a failed action automatically.
 Normal authentication and model-list requests retain their existing behavior.
 

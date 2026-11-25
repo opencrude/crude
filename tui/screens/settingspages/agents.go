@@ -33,6 +33,19 @@ func (s *WorkspaceSettingsSurface) ShowMainAgentForAccount(accountID string) tea
 	return c.model.prefetchModels(catAgents)
 }
 
+// ShowErrandSetup continues first AI setup from Main Agent to Errand's model.
+// Like ShowMainAgentForAccount, it opens the editor without applying or
+// saving a role, and it never replaces an agent draft with unsaved edits.
+func (s *WorkspaceSettingsSurface) ShowErrandSetup() tea.Cmd {
+	if s.agents.dirty() {
+		return nil
+	}
+	return s.ShowAgentPage("role/"+setting.ErrandRoleID, "model")
+}
+
+// errandModelHelp explains the Errand model choice where the user makes it.
+const errandModelHelp = "Errand does background work. A fast, low-cost model is a good choice. Enter fetches the list."
+
 var agentIDPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,47}$`)
 var agentRoles = []struct {
 	key, label string
@@ -306,6 +319,9 @@ func (c *agentCatalog) begin(key string, duplicate bool) tea.Cmd {
 		mode = "Custom selection"
 	}
 	if c.roleIndex == catErrand {
+		if field := c.draft.Field(fieldModel); field != nil {
+			field.Description = errandModelHelp
+		}
 		for _, field := range c.model.suggestionFields(c.model.agents.Suggestions) {
 			c.draft.AddField(field)
 		}
