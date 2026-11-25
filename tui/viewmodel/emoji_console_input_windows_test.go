@@ -37,7 +37,9 @@ func TestPrivateConsoleTextProbe(t *testing.T) {
 	defer func() {
 		cancel()
 		reader.Cancel()
-		<-done
+		if err := <-done; err != nil {
+			t.Error(err)
+		}
 		if err := reader.Close(); err != nil {
 			t.Error(err)
 		}
