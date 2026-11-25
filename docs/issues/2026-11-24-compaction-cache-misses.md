@@ -2,6 +2,9 @@
 
 > Status: RESOLVED for raw history replay after a model-written checkpoint. The subsequent [native implementation](../reference/adaptive-context.md#native-compaction-on-custom-connections) covers Responses and Messages. Exact gateway billing is not claimed. Research checked on 2026-11-24.
 
+For the later Codex HTTP and serving-model changes, known regressions, and
+unfinished threshold work, see the [provider compaction handoff](../plans/provider-compaction-handoff.md).
+
 ## What happened on the wire
 
 The penalty was real. It was not caused by the Claude model name, nor does it require a broken server cache. A cache matches the **beginning** of a rendered prompt. A summary inserted before an unchanged tool result changes the prefix of that result. A smaller upload, a stored response ID, and a cheaper inference are three different things.

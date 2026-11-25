@@ -41,7 +41,7 @@ new human message or a replacement for permission policy.
 | Persistence failure | Keep the owned snapshot/draft, block unsafe advancement, and allow a checked retry |
 | Native file-ownership rejection (outside scope, or another agent's claim) | Ordinary tool error: nothing changes, the run continues, the parent is notified and can replace the live child's scope with `agent_update_claims` |
 | Automatic compaction failure while the next request still fits | The run continues on the retained full context and retries compaction after the context grows by a bounded step; the boundary row records a deferred failure, nothing needs attention. Background preparation failures back off silently |
-| Native compaction failure | Auto: Errand writes the full checkpoint for that boundary, the run continues and the first method change goes to Notices. Provider only: a definite refusal needs attention and names the setting to change; an outage recovers like any provider request. The same source is not sent again automatically for five minutes, and one failure is not permanent model evidence. See [native compaction recovery](adaptive-context.md#native-compaction-on-custom-connections). |
+| Native compaction failure | Auto can fall back to a full portable checkpoint and reports the first method change in Notices. Provider only does not charge another model: after a native refusal the serving model can write the checkpoint, and a transient outage enters request recovery if the checkpoint is required. An uncertain native submission is held for five minutes rather than sent again. One failure is not permanent model evidence. See the [provider compaction handoff](../plans/provider-compaction-handoff.md) for open validation. |
 | Portable compaction model unavailable at capacity (Auto or Errand only) | After the extractor's own adaptation (chunking, staged sections, learned output ceilings, retries), the agent's own connection writes that checkpoint; if no model can, retain the original history and stop recoverably. Never replay a partly rewritten history as a successful checkpoint |
 | Compaction failure with no room left (at the hard limit, or after a provider context-overflow rejection) | Provider-originated failures recover like any provider request; a local fault (for example a checkpoint that still does not fit) needs attention with a compaction-specific action |
 | Faulty clipboard-image capture | Exclude only the missing/empty/invalid image, preserve the original text and reference evidence, report the exact exclusion and continue with usable attachments |
@@ -116,6 +116,13 @@ transient. A Gemini candidate that ends with `MALFORMED_FUNCTION_CALL`,
 before any output is kept; a blocked prompt (`promptFeedback.blockReason`) is a
 permanent content-policy rejection. `The input token count ... exceeds the
 maximum number of tokens allowed` is context overflow.
+
+Do not stop an unfinished run on HTTP 429 alone. For temporary throttling on
+any wire, preserve accepted work and retry with bounded backoff. Use the
+server's retry delay when available, subject to the shared cooldown cap.
+Confirmed quota or billing limits and explicit retry vetoes still take
+precedence. A confirmed rate-limit rejection is not an uncertain execution:
+do not loosen the replay guard for an unconfirmed native compaction request.
 
 This distinction matters for gateways: an upstream stream disconnect can arrive
 as an HTTP 408 JSON response even when Crude is using Chat Completions. Typing
