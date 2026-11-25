@@ -11,6 +11,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"crude/agent/provider"
+	"crude/agent/session"
+	"crude/core"
 	"crude/internal/providersim"
 	"crude/types/statuscenter"
 	"crude/workspace"
@@ -91,6 +94,9 @@ func TestRemoteAppJourneyCompactionQueuesFromBothShells(t *testing.T) {
 		}
 		return true
 	})
+	for _, shell := range shells {
+		requirePaintedCompactionTitle(t, shell.app, "Compacting context (Manual) ")
+	}
 	two.app.Input.SetInput("peer private draft")
 	send(one, "queued prompt one")
 	remoteJourneyUntil(t, shells, func() bool {
@@ -132,6 +138,7 @@ func TestRemoteAppJourneyCompactionQueuesFromBothShells(t *testing.T) {
 		t.Fatalf("queued execution order=%q", prompts)
 	}
 	for i, shell := range shells {
+		requirePaintedCompactionTitle(t, shell.app, "Compacted context (Manual) ")
 		if shell.app.Input.Value() != fmt.Sprintf("new private draft %s", []string{"one", "two"}[i]) {
 			t.Fatal("completion replaced a newer private draft")
 		}
@@ -211,7 +218,20 @@ func TestRemoteAppJourneyStopCompactionPreservesQueuedPromptAndResumeIsPassive(t
 	if normal.Load() != 1 || !pendingJourneyPrompt(two.app, id, "queued prompt survives Stop") || two.app.Input.Value() != "newer private draft" {
 		t.Fatal("Stop started queued work or consumed accepted input/private draft")
 	}
-	sessionID := one.app.ActiveSession.SessionID
+	liveRow := requirePaintedCompactionTitle(t, two.app, "Compaction cancelled (Manual) ")
+	resumed := coldResumeCompactionJourney(t, runtime, shells, root, server.BaseURL(providersim.Chat))
+	resumedID := resumed.app.AgentView.ActiveID()
+	if !pendingJourneyPrompt(resumed.app, resumedID, "queued prompt survives Stop") || normal.Load() != 1 || extraction.Load() != 1 {
+		t.Fatal("cold resume lost queued input or replayed provider work")
+	}
+	if resumedRow := requirePaintedCompactionTitle(t, resumed.app, "Compaction cancelled (Manual) "); resumedRow != liveRow {
+		t.Fatalf("cold resume changed cancelled row: live=%q resumed=%q", liveRow, resumedRow)
+	}
+}
+
+func coldResumeCompactionJourney(t *testing.T, runtime *core.Runtime, shells []remoteJourneyShell, root, endpoint string) remoteJourneyShell {
+	t.Helper()
+	sessionID := shells[0].app.ActiveSession.SessionID
 	for _, shell := range shells {
 		shell.app.StopAsyncIO()
 		if err := shell.app.CloseWorkspaceAttachment(); err != nil {
@@ -221,14 +241,39 @@ func TestRemoteAppJourneyStopCompactionPreservesQueuedPromptAndResumeIsPassive(t
 	if err := runtime.Close(); err != nil {
 		t.Fatal(err)
 	}
-	runtime = remoteJourneyRuntime(t, server.BaseURL(providersim.Chat))
-	resumed := newRemoteJourneyShell(t, runtime, root)
+	resumed := newRemoteJourneyShell(t, remoteJourneyRuntime(t, endpoint), root)
 	runAppCommand(t, resumed.app, resumed.app.launcherResumeSession(sessionID, nil))
 	remoteJourneyUntil(t, []remoteJourneyShell{resumed}, func() bool { return resumed.app.AgentView.ActiveID() != "" })
-	resumedID := resumed.app.AgentView.ActiveID()
-	if !pendingJourneyPrompt(resumed.app, resumedID, "queued prompt survives Stop") || normal.Load() != 1 || extraction.Load() != 1 {
-		t.Fatal("cold resume lost queued input or replayed provider work")
+	return resumed
+}
+
+// Read the terminal cell buffer, not the activity strip or a serialized
+// transcript. Only the ordinary tool title has a rail and one-cell marker.
+func paintedCompactionTitle(app *App, title string) string {
+	for y := app.chatRect.Y; y < app.chatRect.Y+app.chatRect.H-1; y++ {
+		before, after, found := strings.Cut(shellBufferRow(app, y), title)
+		if !found {
+			continue
+		}
+		prefix := strings.Fields(before)
+		if len(prefix) >= 2 && prefix[len(prefix)-2] == "│" {
+			marker := prefix[len(prefix)-1]
+			if marker == "●" || marker == "○" || marker == "×" {
+				return "│ " + marker + " " + strings.TrimRight(title+after, " │┃")
+			}
+		}
 	}
+	return ""
+}
+
+func requirePaintedCompactionTitle(t *testing.T, app *App, title string) string {
+	t.Helper()
+	paint := ansi.Strip(app.View().RenderContent())
+	row := paintedCompactionTitle(app, title)
+	if row == "" || strings.Contains(row, "requested with /compact") {
+		t.Fatalf("want an ordinary tool title for %q, got %q:\n%s", title, row, paint)
+	}
+	return row
 }
 
 func pendingJourneyPrompt(app *App, id, text string) bool {
@@ -244,29 +289,40 @@ func pendingJourneyPrompt(app *App, id, text string) bool {
 // a notice that was easy to miss. Now the shell shows that the request was
 // accepted, and the compaction runs as soon as the turn allows it.
 func TestRemoteAppJourneyCompactDuringActiveTurnIsAccepted(t *testing.T) {
+	t.Run("after_final_step", func(t *testing.T) { runRemoteRequestedCompaction(t, false) })
+	t.Run("between_steps", func(t *testing.T) { runRemoteRequestedCompaction(t, true) })
+}
+
+func runRemoteRequestedCompaction(t *testing.T, betweenSteps bool) {
+	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	var normal, extraction atomic.Int32
-	held := make(chan struct{}, 4)
+	held := make(chan struct{}, 1)
 	gate := providersim.NewGate()
+	compactGate := providersim.NewGate()
 	server := providersim.New(t)
 	server.Respond(func(request providersim.Request) providersim.Turn {
-		text := "TURN FINISHED"
 		if string(request.ToolChoice) == `"none"` {
 			extraction.Add(1)
-			text = "<<<intent>>>\nKeep the request.\n<<<work>>>\nEvidence retained.\n<<<state>>>\nClean.\n<<<continuation>>>\nNone."
-		} else {
-			normal.Add(1)
-			held <- struct{}{}
-			return simulatedAnswer(text).WithGate(gate)
+			return simulatedAnswer("<<<intent>>>\nKeep the request.\n<<<work>>>\nEvidence retained.\n<<<state>>>\nClean.\n<<<continuation>>>\nNone.").WithGate(compactGate)
 		}
-		return simulatedAnswer(text)
+		if normal.Add(1) == 1 {
+			held <- struct{}{}
+			if betweenSteps {
+				return providersim.CallTools(providersim.ToolCall{Name: "list_directory", Arguments: `{"path":"."}`}).WithGate(gate)
+			}
+			return simulatedAnswer("TURN FINISHED").WithGate(gate)
+		}
+		return simulatedAnswer("TURN FINISHED")
 	})
 	t.Cleanup(gate.Release)
 	runtime := remoteJourneyRuntime(t, server.BaseURL(providersim.Chat))
-	shell := newRemoteJourneyShell(t, runtime, t.TempDir())
+	root := t.TempDir()
+	shell := newRemoteJourneyShell(t, runtime, root)
 	t.Cleanup(gate.Release)
+	t.Cleanup(compactGate.Release)
 	id := remoteJourneyCreate(t, shell)
 	shells := []remoteJourneyShell{shell}
 	shell.app.Input.SetInput("Keep the complete evidence.\n" + strings.Repeat("source evidence\n", 4_000))
@@ -296,15 +352,90 @@ func TestRemoteAppJourneyCompactDuringActiveTurnIsAccepted(t *testing.T) {
 	}
 	gate.Release()
 	remoteJourneyUntil(t, shells, func() bool {
-		return extraction.Load() == 1 && shell.app.ws.AgentActivity(id).Status.Phase == statuscenter.AgentCompactionResult &&
+		return extraction.Load() == 1 && strings.Contains(ansi.Strip(shell.app.View().RenderContent()), "Compacting context")
+	})
+	requirePaintedCompactionTitle(t, shell.app, "Compacting context (Manual) ")
+	compactGate.Release()
+	wantPhase, wantTrigger, wantNormal := statuscenter.AgentCompactionResult, "manual", int32(1)
+	if betweenSteps {
+		wantPhase, wantTrigger, wantNormal = statuscenter.AgentCompleted, "requested", 2
+	}
+	remoteJourneyUntil(t, shells, func() bool {
+		return extraction.Load() == 1 && shell.app.ws.AgentActivity(id).Status.Phase == wantPhase &&
 			strings.Contains(ansi.Strip(shell.app.View().RenderContent()), "Compacted context")
 	})
+	liveRow := requirePaintedCompactionTitle(t, shell.app, "Compacted context (Manual) ")
+	for _, message := range shell.app.ws.AgentMgr().Get(id).State.Messages.Messages() {
+		if message.LifecyclePhase == "compaction_completed" && message.LifecycleTrigger == wantTrigger {
+			wantTrigger = ""
+			break
+		}
+	}
+	if wantTrigger != "" {
+		t.Fatalf("fixture never completed the %s compaction", wantTrigger)
+	}
 	for _, notice := range shell.app.ws.Status().Notifications(false) {
 		if notice.Severity == statuscenter.SeverityError && strings.Contains(strings.ToLower(notice.Summary), "compact") {
 			t.Fatalf("accepted compaction reported an error: %+v", notice)
 		}
 	}
-	if normal.Load() != 1 {
-		t.Fatalf("model requests=%d; the accepted compaction must not start another turn", normal.Load())
+	if normal.Load() != wantNormal {
+		t.Fatalf("model requests=%d, want %d in the original turn", normal.Load(), wantNormal)
+	}
+	resumed := coldResumeCompactionJourney(t, runtime, shells, root, server.BaseURL(providersim.Chat))
+	if resumedRow := requirePaintedCompactionTitle(t, resumed.app, "Compacted context (Manual) "); resumedRow != liveRow {
+		t.Fatalf("cold resume changed requested row: live=%q resumed=%q", liveRow, resumedRow)
+	}
+	if normal.Load() != wantNormal || extraction.Load() != 1 {
+		t.Fatal("cold resume replayed provider work")
+	}
+}
+
+func TestRemoteAppJourneyAutomaticCompactionTitleSurvivesColdResume(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	var normal, extraction atomic.Int32
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
+		if string(request.ToolChoice) == `"none"` {
+			extraction.Add(1)
+			return simulatedAnswer("<<<intent>>>\nKeep source evidence.\n<<<work>>>\nEvidence retained.\n<<<state>>>\nCheckpoint ready.\n<<<continuation>>>\nFinish the request.")
+		}
+		normal.Add(1)
+		return simulatedAnswer("Evidence reviewed.")
+	})
+	endpoint := server.BaseURL(providersim.Chat)
+	runtime := remoteJourneyRuntimeConfig(t, endpoint, func(cfg *session.Config) {
+		profile := cfg.Agents.Profiles["default"]
+		category := profile.Categories[session.CategoryDefault]
+		percentage := 50
+		category.ModelContextWindow, category.ModelMaxOutput = 80_000, 2_048
+		category.ContextCompactionPercent = &percentage
+		profile.Categories[session.CategoryDefault] = category
+		cfg.Agents.Profiles["default"] = profile
+	})
+	root := t.TempDir()
+	shell := newRemoteJourneyShell(t, runtime, root)
+	id := remoteJourneyCreate(t, shell)
+	shells := []remoteJourneyShell{shell}
+	runAppCommand(t, shell.app, shell.app.submitPreparedInput(id, provider.UserInput{
+		Text:        "Review the evidence.\n" + strings.Repeat("retained source evidence\n", 4_000),
+		DisplayText: "Review the retained source evidence.",
+	}, shell.app.Input.DraftRevision()))
+	remoteJourneyUntil(t, shells, func() bool {
+		return normal.Load() == 1 && shell.app.ws.AgentActivity(id).Status.Phase == statuscenter.AgentCompleted
+	})
+	liveRow := requirePaintedCompactionTitle(t, shell.app, "Compacted context (Auto) ")
+	if extraction.Load() == 0 {
+		t.Fatal("automatic compaction did not reach the provider")
+	}
+	extractions := extraction.Load()
+	resumed := coldResumeCompactionJourney(t, runtime, shells, root, endpoint)
+	if resumedRow := requirePaintedCompactionTitle(t, resumed.app, "Compacted context (Auto) "); resumedRow != liveRow {
+		t.Fatalf("cold resume changed automatic row: live=%q resumed=%q", liveRow, resumedRow)
+	}
+	if normal.Load() != 1 || extraction.Load() != extractions {
+		t.Fatal("cold resume replayed provider work")
 	}
 }
