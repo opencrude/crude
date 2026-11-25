@@ -366,7 +366,7 @@ func (g *geminiWire) rememberSignature(model string, history, parts []any) {
 
 // Only function-call steps in the current turn require validation on Gemini
 // 3 and 4. Old turns and ordinary response text do not have this requirement.
-// https://aistudio.google.com/docs/thought-signatures.md?generate-content=true
+// https://aistudio.google.com/docs/thought-signatures?generate-content=true
 func (g *geminiWire) validateSignatures(model string, history []any) error {
 	if !geminiRequiresSignatures(model) {
 		return nil
