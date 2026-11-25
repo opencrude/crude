@@ -322,6 +322,30 @@ func TestAnthropicStreamDecoderUsageThinkingAndTool(t *testing.T) {
 	}
 }
 
+func TestAnthropicStreamUsageMergesCumulativeFields(t *testing.T) {
+	decoder := (&AnthropicStandard{}).NewStreamDecoder()
+	for _, test := range []struct {
+		frame                        string
+		input, read, written, output int
+		writeKnown                   bool
+	}{
+		{`{"type":"message_start","message":{"type":"message","role":"assistant","content":[],"usage":{"input_tokens":200,"cache_read_input_tokens":3000,"output_tokens":1,"speed":"fast"}}}`, 3200, 3000, 0, 1, false},
+		{`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":3200,"cache_read_input_tokens":0,"cache_creation_input_tokens":500,"output_tokens":12}}`, 3700, 0, 500, 12, true},
+		{`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"cache_read_input_tokens":null,"output_tokens":12}}`, 3700, 0, 500, 12, true},
+	} {
+		update, err := decoder.Decode(StreamEvent{Data: []byte(test.frame)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		u := update.Usage
+		if u == nil || u.PromptTokens != test.input || u.PromptTokensCached != test.read ||
+			u.PromptTokensWritten != test.written || u.CompletionTokens != test.output ||
+			!u.CacheReadKnown || u.CacheWriteKnown != test.writeKnown || u.ServiceTier != "fast" {
+			t.Fatalf("usage after %s = %+v", test.frame, u)
+		}
+	}
+}
+
 func TestAnthropicDecodeNonStreaming(t *testing.T) {
 	response, err := (&AnthropicStandard{}).DecodeResponse([]byte(`{
 		"id":"msg_1",

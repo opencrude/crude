@@ -613,6 +613,7 @@ var wireTypes = []any{
 	new(p25.OperationSnapshot),
 	new(p25.OperationState),
 	new(p25.RepairTarget),
+	new(p25.RequestCacheUsage),
 	new(p25.ResourceKind),
 	new(p25.ResourceRef),
 	new(p25.Severity),

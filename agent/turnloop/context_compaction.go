@@ -331,7 +331,7 @@ func (a *Agent) compactSource(ctx context.Context, msgs, source []provider.ChatM
 			return e
 		}
 		r, e := main.NativeCheckpoint(ctx, provider.NativeCheckpointRequest{ValidatePortable: validate, Owner: string(a.AgentID), Explicit: trigger == CompactionTriggerManual || trigger == "requested", Model: targetModel, Messages: msgs, Tools: tools, Limit: limit, Directive: directive, Verify: directive, ProbeAnswer: ticket, ProbeSource: probe, ProbeQuestion: question, Stage: stage, Usage: func(kind string, u provider.TokenUsage, ok bool) {
-			usage = addTokenUsage(usage, u)
+			usage = usage.Add(u)
 			owner.emitCompactionUsage(emit, u, provider.NewMessageID(), requestID, trigger, role, kind, false, ok)
 		}}, opts...)
 		if e != nil {
@@ -413,7 +413,7 @@ func (a *Agent) compactSource(ctx context.Context, msgs, source []provider.ChatM
 			capacityBudget: extractionWindow - contextSafetyReserve(extractionWindow) - 1,
 		}
 		text, combinedErr := extractor.request(source, rootprompt.InitialCompactionDirective(), 0)
-		aggregate = addTokenUsage(aggregate, extractor.usage)
+		aggregate = aggregate.Add(extractor.usage)
 		inputBudget, usageRatio = extractor.inputBudget, extractor.usageRatio
 		if extractor.learnedOutputLimit > 0 {
 			learnedLimit = extractor.learnedOutputLimit
@@ -471,7 +471,7 @@ func (a *Agent) compactSource(ctx context.Context, msgs, source []provider.ChatM
 			capacityBudget: extractionWindow - contextSafetyReserve(extractionWindow) - 1,
 		}
 		stageText, stageErr := extractor.request(source, rootprompt.InitialCompactionDirective(), 0)
-		aggregate = addTokenUsage(aggregate, extractor.usage)
+		aggregate = aggregate.Add(extractor.usage)
 		inputBudget = extractor.inputBudget
 		usageRatio = extractor.usageRatio
 		if extractor.learnedOutputLimit > 0 {
@@ -668,19 +668,6 @@ func (a *Agent) emitCompactionUsage(emit func(AgentEvent), usage provider.TokenU
 		"revision":       1, "reported_at": time.Now().UnixNano(), "estimated": false,
 		"partial_or_retry": partial,
 	}})
-}
-
-func addTokenUsage(a, b provider.TokenUsage) provider.TokenUsage {
-	a.PromptTokens += b.PromptTokens
-	a.CompletionTokens += b.CompletionTokens
-	a.PromptTokensCached += b.PromptTokensCached
-	a.PromptTokensWritten += b.PromptTokensWritten
-	a.CacheReadKnown = a.CacheReadKnown || b.CacheReadKnown
-	a.CacheWriteKnown = a.CacheWriteKnown || b.CacheWriteKnown
-	a.ReasoningTokens += b.ReasoningTokens
-	a.ReasoningKnown = a.ReasoningKnown || b.ReasoningKnown
-	a.ReasoningInOutput = a.ReasoningInOutput || b.ReasoningInOutput
-	return a
 }
 
 // compactionRecoveryDelay waits at least as long as the server advised for

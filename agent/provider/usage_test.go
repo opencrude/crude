@@ -127,3 +127,22 @@ func TestOptionalCacheReadsSurviveWireProjection(t *testing.T) {
 		})
 	}
 }
+
+func TestAnthropicCompactionUsageRequiresEveryIterationToReportCache(t *testing.T) {
+	wire := &AnthropicStandard{}
+	_, got, err := wire.compactResult([]byte(`{
+		"type":"message","role":"assistant","stop_reason":"compaction",
+		"content":[{"type":"compaction","content":"summary","signature":"abc"}],
+		"usage":{"input_tokens":999,"output_tokens":999,"speed":"fast","iterations":[
+			{"type":"compaction","input_tokens":10,"output_tokens":2,"cache_read_input_tokens":100,"cache_creation_input_tokens":5},
+			{"type":"compaction","input_tokens":20,"output_tokens":3,"cache_read_input_tokens":0}
+		]}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PromptTokens != 135 || got.CompletionTokens != 5 || got.PromptTokensCached != 100 ||
+		!got.CacheReadKnown || got.CacheWriteKnown || got.ServiceTier != "fast" {
+		t.Fatalf("incomplete writes or outer summary distorted usage: %+v", got)
+	}
+}

@@ -241,14 +241,36 @@ func agentHeaderUsageSegments(usage statuscenter.UsageSummary, target string) []
 	if usage.Output.Known {
 		segments = append(segments, shellheader.Segment{Text: "↓" + compactNumber(usage.Output.Value), Role: ui.ColorMuted, Action: "tabs", TargetID: target, Priority: 2})
 	}
-	if usage.CacheRead.Known && usage.InputTotal.Known && usage.InputTotal.Value > 0 {
-		rate := float64(usage.CacheRead.Value) * 100 / float64(usage.InputTotal.Value)
-		segments = append(segments, shellheader.Segment{Text: fmt.Sprintf("cache %.1f%%", rate), Role: ui.ColorMuted, Action: "tabs", TargetID: target, Priority: 3})
+	if usage.LatestCache.Present {
+		segments = append(segments, shellheader.Segment{Text: headerCacheReport(usage.LatestCache), Role: ui.ColorMuted, Action: "tabs", TargetID: target, Priority: 3})
 	}
 	if usage.Cost.Known {
 		segments = append(segments, shellheader.Segment{Text: headerCost(usage.Cost), Role: ui.ColorMuted, Action: "tabs", TargetID: target, Priority: 2})
 	}
 	return segments
+}
+
+func headerCacheReport(cache statuscenter.RequestCacheUsage) string {
+	read, total := cache.Read, cache.InputTotal
+	const label = "last cache "
+	if !read.Known || !total.Known || total.Value <= 0 ||
+		read.Confidence == statuscenter.ConfidencePartial || total.Confidence == statuscenter.ConfidencePartial {
+		return label + "not available"
+	}
+	rate := float64(read.Value) * 100 / float64(total.Value)
+	if read.Confidence == statuscenter.ConfidenceEstimated || total.Confidence == statuscenter.ConfidenceEstimated {
+		return label + fmt.Sprintf("~%.1f%%", rate)
+	}
+	// Preserve the difference between no reads and a small measured hit, and
+	// between a full hit and a value rounded to 100 at the displayed precision.
+	switch {
+	case read.Value > 0 && rate < 0.05:
+		return label + "<0.1%"
+	case read.Value < total.Value && rate >= 99.95:
+		return label + ">99.9%"
+	default:
+		return label + fmt.Sprintf("%.1f%%", rate)
+	}
 }
 
 func headerContextReport(usage statuscenter.UsageSummary) string {
@@ -839,6 +861,12 @@ func (m *App) agentUsageSections(agentID string) []statusoverview.UsageSection {
 			{Label: "Output", Value: formatUsageValue(summary.Output), Role: ui.ColorFg},
 			{Label: "Cost", Value: formatCost(summary.Cost), Role: ui.ColorFg},
 			{Label: "Requests", Value: fmt.Sprintf("%d", summary.Requests), Role: ui.ColorMuted},
+			{Label: "Not from cache", Value: formatUsageValue(summary.UncachedInput), Role: ui.ColorMuted},
+			{Label: "Cache read", Value: formatUsageValue(summary.CacheRead), Role: ui.ColorMuted},
+			{Label: "Cache write", Value: formatUsageValue(summary.CacheWrite), Role: ui.ColorMuted},
+		}
+		if summary.Reasoning.Known {
+			lines = append(lines, statusoverview.DetailLine{Label: "Reasoning", Value: formatReasoning(summary), Role: ui.ColorMuted})
 		}
 		if len(summary.Models) > 0 {
 			lines = append(lines, statusoverview.DetailLine{Blank: true}, statusoverview.DetailLine{Value: "Usage by model", Role: ui.ColorAccent2})
@@ -853,26 +881,6 @@ func (m *App) agentUsageSections(agentID string) []statusoverview.UsageSection {
 				}
 				lines = append(lines, statusoverview.DetailLine{Value: identity, Role: ui.ColorFg}, statusoverview.DetailLine{Value: usageTurns(model.Turns, model.TurnsKnown) + " · " + usageCount(model.Requests, "request") + " · " + formatCost(model.Cost), Role: ui.ColorMuted})
 			}
-		}
-		optional := false
-		if summary.UncachedInput.Known {
-			lines = append(lines, statusoverview.DetailLine{Label: "Uncached", Value: formatUsageValue(summary.UncachedInput), Role: ui.ColorMuted})
-			optional = true
-		}
-		if summary.CacheRead.Known {
-			lines = append(lines, statusoverview.DetailLine{Label: "Cache read", Value: formatUsageValue(summary.CacheRead), Role: ui.ColorMuted})
-			optional = true
-		}
-		if summary.CacheWrite.Known {
-			lines = append(lines, statusoverview.DetailLine{Label: "Cache write", Value: formatUsageValue(summary.CacheWrite), Role: ui.ColorMuted})
-			optional = true
-		}
-		if summary.Reasoning.Known {
-			lines = append(lines, statusoverview.DetailLine{Label: "Reasoning", Value: formatReasoning(summary), Role: ui.ColorMuted})
-			optional = true
-		}
-		if !optional {
-			lines = append(lines, statusoverview.DetailLine{Blank: true}, statusoverview.DetailLine{Value: "Cache and reasoning usage were not reported for this scope.", Role: ui.ColorMuted})
 		}
 		sections = append(sections, statusoverview.UsageSection{ID: string(scope), Label: usageScopeLabel(scope), Lines: lines})
 		previous = summary
