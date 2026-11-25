@@ -180,3 +180,5 @@ replace charm.land/glamour/v2 => ./third_party/glamour
 replace charm.land/lipgloss/v2 => ./third_party/lipgloss
 
 replace github.com/go-text/typesetting => ./third_party/typesetting
+
+replace github.com/modelcontextprotocol/go-sdk => ./third_party/go-sdk

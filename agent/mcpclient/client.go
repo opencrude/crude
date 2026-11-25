@@ -39,16 +39,17 @@ const MaxResultBytes = 1 << 20
 var identityPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
 
 type connection struct {
-	serverRevision  string
-	config          captypes.ConnectionConfig
-	state           captypes.ConnectionState
-	session         *mcp.ClientSession
-	epoch           uint64
-	cancel          context.CancelFunc
-	discovered      bool
-	interactiveAuth bool
-	secrets         map[string]struct{}
-	outputSchemas   map[string]*jsonschema.Resolved
+	serverRevision string
+	config         captypes.ConnectionConfig
+	state          captypes.ConnectionState
+	session        *mcp.ClientSession
+	epoch          uint64
+	lifetime       context.Context
+	cancel         context.CancelFunc
+	discovered     bool
+	scopeChallenge *scopeChallenge
+	secrets        map[string]struct{}
+	outputSchemas  map[string]*jsonschema.Resolved
 	// stderr belongs to the exact launch epoch that created it.
 	stderr      *stderrTail
 	stderrEpoch uint64
@@ -70,6 +71,7 @@ type Manager struct {
 	root          string
 	connections   map[string]*connection
 	closed        bool
+	nextEpoch     uint64
 	credentialDir string
 	credentialMu  sync.Mutex
 	authCallbacks map[string]*authorizationFlow
@@ -136,7 +138,13 @@ func Validate(config captypes.ConnectionConfig) error {
 			return errors.New("invalid required environment name")
 		}
 	}
-	return nil
+	return validateOAuth(config)
+}
+
+// advanceEpoch runs under mu. A deleted and re-added ID must not reuse an epoch.
+func (manager *Manager) advanceEpoch(entry *connection) {
+	manager.nextEpoch++
+	entry.epoch = manager.nextEpoch
 }
 
 func (manager *Manager) Configure(configs map[string]captypes.ConnectionConfig) {
@@ -150,7 +158,7 @@ func (manager *Manager) Configure(configs map[string]captypes.ConnectionConfig) 
 		next, exists := configs[id]
 		next.ID = id
 		if !exists || !sameServer(existing.config, next) {
-			existing.epoch++
+			manager.advanceEpoch(existing)
 			if existing.cancel != nil {
 				existing.cancel()
 			}
@@ -160,9 +168,9 @@ func (manager *Manager) Configure(configs map[string]captypes.ConnectionConfig) 
 			}
 			existing.session = nil
 			existing.cancel = nil
-			existing.interactiveAuth = false
+			existing.scopeChallenge = nil
 			existing.state.AuthPending, existing.state.AuthURL = false, ""
-			existing.state.State = "not started"
+			existing.state.State, existing.state.Error = "not started", ""
 			existing.state.Cached = hasCatalog(existing.state)
 			if !exists {
 				delete(manager.connections, id)
@@ -288,6 +296,10 @@ func (manager *Manager) connect(ctx context.Context, id string, interactive bool
 		return errors.New("connection is unavailable")
 	}
 	config := entry.config
+	if interactive && config.Auth != "oauth" {
+		manager.mu.Unlock()
+		return errors.New("Select OAuth in MCP settings before you use Sign in.")
+	}
 	if config.Host == "shell" {
 		manager.mu.Unlock()
 		return errors.New("shell MCP connection requires exact connected-shell dispatcher")
@@ -296,7 +308,7 @@ func (manager *Manager) connect(ctx context.Context, id string, interactive bool
 		manager.mu.Unlock()
 		return errors.New("MCP launch configuration changed after authorization")
 	}
-	if entry.state.State == "connecting" && entry.connecting != nil {
+	if !interactive && entry.state.State == "connecting" && entry.connecting != nil {
 		// Join the attempt already in flight (for example an automatic
 		// reconnect) rather than failing or starting a second launch.
 		wait := entry.connecting
@@ -318,7 +330,12 @@ func (manager *Manager) connect(ctx context.Context, id string, interactive bool
 		}
 		return errors.New(failure)
 	}
-	if entry.session != nil {
+	if !interactive && entry.scopeChallenge != nil {
+		err := entry.scopeChallenge.err()
+		manager.mu.Unlock()
+		return manager.safeError(config, err)
+	}
+	if !interactive && entry.session != nil {
 		manager.mu.Unlock()
 		return nil
 	}
@@ -341,26 +358,32 @@ func (manager *Manager) connect(ctx context.Context, id string, interactive bool
 			return errors.New("local server launch requires approval/authorization for its exact configuration")
 		}
 	}
-	entry.epoch++
+	if interactive {
+		// Replace the old lifetime and carry the challenge from this exact
+		// registration under the same lock. No ordinary Connect can take over.
+		if entry.cancel != nil {
+			entry.cancel()
+		}
+		if previous := entry.session; previous != nil {
+			manager.lifetimeTasks.Go(func() { _ = previous.Close() })
+			entry.session = nil
+		}
+	}
+	challenge := entry.scopeChallenge
+	manager.advanceEpoch(entry)
 	epoch := entry.epoch
 	lifetime, cancel := context.WithCancel(context.Background())
+	entry.lifetime = lifetime
 	entry.cancel = cancel
-	entry.interactiveAuth = interactive
 	entry.state.State, entry.state.Error = "connecting", ""
 	entry.state.AuthPending, entry.state.AuthURL = false, ""
+	entry.state.Cached, entry.discovered = hasCatalog(entry.state), false
 	settled := make(chan struct{})
 	entry.connecting = settled
 	manager.lifetimeTasks.Add(1)
 	manager.mu.Unlock()
 	defer manager.lifetimeTasks.Done()
 	defer close(settled)
-	defer func() {
-		manager.mu.Lock()
-		if current := manager.connections[id]; current == entry && current.epoch == epoch {
-			current.interactiveAuth = false
-		}
-		manager.mu.Unlock()
-	}()
 	seconds := config.TimeoutSeconds
 	if seconds <= 0 && config.Transport != "stdio" && !captypes.TrackedActivation(ctx) {
 		seconds = 30
@@ -400,7 +423,7 @@ func (manager *Manager) connect(ctx context.Context, id string, interactive bool
 		//nolint:staticcheck // Roots remain interoperable for negotiated pre-2026-07-28 servers during the official SDK deprecation window; newer protocols do not use this callback.
 		client.AddRoots(&mcp.Root{URI: fileuri.FromPath(manager.root), Name: filepath.Base(manager.root)})
 	}
-	transport, cleanup, err := manager.transport(config, lifetime, epoch, interactive)
+	transport, cleanup, err := manager.transport(connectCtx, config, lifetime, epoch, interactive, challenge)
 	if err != nil {
 		cancel()
 		manager.failed(id, epoch, err)
@@ -443,6 +466,8 @@ func (manager *Manager) connect(ctx context.Context, id string, interactive bool
 	if err == nil {
 		if !current {
 			err = errors.New("connection discovery was superseded")
+		} else if entry.scopeChallenge != nil {
+			err = entry.scopeChallenge.err()
 		} else if !stopRequest() || connectCtx.Err() != nil {
 			err = connectCtx.Err()
 		}
@@ -478,6 +503,9 @@ func (manager *Manager) watchSession(id string, epoch uint64, session *mcp.Clien
 		entry.session, entry.cancel = nil, nil
 		entry.state.State, entry.state.Cached = "failed", hasCatalog(entry.state)
 		entry.state.Error = redactSecrets(entry.config, entry.secrets, manager.resolveSecret, err.Error())
+		if entry.scopeChallenge != nil {
+			manager.showScopeChallenge(entry)
+		}
 	}
 }
 
@@ -520,6 +548,9 @@ func (manager *Manager) failed(id string, epoch uint64, err error) {
 		// reason and diagnostics visible instead of resetting to "not started".
 		if errors.Is(err, context.Canceled) {
 			entry.state.State, entry.state.Error = "not started", ""
+		}
+		if entry.scopeChallenge != nil && errors.Is(err, context.Canceled) {
+			manager.showScopeChallenge(entry)
 		}
 	}
 }
@@ -580,7 +611,7 @@ func (body *boundedBody) Close() error {
 	return body.ReadCloser.Close()
 }
 
-func (manager *Manager) transport(config captypes.ConnectionConfig, lifetime context.Context, epoch uint64, interactive bool) (mcp.Transport, func(), error) {
+func (manager *Manager) transport(ctx context.Context, config captypes.ConnectionConfig, lifetime context.Context, epoch uint64, interactive bool, challenge *scopeChallenge) (mcp.Transport, func(), error) {
 	cleanup := func() {}
 	if config.IsBuiltin() {
 		transport, err := manager.builtinTransport(config, lifetime, epoch)
@@ -644,7 +675,7 @@ func (manager *Manager) transport(config captypes.ConnectionConfig, lifetime con
 	}
 	transport := &mcp.StreamableClientTransport{Endpoint: config.URL, HTTPClient: client, MaxRetries: -1, MaxEventSize: maxResultBytes}
 	if config.Auth == "oauth" {
-		handler, closeAuth, err := manager.oauthHandler(config, lifetime, epoch, interactive)
+		handler, closeAuth, err := manager.oauthHandler(ctx, config, lifetime, epoch, interactive, challenge)
 		if err != nil {
 			return nil, cleanup, err
 		}
@@ -674,6 +705,14 @@ func redactSecrets(config captypes.ConnectionConfig, secrets map[string]struct{}
 		}
 		if value, err := resolve(reference); err == nil && value != "" {
 			values[value] = struct{}{}
+		}
+	}
+	if config.CredentialRef != "" {
+		values[config.CredentialRef] = struct{}{}
+		if resolve != nil {
+			if value, err := resolve(config.CredentialRef); err == nil {
+				values[value] = struct{}{}
+			}
 		}
 	}
 	if config.URL != "" {
@@ -713,6 +752,9 @@ func (manager *Manager) safeError(config captypes.ConnectionConfig, err error) e
 		}
 		// Preserve the deadline identity and the attached server diagnostics.
 		return redactedError{text: manager.redact(config, err.Error()), cause: context.DeadlineExceeded}
+	}
+	if errors.Is(err, errNeedsSignIn) {
+		return redactedError{text: manager.redact(config, err.Error()), cause: errNeedsSignIn}
 	}
 	return errors.New(manager.redact(config, err.Error()))
 }
@@ -796,6 +838,9 @@ func (manager *Manager) session(id string) (*mcp.ClientSession, captypes.Connect
 	if manager.closed || entry == nil || entry.session == nil || entry.config.Disabled {
 		return nil, captypes.ConnectionConfig{}, 0, errors.New("MCP connection is not connected")
 	}
+	if entry.scopeChallenge != nil && entry.state.State != "connecting" {
+		return nil, captypes.ConnectionConfig{}, 0, errors.New(entry.state.Error)
+	}
 	return entry.session, entry.config, entry.epoch, nil
 }
 
@@ -804,11 +849,7 @@ func (manager *Manager) Refresh(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	seconds := config.TimeoutSeconds
-	if seconds <= 0 {
-		seconds = 30
-	}
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(seconds)*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout(config))
 	defer cancel()
 	state := captypes.ConnectionState{ID: id, State: "connected"}
 	outputSchemas := make(map[string]*jsonschema.Resolved)
@@ -930,6 +971,9 @@ func (manager *Manager) Refresh(ctx context.Context, id string) error {
 	if entry == nil || entry.epoch != epoch || entry.session != session {
 		return errors.New("MCP discovery was superseded")
 	}
+	if entry.scopeChallenge != nil {
+		return errors.New(entry.state.Error)
+	}
 	state.State = entry.state.State
 	state.Logs = entry.state.Logs
 	entry.state, entry.discovered = state, true
@@ -961,35 +1005,23 @@ func validEffect(effect captypes.Effect) bool {
 	return false
 }
 
+func requestTimeout(config captypes.ConnectionConfig) time.Duration {
+	if config.TimeoutSeconds > 0 {
+		return time.Duration(config.TimeoutSeconds) * time.Second
+	}
+	return 30 * time.Second
+}
+
 func (manager *Manager) Call(ctx context.Context, tool captypes.Tool, arguments map[string]any) (captypes.Result, error) {
 	session, config, epoch, err := manager.session(tool.ConnectionID)
 	if err != nil {
 		return captypes.Result{}, err
 	}
-	manager.mu.RLock()
-	entry := manager.connections[tool.ConnectionID]
-	currentGrant := false
-	var outputSchema *jsonschema.Resolved
-	if entry != nil && entry.session == session && entry.epoch == epoch && entry.discovered && !entry.state.Cached && entry.serverRevision == tool.ServerRevision {
-		for _, current := range entry.state.Tools {
-			if current.Name == tool.Name && current.Fingerprint == tool.Fingerprint && current.OriginalName == tool.OriginalName && current.Effect == tool.Effect && current.Scope == tool.Scope && current.Selected {
-				currentGrant = true
-				outputSchema = entry.outputSchemas[current.Fingerprint]
-				break
-			}
-		}
+	outputSchema, lifetime, err := manager.toolGrant(session, epoch, tool)
+	if err != nil {
+		return captypes.Result{}, err
 	}
-	manager.mu.RUnlock()
-	if !currentGrant {
-		return captypes.Result{}, errors.New("MCP operation changed or discovery is unverified; refresh and review access before execution")
-	}
-	seconds := config.TimeoutSeconds
-	if seconds <= 0 {
-		seconds = 30
-	}
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(seconds)*time.Second)
-	defer cancel()
-	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: tool.OriginalName, Arguments: arguments, Meta: mcp.Meta{"progressToken": tool.Name + "/" + fmt.Sprint(time.Now().UnixNano())}})
+	result, err := manager.callWithForms(ctx, session, lifetime, epoch, config, tool, &mcp.CallToolParams{Name: tool.OriginalName, Arguments: arguments, Meta: mcp.Meta{"progressToken": tool.Name + "/" + fmt.Sprint(time.Now().UnixNano())}})
 	if err != nil {
 		unknown := tool.Effect != captypes.EffectRead
 		return captypes.Result{Unknown: unknown, IsError: true}, manager.safeError(config, manager.diagnosed(tool.ConnectionID, epoch, err))
@@ -1031,15 +1063,14 @@ func (manager *Manager) ReadResource(ctx context.Context, id, uri string) (capty
 	if err != nil {
 		return captypes.Result{}, err
 	}
-	seconds := config.TimeoutSeconds
-	if seconds <= 0 {
-		seconds = 30
-	}
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(seconds)*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout(config))
 	defer cancel()
 	result, err := session.ReadResource(ctx, &mcp.ReadResourceParams{URI: uri})
 	if err != nil {
 		return captypes.Result{}, manager.safeError(config, err)
+	}
+	if result.NeedsInput() {
+		return captypes.Result{}, errors.New("The MCP server needs input. This request cannot collect user data.")
 	}
 	projection := newContentProjection(manager, config)
 	for _, content := range result.Contents {
@@ -1055,15 +1086,14 @@ func (manager *Manager) GetPrompt(ctx context.Context, id, name string, argument
 	if err != nil {
 		return captypes.Result{}, err
 	}
-	seconds := config.TimeoutSeconds
-	if seconds <= 0 {
-		seconds = 30
-	}
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(seconds)*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout(config))
 	defer cancel()
 	result, err := session.GetPrompt(ctx, &mcp.GetPromptParams{Name: name, Arguments: arguments})
 	if err != nil {
 		return captypes.Result{}, manager.safeError(config, err)
+	}
+	if result.NeedsInput() {
+		return captypes.Result{}, errors.New("The MCP server needs input. This request cannot collect user data.")
 	}
 	projection := newContentProjection(manager, config)
 	// Roles describe external source messages, never local instruction authority.
@@ -1103,7 +1133,7 @@ func (manager *Manager) disconnect(id string, park bool) error {
 		return errors.New("connection is unavailable")
 	}
 	entry.parked = park
-	entry.epoch++
+	manager.advanceEpoch(entry)
 	cancel := entry.cancel
 	transport := entry.config.Transport
 	session := entry.session
@@ -1112,9 +1142,10 @@ func (manager *Manager) disconnect(id string, park bool) error {
 	}
 	entry.session = nil
 	entry.cancel = nil
-	entry.interactiveAuth = false
+	entry.scopeChallenge = nil
 	entry.state.AuthPending, entry.state.AuthURL = false, ""
 	entry.state.State, entry.state.Cached = "not started", hasCatalog(entry.state)
+	entry.state.Error = ""
 	manager.mu.Unlock()
 	if cancel != nil {
 		cancel()

@@ -668,6 +668,13 @@ func (a *Agent) executeToolCall(ctx context.Context, tc provider.ToolCall, emit 
 	a.logger.Info("TOOL", "call", "name", tc.Function.Name, "params", formatToolArgs(params))
 	toolStart := time.Now()
 	ctx = context.WithValue(ctx, tools.ExecutionIdentityKey{}, tools.ExecutionIdentity{AgentID: string(a.AgentID), RunID: a.RunID, MessageID: tc.InternalID, ToolCallID: tc.ID})
+	if metadata.Dynamic && strings.HasPrefix(tc.Function.Name, "mcp__") && blockResolveCh != nil &&
+		findToolDef("question", validationDefs) != nil && PolicyAllows(a.Policy, "question") {
+		var stop context.CancelFunc
+		ctx, stop = context.WithCancel(ctx)
+		defer stop()
+		ctx = captypes.WithFormHandler(ctx, tc.Function.Name, formQuestionLane(blockID, tc.Function.Name, emit, blockResolveCh))
+	}
 
 	var result tools.ToolResult
 	var toolErr error

@@ -134,9 +134,12 @@ const (
 // agent-assigned internal tool ID, which prevents a late response from an old
 // panel from resolving a newer request.
 type BlockResponse struct {
-	RequestID       string
-	Outcome         BlockOutcome
-	Value           string
+	RequestID string
+	Outcome   BlockOutcome
+	Value     string
+	// HumanAnswers is populated only by the human question resolver. It
+	// preserves multiline values without parsing model-facing display text.
+	HumanAnswers    [4]string
 	Detail          string
 	AttributionKind string
 	AttributionID   string

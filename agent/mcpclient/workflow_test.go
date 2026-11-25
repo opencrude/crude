@@ -37,6 +37,7 @@ type workflowCallOutcome struct {
 type workflowStoredCredential struct {
 	Endpoint string
 	ID       string
+	Binding  string
 	Config   oauth2.Config
 	Token    oauth2.Token
 }

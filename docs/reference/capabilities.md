@@ -197,6 +197,27 @@ protocol responses and bounded evidence still apply.
 
 ## Transports and recovery
 
+- MCP OAuth uses the existing **Sign in** and **Open browser** controls. In
+  **Edit connection**, select OAuth and enter either the public HTTPS **OAuth
+  client metadata URL** or a pre-registered **OAuth client ID**. A metadata
+  document must describe the same public client and allow the native loopback
+  return path `/callback` on `127.0.0.1` with an ephemeral port. If the server
+  does not advertise metadata support, Crude can use dynamic registration when
+  the server supports it.
+- For a registered client that needs a secret, set **OAuth issuer URL** and use
+  `secret:NAME` in **OAuth client secret reference**. Store the value in the
+  existing application secret store; do not put it in a resource header.
+  Settings only shows that the reference is stored. An unchanged reference
+  cannot follow an issuer or client-ID edit in the editor. The SDK checks the
+  discovered issuer. Crude sends the secret only to its validated token endpoint
+  on that issuer's origin, never to the MCP resource or through a redirect. The
+  token file does not contain a copy of the managed secret.
+- If a Bearer challenge asks for more access, Crude stops the request and shows
+  the scopes. The connection keeps the challenge until the user signs in again,
+  disconnects, or changes the connection. Only a new **Sign in** can ask for the
+  old and newly requested scopes at the same resource and authorization
+  endpoints. Cancellation or refusal does not exchange a token. Sign-in never
+  repeats the original tool call or changes the tool's approval.
 - Remote servers use Streamable HTTP; a server that answers the initialize
   POST like a 2024-11-05 server (400/404/405/406/415) is reconnected over the
   legacy HTTP+SSE transport automatically, and `sse` can be configured
