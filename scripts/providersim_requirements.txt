@@ -1,0 +1,9 @@
+PyYAML==6.0.3
+pydantic==2.12.5
+typing-extensions==4.16.0
+# Compile the pinned Gemini inventory protos and read their descriptors.
+grpcio-tools==1.85.4
+protobuf==7.36.2
+anthropic==2.14.0
+# The published 3.6.1 wheel does not match this revision's Interactions types.
+google-genai @ git+https://github.com/googleapis/python-genai.git@36e297073202d937da00829aadbd85e42c32a571
