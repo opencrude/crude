@@ -52,6 +52,9 @@ func validateChat(b *bundle, value any, obj map[string]any, gateway ChatGateway)
 }
 
 func decodeChat(req *Request, obj map[string]any, gateway ChatGateway) (bool, []block) {
+	if _, ok := obj["reasoning_effort"]; ok {
+		req.captureReasoning()
+	}
 	req.Stream = jsonField[bool](obj, "stream")
 	if store, ok := obj["store"].(bool); ok {
 		req.Store = &store

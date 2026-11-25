@@ -1,8 +1,11 @@
 package providersim
 
 import (
+	"fmt"
+	"maps"
 	"slices"
 	"strings"
+	"unicode/utf8"
 )
 
 // ToolCall is a tool invocation. Arguments is the encoded input (JSON for a
@@ -76,6 +79,7 @@ type Turn struct {
 	gateAfter  int
 	omitUsage  bool
 	textDeltas []string
+	toolDeltas map[int][]string
 }
 
 // Text builds a turn with visible text.
@@ -131,7 +135,47 @@ func (t Turn) WithReasoning(text, signature, encrypted string) Turn {
 // WithTools replaces t's tool calls.
 func (t Turn) WithTools(calls ...ToolCall) Turn {
 	t.Tools = slices.Clone(calls)
+	t.toolDeltas = nil
 	return t
+}
+
+// WithToolArgumentDeltas appends a tool call. Its Arguments are the joined
+// parts. Each part becomes one argument delta when the wire supports it.
+// Each part must be valid UTF-8: an SSE delta carries a JSON string, not bytes.
+func (t Turn) WithToolArgumentDeltas(id, name string, parts ...string) Turn {
+	t.toolDeltas = maps.Clone(t.toolDeltas)
+	if t.toolDeltas == nil {
+		t.toolDeltas = make(map[int][]string)
+	}
+	t.toolDeltas[len(t.Tools)] = slices.Clone(parts)
+	t.Tools = append(slices.Clip(t.Tools), ToolCall{ID: id, Name: name, Arguments: strings.Join(parts, "")})
+	return t
+}
+
+func (t Turn) validateToolDeltas(wire Wire) error {
+	for i, parts := range t.toolDeltas {
+		// Pinned sources in schemas/manifest.json. Gemini's FunctionCall.args
+		// is an object; SDK partialArgs address typed values by JSON path, not
+		// arbitrary fragments of serialized JSON. Ollama ToolCallFunction
+		// (api/types.go) also carries an object, even in NDJSON streams.
+		switch wire {
+		case Chat, Responses, Codex, Messages, Interactions:
+		default:
+			return fmt.Errorf("%s does not stream serialized tool argument deltas", wire)
+		}
+		if i >= len(t.Tools) || strings.Join(parts, "") != t.Tools[i].Arguments {
+			return fmt.Errorf("tool %d argument deltas do not match its arguments", i)
+		}
+		if len(parts) == 0 {
+			return fmt.Errorf("tool %d needs at least one argument delta", i)
+		}
+		for _, part := range parts {
+			if !utf8.ValidString(part) {
+				return fmt.Errorf("tool %d argument deltas must each be valid UTF-8", i)
+			}
+		}
+	}
+	return nil
 }
 
 // WithRefusal adds refusal text to t.

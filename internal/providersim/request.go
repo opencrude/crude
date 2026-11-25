@@ -15,6 +15,10 @@ type Request struct {
 	Wire Wire
 	// Model is the requested model ID, when present.
 	Model string
+	// Prompt is the literal text before a FIM insertion.
+	Prompt string
+	// Suffix is the literal text after a FIM insertion.
+	Suffix string
 	// Method is the incoming HTTP method.
 	Method string
 	// Path is the decoded operation path relative to the wire mount.
@@ -36,6 +40,8 @@ type Request struct {
 	Reasoning json.RawMessage
 	// OutputLimit is the requested token limit. An empty value means absent.
 	OutputLimit json.Number
+	// MinOutputLimit is the optional minimum output token count on Codestral.
+	MinOutputLimit json.Number
 	// Stream reports whether the client requested streaming.
 	Stream bool
 	// Store is the client's setting, with nil distinguishing an omitted field.
@@ -150,6 +156,23 @@ func (r Request) snapshot() Request {
 		r.CacheMarkers[i].Value = slices.Clone(r.CacheMarkers[i].Value)
 	}
 	return r
+}
+
+// Capture the exact field bytes (including null, escapes and object order).
+// The request already passed the wire's validation before neutral projection.
+// Sources: CreateChatCompletionRequest, CreateResponse and Codex Reasoning
+// at the OpenAI and Codex revisions in schemas/manifest.json.
+func (r *Request) captureReasoning() {
+	var fields struct {
+		Effort    json.RawMessage `json:"reasoning_effort"`
+		Reasoning json.RawMessage `json:"reasoning"`
+	}
+	_ = json.Unmarshal(r.Raw, &fields)
+	if r.Wire == Chat {
+		r.Reasoning = fields.Effort
+	} else {
+		r.Reasoning = fields.Reasoning
+	}
 }
 
 func (c Conversation) snapshot() Conversation {

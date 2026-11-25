@@ -22,6 +22,9 @@ func validateResponse(b *bundle, component string, obj responseObject) (string, 
 }
 
 func decodeResponse(req *Request, obj responseObject) []responseObject {
+	if _, ok := obj["reasoning"]; ok {
+		req.captureReasoning()
+	}
 	req.Model = jsonField[string](obj, "model")
 	req.Stream = jsonField[bool](obj, "stream")
 	if store, ok := obj["store"].(bool); ok {

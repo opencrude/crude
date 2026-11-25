@@ -183,7 +183,7 @@ func (s *messageState) create(w http.ResponseWriter, r *http.Request) {
 		_, payload := messageFault(w, f)
 		return frame{event: "error", data: jsonBytes(payload)}
 	}}
-	s.server.sendStream(w, r, turn, codec, slices.Values(messageFrames(body, turn.textDeltas)))
+	s.server.sendStream(w, r, turn, codec, slices.Values(messageFrames(body, turn)))
 }
 func messageStop(t Turn) string {
 	switch t.finish() {
@@ -334,7 +334,7 @@ func messageFrame(event string, v messageObject) frame {
 	v["type"] = event
 	return frame{event: event, data: jsonBytes(v)}
 }
-func messageFrames(body messageObject, textDeltas []string) []frame {
+func messageFrames(body messageObject, turn Turn) []frame {
 	start := maps.Clone(body)
 	usage := body["usage"].(messageObject)
 	initial := maps.Clone(usage)
@@ -344,6 +344,7 @@ func messageFrames(body messageObject, textDeltas []string) []frame {
 	start["stop_reason"] = nil
 	start["usage"] = initial
 	out := []frame{messageFrame("message_start", messageObject{"message": start}), messageFrame("ping", messageObject{})}
+	tool, textDeltas := 0, turn.textDeltas
 	for i, v := range body["content"].([]messageObject) {
 		first := maps.Clone(v)
 		var deltas []messageObject
@@ -362,7 +363,10 @@ func messageFrames(body messageObject, textDeltas []string) []frame {
 			add("signature_delta", "signature", v["signature"])
 		case "tool_use":
 			first["input"] = messageObject{}
-			add("input_json_delta", "partial_json", string(v["input"].(json.RawMessage)))
+			for _, part := range textChunks(turn.toolDeltas[tool], string(v["input"].(json.RawMessage))) {
+				add("input_json_delta", "partial_json", part)
+			}
+			tool++
 		case "compaction":
 			if v["signature"] == nil {
 				first["content"] = nil

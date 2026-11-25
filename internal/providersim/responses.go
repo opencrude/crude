@@ -203,7 +203,7 @@ func (s *responseState) create(w http.ResponseWriter, r *http.Request) {
 	if s.wire == Codex {
 		deltas = turn.mergedDeltas()
 	}
-	events := responseFrames(body, output, deltas)
+	events := responseFrames(body, output, deltas, turn.toolDeltas)
 	terminal := responseFrame(len(events), "response."+final["status"].(string), responseObject{"response": final})
 	codec := streamCodec{contentType: "text/event-stream", terminal: []frame{terminal}, write: func(w io.Writer, f frame) error {
 		if f.event == terminal.event {
@@ -350,13 +350,14 @@ func responseFrame(n int, name string, fields responseObject) frame {
 	return frame{event: name, data: jsonBytes(fields)}
 }
 
-func responseFrames(base responseObject, output []responseObject, textDeltas []string) []frame {
+func responseFrames(base responseObject, output []responseObject, textDeltas []string, toolDeltas map[int][]string) []frame {
 	var frames []frame
 	emit := func(name string, fields responseObject) {
 		frames = append(frames, responseFrame(len(frames), "response."+name, fields))
 	}
 	emit("created", responseObject{"response": base})
 	emit("in_progress", responseObject{"response": base})
+	tool := 0
 	for i, item := range output {
 		fields := func() responseObject { return responseObject{"output_index": i, "item_id": item["id"]} }
 		start := maps.Clone(item)
@@ -380,10 +381,13 @@ func responseFrames(base responseObject, output []responseObject, textDeltas []s
 		case "compaction":
 			emit("compaction.compacting", fields())
 		case "function_call":
+			for _, part := range textChunks(toolDeltas[tool], item["arguments"].(string)) {
+				f := fields()
+				f["delta"] = part
+				emit("function_call_arguments.delta", f)
+			}
+			tool++
 			f := fields()
-			f["delta"] = item["arguments"]
-			emit("function_call_arguments.delta", f)
-			f = fields()
 			f["arguments"] = item["arguments"]
 			f["name"] = item["name"]
 			emit("function_call_arguments.done", f)

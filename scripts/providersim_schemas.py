@@ -237,6 +237,7 @@ REST_EVIDENCE = {
 # OpenAPI wires and externally addressable schema roots.
 WIRES = {
     "codex": ("codex", ("ResponseItem",)),
+    "openai-completions": ("openai", ("CreateCompletionRequest", "CreateCompletionResponse", "ErrorResponse")),
     "chat": ("openai", (
         "CreateChatCompletionRequest", "CreateChatCompletionResponse",
         "CreateChatCompletionStreamResponse", "ErrorResponse", "ListModelsResponse",
@@ -357,6 +358,21 @@ def normalize_openai_input_item(schema):
         "change": "Use anyOf: EasyInputMessage and Item/InputMessage both accept the witness. Preserve all arm assertions.",
         "witness": {"role": "user", "content": [{"type": "input_text", "text": "Hello"}]},
         "authority": "https://github.com/openai/openai-python/blob/aff223de836de6781e538ce21badfd4620961544/src/openai/types/responses/response_input_param.py",
+    }]
+
+
+def completion_definitions(definitions):
+    # Both media types reference CreateCompletionResponse. Its usage $ref
+    # only permits objects, but include_usage explicitly requires null on
+    # ordinary stream chunks. Keep the non-streaming root unchanged.
+    root = definitions["CreateCompletionResponse"]
+    usage = root["properties"]["usage"]
+    if usage != {"$ref": OAS_COMPONENTS + "CompletionUsage"}:
+        raise ValueError("recheck CreateCompletionResponse.usage")
+    stream = {**root, "properties": {**root["properties"], "usage": {"anyOf": [usage, {"type": "null"}]}}}
+    return {**definitions, "CompletionStreamChunk": stream}, [{
+        "pointer": "#/components/schemas/CreateCompletionResponse/properties/usage",
+        "change": "Stream-only root: allow null as specified by ChatCompletionStreamOptions.include_usage. Keep the JSON response root unchanged.",
     }]
 
 
@@ -837,7 +853,10 @@ def generate(cache):
         }
 
     for wire, (source, roots) in WIRES.items():
-        if source == "codex":
+        if wire == "openai-completions":
+            defs, adaptations = completion_definitions(definitions[source])
+            emit(wire, source, defs, (*roots, "CompletionStreamChunk"), adaptations)
+        elif source == "codex":
             emit(wire, source, definitions[source], roots, [{
                 "pointer": "#/definitions/ResponseItem",
                 "change": "Equivalent Draft 7 subset to Draft 2020-12; relink definitions to $defs. No assertions changed.",
