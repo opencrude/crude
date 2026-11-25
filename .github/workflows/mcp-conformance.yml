@@ -1,0 +1,42 @@
+name: Offline protocol conformance
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  client:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.21.1'
+          package-manager-cache: false
+      - name: Prepare pinned tools
+        run: |
+          python3 scripts/mcp_conformance.py prepare "$RUNNER_TEMP/mcp-tools"
+          go -C tools/providerfixtures test -p=2 -c -o "$RUNNER_TEMP/fixture-tests"
+      - name: Run with loopback only
+        run: |
+          sudo unshare --net bash -ceu '
+            ip link set lo up
+            exec sudo -u "$1" env PATH="$2" bash -ceu "$3" -- "$4"
+          ' -- "$USER" "$PATH" '
+            (cd tools/providerfixtures && "$1/fixture-tests" -test.v)
+            python3 scripts/mcp_conformance.py full "$1/mcp-tools"
+          ' "$RUNNER_TEMP"
+      - name: Keep official checks
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mcp-client-checks
+          path: ${{ runner.temp }}/mcp-tools/results-*/**/checks.json
+          if-no-files-found: warn

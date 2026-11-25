@@ -1,0 +1,42 @@
+# Authored synthetic example of the pinned OpenAI Chat chunk contract, not a provider capture.
+{
+  "version": 2,
+  "interactions": [
+    {
+      "id": 0,
+      "request": {
+        "proto": "HTTP/1.1",
+        "proto_major": 1,
+        "proto_minor": 1,
+        "method": "POST",
+        "url": "https://fixture.invalid/v1/chat/completions",
+        "host": "fixture.invalid",
+        "headers": {
+          "Accept": [
+            "text/event-stream"
+          ],
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "body": "{\"model\":\"gpt-4o\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly OK.\"}],\"stream\":true}",
+        "content_length": 96
+      },
+      "response": {
+        "proto": "HTTP/1.1",
+        "proto_major": 1,
+        "proto_minor": 1,
+        "status": "200 OK",
+        "code": 200,
+        "headers": {
+          "Content-Type": [
+            "text/event-stream"
+          ]
+        },
+        "body": "data: {\"id\":\"fixture_1\",\"model\":\"gpt-4o\",\"object\":\"chat.completion.chunk\",\"created\":1735689600,\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"fixture_1\",\"model\":\"gpt-4o\",\"object\":\"chat.completion.chunk\",\"created\":1735689600,\"choices\":[{\"index\":0,\"delta\":{\"content\":\"OK\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"fixture_1\",\"model\":\"gpt-4o\",\"object\":\"chat.completion.chunk\",\"created\":1735689600,\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+        "content_length": 507,
+        "duration": "0s"
+      }
+    }
+  ]
+}
