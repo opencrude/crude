@@ -17,6 +17,8 @@ make layout-check   # only the folder, package, file and name rules
 ```
 
 `make design-audit` and the Conventions CI workflow also run these checks.
+On Windows, use `mingw32-make hooks` if that is the name of your GNU Make
+executable. The hook runs the same `conventions` target with either name.
 
 <a id="allow-unused"></a>
 A reviewed exception goes in `tools/layoutcheck/allow.txt` as

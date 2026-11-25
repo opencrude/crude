@@ -4,7 +4,17 @@
 # Rules and fixes: docs/reference/code-layout.md
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
-if ! make --no-print-directory conventions; then
+# MinGW installs GNU Make as mingw32-make. Select the executable before
+# running the gate; never retry a failing gate with another executable.
+if command -v make >/dev/null; then
+	make_cmd=make
+elif command -v mingw32-make >/dev/null; then
+	make_cmd=mingw32-make
+else
+	echo "Pre-push checks need GNU Make. Add make or mingw32-make to PATH, then push again." >&2
+	exit 1
+fi
+if ! "$make_cmd" --no-print-directory conventions; then
 	echo >&2
 	echo "pre-push: the push stopped because a gate failed. Fix the errors above, commit, and push again." >&2
 	exit 1
