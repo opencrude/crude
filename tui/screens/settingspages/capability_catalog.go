@@ -770,7 +770,7 @@ func (catalog *capabilityCatalog) HandleAction(_ ui.EventContext, action ui.Acti
 	case "save", "test":
 		request, err := catalog.draftAction()
 		if err != nil {
-			catalog.message = err.Error()
+			catalog.message = sentence(err.Error())
 			if draft := model.capabilityDraft; draft != nil {
 				for _, field := range draft.Fields() {
 					if field.HasErrors() {
@@ -1133,7 +1133,7 @@ func (catalog *capabilityCatalog) draftAction() (captypes.Action, error) {
 		switch reference := strings.TrimSpace(value("oauth-secret-ref")); reference {
 		case "":
 			if before.CredentialRef != "" && (before.OAuthClientID != connection.OAuthClientID || before.OAuthIssuer != connection.OAuthIssuer) && connection.Auth == "oauth" {
-				return request, fmt.Errorf("Enter the client secret reference again, or enter - to clear it.")
+				return request, fmt.Errorf("enter the OAuth client secret reference again, or enter - to clear it")
 			}
 		case "-":
 			connection.CredentialRef = ""

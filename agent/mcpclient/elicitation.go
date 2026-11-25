@@ -16,11 +16,11 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func (m *Manager) toolGrant(session *mcp.ClientSession, epoch uint64, tool captypes.Tool) (*jsonschema.Resolved, context.Context, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	c := m.connections[tool.ConnectionID]
-	if !m.closed && c != nil && !c.config.Disabled && c.scopeChallenge == nil && c.session == session && c.epoch == epoch && c.discovered && !c.state.Cached && c.serverRevision == tool.ServerRevision {
+func (manager *Manager) toolGrant(session *mcp.ClientSession, epoch uint64, tool captypes.Tool) (*jsonschema.Resolved, context.Context, error) {
+	manager.mu.RLock()
+	defer manager.mu.RUnlock()
+	c := manager.connections[tool.ConnectionID]
+	if !manager.closed && c != nil && !c.config.Disabled && c.scopeChallenge == nil && c.session == session && c.epoch == epoch && c.discovered && !c.state.Cached && c.serverRevision == tool.ServerRevision {
 		for _, current := range c.state.Tools {
 			if current.Name == tool.Name && current.Fingerprint == tool.Fingerprint && current.OriginalName == tool.OriginalName && current.Effect == tool.Effect && current.Scope == tool.Scope && current.Selected {
 				return c.outputSchemas[current.Fingerprint], c.lifetime, nil
@@ -33,7 +33,7 @@ func (m *Manager) toolGrant(session *mcp.ClientSession, epoch uint64, tool capty
 // callWithForms advances only acknowledged, input-required tool results.
 // A timeout, dropped connection, transport error or busy server never causes
 // another call. The SDK allocates each RPC ID and owns the wire representation.
-func (m *Manager) callWithForms(ctx context.Context, session *mcp.ClientSession, lifetime context.Context, epoch uint64, config captypes.ConnectionConfig, tool captypes.Tool, params *mcp.CallToolParams) (*mcp.CallToolResult, error) {
+func (manager *Manager) callWithForms(ctx context.Context, session *mcp.ClientSession, lifetime context.Context, epoch uint64, config captypes.ConnectionConfig, tool captypes.Tool, params *mcp.CallToolParams) (*mcp.CallToolResult, error) {
 	ask, guard := captypes.FormHandler(ctx, tool.Name)
 	if session.InitializeResult().ProtocolVersion < "2026-07-28" {
 		ask = nil
@@ -57,7 +57,7 @@ func (m *Manager) callWithForms(ctx context.Context, session *mcp.ClientSession,
 				return err
 			}
 		}
-		_, _, err := m.toolGrant(session, epoch, tool)
+		_, _, err := manager.toolGrant(session, epoch, tool)
 		return err
 	}
 	if ask != nil {
@@ -87,10 +87,10 @@ func (m *Manager) callWithForms(ctx context.Context, session *mcp.ClientSession,
 			return result, err
 		}
 		if ask == nil {
-			return nil, errors.New("The MCP server requested user input. This call does not have a human question handler.")
+			return nil, errors.New("MCP server asked for input that this call cannot collect")
 		}
 		if declined || len(result.InputRequests) == 0 || result.IsError || len(result.Content) != 0 || result.StructuredContent != nil {
-			return nil, errors.New("The MCP tool did not complete. Crude did not repeat the call.")
+			return nil, errors.New("MCP tool did not complete; Crude did not repeat the call")
 		}
 		// Validate the whole request set before displaying a question. A
 		// mixed form/sampling request cannot extract answers or invoke a model.
@@ -101,14 +101,14 @@ func (m *Manager) callWithForms(ctx context.Context, session *mcp.ClientSession,
 			}
 			request, ok := input.(*mcp.ElicitParams)
 			if !ok || request == nil || request.Mode != "" && request.Mode != "form" || request.URL != "" || request.ElicitationID != "" {
-				return nil, errors.New("The MCP tool requested unsupported input. No answers were sent.")
+				return nil, errors.New("MCP tool requested unsupported input; Crude sent no answers")
 			}
 			f, err := newServerForm(config.ID, tool.OriginalName, request)
 			if err != nil {
 				return nil, err
 			}
-			if m.privateFormData(config, f.form) {
-				return nil, errors.New("The MCP form contains private data. No answers were sent.")
+			if manager.privateFormData(config, f.form) {
+				return nil, errors.New("MCP form contains private data; Crude sent no answers")
 			}
 			forms[id] = f
 		}
@@ -123,8 +123,8 @@ func (m *Manager) callWithForms(ctx context.Context, session *mcp.ClientSession,
 			if err != nil {
 				return nil, err
 			}
-			if answer.Action == "accept" && m.privateFormData(config, answer.Content) {
-				return nil, errors.New("The MCP answer looks like private data. No answers were sent.")
+			if answer.Action == "accept" && manager.privateFormData(config, answer.Content) {
+				return nil, errors.New("MCP answer looks like private data; Crude sent no answers")
 			}
 			declined = declined || answer.Action != "accept"
 			answers[id] = answer
@@ -145,23 +145,23 @@ var credentialValue = regexp.MustCompile(`(?i)\bbearer\s+\S+|-----BEGIN [^-]*KEY
 
 // Check the data that will actually be shown or sent, not the user's JSON
 // input notation. This also handles escaped strings and multi-select values.
-func (m *Manager) privateFormData(config captypes.ConnectionConfig, data any) bool {
+func (manager *Manager) privateFormData(config captypes.ConnectionConfig, data any) bool {
 	b, err := json.Marshal(data)
 	if err != nil || credentialValue.Match(b) {
 		return true
 	}
 	s := string(b)
-	return m.redact(config, s) != s
+	return manager.redact(config, s) != s
 }
 
 func newServerForm(connectionID, tool string, request *mcp.ElicitParams) (*serverForm, error) {
-	invalid := errors.New("The MCP form is not supported. No answers were sent.")
+	invalid := errors.New("MCP form is not supported; Crude sent no answers")
 	raw, err := json.Marshal(request.RequestedSchema)
 	if err != nil || strings.TrimSpace(request.Message) == "" {
 		return nil, invalid
 	}
 	if sensitiveForm.Match(raw) || sensitiveForm.MatchString(request.Message) {
-		return nil, errors.New("The MCP form asks for private data. No answers were sent.")
+		return nil, errors.New("MCP form asks for private data; Crude sent no answers")
 	}
 	schema, err := mcp.ValidateElicitSchema(request.RequestedSchema)
 	if err != nil || schema == nil || schema.Type != "object" {
@@ -178,7 +178,7 @@ func newServerForm(connectionID, tool string, request *mcp.ElicitParams) (*serve
 			return nil, invalid
 		}
 		if strings.EqualFold(name, "token") || strings.EqualFold(name, "pin") {
-			return nil, errors.New("The MCP form asks for private data. No answers were sent.")
+			return nil, errors.New("MCP form asks for private data; Crude sent no answers")
 		}
 		field := captypes.FormField{Name: name, Type: p.Type, Title: p.Title, Description: p.Description, Required: slices.Contains(schema.Required, name)}
 		choices := slices.Clone(p.Enum)
@@ -223,7 +223,7 @@ func (f *serverForm) answer(reply captypes.FormReply) (*mcp.ElicitResult, error)
 		return out, nil
 	case "accept":
 	default:
-		return nil, errors.New("No human form answer was supplied.")
+		return nil, errors.New("MCP form requires a valid human answer")
 	}
 	out.Content = make(map[string]any)
 	for _, field := range f.form.Fields {
@@ -274,12 +274,12 @@ func (f *serverForm) answer(reply captypes.FormReply) (*mcp.ElicitResult, error)
 			}
 		}
 		if err != nil {
-			return nil, fmt.Errorf("The answer for %q is not a %s. No answers were sent.", field.Name, field.Type)
+			return nil, fmt.Errorf("answer for %q must be of type %s; Crude sent no answers", field.Name, field.Type)
 		}
 		out.Content[field.Name] = v
 	}
 	if len(reply.Values) != len(out.Content) || f.schema.Validate(out.Content) != nil {
-		return nil, errors.New("The answers do not match the MCP form. No answers were sent.")
+		return nil, errors.New("answers do not match the MCP form; Crude sent no answers")
 	}
 	return out, nil
 }

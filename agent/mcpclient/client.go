@@ -298,7 +298,7 @@ func (manager *Manager) connect(ctx context.Context, id string, interactive bool
 	config := entry.config
 	if interactive && config.Auth != "oauth" {
 		manager.mu.Unlock()
-		return errors.New("Select OAuth in MCP settings before you use Sign in.")
+		return errors.New("sign-in requires OAuth; select OAuth in MCP settings")
 	}
 	if config.Host == "shell" {
 		manager.mu.Unlock()
@@ -1070,7 +1070,7 @@ func (manager *Manager) ReadResource(ctx context.Context, id, uri string) (capty
 		return captypes.Result{}, manager.safeError(config, err)
 	}
 	if result.NeedsInput() {
-		return captypes.Result{}, errors.New("The MCP server needs input. This request cannot collect user data.")
+		return captypes.Result{}, errors.New("MCP server needs input, but this request cannot collect it")
 	}
 	projection := newContentProjection(manager, config)
 	for _, content := range result.Contents {
@@ -1093,7 +1093,7 @@ func (manager *Manager) GetPrompt(ctx context.Context, id, name string, argument
 		return captypes.Result{}, manager.safeError(config, err)
 	}
 	if result.NeedsInput() {
-		return captypes.Result{}, errors.New("The MCP server needs input. This request cannot collect user data.")
+		return captypes.Result{}, errors.New("MCP server needs input, but this request cannot collect it")
 	}
 	projection := newContentProjection(manager, config)
 	// Roles describe external source messages, never local instruction authority.
