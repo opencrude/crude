@@ -39,18 +39,35 @@ func messageError(w http.ResponseWriter, kind, msg, code string) messageObject {
 	}
 	return messageObject{"type": "error", "error": e, "request_id": id}
 }
-func messageFault(kind FaultKind) (int, string, string) {
-	switch kind {
+func messageFault(w http.ResponseWriter, f fault) (int, messageObject) {
+	envelope := func(status int, kind, msg string) (int, messageObject) {
+		return status, messageError(w, kind, f.text(msg), "")
+	}
+	// https://platform.claude.com/docs/en/api/errors.md#http-errors
+	// The 502/408 pairing with api_error/timeout_error is synthetic.
+	switch f.kind {
+	case ModelNotFound:
+		return envelope(404, "not_found_error", "Model not found.")
+	case Quota:
+		// https://platform.claude.com/docs/en/api/errors#error-codes:
+		// a monthly spend-cap rejection has no retry-after header.
+		return 429, messageError(w, "rate_limit_error", f.text("The account has reached its spend limit."), "enforced_spend_limit_reached")
+	case BadGateway:
+		return envelope(502, "api_error", "Bad gateway.")
+	case InvalidRequest:
+		return envelope(400, "invalid_request_error", "Invalid request.")
+	case RequestTimeout:
+		return envelope(408, "timeout_error", requestTimedOut)
 	case RateLimit:
-		return 429, "rate_limit_error", "Rate limit reached."
+		return envelope(429, "rate_limit_error", "Rate limit reached.")
 	case Overload:
-		return 529, "overloaded_error", "Overloaded"
+		return envelope(529, "overloaded_error", "Overloaded")
 	case Auth:
-		return 401, "authentication_error", "Invalid API key."
+		return envelope(401, "authentication_error", "Invalid API key.")
 	case ContextOverflow:
-		return 400, "invalid_request_error", "prompt is too long: input exceeds the model context window"
+		return envelope(400, "invalid_request_error", "prompt is too long: input exceeds the model context window")
 	default:
-		return 500, "api_error", "Internal server error."
+		return envelope(500, "api_error", "Internal server error.")
 	}
 }
 func (s *messageState) reject(w http.ResponseWriter, req Request, err error) {
@@ -125,18 +142,18 @@ func (s *messageState) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !req.Stream || turn.fault.mode == faultHTTP {
-		if !turn.gate.await(r.Context(), s.server.done) {
+		if !s.server.awaitBody(r, turn) {
 			return
 		}
 	}
 	if turn.fault.mode == faultHTTP {
-		status, k, msg := messageFault(turn.fault.kind)
-		if h := turn.fault.hint; h.header != "" {
+		status, payload := messageFault(w, turn.fault)
+		if h := turn.fault.hint; h.header != "" && turn.fault.kind != Quota {
 			w.Header().Set(h.header, h.value)
 		} else if turn.fault.kind == RateLimit {
 			w.Header().Set("retry-after", "1")
 		}
-		writeJSON(w, status, messageError(w, k, msg, ""))
+		writeJSON(w, status, payload)
 		return
 	}
 	if !req.Stream && (turn.fault.mode == faultStream || turn.fault.mode == faultCut) {
@@ -162,11 +179,11 @@ func (s *messageState) create(w http.ResponseWriter, r *http.Request) {
 			s.publishCache(c)
 		}
 		return writeSSE(w, f)
-	}, fault: func(k FaultKind, _ int) frame {
-		_, kind, text := messageFault(k)
-		return frame{event: "error", data: jsonBytes(messageError(w, kind, text, ""))}
+	}, encodeFault: func(f fault, _ int) frame {
+		_, payload := messageFault(w, f)
+		return frame{event: "error", data: jsonBytes(payload)}
 	}}
-	s.server.sendStream(w, r, turn, codec, slices.Values(messageFrames(body)))
+	s.server.sendStream(w, r, turn, codec, slices.Values(messageFrames(body, turn.textDeltas)))
 }
 func messageStop(t Turn) string {
 	switch t.finish() {
@@ -196,8 +213,8 @@ func (s *messageState) content(index int, t Turn) ([]messageObject, error) {
 	if th.Encrypted != "" {
 		out = append(out, s.issue(messageObject{"type": "redacted_thinking", "data": th.Encrypted}, false))
 	}
-	for _, text := range []string{t.Text, t.Refusal} {
-		if text != "" {
+	for i, text := range []string{t.Text, t.Refusal} {
+		if text != "" || i == 0 && len(t.textDeltas) > 0 {
 			out = append(out, messageObject{"type": "text", "text": text})
 		}
 	}
@@ -220,7 +237,11 @@ func (s *messageState) content(index int, t Turn) ([]messageObject, error) {
 // input_tokens excludes both cache writes and cache reads. Compaction-only
 // usage appears in iterations, not in the top-level message usage.
 func messageCounts(u Usage, hour int) messageObject {
-	return messageObject{"input_tokens": u.Input - u.CacheWrite - u.Cached, "cache_read_input_tokens": u.Cached, "cache_creation_input_tokens": u.CacheWrite, "output_tokens": u.Output, "cache_creation": messageObject{"ephemeral_1h_input_tokens": hour, "ephemeral_5m_input_tokens": u.CacheWrite - hour}}
+	o := messageObject{"input_tokens": u.Input - u.CacheWrite - u.Cached, "cache_creation_input_tokens": u.CacheWrite, "output_tokens": u.Output, "cache_creation": messageObject{"ephemeral_1h_input_tokens": hour, "ephemeral_5m_input_tokens": u.CacheWrite - hour}}
+	if !u.OmitCacheRead {
+		o["cache_read_input_tokens"] = u.Cached
+	}
+	return o
 }
 func messageIteration(kind string, u Usage, hour int) messageObject {
 	o := messageCounts(u, hour)
@@ -228,6 +249,12 @@ func messageIteration(kind string, u Usage, hour int) messageObject {
 	return o
 }
 func (s *messageState) reply(req Request, t Turn, cfg compactConfig, hour int) (messageObject, error) {
+	if t.omitUsage {
+		return nil, errors.New("a Messages reply requires usage")
+	}
+	if t.Usage != nil && t.Usage.OmitCacheRead && (cfg.demand || cfg.threshold != 0 || hasMessageBeta(req.Header, thresholdBeta)) {
+		return nil, errors.New("iteration usage requires cache_read_input_tokens")
+	}
 	stop := messageStop(t)
 	compact := cfg.demand || cfg.threshold != 0 && req.Prefix.InputTokens >= cfg.threshold
 	only := compact && (cfg.demand || cfg.pause)
@@ -307,7 +334,7 @@ func messageFrame(event string, v messageObject) frame {
 	v["type"] = event
 	return frame{event: event, data: jsonBytes(v)}
 }
-func messageFrames(body messageObject) []frame {
+func messageFrames(body messageObject, textDeltas []string) []frame {
 	start := maps.Clone(body)
 	usage := body["usage"].(messageObject)
 	initial := maps.Clone(usage)
@@ -324,7 +351,10 @@ func messageFrames(body messageObject) []frame {
 		switch v["type"] {
 		case "text":
 			first["text"] = ""
-			add("text_delta", "text", v["text"])
+			for _, part := range textChunks(textDeltas, v["text"].(string)) {
+				add("text_delta", "text", part)
+			}
+			textDeltas = nil // A subsequent text block is the separate refusal.
 		case "thinking":
 			first["thinking"] = ""
 			first["signature"] = ""

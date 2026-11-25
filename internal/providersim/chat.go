@@ -76,10 +76,10 @@ func (s *Server) completeChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if turn.fault.mode == faultHTTP {
-		if !turn.gate.await(r.Context(), s.done) {
+		if !s.awaitBody(r, turn) {
 			return
 		}
-		status, body := chatFault(turn.fault.kind)
+		status, body := chatFault(turn.fault)
 		if hint := turn.fault.hint; hint.header != "" {
 			w.Header().Set(hint.header, hint.value)
 		}
@@ -96,7 +96,7 @@ func (s *Server) completeChat(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, chatError("server_error", "", nil, "The scripted fault requires streaming."))
 		return
 	}
-	if turn.gate.await(r.Context(), s.done) {
+	if s.awaitBody(r, turn) {
 		writeJSON(w, http.StatusOK, reply.completion())
 	}
 }
@@ -108,15 +108,15 @@ func (s *Server) listChatModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.observe(req)
-	models, configured := s.models[Chat]
-	if !configured {
-		models = []string{"gpt-4o-mini"}
+	models, ok := s.inventory(w, r, Chat, "gpt-4o-mini")
+	if !ok {
+		return
 	}
 	list := make([]map[string]any, 0, len(models))
 	for _, model := range models {
 		// Timestamp and owner are synthetic fixture data.
 		list = append(list, map[string]any{
-			"id": model, "object": "model", "created": chatSyntheticCreated, "owned_by": "openai",
+			"id": model.ID, "object": "model", "created": chatSyntheticCreated, "owned_by": "openai",
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": list})
@@ -147,18 +147,35 @@ func chatError(kind, code string, param any, text string) map[string]any {
 // Messages are synthetic. The overload status, type, and code are in the
 // pinned spec's InferenceServiceUnavailable response; the context and auth
 // details represent common OpenAI errors, not guarantees about deployments.
-func chatFault(kind FaultKind) (int, map[string]any) {
-	switch kind {
+// https://developers.openai.com/api/docs/guides/error-codes documents
+// insufficient_quota and invalid_request_error. The pinned Codex parser accepts
+// model_not_found and insufficient_quota: https://github.com/openai/codex/blob/ebd0765/codex-rs/codex-api/src/error.rs.
+// The 502 and 408 use synthetic gateway envelopes (RFC 9110 §§15.6.3, 15.5.9).
+func chatFault(f fault) (int, map[string]any) {
+	envelope := func(kind, code string, param any, text string) map[string]any {
+		return chatError(kind, code, param, f.text(text))
+	}
+	switch f.kind {
+	case ModelNotFound:
+		return 404, envelope("invalid_request_error", "model_not_found", nil, "Model not found.")
+	case Quota:
+		return 429, envelope("insufficient_quota", "insufficient_quota", nil, "The account has reached its quota.")
+	case BadGateway:
+		return 502, envelope("server_error", "server_error", nil, "Bad gateway.")
+	case InvalidRequest:
+		return 400, envelope("invalid_request_error", "", nil, "Invalid request.")
+	case RequestTimeout:
+		return 408, envelope("server_error", "request_timeout", nil, requestTimedOut)
 	case RateLimit:
-		return http.StatusTooManyRequests, chatError("rate_limit_error", "rate_limit_exceeded", nil, "Rate limit exceeded.")
+		return http.StatusTooManyRequests, envelope("rate_limit_error", "rate_limit_exceeded", nil, "Rate limit exceeded.")
 	case ContextOverflow:
-		return http.StatusBadRequest, chatError("invalid_request_error", "context_length_exceeded", "messages", "The input exceeds the context limit.")
+		return http.StatusBadRequest, envelope("invalid_request_error", "context_length_exceeded", "messages", "The input exceeds the context limit.")
 	case Overload:
-		return http.StatusServiceUnavailable, chatError("service_unavailable_error", "server_is_overloaded", nil, "The model is overloaded.")
+		return http.StatusServiceUnavailable, envelope("service_unavailable_error", "server_is_overloaded", nil, "The model is overloaded.")
 	case Auth:
-		return http.StatusUnauthorized, chatError("invalid_request_error", "invalid_api_key", nil, "The API key is invalid.")
+		return http.StatusUnauthorized, envelope("invalid_request_error", "invalid_api_key", nil, "The API key is invalid.")
 	default:
-		return http.StatusInternalServerError, chatError("server_error", "", nil, "The simulated request failed.")
+		return http.StatusInternalServerError, envelope("server_error", "", nil, "The simulated request failed.")
 	}
 }
 
@@ -166,11 +183,11 @@ var chatStream = streamCodec{
 	contentType: "text/event-stream",
 	write:       writeSSE,
 	terminal:    []frame{{data: []byte("[DONE]")}},
-	fault: func(kind FaultKind, _ int) frame {
+	encodeFault: func(f fault, _ int) frame {
 		// The pinned POST /chat/completions 200 description says: “a data frame
 		// may contain a JSON object with an `error` field instead of a completion
 		// chunk.” Reusing ErrorResponse and the injected event count are synthetic.
-		_, body := chatFault(kind)
+		_, body := chatFault(f)
 		return frame{data: jsonBytes(body)}
 	},
 }
@@ -232,11 +249,15 @@ func (c chatReply) completion() map[string]any {
 	}
 	choice := map[string]any{"index": 0, "message": message, "finish_reason": c.turn.finish(), "logprobs": nil}
 	body := c.envelope("chat.completion", []map[string]any{choice})
-	body["usage"] = chatUsage(c.usage)
+	if !c.turn.omitUsage {
+		body["usage"] = chatUsage(c.usage)
+	}
 	return body
 }
 
 func (c chatReply) events(includeUsage bool) iter.Seq[frame] {
+	// Synthetic gateway behavior: omit even a requested stream usage chunk.
+	includeUsage = includeUsage && !c.turn.omitUsage
 	return func(yield func(frame) bool) {
 		chunk := func(choices []map[string]any, usage any) bool {
 			body := c.envelope("chat.completion.chunk", choices)
@@ -254,8 +275,12 @@ func (c chatReply) events(includeUsage bool) iter.Seq[frame] {
 		if c.gateway == DeepSeek && c.turn.Reasoning.Text != "" && !delta(map[string]any{"reasoning_content": c.turn.Reasoning.Text}, nil) {
 			return
 		}
-		if c.turn.Text != "" && !delta(map[string]any{"content": c.turn.Text}, nil) {
-			return
+		if c.turn.Text != "" || len(c.turn.textDeltas) > 0 {
+			for _, part := range textChunks(c.turn.textDeltas, c.turn.Text) {
+				if !delta(map[string]any{"content": part}, nil) {
+					return
+				}
+			}
 		}
 		if c.turn.Refusal != "" && !delta(map[string]any{"refusal": c.turn.Refusal}, nil) {
 			return
@@ -296,13 +321,19 @@ func (c chatReply) callID(index int, call ToolCall) string {
 }
 
 func chatUsage(usage Usage) map[string]any {
-	prompt := map[string]int{"cached_tokens": usage.Cached}
+	prompt := map[string]int{}
+	if !usage.OmitCacheRead {
+		prompt["cached_tokens"] = usage.Cached
+	}
 	if usage.CacheWrite != 0 {
 		prompt["cache_write_tokens"] = usage.CacheWrite
 	}
 	body := map[string]any{
 		"prompt_tokens": usage.Input, "completion_tokens": usage.Output,
-		"total_tokens": usage.Input + usage.Output, "prompt_tokens_details": prompt,
+		"total_tokens": usage.Input + usage.Output,
+	}
+	if len(prompt) > 0 {
+		body["prompt_tokens_details"] = prompt
 	}
 	if usage.Reasoning != 0 {
 		body["completion_tokens_details"] = map[string]int{"reasoning_tokens": usage.Reasoning}

@@ -51,6 +51,7 @@ func TestWireSuite(t *testing.T) {
 		{"usage", cacheUsage, nil},
 		{"prefix", growingPrefix, nil},
 		{"context_overflow", contextOverflow, nil},
+		{"request_timeout", requestTimeout, nil},
 		{"retry_seconds", retryCase("seconds"), map[providersim.Wire]string{providersim.Gemini: relativeRPC}},
 		{"retry_date", retryCase("date"), nil},
 		{"retry_ms", retryCase("ms"), map[providersim.Wire]string{providersim.Gemini: relativeRPC}},

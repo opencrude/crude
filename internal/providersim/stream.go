@@ -14,8 +14,13 @@ type frame struct {
 type streamCodec struct {
 	contentType string
 	write       func(io.Writer, frame) error
-	fault       func(kind FaultKind, sent int) frame
+	encodeFault func(f fault, sent int) frame
 	terminal    []frame
+}
+
+// awaitBody gates an entire non-stream response, regardless of event position.
+func (s *Server) awaitBody(r *http.Request, t Turn) bool {
+	return t.gate.await(r.Context(), s.done)
 }
 
 // sendStream owns flushing, the test gate, and the placement of test faults;
@@ -24,11 +29,14 @@ func (s *Server) sendStream(w http.ResponseWriter, r *http.Request, turn Turn, c
 	w.Header().Set("Content-Type", codec.contentType)
 	w.WriteHeader(http.StatusOK)
 	controller := http.NewResponseController(w)
-	if err := controller.Flush(); err != nil || !turn.gate.await(r.Context(), s.done) {
+	if err := controller.Flush(); err != nil {
 		return
 	}
 	write := func(event frame) bool {
 		return codec.write(w, event) == nil && controller.Flush() == nil
+	}
+	wait := func(sent int) bool {
+		return sent != turn.gateAfter || s.awaitBody(r, turn)
 	}
 	f := turn.fault
 	inject := func(sent int) bool {
@@ -37,7 +45,7 @@ func (s *Server) sendStream(w http.ResponseWriter, r *http.Request, turn Turn, c
 		}
 		switch f.mode {
 		case faultStream:
-			write(codec.fault(f.kind, sent))
+			write(codec.encodeFault(f, sent))
 			return true
 		case faultCut:
 			// net/http aborts the connection without writing the HTTP chunked
@@ -48,7 +56,7 @@ func (s *Server) sendStream(w http.ResponseWriter, r *http.Request, turn Turn, c
 		}
 	}
 	sent := 0
-	if inject(sent) {
+	if !wait(sent) || inject(sent) {
 		return
 	}
 	for event := range events {
@@ -56,7 +64,7 @@ func (s *Server) sendStream(w http.ResponseWriter, r *http.Request, turn Turn, c
 			return
 		}
 		sent++
-		if inject(sent) {
+		if !wait(sent) || inject(sent) {
 			return
 		}
 	}
@@ -68,6 +76,13 @@ func (s *Server) sendStream(w http.ResponseWriter, r *http.Request, turn Turn, c
 		if !write(terminal) {
 			return
 		}
+		sent++
+		if !wait(sent) {
+			return
+		}
+	}
+	if turn.gate != nil && (turn.gateAfter < 0 || turn.gateAfter > sent) {
+		s.report("simulate %s: gate placed after %d events, but turn emitted %d", r.URL.Path, turn.gateAfter, sent)
 	}
 }
 

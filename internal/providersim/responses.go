@@ -27,13 +27,13 @@ func (s *responseState) listModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.server.observe(req)
-	models, ok := s.server.models[s.wire]
+	models, ok := s.server.inventory(w, r, s.wire, "gpt-4o-mini")
 	if !ok {
-		models = []string{"gpt-4o-mini"}
+		return
 	}
 	list := make([]responseObject, 0, len(models))
 	for _, model := range models {
-		list = append(list, responseObject{"id": model, "object": "model", "created": chatSyntheticCreated, "owned_by": "openai"})
+		list = append(list, responseObject{"id": model.ID, "object": "model", "created": chatSyntheticCreated, "owned_by": "openai"})
 	}
 	writeJSON(w, 200, responseObject{"object": "list", "data": list})
 }
@@ -130,10 +130,10 @@ func (s *responseState) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if turn.fault.mode == faultHTTP {
-		if !turn.gate.await(r.Context(), s.server.done) {
+		if !s.server.awaitBody(r, turn) {
 			return
 		}
-		status, payload := responseHTTPFault(turn.fault.kind)
+		status, payload := responseHTTPFault(turn.fault)
 		if h := turn.fault.hint; h.header != "" {
 			w.Header().Set(h.header, h.value)
 		}
@@ -145,12 +145,22 @@ func (s *responseState) create(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, chatError("server_error", "", nil, "The scripted fault requires streaming."))
 		return
 	}
-	if !req.Stream && !turn.gate.await(r.Context(), s.server.done) {
+	if !req.Stream && !s.server.awaitBody(r, turn) {
 		return
 	}
-	usage := responseUsage(req, turn, compact || trigger)
+	if compact && turn.omitUsage || turn.Usage != nil && turn.Usage.OmitCacheRead {
+		// CompactResource requires usage; ResponseUsage requires both
+		// cached_tokens and cache_write_tokens when usage is present.
+		msg := "Response usage requires input_tokens_details.cached_tokens."
+		if compact && turn.omitUsage {
+			msg = "A compaction response requires usage."
+		}
+		s.server.report("simulate %s: %s", s.wire, msg)
+		writeJSON(w, 500, chatError("server_error", "", nil, msg))
+		return
+	}
 	if compact {
-		writeJSON(w, 200, responseObject{"id": fmt.Sprintf("cmpresp_sim_%d", req.Index), "created_at": chatSyntheticCreated, "usage": usage, "object": "response.compaction", "output": s.compact(req.Index, window.originals)})
+		writeJSON(w, 200, responseObject{"id": fmt.Sprintf("cmpresp_sim_%d", req.Index), "created_at": chatSyntheticCreated, "usage": responseUsage(req, turn, true), "object": "response.compaction", "output": s.compact(req.Index, window.originals)})
 		return
 	}
 	output := make([]responseObject, 0)
@@ -161,10 +171,15 @@ func (s *responseState) create(w http.ResponseWriter, r *http.Request) {
 		output = append(output, responseItems(req, obj, turn)...)
 	}
 	body := responseEnvelope(req, obj)
+	if turn.omitUsage {
+		delete(body, "usage")
+	}
 	final := maps.Clone(body)
 	final["status"] = "completed"
 	final["completed_at"] = chatSyntheticCreated
-	final["usage"] = usage
+	if !turn.omitUsage {
+		final["usage"] = responseUsage(req, turn, trigger)
+	}
 	final["output"] = output
 	if f := turn.finish(); f == FinishFiltered || f == FinishLength {
 		reason := "max_output_tokens"
@@ -184,40 +199,53 @@ func (s *responseState) create(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, final)
 		return
 	}
-	events := responseFrames(body, output)
+	deltas := turn.textDeltas
+	if s.wire == Codex {
+		deltas = turn.mergedDeltas()
+	}
+	events := responseFrames(body, output, deltas)
 	terminal := responseFrame(len(events), "response."+final["status"].(string), responseObject{"response": final})
 	codec := streamCodec{contentType: "text/event-stream", terminal: []frame{terminal}, write: func(w io.Writer, f frame) error {
 		if f.event == terminal.event {
 			save()
 		}
 		return writeSSE(w, f)
-	}, fault: func(kind FaultKind, n int) frame { return responseStreamFault(s.wire, body, kind, n, turn.fault.hint) }}
+	}, encodeFault: func(f fault, n int) frame { return responseStreamFault(s.wire, body, f, n) }}
 	s.server.sendStream(w, r, turn, codec, slices.Values(events))
 }
 
-func responseHTTPFault(kind FaultKind) (int, responseObject) {
-	status, body := chatFault(kind)
-	if kind == ContextOverflow {
+func responseHTTPFault(f fault) (int, responseObject) {
+	status, body := chatFault(f)
+	if f.kind == ContextOverflow {
 		body["error"].(map[string]any)["param"] = "input"
 	}
 	return status, body
 }
 
-func responseStreamFault(wire Wire, base responseObject, kind FaultKind, n int, hint RetryHint) frame {
-	_, body := responseHTTPFault(kind)
+func responseStreamFault(wire Wire, base responseObject, f fault, n int) frame {
+	_, body := responseHTTPFault(f)
 	detail := body["error"].(responseObject)
 	// Synthetic fault selection: use top-level error for codes outside the
 	// public ResponseErrorCode enum, and server_error for public overload.
-	if wire == Responses && (kind == Auth || kind == ContextOverflow) {
-		return responseFrame(n, "error", responseObject{"code": detail["code"], "message": detail["message"], "param": detail["param"]})
+	if wire == Responses {
+		switch f.kind {
+		case Auth, ContextOverflow, ModelNotFound, Quota, InvalidRequest, RequestTimeout:
+			return responseFrame(n, "error", responseObject{"code": detail["code"], "message": detail["message"], "param": detail["param"]})
+		}
 	}
 	code := detail["code"]
-	if wire == Responses && kind == Overload {
+	// Codex accepts any optional string code on response.failed:
+	// https://github.com/openai/codex/blob/ebd0765/codex-rs/codex-api/src/sse/responses_error.rs.
+	// Use the generic request type as its synthetic code for a generic 400.
+	if wire == Codex && f.kind == InvalidRequest {
+		code = detail["type"]
+	}
+	if wire == Responses && f.kind == Overload {
 		code = "server_error"
 	}
 	e := responseObject{"code": code, "message": detail["message"]}
 	// Codex sse/responses_error.rs recognizes nested headers on response.failed.
-	if wire == Codex && hint.header != "" {
+	if hint := f.hint; wire == Codex && hint.header != "" {
 		e["headers"] = responseObject{hint.header: hint.value}
 	}
 	failed := maps.Clone(base)
@@ -293,9 +321,9 @@ func responseItems(req Request, obj responseObject, t Turn) []responseObject {
 		}
 		out = append(out, item)
 	}
-	if t.Text != "" || t.Refusal != "" || (len(out) == 0 && len(t.Tools) == 0) {
+	if t.Text != "" || len(t.textDeltas) > 0 || t.Refusal != "" || (len(out) == 0 && len(t.Tools) == 0) {
 		parts := []any{}
-		if t.Text != "" || t.Refusal == "" {
+		if t.Text != "" || len(t.textDeltas) > 0 || t.Refusal == "" {
 			parts = append(parts, responseObject{"type": "output_text", "annotations": []any{}, "logprobs": []any{}, "text": t.Text})
 		}
 		if t.Refusal != "" {
@@ -322,7 +350,7 @@ func responseFrame(n int, name string, fields responseObject) frame {
 	return frame{event: name, data: jsonBytes(fields)}
 }
 
-func responseFrames(base responseObject, output []responseObject) []frame {
+func responseFrames(base responseObject, output []responseObject, textDeltas []string) []frame {
 	var frames []frame
 	emit := func(name string, fields responseObject) {
 		frames = append(frames, responseFrame(len(frames), "response."+name, fields))
@@ -377,18 +405,23 @@ func responseFrames(base responseObject, output []responseObject) []frame {
 					empty[textKey] = ""
 					f["part"] = empty
 					emit(partEvent+".added", f)
-					for _, stage := range []string{"delta", "done"} {
-						f = partFields()
-						k := textKey
-						if stage == "delta" {
-							k = "delta"
-						}
-						f[k] = p[textKey]
+					emitText := func(stage, k, text string) {
+						f := partFields()
+						f[k] = text
 						if typ == "output_text" {
 							f["logprobs"] = []any{}
 						}
 						emit(deltaEvent+"."+stage, f)
 					}
+					text := p[textKey].(string)
+					var deltas []string
+					if typ == "output_text" {
+						deltas = textDeltas
+					}
+					for _, part := range textChunks(deltas, text) {
+						emitText("delta", "delta", part)
+					}
+					emitText("done", textKey, text)
 					f = partFields()
 					f["part"] = p
 					emit(partEvent+".done", f)

@@ -1,6 +1,7 @@
 package providersim
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -14,8 +15,44 @@ func init() {
 		state := newResponseState(s, Codex)
 		mux := http.NewServeMux()
 		mux.HandleFunc("POST /backend-api/codex/responses", state.create)
+		mux.HandleFunc("GET /backend-api/codex/models", s.listCodexModels)
 		return mux
 	})
+}
+
+// Route and client_version query:
+// https://github.com/openai/codex/blob/ebd0765/codex-rs/codex-api/src/endpoint/models.rs.
+// ModelsResponse and ModelInfo (including required Rust deserialize fields):
+// https://github.com/openai/codex/blob/ebd0765/codex-rs/protocol/src/openai_models.rs.
+// Capability defaults are synthetic, not claims about any production model.
+func (s *Server) listCodexModels(w http.ResponseWriter, r *http.Request) {
+	req, err := receive(Codex, r)
+	if err != nil {
+		req.Violation = err.Error()
+		s.observe(req)
+		s.report("simulate Codex %s: %v", req.Path, err)
+		writeJSON(w, 400, chatError("invalid_request_error", "", nil, "Invalid model request."))
+		return
+	}
+	s.observe(req)
+	models, ok := s.inventory(w, r, Codex, "gpt-5-codex")
+	if !ok {
+		return
+	}
+	rows := make([]responseObject, 0, len(models))
+	for i, m := range models {
+		row := responseObject{
+			"slug": m.ID, "display_name": cmp.Or(m.DisplayName, m.ID), "supported_reasoning_levels": []any{},
+			"shell_type": "disabled", "visibility": "list", "supported_in_api": true, "priority": i,
+			"support_verbosity": false, "truncation_policy": responseObject{"mode": "tokens", "limit": 4096},
+			"experimental_supported_tools": []string{},
+		}
+		if m.ContextWindow != 0 {
+			row["context_window"] = m.ContextWindow
+		}
+		rows = append(rows, row)
+	}
+	writeJSON(w, http.StatusOK, responseObject{"models": rows})
 }
 
 // openai/codex@ebd0765 common.rs::ResponsesApiRequest, Reasoning,

@@ -75,13 +75,13 @@ func (s *interactionWire) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if turn.fault.mode == faultHTTP {
-		if turn.gate.await(r.Context(), s.server.done) {
+		if s.server.awaitBody(r, turn) {
 			// Synthetic retry-header injection: the public error guide does not
 			// guarantee headers for the REST 429 error.
 			if hint := turn.fault.hint; hint.header != "" {
 				w.Header().Set(hint.header, hint.value)
 			}
-			status, code, message := interactionFault(turn.fault.kind)
+			status, code, message := interactionFault(turn.fault)
 			writeInteractionError(w, status, code, message)
 		}
 		return
@@ -111,7 +111,7 @@ func (s *interactionWire) create(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		})
-	} else if turn.gate.await(r.Context(), s.server.done) {
+	} else if s.server.awaitBody(r, turn) {
 		save()
 		writeJSON(w, 200, reply.body(reply.steps))
 	}
@@ -140,18 +140,29 @@ func writeInteractionError(w http.ResponseWriter, status int, code, message stri
 // Documented string codes: https://aistudio.google.com/docs/api-errors.md.
 // Messages and the context-overflow code selection are synthetic; overflow
 // reuses the Gemini service wording because both APIs front the same models.
-func interactionFault(kind FaultKind) (int, string, string) {
-	switch kind {
+func interactionFault(f fault) (int, string, string) {
+	switch f.kind {
+	case ModelNotFound:
+		return 404, "model_not_found", f.text("Model not found.")
+	case Quota:
+		return 429, "quota_exceeded", f.text("Daily request quota exhausted.")
+	case BadGateway:
+		// The API errors guide uses snake_case HTTP status for unlisted codes.
+		return 502, "bad_gateway", f.text("Bad gateway.")
+	case InvalidRequest:
+		return 400, "invalid_request", f.text("Invalid request.")
+	case RequestTimeout:
+		return 408, "request_timeout", f.text(requestTimedOut)
 	case RateLimit:
-		return 429, "rate_limit_exceeded", "Rate limit exceeded."
+		return 429, "rate_limit_exceeded", f.text("Rate limit exceeded.")
 	case ContextOverflow:
-		return 400, "invalid_request", googleOverflowMessage
+		return 400, "invalid_request", f.text(googleOverflowMessage)
 	case Overload:
-		return 503, "service_unavailable", "The model is overloaded."
+		return 503, "service_unavailable", f.text("The model is overloaded.")
 	case Auth:
-		return 401, "authentication", "The API key is invalid."
+		return 401, "authentication", f.text("The API key is invalid.")
 	default:
-		return 500, "api_error", "The request failed."
+		return 500, "api_error", f.text("The request failed.")
 	}
 }
 
@@ -160,8 +171,8 @@ var interactionsStream = streamCodec{
 	write:       writeSSE,
 	// Documented transport sentinel, not an InteractionSSEEvent JSON object.
 	terminal: []frame{{event: "done", data: []byte("[DONE]")}},
-	fault: func(kind FaultKind, _ int) frame {
-		_, code, message := interactionFault(kind)
+	encodeFault: func(f fault, _ int) frame {
+		_, code, message := interactionFault(f)
 		return frame{event: "error", data: jsonBytes(googleObject{"event_type": "error", "error": interactionErrorDetail(code, message)})}
 	},
 }
@@ -172,13 +183,17 @@ type interactionReply struct {
 	previous   string
 	steps      []interactionStep
 	usage      googleObject
+	textDeltas []string
 	blocked    bool
 }
 
 func newInteractionReply(req Request, obj googleObject, turn Turn) (interactionReply, error) {
 	out := interactionReply{
 		id: fmt.Sprintf("v1_sim_%d", req.Index), status: "completed", previous: req.PreviousResponseID,
-		identity: googleObject{"model": req.Model}, usage: interactionUsage(googleUsage(req, turn)),
+		identity: googleObject{"model": req.Model},
+	}
+	if !turn.omitUsage {
+		out.usage = interactionUsage(googleUsage(req, turn))
 	}
 	if agent := googleString(obj, "agent"); agent != "" {
 		out.identity = googleObject{"agent": agent}
@@ -205,8 +220,9 @@ func newInteractionReply(req Request, obj googleObject, turn Turn) (interactionR
 		}
 		add(body)
 	}
-	if text := turn.Text + turn.Refusal; text != "" {
+	if text := turn.Text + turn.Refusal; text != "" || len(turn.textDeltas) > 0 {
 		add(googleObject{"type": "model_output", "content": []any{interactionText(text)}})
+		out.textDeltas = turn.mergedDeltas()
 	}
 	for i, call := range turn.Tools {
 		args, err := googleArguments(call)
@@ -222,11 +238,15 @@ func newInteractionReply(req Request, obj googleObject, turn Turn) (interactionR
 }
 
 func interactionUsage(u Usage) googleObject {
-	return googleObject{
+	o := googleObject{
 		"total_input_tokens": u.Input, "total_output_tokens": u.Output - u.Reasoning,
-		"total_cached_tokens": u.Cached, "total_thought_tokens": u.Reasoning,
-		"total_tokens": u.Input + u.Output,
+		"total_thought_tokens": u.Reasoning,
+		"total_tokens":         u.Input + u.Output,
 	}
+	if !u.OmitCacheRead {
+		o["total_cached_tokens"] = u.Cached
+	}
+	return o
 }
 
 func (c interactionReply) identityBody(status string) googleObject {
@@ -238,7 +258,10 @@ func (c interactionReply) identityBody(status string) googleObject {
 func (c interactionReply) body(steps []interactionStep) googleObject {
 	const timestamp = "2025-01-01T00:00:00Z" // Synthetic fixture timestamp.
 	obj := c.identityBody(c.status)
-	obj["created"], obj["updated"], obj["steps"], obj["usage"] = timestamp, timestamp, interactionStepBodies(steps), c.usage
+	obj["created"], obj["updated"], obj["steps"] = timestamp, timestamp, interactionStepBodies(steps)
+	if c.usage != nil {
+		obj["usage"] = c.usage
+	}
 	if c.previous != "" {
 		obj["previous_interaction_id"] = c.previous
 	}
@@ -282,7 +305,9 @@ func (c interactionReply) frames() []frame {
 			delta(googleObject{"type": "thought_signature", "signature": step["signature"]})
 		case "model_output":
 			for _, item := range googleArray(step["content"]) {
-				delta(item.(googleObject))
+				for _, chunk := range textChunks(c.textDeltas, googleString(item.(googleObject), "text")) {
+					delta(interactionText(chunk))
+				}
 			}
 		case "function_call":
 			delta(googleObject{"type": "arguments_delta", "arguments": string(jsonBytes(step["arguments"]))})
@@ -290,7 +315,9 @@ func (c interactionReply) frames() []frame {
 		emit(interactionStepStop, googleObject{"index": i})
 	}
 	end := c.identityBody(c.status)
-	end["usage"] = c.usage
+	if c.usage != nil {
+		end["usage"] = c.usage
+	}
 	emit(interactionCompleted, googleObject{"interaction": end})
 	return events
 }

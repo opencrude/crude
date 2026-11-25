@@ -1,9 +1,11 @@
 package providersim
 
 import (
+	"cmp"
 	"encoding/base64"
 	"fmt"
 	"iter"
+	"maps"
 	"net/http"
 	"strconv"
 	"strings"
@@ -75,8 +77,8 @@ func (g *geminiWire) generate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if turn.fault.mode == faultHTTP {
-		if turn.gate.await(r.Context(), g.server.done) {
-			status, body := geminiFault(turn.fault.kind)
+		if g.server.awaitBody(r, turn) {
+			status, body := geminiFault(turn.fault)
 			applyGeminiRetry(w, body, status, turn.fault.hint)
 			writeJSON(w, status, body)
 		}
@@ -94,7 +96,7 @@ func (g *geminiWire) generate(w http.ResponseWriter, r *http.Request) {
 	save := func() { g.rememberSignature(req.Model, googleArray(obj["contents"]), reply.parts) }
 	if req.Stream {
 		g.server.sendStream(w, r, turn, geminiStream, reply.events(save))
-	} else if turn.gate.await(r.Context(), g.server.done) {
+	} else if g.server.awaitBody(r, turn) {
 		save()
 		writeJSON(w, http.StatusOK, reply.envelope(reply.parts, true))
 	}
@@ -122,16 +124,16 @@ func (g *geminiWire) models(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g.server.observe(req)
-	models, configured := g.server.models[Gemini]
-	if !configured {
-		models = []string{googleDefaultModel}
+	models, ok := g.server.inventory(w, r, Gemini, googleDefaultModel)
+	if !ok {
+		return
 	}
 	list := make([]googleObject, 0, len(models))
-	for _, model := range models {
-		model = strings.TrimPrefix(model, "models/")
+	for _, m := range models {
+		model := strings.TrimPrefix(m.ID, "models/")
 		entry := googleObject{
-			"name": "models/" + model, "baseModelId": model, "version": "001", "displayName": model,
-			"inputTokenLimit": 1048576, "outputTokenLimit": 65536,
+			"name": "models/" + model, "baseModelId": model, "version": "001", "displayName": cmp.Or(m.DisplayName, model),
+			"inputTokenLimit": cmp.Or(m.ContextWindow, 1048576), "outputTokenLimit": 65536,
 			"supportedGenerationMethods": []string{"generateContent", "streamGenerateContent"},
 		}
 		if req.Model == model {
@@ -162,18 +164,35 @@ func writeGeminiError(w http.ResponseWriter, status int, code, message string) {
 // its token counts are synthetic.
 const googleOverflowMessage = "The input token count (1048577) exceeds the maximum number of tokens allowed (1048576)."
 
-func geminiFault(kind FaultKind) (int, googleObject) {
-	switch kind {
+func geminiFault(f fault) (int, googleObject) {
+	// https://github.com/googleapis/googleapis/blob/4b6ea83/google/rpc/code.proto
+	// has no canonical 502 or 408: those gateway/status pairs are synthetic.
+	switch f.kind {
+	case ModelNotFound:
+		return 404, geminiError(404, "NOT_FOUND", f.text("Model not found."))
+	case Quota:
+		body := geminiError(429, "RESOURCE_EXHAUSTED", f.text("Daily request quota exhausted."))
+		// https://github.com/googleapis/googleapis/blob/4b6ea83/google/rpc/error_details.proto
+		// defines QuotaFailure.Violation.quota_id; this quota ID is synthetic.
+		googleObjectAt(body, "error")["details"] = []googleObject{{"@type": "type.googleapis.com/google.rpc.QuotaFailure",
+			"violations": []googleObject{{"quotaId": "GenerateRequestsPerDayPerProject"}}}}
+		return 429, body
+	case BadGateway:
+		return 502, geminiError(502, "UNAVAILABLE", f.text("Bad gateway."))
+	case InvalidRequest:
+		return 400, geminiError(400, "INVALID_ARGUMENT", f.text("Invalid request."))
+	case RequestTimeout:
+		return 408, geminiError(408, "DEADLINE_EXCEEDED", f.text(requestTimedOut))
 	case RateLimit:
-		return 429, geminiError(429, "RESOURCE_EXHAUSTED", "Rate limit exceeded.")
+		return 429, geminiError(429, "RESOURCE_EXHAUSTED", f.text("Rate limit exceeded."))
 	case ContextOverflow:
-		return 400, geminiError(400, "INVALID_ARGUMENT", googleOverflowMessage)
+		return 400, geminiError(400, "INVALID_ARGUMENT", f.text(googleOverflowMessage))
 	case Overload:
-		return 503, geminiError(503, "UNAVAILABLE", "The model is overloaded.")
+		return 503, geminiError(503, "UNAVAILABLE", f.text("The model is overloaded."))
 	case Auth:
-		return 403, geminiError(403, "PERMISSION_DENIED", "The API key lacks permission.")
+		return 403, geminiError(403, "PERMISSION_DENIED", f.text("The API key lacks permission."))
 	default:
-		return 500, geminiError(500, "INTERNAL", "The request failed.")
+		return 500, geminiError(500, "INTERNAL", f.text("The request failed."))
 	}
 }
 
@@ -193,7 +212,9 @@ func applyGeminiRetry(w http.ResponseWriter, body googleObject, status int, hint
 				delay = fmt.Sprintf("%d.%03ds", n/1000, n%1000)
 			}
 		}
-		googleObjectAt(body, "error")["details"] = []googleObject{{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": delay}}
+		e := googleObjectAt(body, "error")
+		details, _ := e["details"].([]googleObject)
+		e["details"] = append(details, googleObject{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": delay})
 		return
 	}
 	w.Header().Set(hint.header, hint.value)
@@ -202,10 +223,10 @@ func applyGeminiRetry(w http.ResponseWriter, body googleObject, status int, hint
 var geminiStream = streamCodec{
 	contentType: "text/event-stream",
 	write:       writeSSE,
-	fault: func(kind FaultKind, _ int) frame {
+	encodeFault: func(f fault, _ int) frame {
 		// Synthetic: neither the REST discovery document nor the SDK pin
 		// establishes an in-band error frame after an HTTP 200 response.
-		_, body := geminiFault(kind)
+		_, body := geminiFault(f)
 		return frame{data: jsonBytes(body)}
 	},
 }
@@ -243,11 +264,13 @@ type geminiReply struct {
 	model, id, reason string
 	parts             []any
 	usage             Usage
+	omitUsage         bool
+	textDeltas        []string
 }
 
 func newGeminiReply(req Request, t Turn) (geminiReply, error) {
 	id := fmt.Sprintf("sim-%d", req.Index) // Synthetic response ID.
-	out := geminiReply{model: req.Model, id: id, reason: "STOP", usage: googleUsage(req, t), parts: []any{}}
+	out := geminiReply{model: req.Model, id: id, reason: "STOP", usage: googleUsage(req, t), omitUsage: t.omitUsage, parts: []any{}}
 	switch t.finish() {
 	case FinishLength:
 		out.reason = "MAX_TOKENS"
@@ -258,8 +281,9 @@ func newGeminiReply(req Request, t Turn) (geminiReply, error) {
 	if t.Reasoning.Text != "" {
 		out.parts = append(out.parts, googleObject{"text": t.Reasoning.Text, "thought": true})
 	}
-	if text != "" {
+	if text != "" || len(t.textDeltas) > 0 {
 		out.parts = append(out.parts, googleObject{"text": text})
+		out.textDeltas = t.mergedDeltas()
 	}
 	firstCall := len(out.parts)
 	for _, call := range t.Tools {
@@ -310,11 +334,17 @@ func (c geminiReply) envelope(parts []any, final bool) googleObject {
 	out := googleObject{"candidates": []googleObject{candidate}, "modelVersion": c.model, "responseId": c.id}
 	if final {
 		candidate["finishReason"] = c.reason
-		out["usageMetadata"] = googleObject{
-			"promptTokenCount": c.usage.Input, "cachedContentTokenCount": c.usage.Cached,
+	}
+	if final && !c.omitUsage {
+		u := googleObject{
+			"promptTokenCount":     c.usage.Input,
 			"candidatesTokenCount": c.usage.Output - c.usage.Reasoning, "thoughtsTokenCount": c.usage.Reasoning,
 			"totalTokenCount": c.usage.Input + c.usage.Output,
 		}
+		if !c.usage.OmitCacheRead {
+			u["cachedContentTokenCount"] = c.usage.Cached
+		}
+		out["usageMetadata"] = u
 	}
 	return out
 }
@@ -324,6 +354,20 @@ func (c geminiReply) events(save func()) iter.Seq[frame] {
 		// Synthetic chunk boundaries: each part is atomic, followed by final
 		// candidate/usage metadata. SSE has no [DONE] sentinel on this wire.
 		for _, part := range c.parts {
+			p := part.(googleObject)
+			if _, text := p["text"]; text && p["thought"] != true && len(c.textDeltas) > 0 {
+				for i, chunk := range c.textDeltas {
+					d := maps.Clone(p)
+					d["text"] = chunk
+					if i+1 < len(c.textDeltas) {
+						delete(d, "thoughtSignature")
+					}
+					if !yield(frame{data: jsonBytes(c.envelope([]any{d}, false))}) {
+						return
+					}
+				}
+				continue
+			}
 			if !yield(frame{data: jsonBytes(c.envelope([]any{part}, false))}) {
 				return
 			}
