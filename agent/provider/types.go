@@ -558,15 +558,18 @@ type StreamEvent struct {
 
 // StreamUpdate is the normalized output of one provider stream event.
 type StreamUpdate struct {
-	ContentDelta       string
-	Reasoning          []reasoning.Delta
-	ToolCalls          []ToolCallDelta
-	FinishReason       string
-	Usage              *TokenUsage
-	ProviderItems      []Item
-	ContinuationID     string
-	ContinuationReason string
-	Done               bool
+	// ReplaceProviderItems means the terminal output supersedes arrival-order items.
+	ReplaceProviderItems bool
+	CheckpointUsage      *TokenUsage
+	ContentDelta         string
+	Reasoning            []reasoning.Delta
+	ToolCalls            []ToolCallDelta
+	FinishReason         string
+	Usage                *TokenUsage
+	ProviderItems        []Item
+	ContinuationID       string
+	ContinuationReason   string
+	Done                 bool
 }
 
 func (u StreamUpdate) ReasoningText() string {
@@ -647,6 +650,7 @@ type ChatRequest struct {
 }
 
 type ChatResponse struct {
+	CheckpointUsage    *TokenUsage   `json:"-"`
 	ContinuationID     string        `json:"-"`
 	ContinuationReason string        `json:"-"`
 	ID                 string        `json:"id,omitempty"`

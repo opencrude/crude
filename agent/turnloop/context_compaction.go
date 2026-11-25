@@ -66,6 +66,8 @@ type CompactionSource struct {
 }
 
 type compactOutcome struct {
+	turn     bool
+	receipt  *provider.ThresholdReceipt
 	Messages []provider.ChatMessage
 	// SourceTokens is the size of the context this checkpoint summarizes.
 	SourceTokens  int
@@ -343,7 +345,7 @@ func (a *Agent) compactSource(ctx context.Context, msgs, source []provider.ChatM
 			checkpoint, e = validateContextCheckpoint(xml, role, checkpointBudget)
 			return e
 		}
-		r, e := main.NativeCheckpoint(ctx, provider.NativeCheckpointRequest{ValidatePortable: validate, Owner: string(a.AgentID), Explicit: explicit, Model: targetModel, Messages: msgs, Tools: tools, Limit: limit, Directive: directive, Verify: directive, Shorter: instructions(max(1, textBudget/2)), ProbeAnswer: ticket, ProbeSource: probe, ProbeQuestion: question, Stage: stage, Usage: func(kind string, u provider.TokenUsage, ok bool) {
+		r, e := main.NativeCheckpoint(ctx, provider.NativeCheckpointRequest{InputTokens: beforeTokens, Boundary: a.boundaryTurn, Receipt: a.thresholdReceipt, ValidatePortable: validate, Owner: string(a.AgentID), Explicit: explicit, Model: targetModel, Messages: msgs, Tools: tools, Limit: limit, Directive: directive, Verify: directive, Shorter: instructions(max(1, textBudget/2)), ProbeAnswer: ticket, ProbeSource: probe, ProbeQuestion: question, Stage: stage, Usage: func(kind string, u provider.TokenUsage, ok bool) {
 			usage = usage.Add(u)
 			owner.emitCompactionUsage(emit, u, provider.NewMessageID(), requestID, trigger, role, kind, false, ok)
 		}}, opts...)
@@ -352,6 +354,8 @@ func (a *Agent) compactSource(ctx context.Context, msgs, source []provider.ChatM
 			fallbackChanged = true
 		} else if e != nil {
 			return compactOutcome{AccountID: main.AccountID, ProviderID: main.ID, ModelID: targetModel, Usage: usage}, &nativeCheckpointError{e}
+		} else if r.Turn {
+			return compactOutcome{turn: true, receipt: r.Receipt, Usage: usage, AccountID: main.AccountID, ProviderID: main.ID, ModelID: targetModel}, nil
 		} else if r.Fallback == "" {
 			r.Message.Content = provider.TextContent(checkpoint)
 			outcome, finishErr := a.finishCheckpoint(ctx, msgs, tools, r.Message, targetModel, continuationLimit, fixed, compactOutcome{Usage: usage, ContextWindow: ctxWindow, RequestID: requestID, SourceTokens: beforeTokens, Role: role, Trigger: trigger, AccountID: main.AccountID, ProviderID: main.ID, ModelID: targetModel})
@@ -363,6 +367,15 @@ func (a *Agent) compactSource(ctx context.Context, msgs, source []provider.ChatM
 			fallback, fallbackChanged, transient = r.Fallback, r.Changed, r.Transient
 		}
 	}
+	if a.thresholdReceipt != nil {
+		// Native export did not finish. Extract all canonical input and the real
+		// round, not another attempt at the same seal or stored response ID.
+		source = provider.FilterReplayMessages(source, nil)
+		for i := range source {
+			source[i].ResponseReference = nil
+		}
+	}
+
 	if rejection != nil {
 		if main.CompactionMethod() == provider.CompactionProviderOnly || a.CompactionConfigError != nil || a.Model == "" || provider.SameConnection(main, a.Provider) {
 			return compactOutcome{AccountID: main.AccountID, ProviderID: main.ID, ModelID: targetModel, ContextWindow: ctxWindow, RequestID: requestID, Trigger: trigger, Role: role}, &nativeCheckpointError{rejection}

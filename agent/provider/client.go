@@ -60,6 +60,7 @@ type Client struct {
 	// gateway proves it cannot reconstruct valid inline images from a stored
 	// Responses prefix.
 	mediaReplayRecovery bool
+	boundary            bool
 
 	// sessionID is a stable identifier for protocols that require
 	// per-conversation headers (see SessionScope).
@@ -416,6 +417,7 @@ type ChatStream struct {
 	reencodes            int
 	yielded              bool
 	sawDone              bool
+	sawEvent             bool
 	closed               bool
 	started              time.Time
 	finished             bool // metrics: the open-stream gauge was released
@@ -498,8 +500,16 @@ func (s *ChatStream) Next() (StreamUpdate, error) {
 			s.closed = true
 			return StreamUpdate{}, err
 		}
+		first := !s.sawEvent
+		s.sawEvent = true
 		update, err := s.decoder.Decode(event)
 		if err != nil {
+			if s.client.boundary && first {
+				var api *APIError
+				if errors.As(err, &api) && (rateLimitAPIError(api.codes()) || quotaAPIError(api.codes())) {
+					err = &firstEventRateLimit{api}
+				}
+			}
 			if strings.EqualFold(strings.TrimSpace(s.resp.Header.Get("x-should-retry")), "false") {
 				err = &streamRetryVetoError{cause: err}
 			}
@@ -828,7 +838,7 @@ func (c *Client) withContinuationPolicy(req *ChatRequest) *ChatRequest {
 // generation. Recover once within the same deadline, before any output, using
 // the authoritative full local request. Other errors keep normal retry policy.
 func (c *Client) rebaseContinuation(req *ChatRequest, cause error) (*ChatRequest, []byte, bool, error) {
-	if c.proto.Info().ID != "openai-responses" || req == nil {
+	if c.boundary || c.proto.Info().ID != "openai-responses" || req == nil {
 		return nil, nil, false, nil
 	}
 	plan := planResponseContinuation(req, false)
@@ -889,7 +899,7 @@ func decodeJSONObject(body []byte) (map[string]any, error) {
 // The caller bounds how often one request may be re-encoded.
 func (c *Client) learnRejection(req *ChatRequest, body []byte, cause *StatusError) ([]byte, bool) {
 	learner, ok := c.proto.(ModelLimitLearner)
-	if !ok || req == nil || cause == nil || !learner.LearnRejection(c.base.String(), req, body, cause) {
+	if c.boundary || !ok || req == nil || cause == nil || !learner.LearnRejection(c.base.String(), req, body, cause) {
 		return nil, false
 	}
 	next, err := c.encodeChatRequest(req)
@@ -1288,6 +1298,7 @@ func chatResponseToUpdate(resp *ChatResponse) StreamUpdate {
 	if resp == nil {
 		return update
 	}
+	update.CheckpointUsage = resp.CheckpointUsage
 	update.ContinuationID = resp.ContinuationID
 	update.ContinuationReason = resp.ContinuationReason
 	if len(resp.Choices) > 0 {

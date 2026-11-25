@@ -70,7 +70,9 @@ type Agent struct {
 	// NativeCompactionProvider is the main connection for a detached extraction agent.
 	NativeCompactionProvider *provider.Provider
 	// checkpointRoute belongs to one Run attempt and its extraction workers.
-	checkpointRoute *checkpointRoute
+	checkpointRoute  *checkpointRoute
+	boundaryTurn     provider.BoundaryTurn
+	thresholdReceipt *provider.ThresholdReceipt
 	// CompactionConfigError preserves a missing Errand binding; the serving
 	// model writes checkpoints instead unless the account requires Errand.
 	CompactionConfigError  error

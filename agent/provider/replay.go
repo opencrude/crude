@@ -118,6 +118,20 @@ func ProjectReplayMessages(messages []ChatMessage, current *Provider) ([]ChatMes
 		copy.nativeReplay = false
 		prefix := hasher.value()
 		eligible := message.ReplayScope == scope && message.ReplayPrefixHash != "" && message.ReplayPrefixHash == prefix
+		batchScope := scope
+		if i := lastSeal(message.ProviderItems); i >= 0 && eligible {
+			// A Responses output batch with a seal must stay on its exact
+			// account and model. A Messages threshold block cannot be replayed
+			// without enabling the edit on the next ordinary request.
+			if current != nil && message.ProviderItems[i].Standard == "openai-responses" {
+				batchScope = current.compactionScope(current.Model)
+				eligible = message.ProviderItems[i].ReplayScope == batchScope
+				copy.nativeReplay = eligible
+			} else {
+				eligible = false
+			}
+		}
+
 		if eligible {
 			for _, item := range message.ProviderItems {
 				if item.Type == nativeWindowItem {
@@ -127,7 +141,7 @@ func ProjectReplayMessages(messages []ChatMessage, current *Provider) ([]ChatMes
 					}
 					continue
 				}
-				if item.ReplayScope == scope && item.PrefixHash == prefix {
+				if item.ReplayScope == batchScope && item.PrefixHash == prefix {
 					copy.ProviderItems = append(copy.ProviderItems, cloneProviderItem(item))
 				}
 			}
@@ -147,10 +161,14 @@ func ProjectReplayMessages(messages []ChatMessage, current *Provider) ([]ChatMes
 
 // StampProviderItems copies items and stamps the current replay scope, model and prefix hash.
 func StampProviderItems(items []Item, current *Provider, model, prefixHash string) []Item {
+	scope := current.ReplayScope()
+	if lastSeal(items) >= 0 && current != nil && current.ProtocolID() == "openai-responses" {
+		scope = current.compactionScope(model)
+	}
 	result := make([]Item, len(items))
 	for index, item := range items {
 		result[index] = cloneProviderItem(item)
-		result[index].ReplayScope = current.ReplayScope()
+		result[index].ReplayScope = scope
 		result[index].SourceModel = model
 		result[index].PrefixHash = prefixHash
 	}

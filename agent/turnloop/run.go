@@ -318,6 +318,14 @@ func (a *Agent) Run(
 			}
 		}
 	}()
+	// A storage or cancellation boundary can interrupt a mixed response before
+	// all tool effects settle. Never leave its announced checkpoint active.
+	var abandonThreshold func()
+	defer func() {
+		if abandonThreshold != nil {
+			abandonThreshold()
+		}
+	}()
 steps:
 	for step := 0; ; step++ {
 		if ctx.Err() != nil {
@@ -475,6 +483,148 @@ steps:
 			}
 			l.Info("CTX", "live_settings_changed", "step", step, "compaction_percent", a.ContextCompactionPercent,
 				"retention_tokens", a.CompactionRetentionTokens, "max_output", a.MaxOutputTokens, "compaction_model", compactionModel)
+		}
+		if err := prefix.check(msgs); err != nil {
+			clearUnsentRuntimeNotices()
+			a.setRunFailure(err, rootprompt.RecoveryUncertain, RecoveryFailureUnknown)
+			a.emitError(emit, fmt.Errorf("refusing mutated context before provider request: %w", err))
+			return returnMessages()
+		}
+		var requestID string
+		var requestMsgs []provider.ChatMessage
+		var completion completionResult
+		var turnReceived, boundarySent, restartUpload bool
+		var finishBoundary func() bool
+		requestEmit := func(event AgentEvent) {
+			if data, ok := event.Data.(map[string]any); ok && strings.HasPrefix(event.Type, "tool_") && data["request_id"] == nil {
+				data["request_id"] = requestID
+			}
+			emit(event)
+		}
+		sendStep := func(sendCtx context.Context, boundary provider.ClientOption) (completionResult, error) {
+			// A local turn counter is not a durable request identity: it can restart
+			// after resume or agent recreation. Revisions reuse this ID; new calls do not.
+			requestID = fmt.Sprintf("%016x%016x", rand2.Uint64(), rand2.Uint64())
+			emit(AgentEvent{Type: "phase", Data: map[string]any{
+				"name": "preparing", "progress": 0, "provider": providerName,
+				"request_id": requestID, "turn_generation": a.TurnGeneration,
+			}})
+
+			requestMsgs = msgs
+
+			prevPreviewKeys := make(map[string]string)
+			requestCtx, cancelRequest := context.WithCancelCause(sendCtx)
+			uploadController := newRuntimeUploadController(cancelRequest)
+			// A paid threshold request cannot restart for steering. Queue the
+			// input for admission after this exact request instead.
+			if boundary != nil {
+				uploadController.cancel = nil
+			}
+			watchRuntime := runtimeInput != nil
+			watchStop := make(chan struct{})
+			watchDone := make(chan bool, 1)
+			if watchRuntime {
+				input := runtimeInput
+				go func() {
+					inputClosed := false
+					defer func() { watchDone <- inputClosed }()
+					for {
+						select {
+						case <-watchStop:
+							return
+						case runtime, ok := <-input:
+							if !ok {
+								inputClosed = true
+								return
+							}
+							uploadController.Queue(runtime)
+						}
+					}
+				}()
+			}
+			// Upload notifications may arrive on a transport goroutine after the
+			// first streamed output. They must not resurrect a provider-wait row.
+			beginOutput := uploadController.OutputStarted
+			toolDelta := a.makeStreamingDeltaCallback(requestEmit, prevPreviewKeys)
+
+			completion, err := a.completeStreamWithOptions(requestCtx, requestMsgs, allTools,
+				func(token string) {
+					beginOutput()
+					emit(AgentEvent{Type: "stream_token", Data: token})
+				},
+				func(text reasoning.Delta) {
+					beginOutput()
+					emit(AgentEvent{Type: "thinking", Data: text})
+				},
+				func(internalID, id, name string) {
+					beginOutput()
+					requestEmit(AgentEvent{Type: "tool_call_streaming", Data: map[string]any{
+						"internal_id": internalID,
+						"tool_id":     id,
+						"name":        name,
+						"preview":     tools.FormatPreview(name, ExtractPreview(id, name, "", a.logger).Params),
+					}})
+				},
+				func(internalID, id, name, args string) { beginOutput(); toolDelta(internalID, id, name, args) },
+				func(attempt int, backoffSeconds float64, reason string) {
+					limit := a.Provider.DialSettings().MaxAttempts
+					if a.MaxRetries > 0 {
+						limit = a.MaxRetries
+					}
+					if limit <= 0 {
+						limit = provider.DefaultMaxAttempts
+					}
+					emit(AgentEvent{Type: "retry", Data: map[string]any{
+						"attempt": attempt, "backoff": backoffSeconds, "limit": limit, "reason": reason,
+						"request_id": requestID, "turn_generation": a.TurnGeneration,
+					}})
+				},
+				func() {
+					uploadController.Accepted()
+					if err := prefix.accept(requestMsgs); err != nil {
+						l.Error("CACHE", "prefix_accept_failed", "error", err.Error())
+					}
+					if !runtimeNoticesAccepted && len(runtimeNoticeIDs) > 0 && a.RuntimeNoticesAccepted != nil {
+						a.RuntimeNoticesAccepted()
+						runtimeNoticesAccepted = true
+					}
+				},
+				func(uploaded, total int64) {
+					outputStarted, restarting := uploadController.Progress(uploaded, total)
+					if outputStarted || restarting {
+						return
+					}
+					percent := 0
+					if total > 0 {
+						percent = int(uploaded * 100 / total)
+					}
+					if percent >= 100 {
+						emit(AgentEvent{Type: "phase", Data: map[string]any{
+							"name": "waiting_provider", "provider": providerName,
+							"uploaded_bytes": uploaded, "total_bytes": total,
+							"request_id": requestID, "turn_generation": a.TurnGeneration,
+						}})
+						return
+					}
+					emit(AgentEvent{Type: "phase", Data: map[string]any{
+						"name": "preparing", "progress": percent, "provider": providerName,
+						"uploaded_bytes": uploaded, "total_bytes": total,
+						"request_id": requestID, "turn_generation": a.TurnGeneration,
+					}})
+				},
+				completionRequestOptions{boundary: boundary, inputTokens: contextUsage.projected(requestMsgs, allTools, a.Model)},
+			)
+			if watchRuntime {
+				close(watchStop)
+				if <-watchDone {
+					runtimeInput = nil
+				}
+			}
+			bufferedRuntime = append(bufferedRuntime, uploadController.TakeQueued()...)
+			restartUpload = uploadController.RestartRequested() &&
+				errors.Is(context.Cause(requestCtx), errRuntimeUploadRestart)
+			cancelRequest(nil)
+			return completion, err
 		}
 		ctxWindow = a.Provider.ContextWindow(a.Model)
 		// A human /compact accepted during this run is honoured here, before
@@ -678,16 +828,36 @@ steps:
 					requestID = fmt.Sprintf("%016x%016x", rand2.Uint64(), rand2.Uint64())
 				}
 				compactor := a.backgroundCompactor(ctxWindow, checkpointTarget)
-				if a.PrepareCompaction != nil {
-					if err := a.PrepareCompaction(CompactionSource{
-						Messages: append([]provider.ChatMessage(nil), msgs[1:]...), BeforeTokens: activeTokens,
-						ContextWindow: ctxWindow, RequestID: requestID, Trigger: trigger, Role: role,
-						AccountID: a.Provider.AccountID, ProviderID: a.Provider.ID, ModelID: a.Model,
-					}); err != nil {
-						stopOnCompaction(&compactionStorageError{fmt.Errorf("persist compaction source: %w", err)})
-						return returnMessages()
+				prepare := func() error {
+					if a.PrepareCompaction != nil {
+						if err := a.PrepareCompaction(CompactionSource{
+							Messages: append([]provider.ChatMessage(nil), msgs[1:]...), BeforeTokens: activeTokens,
+							ContextWindow: ctxWindow, RequestID: requestID, Trigger: trigger, Role: role,
+							AccountID: a.Provider.AccountID, ProviderID: a.Provider.ID, ModelID: a.Model,
+						}); err != nil {
+							return &compactionStorageError{fmt.Errorf("persist compaction source: %w", err)}
+						}
+					}
+					return nil
+				}
+				if e := prepare(); e != nil {
+					stopOnCompaction(e)
+					return returnMessages()
+				}
+				if !overflowPressure && activeTokens < hardLimit && prepared == nil {
+					compactor.boundaryTurn = func(callCtx context.Context, option provider.ClientOption) (provider.BoundaryReply, error) {
+						boundarySent = true
+						completion, err = sendStep(callCtx, option)
+						ordinary := completion.Content != "" || len(completion.ToolCalls) > 0 || completion.ReasoningContent != ""
+						for _, item := range completion.ProviderItems {
+							if item.Type != "compaction" && item.Type != "configuration_update" {
+								ordinary = true
+							}
+						}
+						return provider.BoundaryReply{Items: completion.ProviderItems, Ordinary: ordinary, Usage: completion.Usage, CheckpointUsage: completion.checkpointUsage}, err
 					}
 				}
+
 				source := msgs[1:]
 				var outcome compactOutcome
 				var compactErr error
@@ -718,172 +888,91 @@ steps:
 					l.Warn("COMPACT", "compaction_model_fallback", "error", compactErr.Error())
 					outcome, compactErr = a.compactorFor(true, ctxWindow, checkpointTarget).compactSource(ctx, msgs, source, allTools, requestID, activeTokens, trigger, emit)
 				}
-				if compactErr == nil {
-					adopted, err := adopt(outcome, requestID, trigger)
-					if adopted {
-						continue steps
+				// Use the same install, failure and deferral path before or after
+				// ordinary work. Never resend an unconfirmed threshold generation
+				// merely because its portable fallback also failed.
+				settle := func(outcome compactOutcome, compactErr error, mayContinue bool) (adopted, keepRunning bool) {
+					if compactErr == nil {
+						adopted, err := adopt(outcome, requestID, trigger)
+						if adopted {
+							return true, true
+						}
+						compactErr = err
 					}
-					compactErr = err
-				}
-				var storage *compactionStorageError
-				data := compactionEventData(requestID, trigger, role, outcome.StageIndex, outcome.Completed, activeTokens, 0, ctxWindow)
-				data["account_id"], data["provider_id"], data["model_id"] = outcome.AccountID, outcome.ProviderID, outcome.ModelID
-				data["stage_label"], data["retry"], data["error"] = outcome.StageName, outcome.RetryAttempt, compactErrorText(compactErr)
-				if ctx.Err() != nil {
-					clearUnsentRuntimeNotices()
-					emit(AgentEvent{Type: "context_compaction_cancelled", Data: data})
-					emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Cancelled.", "reason": "cancelled"}})
-					return returnMessages()
-				}
-				var native *nativeCheckpointError
-				blocked := errors.As(compactErr, &native) && provider.RejectedAccount(native) != nil
-				if !blocked && !errors.As(compactErr, &storage) && deferCompaction(activeTokens) {
-					data["deferred"] = true
-					data["error"] = compactErrorText(compactErr) + "; continuing with the full context and retrying later"
-					if trigger == "requested" {
-						data["error"] = compactErrorText(compactErr) + "; continuing with the full context"
+					var storage *compactionStorageError
+					data := compactionEventData(requestID, trigger, role, outcome.StageIndex, outcome.Completed, activeTokens, 0, ctxWindow)
+					data["account_id"], data["provider_id"], data["model_id"] = outcome.AccountID, outcome.ProviderID, outcome.ModelID
+					data["stage_label"], data["retry"], data["error"] = outcome.StageName, outcome.RetryAttempt, compactErrorText(compactErr)
+					if ctx.Err() != nil {
+						clearUnsentRuntimeNotices()
+						emit(AgentEvent{Type: "context_compaction_cancelled", Data: data})
+						emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Cancelled.", "reason": "cancelled"}})
+						return false, false
 					}
-					emit(AgentEvent{Type: "context_compaction_failed", Data: data})
-					l.Warn("COMPACT", "automatic_deferred", "active", activeTokens, "retry_at", planner.deferredUntil, "hard_limit", hardLimit, "error", compactErr.Error())
-				} else {
-					if !errors.As(compactErr, &storage) {
+					var native *nativeCheckpointError
+					blocked := errors.As(compactErr, &native) && provider.RejectedAccount(native) != nil
+					if mayContinue && !blocked && !errors.As(compactErr, &storage) && deferCompaction(activeTokens) {
+						data["deferred"] = true
+						data["error"] = compactErrorText(compactErr) + "; continuing with the full context and retrying later"
+						if trigger == "requested" {
+							data["error"] = compactErrorText(compactErr) + "; continuing with the full context"
+						}
+						emit(AgentEvent{Type: "context_compaction_failed", Data: data})
+						l.Warn("COMPACT", "automatic_deferred", "active", activeTokens, "retry_at", planner.deferredUntil, "hard_limit", hardLimit, "error", compactErr.Error())
+					} else {
+						if !errors.As(compactErr, &storage) {
+							emit(AgentEvent{Type: "context_compaction_failed", Data: data})
+						}
+						stopOnCompaction(compactErr)
+						return false, false
+					}
+					return false, true
+				}
+				if outcome.turn {
+					turnReceived = true
+					if outcome.receipt != nil && err == nil {
+						// Only a completed ordinary round can enter the replacement. Its
+						// assistant output and any actual tool effects are published first.
+						abandonThreshold = func() {
+							data := compactionEventData(requestID, trigger, role, 0, 0, activeTokens, 0, ctxWindow)
+							event := "context_compaction_failed"
+							data["error"] = "The turn stopped before the checkpoint was ready."
+							if ctx.Err() != nil {
+								event = "context_compaction_cancelled"
+							}
+							emit(AgentEvent{Type: event, Data: data})
+						}
+						finishBoundary = func() bool {
+
+							activeTokens = contextUsage.projected(msgs, allTools, a.Model)
+							if e := prepare(); e != nil {
+								stopOnCompaction(e)
+								return false
+							}
+							abandonThreshold = nil
+							compactor.boundaryTurn = nil
+							compactor.thresholdReceipt = outcome.receipt
+							final, e := compactor.compactSource(ctx, msgs, msgs[1:], allTools, requestID, activeTokens, trigger, emit)
+							_, keepRunning := settle(final, e, true)
+							return keepRunning
+						}
+					} else {
+						data := compactionEventData(requestID, trigger, role, 0, 0, activeTokens, 0, ctxWindow)
+						data["deferred"] = deferCompaction(activeTokens)
+						data["error"] = "The provider returned a reply instead of a checkpoint. Crude kept the reply."
 						emit(AgentEvent{Type: "context_compaction_failed", Data: data})
 					}
-					stopOnCompaction(compactErr)
+				} else if adopted, keepRunning := settle(outcome, compactErr, !boundarySent); !keepRunning {
 					return returnMessages()
+				} else if adopted {
+					continue steps
 				}
 			}
 		}
 
-		// A local turn counter is not a durable request identity: it can restart
-		// after resume or agent recreation. Revisions reuse this ID; new calls do not.
-		requestID := fmt.Sprintf("%016x%016x", rand2.Uint64(), rand2.Uint64())
-		emit(AgentEvent{Type: "phase", Data: map[string]any{
-			"name": "preparing", "progress": 0, "provider": providerName,
-			"request_id": requestID, "turn_generation": a.TurnGeneration,
-		}})
-
-		requestMsgs := msgs
-		if err := prefix.check(requestMsgs); err != nil {
-			clearUnsentRuntimeNotices()
-			a.setRunFailure(err, rootprompt.RecoveryUncertain, RecoveryFailureUnknown)
-			a.emitError(emit, fmt.Errorf("refusing mutated context before provider request: %w", err))
-			return returnMessages()
+		if !turnReceived {
+			completion, err = sendStep(ctx, nil)
 		}
-
-		prevPreviewKeys := make(map[string]string)
-		requestCtx, cancelRequest := context.WithCancelCause(ctx)
-		uploadController := newRuntimeUploadController(cancelRequest)
-		watchRuntime := runtimeInput != nil
-		watchStop := make(chan struct{})
-		watchDone := make(chan bool, 1)
-		if watchRuntime {
-			input := runtimeInput
-			go func() {
-				inputClosed := false
-				defer func() { watchDone <- inputClosed }()
-				for {
-					select {
-					case <-watchStop:
-						return
-					case runtime, ok := <-input:
-						if !ok {
-							inputClosed = true
-							return
-						}
-						uploadController.Queue(runtime)
-					}
-				}
-			}()
-		}
-		// Upload notifications may arrive on a transport goroutine after the
-		// first streamed output. They must not resurrect a provider-wait row.
-		beginOutput := uploadController.OutputStarted
-		requestEmit := func(event AgentEvent) {
-			if data, ok := event.Data.(map[string]any); ok && strings.HasPrefix(event.Type, "tool_") && data["request_id"] == nil {
-				data["request_id"] = requestID
-			}
-			emit(event)
-		}
-		toolDelta := a.makeStreamingDeltaCallback(requestEmit, prevPreviewKeys)
-
-		completion, err := a.completeStreamWithOptions(requestCtx, requestMsgs, allTools,
-			func(token string) {
-				beginOutput()
-				emit(AgentEvent{Type: "stream_token", Data: token})
-			},
-			func(text reasoning.Delta) {
-				beginOutput()
-				emit(AgentEvent{Type: "thinking", Data: text})
-			},
-			func(internalID, id, name string) {
-				beginOutput()
-				requestEmit(AgentEvent{Type: "tool_call_streaming", Data: map[string]any{
-					"internal_id": internalID,
-					"tool_id":     id,
-					"name":        name,
-					"preview":     tools.FormatPreview(name, ExtractPreview(id, name, "", a.logger).Params),
-				}})
-			},
-			func(internalID, id, name, args string) { beginOutput(); toolDelta(internalID, id, name, args) },
-			func(attempt int, backoffSeconds float64, reason string) {
-				limit := a.Provider.DialSettings().MaxAttempts
-				if a.MaxRetries > 0 {
-					limit = a.MaxRetries
-				}
-				if limit <= 0 {
-					limit = provider.DefaultMaxAttempts
-				}
-				emit(AgentEvent{Type: "retry", Data: map[string]any{
-					"attempt": attempt, "backoff": backoffSeconds, "limit": limit, "reason": reason,
-					"request_id": requestID, "turn_generation": a.TurnGeneration,
-				}})
-			},
-			func() {
-				uploadController.Accepted()
-				if err := prefix.accept(requestMsgs); err != nil {
-					l.Error("CACHE", "prefix_accept_failed", "error", err.Error())
-				}
-				if !runtimeNoticesAccepted && len(runtimeNoticeIDs) > 0 && a.RuntimeNoticesAccepted != nil {
-					a.RuntimeNoticesAccepted()
-					runtimeNoticesAccepted = true
-				}
-			},
-			func(uploaded, total int64) {
-				outputStarted, restarting := uploadController.Progress(uploaded, total)
-				if outputStarted || restarting {
-					return
-				}
-				percent := 0
-				if total > 0 {
-					percent = int(uploaded * 100 / total)
-				}
-				if percent >= 100 {
-					emit(AgentEvent{Type: "phase", Data: map[string]any{
-						"name": "waiting_provider", "provider": providerName,
-						"uploaded_bytes": uploaded, "total_bytes": total,
-						"request_id": requestID, "turn_generation": a.TurnGeneration,
-					}})
-					return
-				}
-				emit(AgentEvent{Type: "phase", Data: map[string]any{
-					"name": "preparing", "progress": percent, "provider": providerName,
-					"uploaded_bytes": uploaded, "total_bytes": total,
-					"request_id": requestID, "turn_generation": a.TurnGeneration,
-				}})
-			},
-			completionRequestOptions{inputTokens: contextUsage.projected(requestMsgs, allTools, a.Model)},
-		)
-		if watchRuntime {
-			close(watchStop)
-			if <-watchDone {
-				runtimeInput = nil
-			}
-		}
-		bufferedRuntime = append(bufferedRuntime, uploadController.TakeQueued()...)
-		restartUpload := uploadController.RestartRequested() &&
-			errors.Is(context.Cause(requestCtx), errRuntimeUploadRestart)
-		cancelRequest(nil)
 		if restartUpload && ctx.Err() == nil && errors.Is(err, context.Canceled) {
 			if !completion.hasOutput() {
 				clearUnsentRuntimeNotices()
@@ -1059,7 +1148,7 @@ steps:
 		contextPromptTokens := completion.LastPromptTokens
 
 		estimated := false
-		if promptTokens == 0 {
+		if promptTokens == 0 && completion.checkpointUsage == nil {
 			promptTokens = estimateCanonicalRequest(requestMsgs, allTools, a.Model)
 			estimated = true
 		}
@@ -1176,6 +1265,9 @@ steps:
 		}
 
 		if !hasToolCalls {
+			if finishBoundary != nil && !finishBoundary() {
+				return returnMessages()
+			}
 			if isAutoContinuableFinishReason(finishReason) && continuations < maxAutoContinuations {
 				continuations++
 				l.Warn("AGENT", "auto_continue", "finish_reason", finishReason, "continuation", continuations)
@@ -1459,6 +1551,10 @@ steps:
 			a.emitError(emit, fmt.Errorf("persist completed tool boundary: %w", checkpointErr))
 			return returnMessages()
 		}
+		if finishBoundary != nil && !finishBoundary() {
+			return returnMessages()
+		}
+
 		// Tool failures, including uncertain effects and ownership rejections,
 		// are ordinary tool results: the loop continues and the model decides.
 		// A guidance read failure deferred every call of this batch (or will

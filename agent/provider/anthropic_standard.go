@@ -655,6 +655,10 @@ type anthropicResponse struct {
 }
 
 type anthropicUsage struct {
+	Iterations []struct {
+		Type string
+		anthropicUsage
+	} `json:"iterations"`
 	InputTokens              *int `json:"input_tokens"`
 	OutputTokens             *int `json:"output_tokens"`
 	CacheCreationInputTokens *int `json:"cache_creation_input_tokens"`
@@ -697,6 +701,29 @@ func (u *anthropicUsage) merge(delta anthropicUsage) {
 	}
 }
 
+// split counts the message and compaction iterations separately. Outer totals
+// never count as another iteration.
+func (u anthropicUsage) split() (turn TokenUsage, checkpoint *TokenUsage) {
+	if len(u.Iterations) == 0 {
+		return u.tokenUsage(), nil
+	}
+	for _, it := range u.Iterations {
+		v := it.tokenUsage()
+		v.ServiceTier = u.servedTier()
+		switch it.Type {
+		case "message":
+			turn = turn.Add(v)
+		case "compaction":
+			if checkpoint == nil {
+				checkpoint = new(TokenUsage)
+			}
+			*checkpoint = checkpoint.Add(v)
+		default:
+			return u.tokenUsage(), nil
+		}
+	}
+	return turn, checkpoint
+}
 func (u anthropicUsage) tokenUsage() TokenUsage {
 	count := func(n *int) int {
 		if n == nil {
@@ -773,12 +800,12 @@ func (r *anthropicResponse) toChatResponse() (*ChatResponse, error) {
 	msg.ReasoningContent = trace
 	msg.Reasoning = trace
 
-	usage := r.Usage.tokenUsage()
+	usage, checkpointUsage := r.Usage.split()
 	resp := &ChatResponse{
-		ID:          r.ID,
-		Model:       r.Model,
-		ServiceTier: usage.ServiceTier,
-		Choices:     []ChatChoice{{Message: msg, FinishReason: r.StopReason}},
+		ID:              r.ID,
+		Model:           r.Model,
+		CheckpointUsage: checkpointUsage, ServiceTier: usage.ServiceTier,
+		Choices: []ChatChoice{{Message: msg, FinishReason: r.StopReason}},
 		Usage: &ChatUsage{
 			PromptTokens:     usage.PromptTokens,
 			CompletionTokens: usage.CompletionTokens,
@@ -826,6 +853,7 @@ func (d *anthropicStreamDecoder) Decode(event StreamEvent) (StreamUpdate, error)
 		Delta        struct {
 			Type        string          `json:"type"`
 			Text        string          `json:"text"`
+			Content     string          `json:"content"`
 			PartialJSON string          `json:"partial_json"`
 			Thinking    string          `json:"thinking"`
 			Signature   string          `json:"signature"`
@@ -854,6 +882,12 @@ func (d *anthropicStreamDecoder) Decode(event StreamEvent) (StreamUpdate, error)
 	case "content_block_start":
 		return d.startBlock(envelope.Index, envelope.ContentBlock)
 	case "content_block_delta":
+		if envelope.Delta.Type == "compaction_delta" {
+			if b := d.blocks[envelope.Index]; b != nil && b.Type == "compaction" {
+				b.Text.WriteString(envelope.Delta.Content)
+			}
+			return StreamUpdate{}, nil
+		}
 		return d.deltaBlock(envelope.Index, envelope.Delta.Type, envelope.Delta.Text,
 			envelope.Delta.PartialJSON, envelope.Delta.Thinking, envelope.Delta.Signature,
 			envelope.Delta.Citation)
@@ -861,8 +895,9 @@ func (d *anthropicStreamDecoder) Decode(event StreamEvent) (StreamUpdate, error)
 		return d.stopBlock(envelope.Index)
 	case "message_delta":
 		d.usage.merge(envelope.Usage)
-		usage := d.usage.tokenUsage()
-		return StreamUpdate{
+		d.usage.Iterations = envelope.Usage.Iterations
+		usage, checkpointUsage := d.usage.split()
+		return StreamUpdate{CheckpointUsage: checkpointUsage,
 			FinishReason: envelope.Delta.StopReason,
 			Usage:        &usage,
 		}, nil
@@ -971,6 +1006,17 @@ func (d *anthropicStreamDecoder) stopBlock(index int) (StreamUpdate, error) {
 		return StreamUpdate{}, nil
 	}
 	switch state.Type {
+	case "compaction":
+		raw := state.Raw
+		if state.Text.Len() > 0 {
+			var b map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &b); err != nil {
+				return StreamUpdate{}, err
+			}
+			b["content"], _ = json.Marshal(state.Text.String())
+			raw, _ = json.Marshal(b)
+		}
+		return anthropicProviderItemUpdate(state.Type, raw), nil
 	case "text", "refusal":
 		block := map[string]any{
 			"type": state.Type,
