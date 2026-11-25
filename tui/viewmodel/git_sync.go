@@ -10,6 +10,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/core/coreclient"
 	"crude/core/shellport"
 	"crude/tui/screens/diffview"
 	"crude/tui/screens/gitmerge"
@@ -23,14 +24,10 @@ import (
 const (
 	gitMessageEditorOverlay ui.OverlayID = "git-message-editor"
 	gitMergeOverlay         ui.OverlayID = "git-merge"
-	// gitRemoteTimeout bounds a fetch, pull, push or merge; Stop ends one
-	// sooner. A slow network clone of a large history can legitimately run
-	// for minutes.
-	gitRemoteTimeout = 10 * time.Minute
 )
 
-// cancelGitRemote stops the running remote command, if any. Its result is
-// then ignored by sequence.
+// cancelGitRemote asks the owned command to stop. Its completion still owns
+// the busy state unless the workspace or sequence has changed.
 func (m *App) cancelGitRemote() {
 	if m.gitRemoteCancel != nil {
 		m.gitRemoteCancel()
@@ -47,12 +44,12 @@ func (m *App) runGitRemote(label, done string, op func(context.Context, shellpor
 	}
 	m.cancelGitChangesPreparation()
 	m.ws.EnsureGit()
-	service := m.ws.Git()
+	service, logger := m.ws.Git(), m.ws.Logger()
 	if service == nil {
 		return nil
 	}
 	m.cancelGitRemote()
-	ctx, cancel := context.WithTimeout(context.Background(), gitRemoteTimeout)
+	ctx, cancel := context.WithCancel(context.Background())
 	m.gitRemoteCancel = cancel
 	m.gitRemoteSeq++
 	seq, workspaceGen := m.gitRemoteSeq, m.workspaceSwitchGen.Load()
@@ -60,10 +57,35 @@ func (m *App) runGitRemote(label, done string, op func(context.Context, shellpor
 	m.gitReadsInFlight++
 	m.recordGitOperation(gen, label)
 	m.gitPanel.SetRemoteBusy(label)
-	return func() tea.Msg {
+	base := sourceControlResultMsg{gen: gen, remoteSeq: seq, workspaceGen: workspaceGen, remoteLabel: label}
+	run := m.clientIOCommand(context.Background(), func(ioCtx context.Context) tea.Msg {
+		stop := context.AfterFunc(ioCtx, cancel)
+		defer stop()
 		defer cancel()
+		msg := base
+		if err := ctx.Err(); err != nil {
+			msg.err = err
+			return msg
+		}
 		result, err := op(ctx, service)
-		msg := sourceControlResultMsg{gen: gen, remoteSeq: seq, workspaceGen: workspaceGen, remoteLabel: label, err: err}
+		var uncertain *coreclient.UncertainError
+		if errors.As(err, &uncertain) && uncertain.ResultKnown {
+			if logger != nil {
+				logger.Warn("GIT", "remote_cleanup_unconfirmed", "operation", label, "error", uncertain.Error())
+			}
+			// The core sent the original final result. An ACK failure is not
+			// the result of the operation. Keep a decoded refusal or success.
+			fault := uncertain.ResultFault
+			switch {
+			case fault == nil:
+				err = nil
+			case fault.Code == "cancelled":
+				err = context.Canceled
+			default:
+				err = fault
+			}
+		}
+		msg.err = err
 		if err != nil {
 			return msg
 		}
@@ -73,7 +95,19 @@ func (m *App) runGitRemote(label, done string, op func(context.Context, shellpor
 		}
 		readCtx, readCancel := m.sourceControlContext()
 		defer readCancel()
+		stopRead := context.AfterFunc(ioCtx, readCancel)
+		defer stopRead()
 		msg.snapshot, msg.err = service.Snapshot(readCtx)
+		return msg
+	})
+	return func() tea.Msg {
+		if msg := run(); msg != nil {
+			return msg
+		}
+		// The joined owner declined admission after a workspace boundary.
+		// A late result is discarded; a failed switch can still settle it.
+		msg := base
+		msg.err = context.Canceled
 		return msg
 	}
 }
@@ -88,6 +122,20 @@ func (m *App) applyGitRemoteResult(msg sourceControlResultMsg) tea.Cmd {
 		if msg.completed {
 			m.finishGitWithStatusError(msg)
 			return nil
+		}
+		var uncertain *coreclient.UncertainError
+		if errors.As(msg.err, &uncertain) {
+			summary := msg.remoteLabel + " outcome unknown. Check the remote before you try again."
+			// The status operation could not confirm the result; do not
+			// report that the Git effect failed or that Stop took effect.
+			m.finishGitOperation(msg.gen, statuscenter.OperationFailed, summary)
+			m.gitPanel.SetRemoteError(summary)
+			m.ws.Status().SetIssue(statuscenter.IssueSnapshot{ID: "git", Owner: statuscenter.ResourceRef{Kind: statuscenter.ResourceGit, ID: m.ws.RootPath()}, Severity: statuscenter.SeverityWarning, Summary: summary})
+			if logger := m.ws.Logger(); logger != nil {
+				logger.Warn("GIT", "remote_outcome_unknown", "operation", msg.remoteLabel, "error", uncertain.Error())
+			}
+			m.requestGitSnapshot(time.Now())
+			return m.startGitSnapshotRead()
 		}
 		if errors.Is(msg.err, context.Canceled) {
 			m.finishGitOperation(msg.gen, statuscenter.OperationCancelled, "")

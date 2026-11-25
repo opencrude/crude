@@ -90,19 +90,40 @@ func (s GitSnapshot) ConflictedPaths() []string {
 	return out
 }
 
-// runRemote runs a remote operation the user started. It waits for the remote
-// lane (a background fetch may hold it briefly) within the caller's deadline.
-// Credential prompts are disabled so a missing credential fails promptly
-// instead of waiting on a terminal that does not exist; an askpass helper or
-// credential manager the user configured still works.
-func (s *GitService) runRemote(ctx context.Context, args ...string) (string, error) {
+func (s *GitService) lockRemote(ctx context.Context, op string) error {
+	if s == nil {
+		return errors.New("git service is unavailable")
+	}
 	select {
 	case s.remote <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			s.unlockRemote()
+			return fmt.Errorf("git %s stopped: %w", op, err)
+		}
+		return nil
 	case <-ctx.Done():
-		return "", fmt.Errorf("git %s stopped: %w", args[0], ctx.Err())
+		return fmt.Errorf("git %s stopped: %w", op, ctx.Err())
 	}
-	defer func() { <-s.remote }()
-	out, err := s.execRemote(ctx, nil, args...)
+}
+
+func (s *GitService) unlockRemote() { <-s.remote }
+
+// runRemote waits for the remote lane, then runs a user-started command.
+func (s *GitService) runRemote(ctx context.Context, args ...string) (string, error) {
+	if err := s.lockRemote(ctx, args[0]); err != nil {
+		return "", err
+	}
+	defer s.unlockRemote()
+	root, err := s.repositoryRoot()
+	if err != nil {
+		return "", err
+	}
+	return s.runRemoteAtRoot(ctx, root, args...)
+}
+
+// runRemoteAtRoot runs with the remote lane already held.
+func (s *GitService) runRemoteAtRoot(ctx context.Context, root string, args ...string) (string, error) {
+	out, err := execRemoteAtRoot(ctx, root, nil, args...)
 	if err == nil {
 		s.autoFetchPaused.Store(false)
 	}
@@ -110,20 +131,50 @@ func (s *GitService) runRemote(ctx context.Context, args ...string) (string, err
 }
 
 func (s *GitService) execRemote(ctx context.Context, env []string, args ...string) (string, error) {
+	root, err := s.repositoryRoot()
+	if err != nil {
+		return "", err
+	}
+	return execRemoteAtRoot(ctx, root, env, args...)
+}
+
+func (s *GitService) repositoryRoot() (string, error) {
 	repo, root, err := s.open()
 	if err != nil {
 		return "", err
 	}
 	closeGitRepository(repo)
+	return root, nil
+}
+
+// Credential prompts are disabled; a configured askpass or credential helper
+// still works unless the background caller explicitly disables it.
+func execRemoteAtRoot(ctx context.Context, root string, env []string, args ...string) (string, error) {
 	defer observeGitRemote(args, time.Now())
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
-	cmd.Env = append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GCM_INTERACTIVE=never"), env...)
-	out, err := cmd.CombinedOutput()
-	text := strings.TrimSpace(string(out))
+	executable, err := exec.LookPath("git")
+	if err != nil {
+		return "", ErrGitNotInstalled
+	}
+	executable, err = filepath.Abs(executable)
+	if err != nil {
+		return "", err
+	}
+	out, err := fileio.RunOwnedCommand(ctx, fileio.OwnedCommand{
+		Executable: executable, Arguments: args, Directory: root, OutputLimit: 1 << 20,
+		Environment: append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GCM_INTERACTIVE=never"), env...),
+	})
+	text := strings.TrimSpace(string(out.Output))
+	if out.Truncated {
+		text += "\nGit output was shortened."
+	}
 	if err == nil {
 		return text, nil
 	}
-	if ctx.Err() != nil {
+	var unverified *fileio.CommandTreeUnverifiedError
+	if errors.As(err, &unverified) {
+		return text, gitRemoteFailure(args[0], strings.TrimSpace(unverified.Error()+"\n"+text))
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return text, fmt.Errorf("git %s stopped: %w", args[0], ctx.Err())
 	}
 	if gitNeedsCredentials(text) {
@@ -232,14 +283,21 @@ func lastLine(text string) string {
 
 // Fetch updates every remote-tracking branch and prunes deleted ones.
 func (s *GitService) Fetch(ctx context.Context) error {
-	if s == nil {
-		return errors.New("git service is unavailable")
+	if err := s.lockRemote(ctx, "fetch"); err != nil {
+		return err
 	}
+	defer s.unlockRemote()
 	if err := s.lock(ctx); err != nil {
 		return err
 	}
-	defer s.unlock()
-	_, err := s.runRemote(ctx, "fetch", "--all", "--prune")
+	root, err := s.repositoryRoot()
+	s.unlock()
+	if err != nil {
+		return err
+	}
+	// Git selects all configured remotes and locks ref updates itself. This
+	// command does not change the index or the working tree.
+	_, err = s.runRemoteAtRoot(ctx, root, "fetch", "--all", "--prune")
 	return err
 }
 
@@ -247,15 +305,7 @@ func (s *GitService) Fetch(ctx context.Context) error {
 // used regardless of pull.rebase so a conflict always leaves the same
 // resolvable state; conflicts are reported in the result.
 func (s *GitService) Pull(ctx context.Context) (GitSyncResult, error) {
-	if s == nil {
-		return GitSyncResult{}, errors.New("git service is unavailable")
-	}
-	if err := s.lock(ctx); err != nil {
-		return GitSyncResult{}, err
-	}
-	defer s.unlock()
-	out, err := s.runRemote(ctx, "pull", "--no-rebase", "--no-edit")
-	return s.syncResult(ctx, out, err)
+	return s.runGitSync(ctx, "pull", "--no-rebase", "--no-edit")
 }
 
 // Merge merges ref into the current branch.
@@ -267,11 +317,23 @@ func (s *GitService) Merge(ctx context.Context, ref string) (GitSyncResult, erro
 	if ref == "" || strings.HasPrefix(ref, "-") {
 		return GitSyncResult{}, errors.New("merge needs a branch name")
 	}
+	return s.runGitSync(ctx, "merge", "--no-edit", ref)
+}
+
+func (s *GitService) runGitSync(ctx context.Context, args ...string) (GitSyncResult, error) {
+	if err := s.lockRemote(ctx, args[0]); err != nil {
+		return GitSyncResult{}, err
+	}
+	defer s.unlockRemote()
 	if err := s.lock(ctx); err != nil {
 		return GitSyncResult{}, err
 	}
 	defer s.unlock()
-	out, err := s.runRemote(ctx, "merge", "--no-edit", ref)
+	root, err := s.repositoryRoot()
+	if err != nil {
+		return GitSyncResult{}, err
+	}
+	out, err := s.runRemoteAtRoot(ctx, root, args...)
 	return s.syncResult(ctx, out, err)
 }
 
@@ -310,35 +372,49 @@ func (s *GitService) conflictedPaths(ctx context.Context) ([]string, error) {
 // Push publishes the current branch. A branch without an upstream is pushed
 // to its only (or "origin") remote and tracked. Pushes are never forced.
 func (s *GitService) Push(ctx context.Context) error {
-	if s == nil {
-		return errors.New("git service is unavailable")
-	}
-	if err := s.lock(ctx); err != nil {
+	if err := s.lockRemote(ctx, "push"); err != nil {
 		return err
 	}
-	defer s.unlock()
-	repo, _, err := s.open()
+	defer s.unlockRemote()
+	plan, err := s.planPush(ctx)
 	if err != nil {
 		return err
 	}
+	_, err = s.runRemoteAtRoot(ctx, plan.root, plan.args...)
+	if errors.Is(err, ErrGitPushBehind) && plan.upstream != "" {
+		// Show how far behind the branch is, so Pull names the commits
+		// that the push needs first.
+		_, _ = s.runRemoteAtRoot(ctx, plan.root, "fetch", "--prune", plan.upstream)
+	}
+	return err
+}
+
+type gitPushPlan struct {
+	root, upstream string
+	args           []string
+}
+
+// planPush reads repository metadata under the gate. Git owns the actual
+// ref updates; do not hold the gate while it runs a hook or talks to a remote.
+func (s *GitService) planPush(ctx context.Context) (gitPushPlan, error) {
+	if err := s.lock(ctx); err != nil {
+		return gitPushPlan{}, err
+	}
+	defer s.unlock()
+	repo, root, err := s.open()
+	if err != nil {
+		return gitPushPlan{}, err
+	}
+	defer closeGitRepository(repo)
 	var snapshot GitSnapshot
-	snapshot.readHead(repo)
-	remotes := gitRemotes(repo)
-	closeGitRepository(repo)
+	upstream := snapshot.readHead(repo)
 	if strings.HasPrefix(snapshot.Branch, "detached@") || snapshot.Branch == "No commits" {
-		return errors.New("push needs a checked-out branch with commits")
+		return gitPushPlan{}, errors.New("push needs a checked-out branch with commits")
 	}
 	if snapshot.Upstream != "" {
-		_, err = s.runRemote(ctx, "push")
-		if errors.Is(err, ErrGitPushBehind) {
-			// Show the user how far behind the branch is, so Pull names
-			// the commits that the push needs first.
-			if remote, ok := s.upstreamRemote(); ok {
-				_, _ = s.runRemote(ctx, "fetch", "--prune", remote)
-			}
-		}
-		return err
+		return gitPushPlan{root: root, upstream: upstream, args: []string{"push"}}, nil
 	}
+	remotes := gitRemotes(repo)
 	remote := ""
 	switch {
 	case len(remotes) == 1:
@@ -346,12 +422,11 @@ func (s *GitService) Push(ctx context.Context) error {
 	case containsString(remotes, "origin"):
 		remote = "origin"
 	case len(remotes) == 0:
-		return errors.New("this repository has no remote to push to")
+		return gitPushPlan{}, errors.New("this repository has no remote to push to")
 	default:
-		return fmt.Errorf("%s has no upstream and the repository has several remotes (%s); set one with git push -u <remote> %s", snapshot.Branch, strings.Join(remotes, ", "), snapshot.Branch)
+		return gitPushPlan{}, fmt.Errorf("%s has no upstream and the repository has several remotes (%s); set one with git push -u <remote> %s", snapshot.Branch, strings.Join(remotes, ", "), snapshot.Branch)
 	}
-	_, err = s.runRemote(ctx, "push", "--set-upstream", remote, "HEAD")
-	return err
+	return gitPushPlan{root: root, args: []string{"push", "--set-upstream", "--", remote, "refs/heads/" + snapshot.Branch}}, nil
 }
 
 func containsString(values []string, want string) bool {
@@ -366,6 +441,10 @@ func containsString(values []string, want string) bool {
 // AbortOperation abandons the merge, rebase, cherry-pick or revert in
 // progress and restores the branch as it was before it started.
 func (s *GitService) AbortOperation(ctx context.Context) error {
+	if err := s.lockRemote(ctx, "abort"); err != nil {
+		return err
+	}
+	defer s.unlockRemote()
 	operation, err := s.operation(ctx)
 	if err != nil {
 		return err
@@ -379,6 +458,10 @@ func (s *GitService) AbortOperation(ctx context.Context) error {
 // ContinueOperation completes the operation once every conflict is resolved,
 // keeping Git's prepared message (no editor is opened).
 func (s *GitService) ContinueOperation(ctx context.Context) error {
+	if err := s.lockRemote(ctx, "continue"); err != nil {
+		return err
+	}
+	defer s.unlockRemote()
 	operation, err := s.operation(ctx)
 	if err != nil {
 		return err

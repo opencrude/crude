@@ -510,7 +510,11 @@ ordinary framing/identity/decoding exchange rather than owning another server.
 Caller cancellation retains the original waiter and uses typed `request.cancel`
 against its original job only after the enqueue receipt. It joins and ACKs that
 request and the original final result, with a five-second client-lifetime cleanup
-ceiling. Ordinary mutation `Call`/`CallWith` still abandon only their waiter on
+ceiling. The Git panel's **Stop** uses the same joined exchange for its original
+fetch, pull, push or merge. Unlike a cancelled read, the shell uses the Git
+job's final result: a completed push stays successful, a hook rejection keeps
+Git's reason, and a confirmed stop is not an invitation to resend the command.
+Ordinary mutation `Call`/`CallWith` still abandon only their waiter on
 cancellation and retain uncertainty; they do not acquire implicit effect cancellation.
 A decoded result remains known even if release confirmation fails; that distinct
 cleanup state (`ResultKnown=true`, `completed_cleanup_unconfirmed`) must never

@@ -880,6 +880,7 @@ func (m *App) stopAsyncIO() {
 	m.cancelCapabilityOperations()
 	m.stopHistoryOperation()
 	m.cancelLocalDiffs()
+	m.cancelGitRemote()
 	m.cancelGitPreparation()
 	m.cancelComparisonGeometry()
 	m.stopComparisonWork()

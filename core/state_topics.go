@@ -14,6 +14,8 @@ import (
 
 var workspaceStateTopics = [...]string{coreprotocol.TopicStatus, coreprotocol.TopicSettings, coreprotocol.TopicLSP, coreprotocol.TopicTerminalInventory, coreprotocol.TopicRegistry, coreprotocol.TopicGit, coreprotocol.TopicBoard, coreprotocol.TopicPresence}
 
+var stateTopicReadTimeout = 30 * time.Second
+
 // A state slot has one latest immutable publication and one conflated pending
 // derivation. Each family has its own joined worker: a slow Git read can never
 // delay a status update, registry, terminal inventory or command.
@@ -56,9 +58,14 @@ func (a *actor) startStateTopics() {
 				if run == nil {
 					continue
 				}
-				ctx, cancel := context.WithTimeout(a.ctx, 30*time.Second)
-				value := run(ctx)
-				cancel()
+				var value coreprotocol.WorkspaceState
+				if topic == coreprotocol.TopicGit {
+					value = run(a.ctx)
+				} else {
+					ctx, cancel := context.WithTimeout(a.ctx, stateTopicReadTimeout)
+					value = run(ctx)
+					cancel()
+				}
 				body, err := coreprotocol.Marshal(&value)
 				if err != nil {
 					failure := stateFailure("state_encode_failed", err)
@@ -148,7 +155,9 @@ func (a *actor) queueState(topic string) {
 		run = func(ctx context.Context) coreprotocol.WorkspaceState {
 			value := coreprotocol.GitSnapshotResult{}
 			if git != nil {
-				snapshot, err := git.Snapshot(ctx)
+				// A queued read is not a failed read. The actor can stop it
+				// while it waits; the read deadline starts inside the lane.
+				snapshot, err := git.SnapshotWithReadTimeout(ctx, stateTopicReadTimeout)
 				if err != nil {
 					return stateFailure("git_failed", err)
 				}

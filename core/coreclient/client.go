@@ -47,6 +47,9 @@ type UncertainError struct {
 	// ResultKnown distinguishes unconfirmed cleanup from an unknown operation:
 	// the original final result was decoded and must never be replayed.
 	ResultKnown bool
+	// ResultFault is the original command's fault when ResultKnown is true.
+	// A nil fault in that case means success, even if cleanup itself failed.
+	ResultFault *coreprotocol.Fault
 }
 
 func (e *UncertainError) Error() string {
@@ -770,7 +773,7 @@ func (c *Client) callWith(ctx context.Context, workspaceID, method string, in co
 		}
 		var cleanup *finalCleanupError
 		if errors.As(err, &cleanup) {
-			return revision, &UncertainError{RequestID: id, Cause: err, State: "completed_cleanup_unconfirmed", ResultKnown: true}
+			return revision, &UncertainError{RequestID: id, Cause: err, State: "completed_cleanup_unconfirmed", ResultKnown: true, ResultFault: cleanup.fault}
 		}
 		var fault *coreprotocol.Fault
 		if errors.As(err, &fault) && (fault.Code == "outcome_pending" || fault.Code == "outcome_uncertain") {
@@ -843,7 +846,7 @@ func (c *Client) attempt(ctx context.Context, conn corewire.Conn, class corewire
 				if reply.Fault != nil {
 					cause = errors.Join(err, reply.Fault)
 				}
-				return reply.Revision, true, false, released, &finalCleanupError{cause: cause}
+				return reply.Revision, true, false, released, &finalCleanupError{cause: cause, fault: reply.Fault}
 			}
 			released = true
 		} else if sendValues(s, &coreprotocol.TopicAck{Seq: 1}) == nil {

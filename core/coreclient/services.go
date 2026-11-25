@@ -2,6 +2,8 @@ package coreclient
 
 import (
 	"context"
+	"errors"
+
 	"crude/agent/memory"
 	"crude/core/coreprotocol"
 	"crude/workspace"
@@ -84,40 +86,44 @@ func (s *GitService) InspectCommit(ctx context.Context, hash string) (workspace.
 	return out.Evidence, err
 }
 
-func (s *GitService) remote(ctx context.Context, method string) (workspace.GitSyncResult, error) {
+// runSync is for operations with an explicit Stop. Stopping the client wait
+// alone would leave Git (and its hooks) running in the core. A late Stop must
+// not turn a known successful push or a hook refusal into a cancellation.
+func (s *GitService) runSync(ctx context.Context, method string, input coreprotocol.Value) (workspace.GitSyncResult, error) {
 	var out coreprotocol.GitRemoteResult
-	err := s.client.Call(ctx, s.workspaceID, method, coreprotocol.GitRemoteRequest{}, &out)
+	err := s.client.callJoinedJob(ctx, s.workspaceID, method, input, &out, cancelledCallCleanupTimeout, nil)
+	var fault *coreprotocol.Fault
+	var uncertain *UncertainError
+	if errors.As(err, &fault) && fault.Code == "cancelled" && !errors.As(err, &uncertain) {
+		return out.Sync, context.Canceled
+	}
 	return out.Sync, err
 }
 
 func (s *GitService) Fetch(ctx context.Context) error {
-	_, err := s.remote(ctx, coreprotocol.GitFetch)
+	_, err := s.runSync(ctx, coreprotocol.GitFetch, coreprotocol.GitRemoteRequest{})
 	return err
 }
 
 func (s *GitService) Pull(ctx context.Context) (workspace.GitSyncResult, error) {
-	return s.remote(ctx, coreprotocol.GitPull)
+	return s.runSync(ctx, coreprotocol.GitPull, coreprotocol.GitRemoteRequest{})
 }
 
 func (s *GitService) Push(ctx context.Context) error {
-	_, err := s.remote(ctx, coreprotocol.GitPush)
+	_, err := s.runSync(ctx, coreprotocol.GitPush, coreprotocol.GitRemoteRequest{})
 	return err
 }
 
 func (s *GitService) AbortOperation(ctx context.Context) error {
-	_, err := s.remote(ctx, coreprotocol.GitAbortOperation)
-	return err
+	return s.client.Call(ctx, s.workspaceID, coreprotocol.GitAbortOperation, coreprotocol.GitRemoteRequest{}, &coreprotocol.GitRemoteResult{})
 }
 
 func (s *GitService) ContinueOperation(ctx context.Context) error {
-	_, err := s.remote(ctx, coreprotocol.GitContinueOperation)
-	return err
+	return s.client.Call(ctx, s.workspaceID, coreprotocol.GitContinueOperation, coreprotocol.GitRemoteRequest{}, &coreprotocol.GitRemoteResult{})
 }
 
 func (s *GitService) Merge(ctx context.Context, ref string) (workspace.GitSyncResult, error) {
-	var out coreprotocol.GitRemoteResult
-	err := s.client.Call(ctx, s.workspaceID, coreprotocol.GitMerge, coreprotocol.GitMergeRequest{Ref: ref}, &out)
-	return out.Sync, err
+	return s.runSync(ctx, coreprotocol.GitMerge, coreprotocol.GitMergeRequest{Ref: ref})
 }
 
 func (s *GitService) ConflictFile(ctx context.Context, path string) (workspace.GitConflictFile, error) {

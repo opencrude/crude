@@ -88,9 +88,14 @@ func TestWorkspaceSwitchStopsOldTreeAndStartsGenerationBoundReplacement(t *testi
 	if oldWatcher == nil {
 		t.Fatal("Init did not start the original file-tree watcher")
 	}
+	app.gitPanel.SetRemoteBusy("Push")
+	app.gitPanel.SetRemoteError("The old remote refused the push.")
 
 	if err := app.SwitchProject(newRoot); err != nil {
 		t.Fatal(err)
+	}
+	if app.gitPanel.RemoteBusy() != "" || app.gitPanel.RemoteError() != "" {
+		t.Fatal("the new workspace inherited the old Git operation")
 	}
 
 	select {

@@ -276,10 +276,10 @@ func (w *Workspace) BoardSnapshot(ctx context.Context, query, thread string, sin
 	value := w.boardState
 	stateErr := w.boardError
 	w.auxMu.RUnlock()
-	if stateErr != nil {
-		return workspace.BoardSnapshot{}, stateErr
-	}
 	if value == nil {
+		if stateErr != nil {
+			return workspace.BoardSnapshot{}, stateErr
+		}
 		return workspace.BoardSnapshot{}, errors.New("board state is not ready")
 	}
 	var out coreprotocol.BoardSnapshotResult

@@ -2,11 +2,13 @@ package viewmodel
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/core/coreprotocol"
 	"crude/tui/screens/boardbrowser"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"
@@ -21,14 +23,18 @@ type boardResultMsg struct {
 	committed  bool
 }
 
+func (m *App) ensureBoardBrowser() *boardbrowser.Screen {
+	if m.boardBrowser == nil {
+		m.boardBrowser = boardbrowser.New(m.Theme)
+	}
+	return m.boardBrowser
+}
+
 func (m *App) openBoardBrowser() tea.Cmd {
 	if m.termDock == nil {
 		return nil
 	}
-	if m.boardBrowser == nil {
-		m.boardBrowser = boardbrowser.New(m.Theme)
-		m.termDock.SetPanel(termdock.PanelBoard, m.boardBrowser)
-	}
+	m.termDock.SetPanel(termdock.PanelBoard, m.ensureBoardBrowser())
 	if m.revealPlacedPanel(termdock.PanelBoard) {
 		return m.boardRequestCmd(m.boardBrowser.Request("refresh"))
 	}
@@ -79,6 +85,13 @@ func (m *App) handleBoardAction(action ui.Action) (tea.Cmd, bool) {
 
 func (m *App) applyBoardResult(message boardResultMsg) {
 	if message.generation != m.workspaceSwitchGen.Load() || message.request.Target != m.boardBrowser {
+		return
+	}
+	var fault *coreprotocol.Fault
+	if errors.As(message.err, &fault) && fault.Code == "board_failed" {
+		// This is the latest-page topic's own warning. Do not turn it
+		// into an action error that could outlive the next publication.
+		m.boardBrowser.FinishUnavailableTopicRead(message.request.Sequence)
 		return
 	}
 	m.boardBrowser.Apply(message.request.Sequence, message.snapshot, message.err)
