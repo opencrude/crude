@@ -1,20 +1,17 @@
 package workspace
 
 import (
-	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"slices"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"crude/agent/provider"
 	"crude/agent/session"
 	"crude/internal/metrics"
+	"crude/internal/providersim"
 	"crude/types/insight"
 	"crude/types/setting"
 	"crude/workspace/document"
@@ -244,25 +241,15 @@ func TestSuggestionFIMOnlyReportsSourcesSentToTheModel(t *testing.T) {
 	f := newSuggestionFixture(t, "value = ()\n", func(input string) string {
 		return rewriteOf(input, func(region string) string { return region })
 	})
-	var fimCalls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fimCalls.Add(1)
-		var req struct {
-			Prefix string `json:"prompt"`
-			Suffix string `json:"suffix"`
+	server := providersim.New(t)
+	server.Respond(func(req providersim.Request) providersim.Turn {
+		if req.Path != "/v1/completions" || req.Prompt != "score = (" || req.Suffix != ")\n" {
+			t.Errorf("FIM sent path=%q, prefix=%q, suffix=%q; want only code around the caret", req.Path, req.Prompt, req.Suffix)
 		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Error(err)
-		}
-		if r.URL.Path != "/v1/completions" || req.Prefix != "score = (" || req.Suffix != ")\n" {
-			t.Errorf("FIM sent path=%q, prefix=%q, suffix=%q; want only code around the caret", r.URL.Path, req.Prefix, req.Suffix)
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"index\":0,\"text\":\"23\",\"finish_reason\":\"stop\"}]}\n\ndata: {\"choices\":[],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":1}}\n\ndata: [DONE]\n\n")
-	}))
-	t.Cleanup(server.Close)
+		return providersim.Text("23").WithUsage(providersim.Usage{Input: 12, Output: 1})
+	})
 	account := provider.Account{ID: "fim", ProviderID: "openai", APIKey: "fixture-only",
-		Connection: provider.Template{Name: "Local fixture", ProviderURL: server.URL, APIStandard: "openai", AuthType: provider.AuthBearer}}
+		Connection: provider.Template{Name: "Local fixture", ProviderURL: server.BaseURL(providersim.FIMOpenAI), APIStandard: "openai", AuthType: provider.AuthBearer}}
 	cfg := &session.Config{Accounts: map[string]provider.Account{account.ID: account},
 		Agents: session.AgentsConfig{Suggestions: setting.Suggestion{
 			AccountID: account.ID, Model: "fast", Format: setting.SuggestionFormatOpenAI, EndpointPath: "/completions",
@@ -278,8 +265,8 @@ func TestSuggestionFIMOnlyReportsSourcesSentToTheModel(t *testing.T) {
 	caret := len("score = (")
 	got, err := f.request(t, caret)
 	if err != nil || got.Kind != insight.PredictionInsert || got.Start != caret || got.End != caret || got.Text != "23" ||
-		fimCalls.Load() != 1 || len(f.server.Requests()) != 0 {
-		t.Fatalf("FIM suggestion=%+v err=%v (calls=%d FIM, %d Chat)", got, err, fimCalls.Load(), len(f.server.Requests()))
+		len(server.Requests()) != 1 || len(f.server.Requests()) != 0 {
+		t.Fatalf("FIM suggestion=%+v err=%v (calls=%d FIM, %d Chat)", got, err, len(server.Requests()), len(f.server.Requests()))
 	}
 	if got.Sources != nil {
 		t.Fatalf("FIM claims context sources it did not send: %v", got.Sources)
