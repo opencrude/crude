@@ -3,13 +3,13 @@ package provider
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"crude/internal/providersim"
 )
 
 func TestOllamaEncodeRequestTextAndOptions(t *testing.T) {
@@ -79,14 +79,34 @@ func TestOllamaEncodeRequestMultipartImagesStripped(t *testing.T) {
 	}
 }
 
+func ollamaReplyClient(t *testing.T, turn providersim.Turn, mislabel bool) *Client {
+	t.Helper()
+	sim := providersim.New(t)
+	sim.Script(turn)
+	p := FromPreset("ollama-cloud", "key", sim.BaseURL(providersim.Ollama))
+	var opts []ClientOption
+	if mislabel {
+		// Keep the real NDJSON bytes; change only the gateway's Content-Type.
+		transport := &http.Transport{}
+		t.Cleanup(transport.CloseIdleConnections)
+		opts = append(opts, WithHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			resp, err := transport.RoundTrip(r)
+			if err == nil {
+				resp.Header.Set("Content-Type", "application/json")
+			}
+			return resp, err
+		})}))
+	}
+	c, err := p.Client(opts...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
 func TestOllamaDecodeResponseTextUsageAndDoneReason(t *testing.T) {
-	s := &OllamaStandard{}
-	resp, err := s.DecodeResponse([]byte(`{
-		"model":"llama3",
-		"message":{"role":"assistant","content":"hi there"},
-		"done":true,"done_reason":"stop",
-		"prompt_eval_count":7,"eval_count":3
-	}`))
+	client := ollamaReplyClient(t, providersim.Text("hi there").WithUsage(providersim.Usage{Input: 7, Output: 3}), false)
+	resp, err := client.Complete(t.Context(), &ChatRequest{Model: "llama3", Messages: []ChatMessage{NewTextMessage("user", "hi")}})
 	if err != nil {
 		t.Fatalf("DecodeResponse: %v", err)
 	}
@@ -135,18 +155,20 @@ func TestOllamaDecodeResponseErrorPropagates(t *testing.T) {
 }
 
 func TestOllamaStreamDecoderAccumulatesAndTerminates(t *testing.T) {
-	s := &OllamaStandard{}
-	dec := s.NewStreamDecoder()
-	lines := []string{
-		`{"model":"llama3","message":{"role":"assistant","content":"Hel"}}`,
-		`{"model":"llama3","message":{"role":"assistant","content":"lo"}}`,
-		`{"model":"llama3","message":{"role":"assistant","content":""},"done":true,"done_reason":"stop","prompt_eval_count":4,"eval_count":2}`,
+	client := ollamaReplyClient(t, providersim.Turn{}.WithTextDeltas("Hel", "lo").WithUsage(providersim.Usage{Input: 4, Output: 2}), false)
+	stream, err := client.Stream(t.Context(), &ChatRequest{Model: "llama3", Messages: []ChatMessage{NewTextMessage("user", "hi")}})
+	if err != nil {
+		t.Fatal(err)
 	}
+	defer stream.Close()
 	var content strings.Builder
 	var finish string
 	var usage *TokenUsage
-	for _, line := range lines {
-		update, err := dec.Decode(StreamEvent{Data: []byte(line)})
+	for {
+		update, err := stream.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
 		if err != nil {
 			t.Fatalf("decode line: %v", err)
 		}
@@ -280,22 +302,7 @@ func TestOllamaStreamThroughMislabeledJSONContent(t *testing.T) {
 	// End-to-end regression for the reported failure: an Ollama-compatible
 	// gateway streams NDJSON but declares Content-Type "application/json".
 	// The framing sniff must route by body shape, not by header.
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, strings.Join([]string{
-			`{"model":"llama3","message":{"role":"assistant","content":"He"}}`,
-			`{"model":"llama3","message":{"role":"assistant","content":"y"}}`,
-			`{"model":"llama3","message":{"role":"assistant","content":""},"done":true,"done_reason":"stop","prompt_eval_count":3,"eval_count":2}`,
-			"",
-		}, "\n"))
-	}))
-	defer server.Close()
-
-	p := FromPreset("ollama-cloud", "key", server.URL)
-	client, err := p.Client()
-	if err != nil {
-		t.Fatalf("Client: %v", err)
-	}
+	client := ollamaReplyClient(t, providersim.Turn{}.WithTextDeltas("He", "y").WithUsage(providersim.Usage{Input: 3, Output: 2}), true)
 	stream, err := client.Stream(t.Context(), &ChatRequest{Model: "llama3", Messages: []ChatMessage{NewTextMessage("user", "hi")}})
 	if err != nil {
 		t.Fatalf("Stream: %v", err)
@@ -422,22 +429,7 @@ func TestOllamaEncodeRequestToolCallsUseObjectArguments(t *testing.T) {
 func TestOllamaStreamThroughMislabeledJSONWithToolCalls(t *testing.T) {
 	// Full pipeline: ollama.com labels its NDJSON stream "application/json"
 	// and the model answers with a tool call carrying object arguments.
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, strings.Join([]string{
-			`{"model":"glm-5.3-flash","message":{"role":"assistant","content":"","thinking":"need the file"}}`,
-			`{"model":"glm-5.3-flash","message":{"role":"assistant","content":"","tool_calls":[{"function":{"name":"read_file","arguments":{"path":"a.go"}}}]}}`,
-			`{"model":"glm-5.3-flash","message":{"role":"assistant","content":""},"done":true,"done_reason":"stop","prompt_eval_count":5,"eval_count":7}`,
-			"",
-		}, "\n"))
-	}))
-	defer server.Close()
-
-	p := FromPreset("ollama-cloud", "key", server.URL)
-	client, err := p.Client()
-	if err != nil {
-		t.Fatalf("Client: %v", err)
-	}
+	client := ollamaReplyClient(t, providersim.Reasoning("need the file", "", "").WithTools(providersim.ToolCall{Name: "read_file", Arguments: `{"path":"a.go"}`}).WithUsage(providersim.Usage{Input: 5, Output: 7}), true)
 	stream, err := client.Stream(t.Context(), &ChatRequest{Model: "glm-5.3-flash", Messages: []ChatMessage{NewTextMessage("user", "hi")}})
 	if err != nil {
 		t.Fatalf("Stream: %v", err)

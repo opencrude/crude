@@ -680,8 +680,11 @@ func (s *onceState) message(value any, placeholder bool) error {
 	if !ok || item["type"] != "message" || item["role"] != "assistant" {
 		return errOnceContent
 	}
-	if err := onceKeys(item, "id|type|role|status|content"); err != nil {
+	if err := onceKeys(item, "id|type|role|status|phase|content"); err != nil {
 		return err
+	}
+	if phase := item["phase"]; phase != nil && phase != "final_answer" {
+		return errOnceContent // Commentary is not a final text insertion.
 	}
 	if err := s.identity(item, "id", &s.itemID); err != nil {
 		return err
@@ -718,9 +721,10 @@ func (s *onceState) responses(event string, m map[string]any) error {
 		if err := s.usage(response, true); err != nil {
 			return err
 		}
-		if err := onceKeys(response, "id|object|created_at|completed_at|status|error|incomplete_details|output|usage|service_tier|background|instructions|max_output_tokens|max_tool_calls|model|parallel_tool_calls|previous_response_id|reasoning|store|temperature|text|tool_choice|tools|top_logprobs|top_p|truncation|metadata|user|safety_identifier|prompt_cache_key|prompt_cache_retention|prompt|conversation|context_management"); err != nil {
-			return err
-		}
+		// Only output items can supply text. Inert response metadata (for
+		// example access_programs, required by OpenAPI's Response schema)
+		// may grow without changing the meaning of the answer. The strict
+		// event, item, identity, usage and terminal checks still apply.
 		if err := s.identity(response, "id", &s.responseID); err != nil {
 			return err
 		}
@@ -813,6 +817,9 @@ func (s *onceState) responses(event string, m map[string]any) error {
 			}
 		} else if err := s.message(output[0], false); err != nil {
 			return err
+		}
+		if text := response["output_text"]; text != nil && text != s.text.String() {
+			return errOnceContent // An aggregate may corroborate, not replace, the actual output.
 		}
 		s.complete = true
 	case "error":

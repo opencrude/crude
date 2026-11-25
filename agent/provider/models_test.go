@@ -6,9 +6,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"crude/internal/providersim"
 )
 
 func TestListModelsPaginatesAnthropic(t *testing.T) {
+	// The simulator's inventory fits on one page. A genuine has_more/after_id
+	// exchange is the subject of this test, not just two visible model IDs.
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
@@ -61,17 +65,18 @@ func TestListModelsPaginatesAnthropic(t *testing.T) {
 }
 
 func TestListModelsMapsUnsupportedAndUnauthorized(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.Header.Get("Authorization") {
-		case "Bearer unsupported":
-			http.Error(w, `{}`, http.StatusNotFound)
-		default:
-			http.Error(w, `{}`, http.StatusUnauthorized)
-		}
-	}))
-	defer server.Close()
-
-	unsupported := &Provider{ID: "x", BaseURL: server.URL, APIKey: "unsupported", StandardName: "openai"}
+	sim := providersim.New(t, providersim.WithCredentialModels(providersim.Chat, "valid", providersim.Model{ID: "listed"}))
+	// A missing model-list route is distinct from a private list's auth error.
+	base := mountTestWire(t, sim.BaseURL(providersim.Chat), func(next http.Handler) http.Handler {
+		return http.StripPrefix("/v1", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("Authorization") == "Bearer unsupported" && r.URL.Path == "/models" {
+				http.NotFound(w, r)
+				return
+			}
+			next.ServeHTTP(w, r)
+		}))
+	}) + "/v1"
+	unsupported := &Provider{ID: "x", BaseURL: base, APIKey: "unsupported", StandardName: "openai"}
 	client, err := unsupported.Client()
 	if err != nil {
 		t.Fatalf("Client: %v", err)
@@ -80,7 +85,7 @@ func TestListModelsMapsUnsupportedAndUnauthorized(t *testing.T) {
 		t.Fatalf("404 error = %v, want ErrModelsUnsupported", err)
 	}
 
-	unauthorized := &Provider{ID: "x", BaseURL: server.URL, APIKey: "bad", StandardName: "openai"}
+	unauthorized := &Provider{ID: "x", BaseURL: base, APIKey: "bad", StandardName: "openai"}
 	client, err = unauthorized.Client()
 	if err != nil {
 		t.Fatalf("Client: %v", err)

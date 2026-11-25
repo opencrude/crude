@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,8 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	"crude/internal/providersim"
 )
 
 const onceStop = "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"
@@ -41,6 +44,22 @@ func onceRun(t *testing.T, protocol, wire string, capBytes int) (TextOnceResult,
 	return result, err
 }
 
+func onceSim(t *testing.T, wire providersim.Wire, turn providersim.Turn, capBytes int) (TextOnceResult, error) {
+	t.Helper()
+	srv := providersim.New(t)
+	srv.Script(turn)
+	p, req := onceFixture(srv.BaseURL(wire))
+	if wire == providersim.Responses {
+		p.StandardName = "openai-responses"
+	}
+	req.MaxOutputBytes = capBytes
+	result, err := p.CompleteTextOnce(t.Context(), req)
+	if !result.Accepted || (err != nil && result.UsageComplete) || len(srv.Requests()) != 1 {
+		t.Fatalf("invalid one-shot accounting: %+v err=%v", result, err)
+	}
+	return result, err
+}
+
 func onceTerminal(usage string) string {
 	return `data: {"type":"response.completed","response":{"status":"completed","output":[{"id":"m","type":"message","role":"assistant","content":[{"type":"output_text","text":"literal"}]}]` + usage + "}}\n\n"
 }
@@ -63,15 +82,36 @@ func TestTextOnceIndependentOriginalWireNegatives(t *testing.T) {
 func TestTextOnceUsagePresenceAndFailure(t *testing.T) {
 	// Literal independent oracle: empty usage must differ from explicit full zero.
 	for _, protocol := range []string{"openai", "openai-responses"} {
+		wire := providersim.Chat
+		if protocol == "openai-responses" {
+			wire = providersim.Responses
+		}
+		for _, tc := range []struct {
+			name string
+			turn providersim.Turn
+			want *providersim.Usage
+		}{
+			{"absent", providersim.Text("literal").WithoutUsage(), nil},
+			{"zero", providersim.Text("literal").WithUsage(providersim.Usage{}), &providersim.Usage{}},
+			{"full", providersim.Text("literal").WithUsage(providersim.Usage{Input: 7, Output: 2}), &providersim.Usage{Input: 7, Output: 2}},
+		} {
+			t.Run(protocol+"/"+tc.name, func(t *testing.T) {
+				got, err := onceSim(t, wire, tc.turn, 128)
+				if err != nil || got.Text != "literal" || (got.Usage != nil) != (tc.want != nil) || got.UsageComplete != (tc.want != nil) {
+					t.Fatalf("usage presence: %+v %v", got, err)
+				}
+				if tc.want != nil && (got.Usage.PromptTokens != tc.want.Input || got.Usage.CompletionTokens != tc.want.Output) {
+					t.Fatalf("wrong reported tokens: %+v", got.Usage)
+				}
+			})
+		}
 		for _, tc := range []struct {
 			name, usage            string
 			present, complete, bad bool
 		}{
-			{"absent", "", false, false, false}, {"null", "null", false, false, false},
+			{"null", "null", false, false, false},
 			{"empty", "{}", true, false, false},
 			{"partial-input", `{"prompt_tokens":7}`, true, false, false},
-			{"zero", `{"prompt_tokens":0,"completion_tokens":0}`, true, true, false},
-			{"full", `{"prompt_tokens":7,"completion_tokens":2}`, true, true, false},
 			{"null-scalar", `{"prompt_tokens":null,"completion_tokens":0}`, true, false, true},
 			{"negative", `{"prompt_tokens":-1,"completion_tokens":0}`, true, false, true},
 			{"fraction", `{"prompt_tokens":1.5,"completion_tokens":0}`, true, false, true},
@@ -93,9 +133,6 @@ func TestTextOnceUsagePresenceAndFailure(t *testing.T) {
 				got, err := onceRun(t, protocol, wire, 128)
 				if (err != nil) != tc.bad || (got.Usage != nil) != tc.present || got.UsageComplete != tc.complete {
 					t.Fatalf("unreported token scalars became indistinguishable from complete explicit zero usage: %+v %v", got, err)
-				}
-				if tc.name == "full" && (got.Usage.PromptTokens != 7 || got.Usage.CompletionTokens != 2) {
-					t.Fatalf("observations changed: %+v", got)
 				}
 			})
 		}
@@ -146,19 +183,29 @@ func TestTextOnceStrictWire(t *testing.T) {
 
 func TestTextOnceBoundsAndLiteralUnicode(t *testing.T) {
 	for _, tc := range []struct {
+		input, want string
+		cap         int
+		bad         bool
+	}{
+		{"λ😀", "λ😀", 6, false}, {"λ😀", "λ", 4, true}, {"", "", 128, false},
+	} {
+		got, err := onceSim(t, providersim.Chat, providersim.Text(tc.input), tc.cap)
+		if (err != nil) != tc.bad || got.Text != tc.want || !utf8.ValidString(got.Text) {
+			t.Fatalf("bounded literal: %+v err=%v", got, err)
+		}
+	}
+	// The Unicode fixture below asserts a surrogate pair's original JSON spelling.
+	for _, tc := range []struct {
 		wire string
 		cap  int
 		text string
 		bad  bool
 	}{
 		{`data: {"choices":[{"delta":{"content":" \r\nλ\ud83d\ude00\\ud800�"},"finish_reason":"stop"}]}` + "\n\n" + onceDone, 128, " \r\nλ😀\\ud800�", false},
-		{`data: {"choices":[{"delta":{"content":"λ😀"},"finish_reason":"stop"}]}` + "\n\n" + onceDone, 6, "λ😀", false},
-		{`data: {"choices":[{"delta":{"content":"λ😀"},"finish_reason":"stop"}]}` + "\n\n" + onceDone, 4, "λ", true},
 		{strings.Repeat(": "+strings.Repeat("a", 999)+"\n", 34) + "\n" + onceStop + onceDone, 128, "", true},
 		{strings.Repeat(":"+strings.Repeat("a", 1020)+"\n\n", 1026) + onceStop + onceDone, 128, "", true},
 		{strings.Repeat("data: {\"choices\":[{\"delta\":{}}]}\n\n", 2048) + onceStop + onceDone, 128, "", true},
 		{": \xff\n\n" + onceStop + onceDone, 128, "", true},
-		{onceStop + onceDone, 128, "", false},
 	} {
 		got, err := onceRun(t, "openai", tc.wire, tc.cap)
 		if (err != nil) != tc.bad || got.Text != tc.text || !utf8.ValidString(got.Text) {
@@ -173,14 +220,13 @@ func TestTextOnceBoundsAndLiteralUnicode(t *testing.T) {
 }
 
 func TestTextOnceResponsesStreamAndRefusals(t *testing.T) {
-	wire := `data: {"type":"response.output_item.added","output_index":0,"item":{"id":"m","type":"message","role":"assistant","content":[]}}` + "\n\n" +
-		`data: {"type":"response.output_text.delta","item_id":"m","content_index":0,"delta":"literal"}` + "\n\n" +
-		`data: {"type":"response.output_text.done","text":"literal"}` + "\n\n" + onceTerminal(`,"usage":{"input_tokens":0,"output_tokens":0}`)
-	got, err := onceRun(t, "openai-responses", wire, 128)
+	got, err := onceSim(t, providersim.Responses, providersim.Turn{}.WithTextDeltas("lit", "eral").WithUsage(providersim.Usage{}), 128)
 	if err != nil || got.Text != "literal" || !got.UsageComplete {
 		t.Fatalf("responses stream: %+v %v", got, err)
 	}
 	for _, unsafe := range []string{
+		strings.Replace(onceTerminal(""), `"status":"completed"`, `"status":"completed","output_text":"different"`, 1),
+		strings.Replace(onceTerminal(""), `"role":"assistant"`, `"role":"assistant","phase":"commentary"`, 1),
 		strings.Replace(onceTerminal(""), `"message"`, `"reasoning"`, 1),
 		strings.Replace(onceTerminal(""), `"message"`, `"web_search_call"`, 1),
 		strings.Replace(onceTerminal(""), `"content":[`, `"content":[{"type":"output_text","text":"extra"},`, 1),
@@ -205,42 +251,52 @@ func TestTextOnceRequestAndSingleAttempt(t *testing.T) {
 				var calls, redirected atomic.Int32
 				target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { redirected.Add(1) }))
 				defer target.Close()
-				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					calls.Add(1)
-					path := "/mount/chat/completions"
-					if protocol == "openai-responses" {
-						path = "/mount/responses"
-					}
-					if r.Method != "POST" || r.URL.Path != path || r.Header.Get("Authorization") != "Bearer fixture-key" || r.Header.Get("X-Fixture") != "kept" || r.Header.Get("Idempotency-Key") != "" {
-						t.Errorf("request %s %s %v", r.Method, r.URL, r.Header)
-					}
-					var body map[string]any
-					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-						t.Error(err)
-					}
-					want := `{"model":"literal-model","stream":true,"max_tokens":97,"tool_choice":"none","stream_options":{"include_usage":true},"messages":[{"role":"system","content":" system \r\n"},{"role":"user","content":" input\t\n"}]}`
-					if protocol == "openai-responses" {
-						want = `{"model":"literal-model","stream":true,"max_output_tokens":97,"tool_choice":"none","store":true,"input":[{"role":"system","content":[{"type":"input_text","text":" system \r\n"}]},{"role":"user","content":[{"type":"input_text","text":" input\t\n"}]}]}`
-					}
-					var expected map[string]any
-					if err := json.Unmarshal([]byte(want), &expected); err != nil {
-						t.Fatal(err)
-					}
-					if !reflect.DeepEqual(body, expected) {
-						t.Errorf("body got=%#v want=%#v", body, expected)
-					}
-					w.Header().Set("Content-Type", "text/event-stream")
-					w.Header().Set("Location", target.URL)
-					w.Header().Set("Retry-After", "300")
-					w.WriteHeader(status)
-					wire := onceStop + onceDone
-					if protocol == "openai-responses" {
-						wire = onceTerminal("")
-					}
-					_, _ = io.WriteString(w, wire)
-				}))
-				defer srv.Close()
-				p, req := onceFixture(srv.URL + "/mount")
+				wire, path := providersim.Chat, "/mount/chat/completions"
+				if protocol == "openai-responses" {
+					wire, path = providersim.Responses, "/mount/responses"
+				}
+				sim := providersim.New(t)
+				if kind, ok := map[int]providersim.FaultKind{503: providersim.Overload, 429: providersim.RateLimit, 404: providersim.ModelNotFound}[status]; ok {
+					sim.Script(providersim.HTTPError(kind).WithRetryHint(providersim.RetryAfterSeconds(300)))
+				} else if status == 200 {
+					sim.Script(providersim.Text("literal"))
+				}
+				want := `{"model":"literal-model","stream":true,"max_tokens":97,"tool_choice":"none","stream_options":{"include_usage":true},"messages":[{"role":"system","content":" system \r\n"},{"role":"user","content":" input\t\n"}]}`
+				if protocol == "openai-responses" {
+					want = `{"model":"literal-model","stream":true,"max_output_tokens":97,"tool_choice":"none","store":true,"input":[{"role":"system","content":[{"type":"input_text","text":" system \r\n"}]},{"role":"user","content":[{"type":"input_text","text":" input\t\n"}]}]}`
+				}
+				var expected map[string]any
+				if err := json.Unmarshal([]byte(want), &expected); err != nil {
+					t.Fatal(err)
+				}
+				base := mountTestWire(t, sim.BaseURL(wire), func(next http.Handler) http.Handler {
+					return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						calls.Add(1)
+						if r.Method != "POST" || r.URL.Path != path || r.Header.Get("Authorization") != "Bearer fixture-key" || r.Header.Get("X-Fixture") != "kept" || r.Header.Get("Idempotency-Key") != "" {
+							t.Errorf("request %s %s %v", r.Method, r.URL, r.Header)
+						}
+						raw, err := io.ReadAll(r.Body)
+						if err != nil {
+							t.Error(err)
+							return
+						}
+						var body map[string]any
+						if err := json.Unmarshal(raw, &body); err != nil || !reflect.DeepEqual(body, expected) {
+							t.Errorf("body got=%#v want=%#v err=%v", body, expected, err)
+						}
+						w.Header().Set("Location", target.URL)
+						if status == 200 || status/100 == 3 {
+							w.Header().Set("Retry-After", "300")
+						}
+						if status/100 == 3 {
+							w.WriteHeader(status)
+							return
+						}
+						r.Body = io.NopCloser(bytes.NewReader(raw))
+						http.StripPrefix("/mount", next).ServeHTTP(w, r)
+					})
+				}) + "/mount"
+				p, req := onceFixture(base)
 				p.StandardName, p.headers = protocol, map[string]string{"X-Fixture": "kept"}
 				p.SetDialSettings(DialSettings{MaxAttempts: 6})
 				got, err := p.CompleteTextOnce(t.Context(), req)
@@ -285,6 +341,8 @@ func TestTextOnceAdmission(t *testing.T) {
 }
 
 func TestTextOncePacedCancellation(t *testing.T) {
+	// This gateway sends observed usage on the unfinished text delta. A normal
+	// Chat usage chunk arrives after the finish choice; that is too late here.
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	var calls atomic.Int32

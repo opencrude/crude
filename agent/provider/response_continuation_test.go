@@ -10,6 +10,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"crude/internal/providersim"
 )
 
 func continuationFixture(t *testing.T, endpoint string) (*Provider, ChatRequest) {
@@ -195,19 +197,50 @@ func TestResponsesContinuationOnlyAdoptsCompletedStoredResponses(t *testing.T) {
 }
 
 func TestResponsesContinuationTracksOfficialStreamingLifecycle(t *testing.T) {
-	decoder := (&OpenAIResponsesStandard{}).NewStreamDecoder()
-	for _, event := range []string{
-		`{"type":"response.created","sequence_number":0,"response":{"id":"resp-official","status":"in_progress","store":true,"output":[]}}`,
-		`{"type":"response.in_progress","sequence_number":1,"response":{"id":"resp-official","status":"in_progress","store":true,"output":[]}}`,
-	} {
-		update, err := decoder.Decode(StreamEvent{Data: []byte(event)})
-		if err != nil || update.ContinuationID != "" || update.Done {
-			t.Fatalf("nonterminal lifecycle event was not passive: %+v err=%v", update, err)
-		}
+	sim := providersim.New(t)
+	sim.Script(providersim.Text("done"))
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, sim.BaseURL(providersim.Responses)+"/responses", strings.NewReader(`{"model":"m","stream":true,"store":true,"input":"question"}`))
+	if err != nil {
+		t.Fatal(err)
 	}
-	completed, err := decoder.Decode(StreamEvent{Data: []byte(`{"type":"response.completed","sequence_number":2,"response":{"id":"resp-official","status":"completed","store":true,"output":[]}}`)})
-	if err != nil || !completed.Done || completed.ContinuationID != "resp-official" || completed.ContinuationReason != "response_id_retained" {
-		t.Fatalf("official terminal event did not retain its ID: %+v err=%v", completed, err)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	reader := NewSSEReader(resp.Body)
+	decoder := (&OpenAIResponsesStandard{}).NewStreamDecoder()
+	var created string
+	for i := 0; ; i++ {
+		event, err := reader.Next()
+		if err != nil {
+			t.Fatalf("no terminal lifecycle at frame %d: %v", i, err)
+		}
+		if i < 2 {
+			want := []string{"response.created", "response.in_progress"}[i]
+			if event.Event != want {
+				t.Fatalf("frame %d: %q want %q", i, event.Event, want)
+			}
+			var v struct{ Response struct{ ID string } }
+			if err := json.Unmarshal(event.Data, &v); err != nil || v.Response.ID == "" || (i == 1 && created != v.Response.ID) {
+				t.Fatalf("lifecycle ID %q after %q: %v", v.Response.ID, created, err)
+			}
+			created = v.Response.ID
+		}
+		update, err := decoder.Decode(event)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if event.Event == "response.completed" {
+			if !update.Done || update.ContinuationID != created || update.ContinuationReason != "response_id_retained" {
+				t.Fatalf("terminal event did not retain its ID %q: %+v", created, update)
+			}
+			break
+		}
+		if update.ContinuationID != "" || update.Done {
+			t.Fatalf("nonterminal lifecycle event was not passive: %+v", update)
+		}
 	}
 }
 
@@ -245,148 +278,151 @@ func TestResponsesContinuationReportsWhyNoIDCanBeRetained(t *testing.T) {
 	}
 }
 
-func TestResponsesContinuationRecoversMissingReferenceOnce(t *testing.T) {
-	for _, streaming := range []bool{false, true} {
-		t.Run(fmt.Sprint(streaming), func(t *testing.T) {
-			requests := 0
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				requests++
-				var wire struct {
-					Previous string            `json:"previous_response_id"`
-					Input    []json.RawMessage `json:"input"`
-				}
-				if err := json.NewDecoder(r.Body).Decode(&wire); err != nil {
-					t.Error(err)
-					return
-				}
-				if requests == 1 {
-					if wire.Previous != "response-1" || len(wire.Input) != 1 {
-						t.Error("initial request was not a delta")
-					}
-					w.WriteHeader(http.StatusNotFound)
-					_, _ = fmt.Fprint(w, `{"error":{"type":"invalid_request_error","param":"previous_response_id","message":"Reference expired"}}`)
-					return
-				}
-				if wire.Previous != "" || len(wire.Input) != 4 {
-					t.Error("recovery omitted full authoritative context")
-				}
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = fmt.Fprint(w, `{"id":"response-2","status":"completed","store":true,"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}]}`)
-			}))
-			defer server.Close()
-			p, req := continuationFixture(t, server.URL)
-			client, err := p.Client(WithMaxAttempts(1))
+// Start from an actual stored patch call. The tool result is authoritative
+// local history; neither an unavailable ID nor a gateway that fails to replay
+// a stored image may drop it or execute the patch a second time.
+func storedToolContinuation(t *testing.T, sim *providersim.Server, media bool) (*Provider, ChatRequest) {
+	t.Helper()
+	fixture := continuationFixture
+	if media {
+		fixture = inlineMediaContinuationFixture
+	}
+	p, req := fixture(t, sim.BaseURL(providersim.Responses))
+	client, err := p.Client(WithMaxAttempts(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sim.Script(providersim.CallTools(providersim.ToolCall{ID: "patch", Name: "apply_patch", Arguments: "patch"}))
+	first := req
+	first.Messages = req.Messages[:2]
+	first.Tools = []ToolDef{{Type: "custom", Function: FunctionDef{Name: "apply_patch"}, Format: &ToolFormat{Type: "grammar", Syntax: "lark", Definition: `start: "patch"`}}}
+	result, err := client.Complete(t.Context(), &first)
+	if err != nil || len(result.Choices) != 1 || result.Choices[0].Message.ResponseReference == nil {
+		t.Fatalf("could not store tool reply: %+v %v", result, err)
+	}
+	msg := result.Choices[0].Message
+	if len(msg.ToolCalls) != 1 || msg.ToolCalls[0].ID != "patch" || msg.ToolCalls[0].Type != "custom" {
+		t.Fatalf("stored the wrong tool: %+v", msg.ToolCalls)
+	}
+	req.Messages[2] = msg
+	return p, req
+}
+
+const rejectedImageReplay = "Invalid 'input[1].content[1].image_url'. Expected a base64-encoded data URL with an image MIME type, but got an invalid base64-encoded value."
+
+func recoverContinuation(t *testing.T, streaming, media bool) {
+	t.Helper()
+	sim := providersim.New(t)
+	p, req := storedToolContinuation(t, sim, media)
+	previous := req.Messages[2].ResponseReference.ID
+	if media {
+		sim.Script(providersim.HTTPError(providersim.InvalidRequest).WithFaultMessage(rejectedImageReplay))
+	} else if !sim.ExpireResponse(previous) {
+		t.Fatal("could not expire the stored tool reply")
+	}
+	sim.Script(providersim.Text("done"))
+	client, err := p.Client(WithMaxAttempts(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var content strings.Builder
+	var id string
+	if streaming {
+		stream, err := client.Stream(t.Context(), &req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer stream.Close()
+		for {
+			u, err := stream.Next()
+			if err == io.EOF {
+				break
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
-			if streaming {
-				stream, err := client.Stream(t.Context(), &req)
-				if err != nil {
-					t.Fatal(err)
-				}
-				defer stream.Close()
-				update, err := stream.Next()
-				if err != nil || update.ContentDelta != "done" || update.ContinuationID != "response-2" {
-					t.Fatalf("%+v %v", update, err)
-				}
-			} else {
-				response, err := client.Complete(t.Context(), &req)
-				if err != nil || response.Choices[0].Message.ResponseReference == nil {
-					t.Fatalf("%+v %v", response, err)
-				}
+			content.WriteString(u.ContentDelta)
+			if u.ContinuationID != "" {
+				id = u.ContinuationID
 			}
-			if requests != 2 || req.ResponseContinuationScope == "" {
-				t.Fatal("recovery did not stay bounded and request-owned")
+		}
+	} else {
+		response, err := client.Complete(t.Context(), &req)
+		if err != nil || len(response.Choices) != 1 || response.Choices[0].Message.ResponseReference == nil {
+			t.Fatalf("recovery: %+v %v", response, err)
+		}
+		msg := response.Choices[0].Message
+		content.WriteString(msg.ContentString())
+		id = msg.ResponseReference.ID
+	}
+	if id == "" || id == previous || content.String() != "done" {
+		t.Fatalf("recovered text=%q id=%q", content.String(), id)
+	}
+	calls := sim.Requests()
+	if len(calls) != 3 || req.ResponseContinuationScope == "" {
+		t.Fatalf("recovery did not stay bounded and request-owned: %d calls including the seed", len(calls))
+	}
+	for _, r := range calls {
+		if r.Method != "POST" || r.Path != "/v1/responses" || r.Header.Get("Authorization") != "Bearer key" {
+			t.Error("wrong continuation route or credential")
+		}
+	}
+	first := calls[1]
+	if first.PreviousResponseID != previous || len(first.Messages) != 1 || len(first.Messages[0].Parts) != 1 || first.Messages[0].Parts[0].Kind != providersim.PartToolResult || first.Messages[0].Parts[0].CallID != "patch" || first.Messages[0].Parts[0].Text != "written" {
+		t.Error("initial request was not the exact tool-result delta")
+	}
+	retry := calls[2]
+	var wire struct {
+		Input []json.RawMessage `json:"input"`
+	}
+	if err := json.Unmarshal(retry.Raw, &wire); err != nil || retry.PreviousResponseID != "" || len(wire.Input) != 4 || retry.Stream != streaming {
+		t.Fatalf("recovery omitted full authoritative context: %d items, previous=%q err=%v", len(wire.Input), retry.PreviousResponseID, err)
+	}
+	// Check the server, not just the spelling of an ID invented by the client.
+	lookup, err := http.NewRequestWithContext(t.Context(), http.MethodGet, sim.BaseURL(providersim.Responses)+"/responses/"+id, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := http.DefaultClient.Do(lookup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stored.Body.Close()
+	if stored.StatusCode != http.StatusOK {
+		t.Fatalf("recovered ID cannot be retrieved: HTTP %d", stored.StatusCode)
+	}
+	if media {
+		var user struct {
+			Content []struct {
+				Type     string
+				ImageURL string `json:"image_url"`
 			}
-		})
+		}
+		if err := json.Unmarshal(wire.Input[1], &user); err != nil || len(user.Content) != 2 || user.Content[1].Type != "input_image" || user.Content[1].ImageURL != testPNGDataURL() {
+			t.Fatalf("authoritative retry lost image: %#v (%v)", user.Content, err)
+		}
+		if plan := PlanResponseContinuation(&req); plan.Reason != "media_replay_limitation_learned" || plan.PreviousResponseID != "" {
+			t.Fatalf("connection limitation was not learned: %+v", plan)
+		}
+	}
+}
+
+func TestResponsesContinuationRecoversMissingReferenceOnce(t *testing.T) {
+	for _, streaming := range []bool{false, true} {
+		t.Run(fmt.Sprint(streaming), func(t *testing.T) { recoverContinuation(t, streaming, false) })
 	}
 }
 
 func TestResponsesContinuationRecoversInlineMediaReplayAndLearns(t *testing.T) {
 	for _, streaming := range []bool{false, true} {
-		t.Run(fmt.Sprint(streaming), func(t *testing.T) {
-			requests := 0
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				requests++
-				var wire struct {
-					Previous string            `json:"previous_response_id"`
-					Input    []json.RawMessage `json:"input"`
-				}
-				if err := json.NewDecoder(r.Body).Decode(&wire); err != nil {
-					t.Error(err)
-					return
-				}
-				if requests == 1 {
-					if wire.Previous != "response-1" || len(wire.Input) != 1 {
-						t.Errorf("first request was not the documented delta: previous=%q input=%d", wire.Previous, len(wire.Input))
-					}
-					w.WriteHeader(http.StatusBadRequest)
-					_, _ = fmt.Fprint(w, `{"error":{"type":"invalid_request_error","message":"Invalid 'input[1].content[1].image_url'. Expected a base64-encoded data URL with an image MIME type, but got an invalid base64-encoded value."}}`)
-					return
-				}
-				if wire.Previous != "" || len(wire.Input) != 4 {
-					t.Errorf("recovery was not a full upload: previous=%q input=%d", wire.Previous, len(wire.Input))
-				}
-				var user struct {
-					Content []struct {
-						Type     string `json:"type"`
-						ImageURL string `json:"image_url"`
-					} `json:"content"`
-				}
-				if err := json.Unmarshal(wire.Input[1], &user); err != nil {
-					t.Error(err)
-					return
-				}
-				if len(user.Content) != 2 || user.Content[1].Type != "input_image" ||
-					user.Content[1].ImageURL != testPNGDataURL() {
-					t.Errorf("authoritative retry lost image: %#v", user.Content)
-				}
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = fmt.Fprint(w, `{"id":"response-2","status":"completed","store":true,"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}]}`)
-			}))
-			defer server.Close()
-
-			p, req := inlineMediaContinuationFixture(t, server.URL)
-			client, err := p.Client(WithMaxAttempts(1))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if streaming {
-				stream, err := client.Stream(t.Context(), &req)
-				if err != nil {
-					t.Fatal(err)
-				}
-				defer stream.Close()
-				update, err := stream.Next()
-				if err != nil || update.ContentDelta != "done" {
-					t.Fatalf("stream recovery = %+v err=%v", update, err)
-				}
-			} else {
-				response, err := client.Complete(t.Context(), &req)
-				if err != nil || response.Choices[0].Message.ContentString() != "done" {
-					t.Fatalf("complete recovery = %+v err=%v", response, err)
-				}
-			}
-			if requests != 2 {
-				t.Fatalf("adaptive recovery requests=%d want=2", requests)
-			}
-			if plan := PlanResponseContinuation(&req); plan.Reason != "media_replay_limitation_learned" || plan.PreviousResponseID != "" {
-				t.Fatalf("connection limitation was not learned: %+v", plan)
-			}
-		})
+		t.Run(fmt.Sprint(streaming), func(t *testing.T) { recoverContinuation(t, streaming, true) })
 	}
 }
 
 func TestResponsesContinuationMediaReplayRecoveryCanBeDisabled(t *testing.T) {
-	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requests++
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = fmt.Fprint(w, `{"error":{"type":"invalid_request_error","message":"Invalid 'input[1].content[1].image_url'. Expected a base64-encoded data URL, but got an invalid base64-encoded value."}}`)
-	}))
-	defer server.Close()
-
-	p, req := inlineMediaContinuationFixture(t, server.URL)
+	sim := providersim.New(t)
+	p, req := storedToolContinuation(t, sim, true)
+	sim.Script(providersim.HTTPError(providersim.InvalidRequest).WithFaultMessage(rejectedImageReplay))
 	off := false
 	p.SetProtocolSettings(&ProtocolSettings{MediaReplayRecovery: &off})
 	client, err := p.Client(WithMaxAttempts(1))
@@ -396,8 +432,8 @@ func TestResponsesContinuationMediaReplayRecoveryCanBeDisabled(t *testing.T) {
 	if _, err := client.Complete(t.Context(), &req); err == nil {
 		t.Fatal("disabled recovery accepted the gateway error")
 	}
-	if requests != 1 {
-		t.Fatalf("disabled recovery requests=%d want=1", requests)
+	if requests := sim.Requests(); len(requests) != 2 || requests[1].PreviousResponseID != req.Messages[2].ResponseReference.ID {
+		t.Fatalf("disabled recovery changed or repeated its initial delta (%d calls incl. seed)", len(requests))
 	}
 }
 
