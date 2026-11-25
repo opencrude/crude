@@ -3,6 +3,7 @@ package chatprojection
 import (
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -218,19 +219,23 @@ func livePlan(p *activity.Plan) bool { return p != nil && p.Status != "paused" }
 
 // compactPlanLine keeps full plan detail out of the fixed status band.
 func compactPlanLine(p *activity.Plan) PaintLine {
-	var step *activity.Step
-	for i := range p.Current {
-		if p.Current[i].Status == "in_progress" || p.Current[i].Status == "" {
-			step = &p.Current[i]
-			break
+	var numbers []string
+	var task string
+	for _, step := range p.Current {
+		if step.Status == "in_progress" || step.Status == "" {
+			if len(numbers) == 0 {
+				task = step.Text
+			}
+			numbers = append(numbers, strconv.Itoa(step.Number))
 		}
 	}
-	if step == nil {
-		step = p.Next
+	if len(numbers) == 0 && p.Next != nil {
+		numbers = append(numbers, strconv.Itoa(p.Next.Number))
+		task = p.Next.Text
 	}
 	label := "Plan ready"
-	if step != nil {
-		label = fmt.Sprintf("%d/%d %s", step.Number, p.Total, stripText(step.Text))
+	if len(numbers) != 0 {
+		label = fmt.Sprintf("%s/%d %s", strings.Join(numbers, ","), p.Total, stripText(task))
 	}
 	return PaintLine{Spans: []RowSpan{{Text: label, Role: ui.ColorActivityText}}}
 }

@@ -62,13 +62,15 @@ func TestActivityStripPacksThenRotatesPlanFactsInOrder(t *testing.T) {
 	var strip ActivityStrip
 	view := statuscenter.AgentActivityView{Active: true, Thinking: "**Inspecting the renderer and state ownership**", ThinkingDisplay: reasoning.Display{Kind: reasoning.Summary, BlockID: "one"}, SuccessfulCalls: 8, CallsKnown: true,
 		Status: statuscenter.AgentStatusSnapshot{Ref: statuscenter.ResourceRef{ID: "owner"}, Phase: statuscenter.AgentThinking},
-		Plan:   &activity.Plan{ID: "plan", Status: "active", Total: 4, Completed: 1, Objective: "Repair activity ownership", Current: []activity.Step{{Number: 2, Text: "Implement the projector"}}, Next: &activity.Step{Number: 3, Text: "Run tests"}}}
+		Plan: &activity.Plan{ID: "plan", Status: "active", Total: 4, Completed: 1, Objective: "Repair activity ownership",
+			Current: []activity.Step{{Number: 2, Status: "in_progress", Text: "Implement the projector"}, {Number: 4, Status: "in_progress", Text: "Update the guide"}},
+			Next:    &activity.Step{Number: 3, Text: "Run tests"}}}
 	strip.Update(view, 48, th, tokens)
 	first := strip.Line(1000).PlainText()
 	if !strings.Contains(first, "Inspecting the renderer") || strings.HasPrefix(first, "8") {
 		t.Fatalf("wrong priority: %s", first)
 	}
-	if next := strip.Line(7000).PlainText(); next != "2/4 Implement the projector" {
+	if next := strip.Line(7000).PlainText(); next != "2,4/4 Implement the projector" {
 		t.Fatalf("active step lost: %s", next)
 	}
 	if next := strip.Line(13000).PlainText(); next != first {
@@ -77,7 +79,7 @@ func TestActivityStripPacksThenRotatesPlanFactsInOrder(t *testing.T) {
 	// Transport deltas must not continually restart rotation and starve plans.
 	view.Thinking += "."
 	strip.Update(view, 48, th, tokens)
-	if line := strip.Line(19000).PlainText(); !strings.Contains(line, "2/4 Implement the projector") {
+	if line := strip.Line(19000).PlainText(); !strings.Contains(line, "2,4/4 Implement the projector") {
 		t.Fatalf("token update starved plan: %s", line)
 	}
 	// New semantic blocks preempt secondary information immediately.
@@ -90,8 +92,13 @@ func TestActivityStripPacksThenRotatesPlanFactsInOrder(t *testing.T) {
 	if len(strip.pages) != 1 {
 		t.Fatalf("wide line wasted space on %d pages", len(strip.pages))
 	}
-	if text := strip.Line(32000).PlainText(); !strings.Contains(text, "2/4 Implement the projector") || strings.Contains(text, "turns") {
+	if text := strip.Line(32000).PlainText(); !strings.Contains(text, "2,4/4 Implement the projector") || strings.Contains(text, "turns") {
 		t.Fatalf("wide packing=%s", text)
+	}
+	view.Thinking = ""
+	strip.Update(view, 11, th, tokens)
+	if text := strip.Line(32000).PlainText(); text != "2,4/4 Impl…" {
+		t.Fatalf("narrow task = %q", text)
 	}
 }
 
@@ -288,6 +295,37 @@ func TestCompactPlanStatusIsOnlyCurrentOrdinalAndTask(t *testing.T) {
 	for _, frame := range []int{0, 6100, 18000} {
 		if got := strip.Line(frame).PlainText(); got != "3/5 Task name" {
 			t.Fatalf("compact task = %q", got)
+		}
+	}
+}
+
+func TestCompactPlanStatusTracksRunningStepsAcrossRevisions(t *testing.T) {
+	th := theme.DefaultDark()
+	tokens := ui.NewTokenSet(th)
+	var strip ActivityStrip
+	running := []activity.Step{
+		{Number: 1, Status: "in_progress", Text: "Verify the parser"},
+		{Number: 2, Status: "in_progress", Text: "Check the reader"},
+		{Number: 3, Status: "in_progress", Text: "Test the writer"},
+	}
+	next := &activity.Step{Number: 4, Status: "pending", Text: "Review the results"}
+	view := statuscenter.AgentActivityView{Active: true, Status: statuscenter.AgentStatusSnapshot{Phase: statuscenter.AgentTool}}
+	for i, tc := range []struct {
+		current []activity.Step
+		next    *activity.Step
+		want    string
+	}{
+		{running, next, "1,2,3/6 Verify the parser"},
+		{[]activity.Step{running[0], running[2]}, next, "1,3/6 Verify the parser"},
+		{running[2:], next, "3/6 Test the writer"},
+		{[]activity.Step{{Number: 2, Status: "blocked"}, {Number: 3, Status: "failed"}}, next, "4/6 Review the results"},
+		{[]activity.Step{{Number: 2, Status: "blocked"}}, nil, "Plan ready"},
+	} {
+		revision := uint64(i + 1)
+		view.Plan = &activity.Plan{ID: "p", Revision: revision, Status: "active", Total: 6, Current: tc.current, Next: tc.next}
+		strip.Update(view, 80, th, tokens)
+		if got := strip.Line(0).PlainText(); got != tc.want {
+			t.Errorf("revision %d: got %q, want %q", revision, got, tc.want)
 		}
 	}
 }
