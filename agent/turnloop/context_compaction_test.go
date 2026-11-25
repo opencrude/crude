@@ -191,6 +191,19 @@ func compactionTestHistory(last provider.ChatMessage) []provider.ChatMessage {
 	}
 }
 
+// servedBy marks the model output in history as written by p's model, as a
+// conversation on that connection records it. Only such a context can be in
+// that provider's cache, so only then may Auto ask it for the checkpoint.
+func servedBy(p *provider.Provider, history []provider.ChatMessage) []provider.ChatMessage {
+	history = slices.Clone(history)
+	for i := range history {
+		if history[i].Role == "assistant" {
+			history[i].ReplayScope, history[i].ReplaySourceModel = p.ReplayScope(), p.Model
+		}
+	}
+	return history
+}
+
 func TestCompactEndsWithFreshContinuationNotHistoricalUserInput(t *testing.T) {
 	var calls atomic.Int32
 

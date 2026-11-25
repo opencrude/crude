@@ -74,21 +74,29 @@ func planResponseContinuation(req *ChatRequest, applyLearnedLimitations bool) Re
 	if req.ResponseContinuationScope == "" {
 		return ResponseContinuationPlan{Reason: "disabled"}
 	}
-	last := -1
+	// The anchor is the latest completed response with a stored ID. Output
+	// without an ID (a response cut by a stream interruption or a stop, or
+	// one written on a wire without storage) travels in the delta after it.
+	// The ID of a cut response is never stored, so it cannot be the anchor.
+	last, unanchored := -1, false
 	for i := len(req.Messages) - 1; i >= 0; i-- {
-		if req.Messages[i].Role == "assistant" {
+		if req.Messages[i].Role != "assistant" {
+			continue
+		}
+		if ref := req.Messages[i].ResponseReference; ref != nil && ref.ID != "" {
 			last = i
 			break
 		}
+		unanchored = true
 	}
 	if last < 0 {
+		if unanchored {
+			return ResponseContinuationPlan{Reason: "response_id_unavailable"}
+		}
 		return ResponseContinuationPlan{Reason: "no_completed_response"}
 	}
 	message := req.Messages[last]
 	ref := message.ResponseReference
-	if ref == nil || ref.ID == "" {
-		return ResponseContinuationPlan{Reason: "response_id_unavailable"}
-	}
 	if ref.Scope != req.ResponseContinuationScope {
 		return ResponseContinuationPlan{Reason: "connection_changed"}
 	}

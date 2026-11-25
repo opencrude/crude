@@ -672,8 +672,9 @@ steps:
 			// A connection that refused concurrent requests cannot prepare in
 			// the background beside the agent's own requests.
 			// Native compaction needs the exact boundary source on the main
-			// connection; Errand cannot prepare it ahead.
-			nativePlanned := a.Provider.NativeCompactionPlanned(a.Model)
+			// connection; Errand cannot prepare it ahead. Errand writes the
+			// checkpoint when the main model does not hold this context.
+			nativePlanned := a.Provider.NativeCompactionPlanned(a.Model) && !errandCheckpoint(a.Provider, a.Model, msgs, requested != "")
 			serial := nativePlanned || provider.SameConnection(compactionConnection, a.Provider) && provider.ConcurrencyRefused(compactionConnection, compactionModel)
 			deferCompaction := func(at int) bool {
 				if overflowPressure || activeTokens >= hardLimit {

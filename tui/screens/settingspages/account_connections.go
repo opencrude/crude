@@ -114,7 +114,7 @@ func (m *Model) protocolFieldsFor(providerID string, cfg provider.Template, pref
 		if settings != nil && settings.Compaction != "" {
 			method = settings.Compaction
 		}
-		hint := "Auto tries the provider first, then Errand or this model."
+		hint := "Auto tries the provider first. /compact and model changes use Errand."
 		if options.NativeCompaction == "" {
 			hint = "No native compaction here. Auto uses Errand or this model."
 		}

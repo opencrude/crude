@@ -304,8 +304,9 @@ func (a *Agent) compactSource(ctx context.Context, msgs, source []provider.ChatM
 	if explicit {
 		a.checkpointRoute.clear(main)
 	}
+	errand := errandCheckpoint(main, targetModel, msgs, explicit)
 	rejection := a.checkpointRoute.current(main)
-	if main != nil && main.UsesNativeCompaction() && rejection == nil {
+	if main != nil && main.UsesNativeCompaction() && rejection == nil && !errand {
 		owner := NewAgent(main, targetModel, a.logger)
 		owner.MaxOutputTokens = a.CompactionTargetOutput
 		// Reading the checkpoint back is a normal request of the serving model,
@@ -389,7 +390,7 @@ func (a *Agent) compactSource(ctx context.Context, msgs, source []provider.ChatM
 				outcomeErr = &nativeCheckpointError{rejection}
 			}
 		}()
-	} else if writer := a.servingWriter(main, targetModel, beforeTokens, min(8192, checkpointBudget), transient); writer != nil {
+	} else if writer := a.servingWriter(main, targetModel, beforeTokens, min(8192, checkpointBudget), transient || errand); writer != nil {
 		if fallbackChanged {
 			emit(AgentEvent{Type: "compaction_route_notice", Data: map[string]any{"reason": fallback + " The agent's model writes the checkpoint."}})
 		} else if a.CompactionConfigError != nil && main.CompactionMethod() != provider.CompactionProviderOnly {
@@ -552,12 +553,41 @@ func (a *Agent) compactSource(ctx context.Context, msgs, source []provider.ChatM
 
 const errandUnavailableNotice = "Errand cannot compact with its current settings. The agent's model writes the checkpoint."
 
+// errandCheckpoint reports that Errand, not the serving connection, writes
+// this checkpoint. The serving connection is worth asking only while it holds
+// the context in its cache. A human request always uses Errand: it often
+// follows a model change, and a native or self-written checkpoint would send
+// the whole history to that model at full price. Provider only is the user's
+// explicit choice of the native route.
+func errandCheckpoint(main *provider.Provider, model string, msgs []provider.ChatMessage, human bool) bool {
+	if main == nil || main.CompactionMethod() == provider.CompactionProviderOnly {
+		return false
+	}
+	return human || !servedContext(msgs, main, model)
+}
+
+// servedContext reports whether connection and model wrote the latest model
+// output in msgs. Only then can the provider have this prefix in its cache.
+// After a change of model or connection, or before any output, it cannot.
+func servedContext(msgs []provider.ChatMessage, connection *provider.Provider, model string) bool {
+	if connection == nil {
+		return false
+	}
+	for _, m := range slices.Backward(msgs) {
+		if m.ReplayScope != "" {
+			return m.ReplayScope == connection.ReplayScope() && m.ReplaySourceModel == model
+		}
+	}
+	return false
+}
+
 // servingWriter returns the serving model as the portable checkpoint writer,
 // or nil when the configured compaction model writes it. Provider only never
 // charges another model. Auto uses the serving model when Errand cannot run,
-// or when its cached context makes the checkpoint cheaper, but not right after
-// an outage of that route.
-func (a *Agent) servingWriter(main *provider.Provider, model string, source, output int, transient bool) *Agent {
+// or when its cached context makes the checkpoint cheaper. It does not use it
+// right after an outage of that route, for a human request or when the model
+// does not hold the context (skip).
+func (a *Agent) servingWriter(main *provider.Provider, model string, source, output int, skip bool) *Agent {
 	if main == nil || a.portableOnly || provider.SameConnection(main, a.Provider) && a.Model == model {
 		return nil
 	}
@@ -568,7 +598,7 @@ func (a *Agent) servingWriter(main *provider.Provider, model string, source, out
 	default:
 		window := main.ContextWindow(model)
 		fits := window > 0 && source+output < window-contextSafetyReserve(window)
-		if a.CompactionConfigError == nil && (transient || !fits || !servingCheckpointCheaper(model, a.Model, source, output, a.servingCacheRatio)) {
+		if a.CompactionConfigError == nil && (skip || !fits || !servingCheckpointCheaper(model, a.Model, source, output, a.servingCacheRatio)) {
 			return nil
 		}
 	}

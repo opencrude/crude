@@ -87,6 +87,10 @@ func (s *triggerWire) compactBody(req *ChatRequest, directive string, extras map
 	if err != nil {
 		return nil, err
 	}
+	// A trigger requests a compaction item, not a text reply. Let the
+	// service size that item as it does for /compact. A small probe or
+	// read-back allowance can be invalid here even when both calls work.
+	delete(wire, "max_output_tokens")
 	mergeExtras(wire, extras, nil)
 	input, _ := wire["input"].([]any)
 	wire["input"] = append(input, map[string]any{"type": "compaction_trigger"})

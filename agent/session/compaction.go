@@ -136,7 +136,7 @@ func (s *Session) registerCompaction(agentID, operationID, trigger string) (Prep
 	s.compactionMu.Unlock()
 
 	prepared := PreparedCompaction{OperationID: operationID, AgentID: agentID, Cancel: cancel}
-	prepared.ProviderID, prepared.AccountID, prepared.ModelID = s.compactionIdentity(agentID)
+	prepared.ProviderID, prepared.AccountID, prepared.ModelID = s.compactionIdentity(agentID, trigger)
 	prepared.Started = compactionLifecycleData(operationID, trigger, "root", 0, 0, 0, 0)
 	prepared.Started["provider_id"] = prepared.ProviderID
 	prepared.Started["model_id"] = prepared.ModelID
@@ -147,8 +147,10 @@ func (s *Session) registerCompaction(agentID, operationID, trigger string) (Prep
 	return prepared, true
 }
 
-// compactionIdentity is the connection that writes the agent's checkpoints.
-func (s *Session) compactionIdentity(agentID string) (providerID, accountID, modelID string) {
+// compactionIdentity is the connection expected to write a checkpoint with
+// trigger. A human request uses Errand unless the account is Provider only;
+// the loop-end checkpoint of Errand itself may use its native route.
+func (s *Session) compactionIdentity(agentID, trigger string) (providerID, accountID, modelID string) {
 	if s.cfg == nil {
 		return "", "", ""
 	}
@@ -157,7 +159,8 @@ func (s *Session) compactionIdentity(agentID string) (providerID, accountID, mod
 		effectiveCfg = s.runtimeProfile.EffectiveConfig(agentID)
 	}
 	main := effectiveCfg.ActiveDefaultCategory()
-	if p, err := effectiveCfg.providerForCategory(main); err == nil && p.UsesNativeCompaction() {
+	if p, err := effectiveCfg.providerForCategory(main); err == nil && p.UsesNativeCompaction() &&
+		(trigger != turnloop.CompactionTriggerManual || p.CompactionMethod() == provider.CompactionProviderOnly) {
 		return p.ID, p.AccountID, main.Model
 	}
 	compactionCfg := effectiveCfg.CategoryConfig(CategoryErrand)
@@ -282,7 +285,7 @@ const loopEndCompactionMinimumTokens = 8192
 
 func (s *Session) loopEndCompactionWorthwhile(agentID string) bool {
 	model := ""
-	if _, _, id := s.compactionIdentity(agentID); id != "" {
+	if _, _, id := s.compactionIdentity(agentID, turnloop.CompactionTriggerLoopEnd); id != "" {
 		model = id
 	}
 	s.msgsMu.Lock()

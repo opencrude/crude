@@ -60,8 +60,8 @@ func TestAutoCompactionRateLimitPermanentVerdict(t *testing.T) {
 						return providersim.Text("<<<intent>>>\nRetain the audit\n<<<work>>>\nReviewed inputs\n<<<state>>>\nThe ticket is blue\n<<<continuation>>>\nFinish the check")
 					})
 					var notices []string
-					history := compactionTestHistory(provider.NewTextMessage("user", "Finish my audit."))
-					result, err := a.Compact(t.Context(), history, "Preserve the audit.", func(e AgentEvent) {
+					history := servedBy(main, compactionTestHistory(provider.NewTextMessage("user", "Finish my audit.")))
+					result, err := a.CompactWithRequestID(t.Context(), history, "Preserve the audit.", "", "automatic", func(e AgentEvent) {
 						if e.Type == "compaction_route_notice" {
 							notices = append(notices, e.Data.(map[string]any)["reason"].(string))
 						}
@@ -121,7 +121,7 @@ func TestRequiredCompactionRateLimit(t *testing.T) {
 					a.CompactionProvider = &provider.Provider{ID: "custom", AccountID: t.Name() + "-errand", Model: "errand", StandardName: "openai", BaseURL: sim.BaseURL(providersim.Chat)}
 					a.CompactionProvider.SetContextWindow(200_000)
 				}
-				history := compactionTestHistory(provider.NewTextMessage("user", pending))
+				history := servedBy(p, compactionTestHistory(provider.NewTextMessage("user", pending)))
 				var sources []CompactionSource
 				a.PrepareCompaction = func(s CompactionSource) error { sources = append(sources, s); return nil }
 				var commits []CompactionCommit

@@ -82,3 +82,55 @@ func TestManualNativeCheckpointWithoutErrand(t *testing.T) {
 		t.Fatal("source not archived")
 	}
 }
+
+// The user switched a session to another model on the same Responses account,
+// stopped the turn and typed /compact. On 2026-11-25 Crude probed the new
+// model, then sent it the whole history for native compaction at full price.
+// A human /compact in Auto uses Errand. Neither the history nor a capability
+// check reaches the serving model, whichever model wrote the context.
+func TestManualCompactionUsesErrandAfterModelChange(t *testing.T) {
+	const errand = "adaptive-errand-model"
+	for _, writtenBy := range []string{"previous-model", "adaptive-main-model"} {
+		t.Run(writtenBy, func(t *testing.T) {
+			var writes atomic.Int32
+			sim := providersim.New(t)
+			sim.Respond(func(request providersim.Request) providersim.Turn {
+				if request.Model != errand || strings.HasSuffix(request.Path, "/compact") || bytes.Contains(request.Raw, []byte("compaction_trigger")) {
+					t.Errorf("/compact sent %s to model %q", request.Path, request.Model)
+					return providersim.HTTPError(providersim.InvalidRequest)
+				}
+				writes.Add(1)
+				if !bytes.Contains(request.Raw, []byte("build-evidence-27")) {
+					t.Error("Errand did not read the complete source")
+				}
+				return providersim.Text("<<<intent>>>\nFix the build\n<<<work>>>\nRead the test\n<<<state>>>\nbuild-evidence-27\n<<<continuation>>>\nRun the focused test")
+			})
+			responses := func(history []provider.ChatMessage) (*Session, *provider.Provider) {
+				s, _ := newAdaptiveCompactionSession(t, sim.BaseURL(providersim.Responses), 200_000, history)
+				account := s.cfg.Accounts["account"]
+				account.Connection.APIStandard = "openai-responses"
+				s.cfg.Accounts["account"] = account
+				main, err := s.cfg.providerForCategory(s.cfg.ActiveDefaultCategory())
+				if err != nil || !main.UsesNativeCompaction() || main.CompactionMethod() != "" {
+					t.Fatalf("fixture is not an Auto account on a native wire: %v", err)
+				}
+				return s, main
+			}
+			_, main := responses(nil)
+			answer := provider.NewTextMessage("assistant", strings.Repeat("raw tool body ", 3000)+"build-evidence-27")
+			answer.ReplayScope, answer.ReplaySourceModel = main.ReplayScope(), writtenBy
+			s, _ := responses([]provider.ChatMessage{provider.NewTextMessage("user", "Fix the build"), answer, provider.NewTextMessage("user", "Continue")})
+			prepared, result := s.PrepareCompaction(s.sessionID)
+			if prepared.Run == nil || prepared.ModelID != errand {
+				t.Fatalf("prepared writer=%q result=%+v; want Errand", prepared.ModelID, result)
+			}
+			if r := prepared.Run(); r.Error != "" || r.Cancelled || writes.Load() == 0 {
+				t.Fatalf("compaction=%+v writes=%d", r, writes.Load())
+			}
+			records := s.CompactionRecords(s.sessionID)
+			if len(records) != 1 || records[0].ModelID != errand || records[0].State != sessiondb.CompactionCompleted {
+				t.Fatalf("wrong checkpoint writer: %+v", records)
+			}
+		})
+	}
+}
