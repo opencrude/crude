@@ -211,6 +211,7 @@ documents to read before changing each area.
 
 ### Issues (dated user reports)
 
+- [Composer chips, slash parity, workspace entry and Errand setup](issues/2026-11-25-composer-entry-and-errand-setup.md) — open immediate actions: one-unit attachment chips, the same slash matches in every draft, explicit top-level folders, direct file opening and the Errand model in first AI setup.
 - [Windows emoji input](issues/2026-11-25-windows-emoji-input.md) — why a correct draft could show a second emoji or caret, and how native console text reaches the focused editor.
 
 - [Cold requests after automatic compaction](issues/2026-11-24-compaction-cache-misses.md) — measured cache reads, all seven wire contracts and the portable fallback.
