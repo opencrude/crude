@@ -115,13 +115,15 @@ func turnRecordFromMessages(
 	var files []string
 	seenFiles := make(map[string]struct{})
 	var lastAssistant string
+	var human []string
 	for _, m := range msgs {
 		switch m.Role {
 		case "user":
-			if record.UserText == "" && m.IsGenuineUserInput() {
-				record.UserText = m.DisplayContent
-				if record.UserText == "" {
-					record.UserText = m.ContentString()
+			// The request and every steering message the human sent while the
+			// turn ran: corrections and stated facts usually arrive as steering.
+			if m.IsGenuineUserInput() {
+				if text := humanText(m); text != "" {
+					human = append(human, text)
 				}
 			}
 		case "assistant":
@@ -149,6 +151,7 @@ func turnRecordFromMessages(
 			}
 		}
 	}
+	record.UserText = strings.Join(human, "\n\n")
 	record.AssistantText = finalContent
 	if record.AssistantText == "" {
 		record.AssistantText = lastAssistant
@@ -173,7 +176,7 @@ func observationsFromMessages(sessionID string, turn int, messages []provider.Ch
 		if message.IsGenuineUserInput() && message.InternalID != "" {
 			observations = append(observations, memory.Observation{Evidence: memory.Evidence{
 				SessionID: sessionID, MessageID: message.InternalID, Kind: memory.EvidenceUser,
-				Summary: message.ContentString(), Outcome: memory.OutcomeUnmeasured}, Turn: turn})
+				Summary: humanText(message), Outcome: memory.OutcomeUnmeasured}, Turn: turn})
 			continue
 		}
 		if message.EffectiveOrigin() != provider.OriginTool || message.ToolCallID == "" {
@@ -267,6 +270,15 @@ func observationsFromMessages(sessionID string, turn int, messages []provider.Ch
 			Method: method, Conditions: conditions, Paths: pathsFromToolArgs(call.Function.Arguments)})
 	}
 	return memory.SanitizeObservations(observations)
+}
+
+// humanText is what the human typed. A steering message's provider content
+// wraps it in delivery instructions that would hide it from the curator.
+func humanText(message provider.ChatMessage) string {
+	if message.DisplayContent != "" {
+		return message.DisplayContent
+	}
+	return message.ContentString()
 }
 
 func memoryChangeSummary(name string, arguments map[string]any) string {

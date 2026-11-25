@@ -141,10 +141,11 @@ func (s *Session) touchedFilesSnapshot() []string {
 }
 
 // recallMemoryContext builds the auto-injected system prompt block: scored
-// recall over the user prompt plus IDE context, packed under the recall
-// token budget. Exposure is logged without reinforcing knowledge.
+// recall over what the human just wrote plus IDE context, packed under the
+// recall token budget. Revisions already in context are not sent again.
+// Exposure is logged without reinforcing knowledge.
 func (s *Session) recallMemoryContext(
-	ctx context.Context, query string, activePaths []string,
+	ctx context.Context, query string, activePaths []string, shown map[memory.RevisionRef]bool,
 ) (string, error) {
 	store := s.MemoryStore()
 	if store == nil {
@@ -166,6 +167,7 @@ func (s *Session) recallMemoryContext(
 		TouchedPaths: s.touchedFilesSnapshot(),
 		Limit:        limit,
 		BudgetTokens: budget,
+		Exclude:      shown,
 	})
 	if err != nil {
 		return "", fmt.Errorf("recall workspace memory: %w", err)

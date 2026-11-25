@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -55,32 +57,32 @@ func (st *Store) Recall(ctx context.Context, q RecallQuery) ([]ScoredRecord, err
 		}
 		return candidates[i].Score > candidates[j].Score
 	})
-	var applicable []ScoredRecord
-	for _, candidate := range candidates {
-		if q.IncludeArchived || scopeApplicable(candidate.Record, append(append([]string(nil), q.ActivePaths...), q.TouchedPaths...)) {
-			applicable = append(applicable, candidate)
-		}
-	}
-	return packBudget(applicable, q.Limit, q.BudgetTokens), nil
+	candidates = slices.DeleteFunc(candidates, func(c ScoredRecord) bool {
+		return q.Exclude[RevisionRef{ID: c.ID, Revision: c.Revision}]
+	})
+	return packBudget(candidates, q.Limit, q.BudgetTokens), nil
 }
 
-func scopeApplicable(record Record, paths []string) bool {
-	if len(record.ScopePaths) == 0 {
-		return true
-	}
+// inScope reports whether a context path lies inside one of the record's
+// scopes. A scope ranks a record higher; it never hides it. A scope of the
+// whole workspace (".") adds nothing over an unscoped record.
+func inScope(record Record, paths []string) bool {
 	for _, scope := range record.ScopePaths {
-		scope = strings.TrimSuffix(filepath.ToSlash(scope), "/")
-		for _, path := range paths {
-			path = filepath.ToSlash(path)
-			if path == scope || strings.HasPrefix(path, scope+"/") {
+		scope = path.Clean(filepath.ToSlash(scope))
+		if scope == "." || scope == "/" {
+			continue
+		}
+		for _, p := range paths {
+			p = path.Clean(filepath.ToSlash(p))
+			if p == scope || strings.HasPrefix(p, scope+"/") {
 				return true
 			}
-			if matched, err := filepath.Match(scope, path); err == nil && matched {
+			if matched, err := path.Match(scope, p); err == nil && matched {
 				return true
 			}
 		}
 	}
-	return len(paths) == 0
+	return false
 }
 
 // gatherCandidates merges FTS matches (or the scan fallback), pinned
@@ -406,7 +408,9 @@ func scoreCandidates(candidates []ScoredRecord, q RecallQuery) {
 		importance := float64(c.Importance) / 100.0
 
 		pathScore := 0.0
-		if len(contextPaths) > 0 {
+		if inScope(c.Record, contextPaths) {
+			pathScore = 1
+		} else if len(contextPaths) > 0 {
 			recordTokens := tokenSet(c.Title + " " + c.Entities + " " + strings.Join(c.ScopePaths, " "))
 			pathScore = PathOverlap(recordTokens, contextPaths)
 		}

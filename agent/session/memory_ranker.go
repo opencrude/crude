@@ -12,6 +12,7 @@ import (
 	"crude/agent/memory"
 	"crude/agent/prompt"
 	"crude/agent/provider"
+	"crude/agent/sessiondb"
 	"crude/agent/tools"
 	"crude/agent/turnloop"
 	"crude/types/setting"
@@ -79,7 +80,7 @@ func (s *Session) rankActionMemories(parent context.Context, owner, root string,
 	// Candidate lookup is local; the remote deadline starts at the request.
 	ctx, cancel := context.WithTimeout(parent, chatRankingDeadline)
 	defer cancel()
-	state, paths := actionRankingState(active, batch, root)
+	state, paths := actionRankingState(active, batch, root, s.typedText)
 	if len(state.Actions) == 0 {
 		return nil, nil
 	}
@@ -194,16 +195,15 @@ func rankExcerpt(text string, limit int) string {
 	return memory.TruncateBytes(memory.Redact(strings.TrimSpace(text)), limit)
 }
 
-func actionRankingState(active, batch []provider.ChatMessage, root string) (actionMemoryState, []string) {
+// actionRankingState describes the latest input and the actions that followed.
+// typed returns the words of an input; a steering message's provider text
+// begins with delivery instructions that would fill the whole task excerpt.
+func actionRankingState(active, batch []provider.ChatMessage, root string, typed func(provider.ChatMessage) string) (actionMemoryState, []string) {
 	state := actionMemoryState{Candidates: map[string]string{}}
 	for i := len(active) - 1; i >= 0; i-- {
 		m := active[i]
 		if m.IsGenuineUserInput() || m.Origin == provider.OriginAssignment {
-			text := m.DisplayContent
-			if text == "" && m.Content.IsText() {
-				text = string(m.Content)
-			}
-			state.Task = rankExcerpt(text, 384)
+			state.Task = rankExcerpt(typed(m), 384)
 			break
 		}
 	}
@@ -282,6 +282,32 @@ func actionRankingState(active, batch []provider.ChatMessage, root string) (acti
 		}
 	}
 	return state, paths
+}
+
+// typedText is the text the human or assigner wrote for a context message.
+// Context copies drop display text; the transcript keeps it.
+func (s *Session) typedText(message provider.ChatMessage) string {
+	if message.DisplayContent == "" && message.InternalID != "" && s.db != nil {
+		if meta, found, err := sessiondb.LookupTranscriptDisplayMeta(s.db, message.InternalID); err == nil && found {
+			message.DisplayContent = meta.DisplayContent
+		}
+	}
+	return humanText(message)
+}
+
+// shownMemories lists every memory revision Crude already placed in messages.
+func shownMemories(messages []provider.ChatMessage) map[memory.RevisionRef]bool {
+	shown := map[memory.RevisionRef]bool{}
+	for _, m := range messages {
+		if m.EffectiveOrigin() != provider.OriginRuntimeContext || m.EffectiveVisibility() != provider.VisibilityContextOnly || !m.Content.IsText() {
+			continue
+		}
+		_, items := prompt.ReadWorkspaceMemory(string(m.Content))
+		for _, item := range items {
+			shown[memory.RevisionRef{ID: item.ID, Revision: item.Revision}] = true
+		}
+	}
+	return shown
 }
 
 // Only count Crude's hidden recall blocks. A tool result or human message

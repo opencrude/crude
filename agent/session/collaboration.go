@@ -706,6 +706,15 @@ func (s *Session) commitCollaborationAdmissions(
 	}
 	if root {
 		s.msgsMu.Lock()
+		// A message admitted during a turn belongs to that turn. The turn
+		// mirror, memory curation and history search read a turn by its
+		// number, so steering left at turn 0 never reached any of them.
+		deltas = slices.Clone(deltas)
+		for i := range deltas {
+			if deltas[i].Turn == 0 {
+				deltas[i].Turn = s.turnNumber
+			}
+		}
 	}
 	state, err := sessiondb.PublishContext(db, sessiondb.ContextPublication{
 		SessionID: sessionID, AgentID: contextOwnerID, RuntimeAgentID: agentID, ExpectedRevision: expectedRevision,
