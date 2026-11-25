@@ -157,12 +157,17 @@ func writeGeminiError(w http.ResponseWriter, status int, code, message string) {
 
 // Synthetic messages and context/auth mapping; HTTP codes and canonical status
 // strings use the Google HTTP error envelope (https://google.aip.dev/193).
+// The context-overflow wording is the observed service message, for example
+// https://discuss.google.dev/t/token-limit-exceeded-error-400-invalid-argument/352656;
+// its token counts are synthetic.
+const googleOverflowMessage = "The input token count (1048577) exceeds the maximum number of tokens allowed (1048576)."
+
 func geminiFault(kind FaultKind) (int, googleObject) {
 	switch kind {
 	case RateLimit:
 		return 429, geminiError(429, "RESOURCE_EXHAUSTED", "Rate limit exceeded.")
 	case ContextOverflow:
-		return 400, geminiError(400, "INVALID_ARGUMENT", "The input exceeds the context limit.")
+		return 400, geminiError(400, "INVALID_ARGUMENT", googleOverflowMessage)
 	case Overload:
 		return 503, geminiError(503, "UNAVAILABLE", "The model is overloaded.")
 	case Auth:

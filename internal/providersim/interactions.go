@@ -138,13 +138,14 @@ func writeInteractionError(w http.ResponseWriter, status int, code, message stri
 }
 
 // Documented string codes: https://aistudio.google.com/docs/api-errors.md.
-// Messages and the context-overflow code selection are synthetic.
+// Messages and the context-overflow code selection are synthetic; overflow
+// reuses the Gemini service wording because both APIs front the same models.
 func interactionFault(kind FaultKind) (int, string, string) {
 	switch kind {
 	case RateLimit:
 		return 429, "rate_limit_exceeded", "Rate limit exceeded."
 	case ContextOverflow:
-		return 400, "invalid_request", "The input exceeds the context limit."
+		return 400, "invalid_request", googleOverflowMessage
 	case Overload:
 		return 503, "service_unavailable", "The model is overloaded."
 	case Auth:

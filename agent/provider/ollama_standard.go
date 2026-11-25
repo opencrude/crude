@@ -162,6 +162,14 @@ func encodeOllamaMessages(messages []ChatMessage) ([]map[string]any, error) {
 				wire["images"] = images
 			}
 		}
+		// Ollama returns the gathered thinking with the assistant turn in the
+		// follow-up request (https://github.com/ollama/ollama/blob/924cc28/docs/capabilities/tool-calling.mdx).
+		// Replay filtering has already removed thinking that is not eligible.
+		if m.Role == "assistant" {
+			if thinking := firstNonEmptyOllama(m.ReasoningContent, m.Reasoning); thinking != "" {
+				wire["thinking"] = thinking
+			}
+		}
 		if m.ToolCallID != "" {
 			wire["tool_call_id"] = m.ToolCallID
 		}

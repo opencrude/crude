@@ -3,8 +3,11 @@
 > Status: ACTIVE PLAN. Owner: the lead agent. Workers build against the
 > contract below and do not change it without the lead. Phases 1 and 2 are
 > done: all seven wires serve, validate, stream, fault and count caches.
-> The first Crude test on the simulator is
-> `agent/turnloop/native_readback_test.go`. Phases 3 to 6 remain.
+> Phase 3 is done: `agent/provider/wire_suite_test.go` runs 15 behaviors on
+> every wire through Crude's client. Its first run found four Crude defects,
+> now fixed: Codex shorthand messages, Ollama thinking not sent back, the
+> Ollama context-overflow message, and a synthetic Google overflow message in
+> the simulator. Phases 4 to 6 remain.
 
 ## Why
 

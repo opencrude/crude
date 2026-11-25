@@ -66,7 +66,7 @@ func IsContextWindowExceeded(err error) bool {
 	if strings.Contains(text, "input token count") && strings.Contains(text, "exceeds the maximum number of tokens") {
 		return true
 	}
-	for _, marker := range []string{"context_length_exceeded", "context_window_exceeded", "maximum context length", "exceeds the context window", "exceeds model context", "input is longer than the model's context length", "prompt is too long"} {
+	for _, marker := range []string{"context_length_exceeded", "context_window_exceeded", "maximum context length", "exceeds the context window", "exceeds model context", "input is longer than the model's context length", "input length exceeds the context length", "prompt is too long"} {
 		if strings.Contains(text, marker) {
 			return true
 		}
