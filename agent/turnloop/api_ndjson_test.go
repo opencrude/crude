@@ -2,37 +2,27 @@ package turnloop
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"crude/agent/provider"
+	"crude/internal/providersim"
 )
 
 func TestCompleteStreamOllamaNDJSON(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/chat" {
-			t.Errorf("path = %q, want /api/chat", r.URL.Path)
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
+		if r.Path != "/api/chat" {
+			t.Errorf("path = %q, want /api/chat", r.Path)
 		}
 		if r.Header.Get("Authorization") != "Bearer ollama-key" {
 			t.Errorf("authorization = %q", r.Header.Get("Authorization"))
 		}
-		w.Header().Set("Content-Type", "application/x-ndjson")
-		// Ollama streams one JSON object per line; the final line carries the
-		// done flag and usage counts.
-		_, _ = fmt.Fprint(w,
-			`{"model":"llama3","message":{"role":"assistant","content":"Hel"}}`+"\n"+
-				`{"model":"llama3","message":{"role":"assistant","content":"lo"}}`+"\n"+
-				`{"model":"llama3","message":{"role":"assistant","content":""},"done":true,"done_reason":"stop","prompt_eval_count":5,"eval_count":2}`+"\n")
-	}))
-	defer server.Close()
+		return providersim.Turn{}.WithTextDeltas("Hel", "lo").WithUsage(providersim.Usage{Input: 5, Output: 2})
+	})
 
-	p := provider.FromPreset("ollama-cloud", "ollama-key", server.URL)
+	p := provider.FromPreset("ollama-cloud", "ollama-key", server.BaseURL(providersim.Ollama))
 	p.Model = "compaction-test-model"
 	provider.SetModelContext(p.Model, 65536)
 	if got := p.ContextWindow(p.Model); got != 65536 {
@@ -56,25 +46,14 @@ func TestCompleteStreamOllamaNDJSON(t *testing.T) {
 }
 
 func TestConfiguredAgentCompactsWithCurrentModelAtThreshold(t *testing.T) {
-	var requestCount atomic.Int32
-	var bodies [][]byte
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			t.Error(err)
-			return
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
+		if r.Index <= len(compactionStagesForTest) {
+			return providersim.Text("- compact stage: preserved facts").WithUsage(providersim.Usage{Input: 100_000, Output: 100})
 		}
-		bodies = append(bodies, body)
-		w.Header().Set("Content-Type", "application/x-ndjson")
-		if requestCount.Add(1) <= int32(len(compactionStagesForTest)) {
-			encoded, _ := json.Marshal("- compact stage: preserved facts")
-			_, _ = fmt.Fprintf(w, `{"model":"llama3","message":{"role":"assistant","content":%s},"done":true,"done_reason":"stop","prompt_eval_count":100000,"eval_count":100}`+"\n", encoded)
-			return
-		}
-		_, _ = fmt.Fprint(w, `{"model":"llama3","message":{"role":"assistant","content":"done"},"done":true,"done_reason":"stop","prompt_eval_count":12000,"eval_count":1}`+"\n")
-	}))
-	defer server.Close()
-	p := provider.FromPreset("ollama-cloud", "ollama-key", server.URL)
+		return providersim.Text("done").WithUsage(providersim.Usage{Input: 12_000, Output: 1})
+	})
+	p := provider.FromPreset("ollama-cloud", "ollama-key", server.BaseURL(providersim.Ollama))
 	p.Model = "compaction-test-model"
 	provider.SetModelContext(p.Model, 200000)
 	a := newTestAgent(t, p, p.Model)
@@ -88,13 +67,14 @@ func TestConfiguredAgentCompactsWithCurrentModelAtThreshold(t *testing.T) {
 	}
 	largeHistory = append(largeHistory, provider.NewTextMessage("user", "current instruction must survive"))
 	archive := a.Run(context.Background(), largeHistory, "system", func(AgentEvent) {}, nil, "", nil)
-	if len(bodies) != len(compactionStagesForTest)+1 || len(bodies[0]) < 400000 || !strings.Contains(string(bodies[0]), "compaction") ||
-		!strings.Contains(string(bodies[0]), "request 0") {
-		t.Fatalf("summary request did not retain cached context: requests=%d sizes=%v", len(bodies), []int{len(bodies[0]), len(bodies[1])})
+	bodies := server.Requests()
+	if len(bodies) != len(compactionStagesForTest)+1 || len(bodies[0].Raw) < 400000 || !strings.Contains(conversationText(bodies[0].Conversation), "compaction") ||
+		!strings.Contains(conversationText(bodies[0].Conversation), "request 0") {
+		t.Fatalf("summary request did not retain cached context: requests=%d", len(bodies))
 	}
-	postCompact := bodies[len(bodies)-1]
-	if len(postCompact) >= len(bodies[0])/2 || !strings.Contains(string(postCompact), "context_checkpoint") || strings.Contains(string(postCompact), "request 0") {
-		t.Fatalf("post-compaction request was not rotated: first=%d final=%d", len(bodies[0]), len(postCompact))
+	postCompact := bodies[len(bodies)-1].Raw
+	if len(postCompact) >= len(bodies[0].Raw)/2 || !strings.Contains(string(postCompact), "context_checkpoint") || strings.Contains(string(postCompact), "request 0") {
+		t.Fatalf("post-compaction request was not rotated: first=%d final=%d", len(bodies[0].Raw), len(postCompact))
 	}
 	if len(archive) <= len(largeHistory) || !strings.Contains(archive[1].Content.String(), "request 0") {
 		t.Fatal("full archive was lost during active epoch rotation")

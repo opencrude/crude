@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -13,6 +11,7 @@ import (
 	"time"
 
 	"crude/agent/provider"
+	"crude/internal/providersim"
 )
 
 func TestCompactionWorkStageRecoversReasoningOutputExhaustion(t *testing.T) {
@@ -20,9 +19,10 @@ func TestCompactionWorkStageRecoversReasoningOutputExhaustion(t *testing.T) {
 	var limits []int
 	var workInputs []int
 	var truncated atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	server := providersim.New(t, providersim.WithChatGateway("cmd/deepseek/deepseek-v4-flash", providersim.DeepSeek))
+	server.Respond(func(r providersim.Request) providersim.Turn {
 		var body map[string]json.RawMessage
-		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+		if err := json.Unmarshal(r.Raw, &body); err != nil {
 			t.Error(err)
 		}
 		requests = append(requests, body)
@@ -44,14 +44,11 @@ func TestCompactionWorkStageRecoversReasoningOutputExhaustion(t *testing.T) {
 		}
 		if work && workInputs[len(workInputs)-1] > 30_000 && cap < 48_000 {
 			truncated.Add(1)
-			writer.Header().Set("Content-Type", "text/event-stream")
-			_, _ = fmt.Fprintf(writer, "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"reasoning consumed the cap\",\"content\":\"UNSAFE_TRUNCATED_CHECKPOINT\"},\"finish_reason\":\"length\"}],\"usage\":{\"prompt_tokens\":598300,\"completion_tokens\":%d,\"completion_tokens_details\":{\"reasoning_tokens\":%d}}}\n\ndata: [DONE]\n\n", cap, max(0, cap-100))
-			return
+			return providersim.Text("UNSAFE_TRUNCATED_CHECKPOINT").WithReasoning("reasoning consumed the cap", "", "").WithFinish(providersim.FinishLength).WithUsage(providersim.Usage{Input: 598300, Output: cap, Reasoning: max(0, cap-100)})
 		}
-		writeChatSSE(writer, "- parser.go: no-delete constraint; work and evidence retained", "stop")
-	}))
-	defer server.Close()
-	connection := provider.FromPreset("commandcode", "key", server.URL)
+		return providersim.Text("- parser.go: no-delete constraint; work and evidence retained")
+	})
+	connection := provider.FromPreset("commandcode", "key", server.BaseURL(providersim.Chat))
 	connection.Model = "cmd/deepseek/deepseek-v4-flash"
 	connection.SetContextWindow(128_000)
 	connection.SetThinkingEffort("high")
@@ -78,18 +75,18 @@ func TestCompactionWorkStageRecoversReasoningOutputExhaustion(t *testing.T) {
 
 func TestCompactionPreservesConfiguredModelOutputCap(t *testing.T) {
 	var caps []int
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
 		var body struct {
 			MaxTokens int `json:"max_tokens"`
 		}
-		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+		if err := json.Unmarshal(r.Raw, &body); err != nil {
 			t.Error(err)
 		}
 		caps = append(caps, body.MaxTokens)
-		writeChatSSE(writer, "- exact evidence preserved", "stop")
-	}))
-	defer server.Close()
-	connection := provider.FromPreset("openai-chat", "key", server.URL)
+		return providersim.Text("- exact evidence preserved")
+	})
+	connection := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	connection.Model = "configured-output-extractor"
 	connection.SetContextWindow(100_000)
 	agent := newTestAgent(t, connection, connection.Model)
@@ -110,16 +107,16 @@ func TestCompactionPreservesConfiguredModelOutputCap(t *testing.T) {
 
 func TestCompactionKeepsConfiguredReasoningForExtractionAndOrdinaryRequests(t *testing.T) {
 	var bodies []map[string]json.RawMessage
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
 		var body map[string]json.RawMessage
-		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+		if err := json.Unmarshal(r.Raw, &body); err != nil {
 			t.Error(err)
 		}
 		bodies = append(bodies, body)
-		writeChatSSE(writer, "- work state preserved", "stop")
-	}))
-	defer server.Close()
-	connection := provider.FromPreset("commandcode", "key", server.URL)
+		return providersim.Text("- work state preserved")
+	})
+	connection := provider.FromPreset("commandcode", "key", server.BaseURL(providersim.Chat))
 	connection.Model = "cmd/deepseek/deepseek-v4-flash"
 	connection.SetContextWindow(128_000)
 	connection.SetThinkingEffort("high")
@@ -145,20 +142,16 @@ func TestCompactionKeepsConfiguredReasoningForExtractionAndOrdinaryRequests(t *t
 
 func TestCompactionContextTruncationReplansInsteadOfRepeatingTheSameRequest(t *testing.T) {
 	var requests []int
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		var body provider.ChatRequest
-		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
-			t.Error(err)
-		}
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
+		body := canonicalChatRequest(t, r)
 		requests = append(requests, provider.EstimateMessagesTotal(body.Messages, body.Model))
 		if requests[len(requests)-1] > 10_000 {
-			writeChatSSE(writer, "UNSAFE_TRUNCATED_CHECKPOINT", "model_context_window_exceeded")
-			return
+			return providersim.Text("UNSAFE_TRUNCATED_CHECKPOINT").WithFinish("model_context_window_exceeded")
 		}
-		writeChatSSE(writer, "- verified state and constraints preserved", "stop")
-	}))
-	defer server.Close()
-	connection := provider.FromPreset("openai-chat", "key", server.URL)
+		return providersim.Text("- verified state and constraints preserved")
+	})
+	connection := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	connection.Model = "context-truncation-extractor"
 	connection.SetContextWindow(100_000)
 	agent := newTestAgent(t, connection, connection.Model)
@@ -173,19 +166,16 @@ func TestCompactionContextTruncationReplansInsteadOfRepeatingTheSameRequest(t *t
 
 func TestCompactionWithVeryLargeRealRequestKeepsContextWithinWindow(t *testing.T) {
 	var capacities []struct{ input, output int }
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		var body provider.ChatRequest
-		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
-			t.Error(err)
-		}
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
+		body := canonicalChatRequest(t, r)
 		capacities = append(capacities, struct{ input, output int }{
 			input:  provider.EstimateMessagesTotal(body.Messages, body.Model),
 			output: max(body.MaxTokens, body.MaxCompletionTokens),
 		})
-		writeChatSSE(writer, "- work and constraints preserved", "stop")
-	}))
-	defer server.Close()
-	connection := provider.FromPreset("commandcode", "key", server.URL)
+		return providersim.Text("- work and constraints preserved")
+	})
+	connection := provider.FromPreset("commandcode", "key", server.BaseURL(providersim.Chat))
 	connection.Model = "cmd/deepseek/deepseek-v4-flash"
 	connection.SetContextWindow(1_050_000)
 	connection.SetThinkingEffort("high")
@@ -210,16 +200,15 @@ func TestCompactionWithVeryLargeRealRequestKeepsContextWithinWindow(t *testing.T
 
 func TestCompactionRefinesOnlyOversizedSuccessfulCheckpointText(t *testing.T) {
 	var calls int
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
 		calls++
 		if calls == 1 {
-			writeChatSSE(writer, strings.Repeat("evidence requires refinement ", 800), "stop")
-			return
+			return providersim.Text(strings.Repeat("evidence requires refinement ", 800))
 		}
-		writeChatSSE(writer, "- retained: all constraints and evidence", "stop")
-	}))
-	defer server.Close()
-	connection := provider.FromPreset("openai-chat", "key", server.URL)
+		return providersim.Text("- retained: all constraints and evidence")
+	})
+	connection := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	connection.Model = "refine-successful-extraction"
 	connection.SetContextWindow(32_000)
 	agent := newTestAgent(t, connection, connection.Model)
@@ -237,21 +226,18 @@ func TestCompactionRefinesOnlyOversizedSuccessfulCheckpointText(t *testing.T) {
 
 func TestCompactionUsesFullRemainingGenerationCapacityWithReasoning(t *testing.T) {
 	var capturedInput, capturedOutput int
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		var body provider.ChatRequest
-		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
-			t.Error(err)
-		}
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
+		body := canonicalChatRequest(t, r)
 		if capturedOutput == 0 {
 			// The serving model declares the conversation's tools; Crude budgets
 			// them with its own estimate of those definitions.
 			capturedInput = estimateCanonicalRequest(body.Messages, allToolDefs(), body.Model)
 			capturedOutput = max(body.MaxTokens, body.MaxCompletionTokens)
 		}
-		writeChatSSE(writer, "- preserved facts", "stop")
-	}))
-	defer server.Close()
-	connection := provider.FromPreset("commandcode", "key", server.URL)
+		return providersim.Text("- preserved facts")
+	})
+	connection := provider.FromPreset("commandcode", "key", server.BaseURL(providersim.Chat))
 	connection.Model = "cmd/deepseek/deepseek-v4-flash"
 	connection.SetContextWindow(128_000)
 	connection.SetThinkingEffort("high")
@@ -269,20 +255,16 @@ func TestCompactionUsesFullRemainingGenerationCapacityWithReasoning(t *testing.T
 func TestCompactionUsesReportedInputToLeaveRoomForReasoning(t *testing.T) {
 	var measuredInputs []int
 	var outputs []int
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		var body provider.ChatRequest
-		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
-			t.Error(err)
-		}
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
+		body := canonicalChatRequest(t, r)
 		estimated := estimateCanonicalRequest(body.Messages, allToolDefs(), body.Model)
 		measured := estimated * 2
 		measuredInputs = append(measuredInputs, estimated)
 		outputs = append(outputs, max(body.MaxTokens, body.MaxCompletionTokens))
-		writer.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprintf(writer, "data: {\"choices\":[{\"delta\":{\"content\":\"- evidence preserved\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":%d,\"completion_tokens\":5}}\n\ndata: [DONE]\n\n", measured)
-	}))
-	defer server.Close()
-	connection := provider.FromPreset("openai-chat", "key", server.URL)
+		return providersim.Text("- evidence preserved").WithUsage(providersim.Usage{Input: measured, Output: 5})
+	})
+	connection := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	connection.Model = "measured-extraction-capacity"
 	connection.SetContextWindow(128_000)
 	agent := newTestAgent(t, connection, connection.Model)
@@ -311,41 +293,38 @@ func TestCompactionLearnsProviderOutputCeilingAcrossSessions(t *testing.T) {
 	var outputs []int
 	var retainedSource bool
 	var firstTools string
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		var body provider.ChatRequest
-		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
+		limit, err := r.OutputLimit.Int64()
+		if err != nil {
 			t.Error(err)
-			return
 		}
-		output := max(body.MaxTokens, body.MaxCompletionTokens)
+		output := int(limit)
 		outputs = append(outputs, output)
-		if len(body.Messages) > 1 && strings.Contains(body.Messages[1].ContentString(), "original evidence") {
+		if len(r.Messages) > 0 && strings.Contains(simulatedText(r.Messages[0].Parts), "original evidence") {
 			retainedSource = true
 		}
 		// Only the output cap may change: the serving model keeps declaring the
 		// same tools, and tool use stays forbidden.
-		names := make([]string, 0, len(body.Tools))
-		for _, tool := range body.Tools {
-			names = append(names, tool.Function.Name)
+		names := make([]string, 0, len(r.Tools))
+		for _, tool := range r.Tools {
+			names = append(names, tool.Name)
 		}
 		declared := strings.Join(names, ",")
 		if firstTools == "" {
 			firstTools = declared
 		}
-		if body.ToolChoice != "none" || declared == "" || declared != firstTools || body.Model != "cmd/deepseek/deepseek-v4-flash" ||
-			string(body.Messages[len(body.Messages)-1].Content.String()) == "" {
-			t.Errorf("extraction request was changed instead of tuning its output cap: tool_choice=%v tools=%d model=%s", body.ToolChoice, len(body.Tools), body.Model)
+		if string(r.ToolChoice) != `"none"` || declared == "" || declared != firstTools || r.Model != "cmd/deepseek/deepseek-v4-flash" ||
+			simulatedText(r.Messages[len(r.Messages)-1].Parts) == "" {
+			t.Errorf("extraction request was changed instead of tuning its output cap: tool_choice=%v tools=%d model=%s", r.ToolChoice, len(r.Tools), r.Model)
 		}
 		if output > 393216 {
-			writer.WriteHeader(http.StatusBadRequest)
-			_, _ = fmt.Fprintf(writer, `{"error":{"type":"invalid_request_error","message":"{\"code\":400, \"reason\":\"INVALID_REQUEST_BODY\", \"message\":\"max_tokens (current value: %d) must be between 0 and 393216 \", \"metadata\":{}}"}}`, output)
-			return
+			return providersim.HTTPError(providersim.InvalidRequest).WithFaultMessage(fmt.Sprintf(`{"code":400, "reason":"INVALID_REQUEST_BODY", "message":"max_tokens (current value: %d) must be between 0 and 393216 ", "metadata":{}}`, output))
 		}
-		writeChatSSE(writer, "- original evidence and human corrections retained", "stop")
-	}))
-	defer server.Close()
+		return providersim.Text("- original evidence and human corrections retained")
+	})
 	makeAgent := func() *Agent {
-		connection := provider.FromPreset("commandcode", "key", server.URL)
+		connection := provider.FromPreset("commandcode", "key", server.BaseURL(providersim.Chat))
 		connection.Model = "cmd/deepseek/deepseek-v4-flash"
 		connection.AccountID = "test-account"
 		connection.SetContextWindow(1_050_000)

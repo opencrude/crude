@@ -2,31 +2,20 @@ package turnloop
 
 import (
 	"context"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"sync"
 	"testing"
 
 	"crude/agent/provider"
 	"crude/agent/tools"
+	"crude/internal/providersim"
 )
 
 // A provider can schedule a progress reply alongside a slow tool. Completion
 // order must not change its display order relative to durable wire results.
 func TestProgressReplyInParallelToolBatchUsesProviderOrder(t *testing.T) {
-	var requests int
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requests++
-		if requests == 1 {
-			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = fmt.Fprint(w, `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"slow-1","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"one.go\"}"}},{"index":1,"id":"progress-1","type":"function","function":{"name":"reply","arguments":"{\"content\":\"Checking tests.\"}"}}]},"finish_reason":"tool_calls"}]}`+"\n\ndata: [DONE]\n\n")
-			return
-		}
-		writeChatSSE(w, "Final result.", "stop")
-	}))
-	defer server.Close()
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+	server := providersim.New(t)
+	server.Script(providersim.CallTools(providersim.ToolCall{ID: "slow-1", Name: "read_file", Arguments: `{"path":"one.go"}`}, providersim.ToolCall{ID: "progress-1", Name: "reply", Arguments: `{"content":"Checking tests."}`}), providersim.Text("Final result."))
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "test-model"
 	a := newTestAgent(t, p, p.Model)
 	started, release := make(chan struct{}), make(chan struct{})

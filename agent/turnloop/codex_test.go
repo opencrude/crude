@@ -15,6 +15,7 @@ import (
 	"crude/agent/provider"
 	"crude/agent/safety"
 	"crude/agent/tools"
+	"crude/internal/providersim"
 )
 
 func TestGPTProfilesForEveryRole(t *testing.T) {
@@ -253,67 +254,51 @@ func TestChatPatchPreviewUnwrapsFunctionInput(t *testing.T) {
 
 func TestParallelBatchSurvivesOpenAIProtocolSwitches(t *testing.T) {
 	const args = `{"tool_uses":[{"recipient_name":"functions.read_file","parameters":{"path":"a.go"}},{"recipient_name":"functions.read_file","parameters":{"path":"b.go"}}]}`
-	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
-		var wire struct {
-			Tools []struct {
-				Type, Name string
-				Function   struct{ Name string }
-			} `json:"tools"`
-			Input    []struct{ Type, Name, Namespace, CallID, Arguments string } `json:"input"`
-			Messages []struct {
-				ToolCalls []struct {
-					Function provider.FunctionCall `json:"function"`
-				} `json:"tool_calls"`
-			} `json:"messages"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&wire); err != nil {
-			t.Error(err)
-			return
-		}
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
 		found := false
-		for _, tool := range wire.Tools {
-			if tool.Type == "namespace" || tool.Name == "multi_tool_use.parallel" {
-				w.WriteHeader(http.StatusBadRequest)
-				_, _ = fmt.Fprint(w, `{"error":{"message":"multi_tool_use is a reserved namespace"}}`)
-				return
+		for _, decl := range r.Tools {
+			var wire struct{ Type string }
+			if err := json.Unmarshal(decl.Raw, &wire); err != nil {
+				t.Error(err)
 			}
-			found = found || tool.Name == "multi_tool_use_parallel" || tool.Function.Name == "multi_tool_use_parallel"
+			if wire.Type == "namespace" || decl.Name == "multi_tool_use.parallel" {
+				t.Error("multi_tool_use is a reserved namespace")
+			}
+			found = found || decl.Name == "multi_tool_use_parallel"
 		}
 		if !found {
 			t.Error("parallel execution tool missing from request")
 		}
-		for _, item := range wire.Input {
-			if item.Type == "function_call" && (item.Name != "multi_tool_use_parallel" || item.Namespace != "" || item.Arguments != args) {
-				t.Errorf("invalid Responses batch replay: %+v", item)
-			}
-		}
-		for _, message := range wire.Messages {
-			for _, call := range message.ToolCalls {
-				if call.Function.Name != "multi_tool_use_parallel" || call.Function.Arguments != args {
-					t.Errorf("invalid Chat batch replay: %+v", call)
+		for _, m := range r.Messages {
+			for _, p := range m.Parts {
+				if p.Kind != providersim.PartToolCall {
+					continue
+				}
+				if r.Wire == providersim.Chat {
+					if p.Call.Name != "multi_tool_use_parallel" || p.Call.Arguments != args {
+						t.Errorf("invalid Chat batch replay: %+v", p.Call)
+					}
+					continue
+				}
+				var item struct{ Namespace string }
+				if err := json.Unmarshal(p.Raw, &item); err != nil {
+					t.Error(err)
+				}
+				if item.Namespace != "" || p.Call.Name != "multi_tool_use_parallel" || p.Call.Arguments != args {
+					t.Errorf("invalid Responses batch replay: %s", p.Raw)
 				}
 			}
 		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		if strings.HasSuffix(r.URL.Path, "/responses") {
-			if requests%2 == 1 {
-				_, _ = fmt.Fprintf(w, "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"name\":\"multi_tool_use_parallel\",\"call_id\":\"p%d\",\"arguments\":\"\",\"status\":\"in_progress\"}}\n\ndata: {\"type\":\"response.function_call_arguments.done\",\"output_index\":0,\"name\":\"multi_tool_use_parallel\",\"arguments\":%q}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[{\"type\":\"function_call\",\"name\":\"multi_tool_use_parallel\",\"call_id\":\"p%d\",\"arguments\":%q,\"status\":\"completed\"}]}}\n\n", requests, args, requests, args)
-			} else {
-				_, _ = fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"done\"}]}]}}\n\n")
-			}
-		} else if requests%2 == 1 {
-			_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"p%d\",\"type\":\"function\",\"function\":{\"name\":\"multi_tool_use_parallel\",\"arguments\":%q}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", requests, args)
-		} else {
-			writeChatSSE(w, "done", "stop")
+		if r.Index%2 == 1 {
+			return providersim.CallTools(providersim.ToolCall{ID: fmt.Sprintf("p%d", r.Index), Name: "multi_tool_use_parallel", Arguments: args})
 		}
-	}))
-	defer server.Close()
+		return providersim.Text("done")
+	})
 	var executed atomic.Int32
 	var history []provider.ChatMessage
 	for _, protocol := range []string{"openai", "openai-responses", "codex", "openai"} {
-		p := provider.FromPreset("openai-chat", "key", server.URL)
+		p := provider.FromPreset("openai-chat", "key", server.BaseURL(supervisedWires[protocol].wire))
 		if err := p.SetProtocolID(protocol); err != nil {
 			t.Fatal(err)
 		}
@@ -348,6 +333,7 @@ func TestParallelBatchSurvivesOpenAIProtocolSwitches(t *testing.T) {
 			}
 		}
 	}
+	requests := len(server.Requests())
 	if requests != 8 || executed.Load() != 8 {
 		t.Fatalf("requests=%d executions=%d", requests, executed.Load())
 	}

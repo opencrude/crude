@@ -3,40 +3,27 @@ package turnloop
 import (
 	"context"
 	"errors"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"crude/agent/provider"
+	"crude/internal/providersim"
 )
 
 func TestRunRuntimePreparationFailureBlocksWeakenedRequests(t *testing.T) {
 	for _, boundary := range []string{"before-request", "terminal-response", "provider-error", "already-cancelled"} {
 		t.Run(boundary, func(t *testing.T) {
-			var requests atomic.Int32
-			started, release := make(chan struct{}, 1), make(chan struct{}, 1)
-			defer close(release)
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				requests.Add(1)
-				started <- struct{}{}
-				select {
-				case <-release:
-				case <-r.Context().Done():
-					return
-				}
-				if boundary == "provider-error" {
-					http.Error(w, "request rejected", http.StatusBadRequest)
-					return
-				}
-				w.Header().Set("Content-Type", "text/event-stream")
-				_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"accepted original response\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-			}))
-			t.Cleanup(server.Close)
-			connection := provider.FromPreset("openai-chat", "fixture", server.URL)
+			gate := providersim.NewGate()
+			defer gate.Release()
+			turn := providersim.Text("accepted original response")
+			if boundary == "provider-error" {
+				turn = providersim.HTTPError(providersim.InvalidRequest)
+			}
+			server := providersim.New(t)
+			server.Script(turn.WithGate(gate))
+			connection := provider.FromPreset("openai-chat", "fixture", server.BaseURL(providersim.Chat))
 			connection.Model = "runtime-preparation-" + boundary
 			connection.SetDialSettings(provider.DialSettings{MaxAttempts: 1})
 			a := newTestAgent(t, connection, connection.Model)
@@ -80,13 +67,13 @@ func TestRunRuntimePreparationFailureBlocksWeakenedRequests(t *testing.T) {
 				}, nil, "runtime-preparation", inbox)
 			}()
 			if boundary == "terminal-response" || boundary == "provider-error" {
-				select {
-				case <-started:
-				case <-time.After(3 * time.Second):
-					t.Fatal("initial request did not start")
+				wait, stop := context.WithTimeout(t.Context(), 3*time.Second)
+				defer stop()
+				if err := gate.Wait(wait); err != nil {
+					t.Fatalf("initial request did not start: %v", err)
 				}
 				inbox <- runtime
-				release <- struct{}{}
+				gate.Release()
 			}
 			select {
 			case archive := <-done:
@@ -107,12 +94,12 @@ func TestRunRuntimePreparationFailureBlocksWeakenedRequests(t *testing.T) {
 			case <-time.After(3 * time.Second):
 				t.Fatal("runtime preparation failure did not end the unsafe attempt")
 			}
-			wantRequests := int32(0)
+			wantRequests := 0
 			if boundary == "terminal-response" || boundary == "provider-error" {
 				wantRequests = 1
 			}
-			if requests.Load() != wantRequests || toolEvents.Load() != 0 || admissions.Load() != 1 || releases.Load() != 1 {
-				t.Fatalf("unsafe runtime lifecycle: requests=%d tools=%d admissions=%d releases=%d", requests.Load(), toolEvents.Load(), admissions.Load(), releases.Load())
+			if len(server.Requests()) != wantRequests || toolEvents.Load() != 0 || admissions.Load() != 1 || releases.Load() != 1 {
+				t.Fatalf("unsafe runtime lifecycle: requests=%d tools=%d admissions=%d releases=%d", len(server.Requests()), toolEvents.Load(), admissions.Load(), releases.Load())
 			}
 			if boundary != "already-cancelled" && (a.RunFailureKind() != RecoveryFailureConfiguration || !errors.Is(a.RunFailure(), failure)) {
 				t.Fatalf("preparation error was swallowed/reclassified: kind=%s err=%v", a.RunFailureKind(), a.RunFailure())

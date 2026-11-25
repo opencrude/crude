@@ -2,20 +2,16 @@ package turnloop
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
-	"net/http"
-	"net/http/httptest"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"crude/agent/provider"
 	"crude/agent/tools"
+	"crude/internal/providersim"
 	recoverytypes "crude/types/recovery"
 )
 
@@ -25,31 +21,20 @@ import (
 func TestToolPanicContinuesSupervisedRunWithoutIncident(t *testing.T) {
 	for _, parallel := range []bool{false, true} {
 		t.Run(fmt.Sprintf("parallel=%t", parallel), func(t *testing.T) {
-			var requests atomic.Int32
-			sawError := make(chan string, 1)
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if requests.Add(1) > 1 {
-					// The raw request carries the tool error wherever the wire
-					// placed it (a tool message or batch content parts).
-					body, _ := io.ReadAll(r.Body)
-					select {
-					case sawError <- string(body):
-					default:
-					}
-					writeChatSSE(w, "inspected and finished", "stop")
-					return
+
+			server := providersim.New(t)
+			server.Respond(func(r providersim.Request) providersim.Turn {
+				if r.Index > 1 {
+					return providersim.Text("inspected and finished")
 				}
 				name, args := "read_file", `{"path":"uncertain"}`
 				if parallel {
 					name = "multi_tool_use.parallel"
 					args = `{"tool_uses":[{"recipient_name":"functions.read_file","parameters":{"path":"uncertain"}}]}`
 				}
-				encoded, _ := json.Marshal(args)
-				w.Header().Set("Content-Type", "text/event-stream")
-				_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call-1\",\"type\":\"function\",\"function\":{\"name\":%q,\"arguments\":%s}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", name, encoded)
-			}))
-			defer server.Close()
-			a := newTestAgent(t, provider.FromPreset("openai-chat", "key", server.URL), "panic-boundary")
+				return providersim.CallTools(providersim.ToolCall{ID: "call-1", Name: name, Arguments: args})
+			})
+			a := newTestAgent(t, provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat)), "panic-boundary")
 			a.FilteredTools = append(append([]tools.ToolDef(nil), tools.AgentTools...), tools.ParallelTool())
 			a.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
 				panic("effect may already have happened")
@@ -62,15 +47,15 @@ func TestToolPanicContinuesSupervisedRunWithoutIncident(t *testing.T) {
 			defer cancel()
 			result := a.RunSupervised(ctx, []provider.ChatMessage{provider.NewTextMessage("user", "task")},
 				"system", nil, nil, "session", nil, SupervisedRunOptions{Supervisor: supervisor})
-			if result.State != SupervisedRunCompleted || requests.Load() != 2 {
-				t.Fatalf("tool panic ended the run: state=%s requests=%d", result.State, requests.Load())
+			if result.State != SupervisedRunCompleted || len(server.Requests()) != 2 {
+				t.Fatalf("tool panic ended the run: state=%s requests=%d", result.State, len(server.Requests()))
 			}
 			select {
 			case status := <-statuses:
 				t.Fatalf("tool panic opened a recovery incident: %+v", status)
 			default:
 			}
-			if text := <-sawError; !strings.Contains(text, "panicked") || !strings.Contains(text, "Do not replay an operation that may have committed") {
+			if text := conversationText(server.Requests()[1].Effective); !strings.Contains(text, "panicked") || !strings.Contains(text, "Do not replay an operation that may have committed") {
 				t.Fatalf("model did not receive the uncertain-effect tool error: %q", text)
 			}
 		})
@@ -206,23 +191,17 @@ func TestCompletedParallelSiblingIsCheckpointedWhileOtherToolRuns(t *testing.T) 
 
 func checkCompletedParallelSibling(t *testing.T, batch bool) {
 	t.Helper()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request provider.ChatRequest
-		_ = json.NewDecoder(r.Body).Decode(&request)
-		if request.Messages[len(request.Messages)-1].Role == "tool" {
-			writeChatSSE(w, "done", "stop")
-			return
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
+		if len(r.Messages) != 0 && r.Messages[len(r.Messages)-1].Role == "tool" {
+			return providersim.Text("done")
 		}
-		w.Header().Set("Content-Type", "text/event-stream")
 		if batch {
-			arguments, _ := json.Marshal(`{"tool_uses":[{"recipient_name":"functions.read_file","parameters":{"path":"slow"}},{"recipient_name":"functions.read_file","parameters":{"path":"fast"}}]}`)
-			_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"batch\",\"type\":\"function\",\"function\":{\"name\":\"multi_tool_use.parallel\",\"arguments\":%s}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", arguments)
-		} else {
-			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"slow\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"slow\\\"}\"}},{\"index\":1,\"id\":\"fast\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"fast\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n")
+			return providersim.CallTools(providersim.ToolCall{ID: "batch", Name: "multi_tool_use.parallel", Arguments: `{"tool_uses":[{"recipient_name":"functions.read_file","parameters":{"path":"slow"}},{"recipient_name":"functions.read_file","parameters":{"path":"fast"}}]}`})
 		}
-	}))
-	defer server.Close()
-	a := newTestAgent(t, provider.FromPreset("openai-chat", "key", server.URL), "checkpoint-boundary")
+		return providersim.CallTools(providersim.ToolCall{ID: "slow", Name: "read_file", Arguments: `{"path":"slow"}`}, providersim.ToolCall{ID: "fast", Name: "read_file", Arguments: `{"path":"fast"}`})
+	})
+	a := newTestAgent(t, provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat)), "checkpoint-boundary")
 	a.FilteredTools = append(append([]tools.ToolDef(nil), tools.AgentTools...), tools.ParallelTool())
 	release := make(chan struct{})
 	a.ToolFn = func(ctx context.Context, _ string, params map[string]any) (tools.ToolResult, error) {

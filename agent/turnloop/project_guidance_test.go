@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -16,6 +14,7 @@ import (
 	rootprompt "crude/agent/prompt"
 	"crude/agent/provider"
 	"crude/agent/tools"
+	"crude/internal/providersim"
 )
 
 func TestRunReadsWholeGuidanceBeforeFirstRequest(t *testing.T) {
@@ -27,28 +26,21 @@ func TestRunReadsWholeGuidanceBeforeFirstRequest(t *testing.T) {
 		}
 	}
 	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
 		calls.Add(1)
-		var request provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-		}
-		var text strings.Builder
-		for _, message := range request.Messages {
-			text.WriteString(message.ContentString())
-		}
+		text := conversationText(r.Effective)
 		for _, name := range []string{"AGENTS.md", "CLAUDE.md", "SOUL.md"} {
-			if !strings.Contains(text.String(), name+"-start") || !strings.Contains(text.String(), name+"-end") {
+			if !strings.Contains(text, name+"-start") || !strings.Contains(text, name+"-end") {
 				t.Errorf("first request lacks complete %s", name)
 			}
 		}
-		if strings.LastIndex(text.String(), "<intake_status>") < strings.LastIndex(text.String(), "SOUL.md-end") {
+		if strings.LastIndex(text, "<intake_status>") < strings.LastIndex(text, "SOUL.md-end") {
 			t.Error("startup completion notice did not follow the supplied source content")
 		}
-		writeChatSSE(w, "Guidance received before project work.", "stop")
-	}))
-	defer server.Close()
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+		return providersim.Text("Guidance received before project work.")
+	})
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "whole-guidance-model"
 	provider.SetModelContext(p.Model, 1_000_000)
 	a := newTestAgent(t, p, p.Model)
@@ -74,58 +66,51 @@ func TestOversizedGuidanceIsFullyCompiledBeforeBoundedNormalRequest(t *testing.T
 	chunks := make(map[int]guidanceChunk)
 	systems := make(map[string]string)
 	chunkPattern := regexp.MustCompile(`(?s)<source_chunk_json>\n(.*?)\n</source_chunk_json>`)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
 		calls.Add(1)
-		var request provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-			return
-		}
-		if request.ToolChoice == "none" {
+		if string(r.ToolChoice) == `"none"` {
 			compiles.Add(1)
-			if len(request.Tools) != 0 {
+			if len(r.Tools) != 0 {
 				t.Error("instruction compiler received tools")
 			}
-			user := request.Messages[len(request.Messages)-1].ContentString()
+			user := simulatedText(r.Messages[len(r.Messages)-1].Parts)
 			if strings.Contains(user, "<verify_source_chunk_json>") {
-				writeChatSSE(w, "COVERED", "stop")
-				return
+				return providersim.Text("COVERED")
 			}
 			match := chunkPattern.FindStringSubmatch(user)
 			if len(match) != 2 {
 				t.Error("compiler request lacks exact source chunk")
-				return
+				return providersim.Turn{}
 			}
 			var chunk guidanceChunk
 			if err := json.Unmarshal([]byte(match[1]), &chunk); err != nil {
 				t.Error(err)
-				return
+				return providersim.Turn{}
 			}
 			chunks[chunk.StartByte] = chunk
-			writeChatSSE(w, fmt.Sprintf("- source %s bytes %d-%d: all requirements retained", chunk.SHA256, chunk.StartByte, chunk.EndByte), "stop")
-			return
+			return providersim.Text(fmt.Sprintf("- source %s bytes %d-%d: all requirements retained", chunk.SHA256, chunk.StartByte, chunk.EndByte))
 		}
 		normal.Add(1)
-		if len(request.Messages) == 0 {
+		if len(r.System) == 0 {
 			t.Error("normal request has no system prompt")
-			return
+			return providersim.Turn{}
 		}
-		system := request.Messages[0].ContentString()
-		if previous, ok := systems[request.Model]; ok && previous != system {
+		system := simulatedText(r.System)
+		if previous, ok := systems[r.Model]; ok && previous != system {
 			t.Error("unchanged compiled guidance changed after a target model switch")
 		}
-		systems[request.Model] = system
+		systems[r.Model] = system
 		if !strings.Contains(system, `mode="compiled"`) || !strings.Contains(system, "complete=\"true\"") ||
 			strings.Contains(system, "README-MUST-STAY-SELECTIVE") || strings.Contains(system, "first-required-rule") || strings.Contains(system, "last-required-rule") {
 			t.Errorf("normal prompt is not a bounded compiled ledger")
 		}
-		if tokens := provider.EstimateMessagesTotal(request.Messages, request.Model); tokens >= 16_000 {
+		if tokens := provider.EstimateMessagesTotal(canonicalChatRequest(t, r).Messages, r.Model); tokens >= 16_000 {
 			t.Errorf("normal request consumed unbounded context: %d", tokens)
 		}
-		writeChatSSE(w, "Normal work started after complete guidance intake.", "stop")
-	}))
-	defer server.Close()
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+		return providersim.Text("Normal work started after complete guidance intake.")
+	})
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "bounded-guidance-model"
 	p.SetContextWindow(16_000)
 	cache := make(map[string]string)
@@ -184,21 +169,16 @@ func TestRunDefersScopedEffectsButRunsReadsUntilWholeGuidanceIsVisible(t *testin
 		t.Fatal(err)
 	}
 	var requests, reads, writes atomic.Int32
-	writeCall := func(w http.ResponseWriter, id string) {
-		_, _ = fmt.Fprintf(w, "{\"index\":%d,\"id\":\"%s\",\"type\":\"function\",\"function\":{\"name\":\"write_file\",\"arguments\":\"{\\\"path\\\":\\\"nested/out.txt\\\",\\\"content\\\":\\\"x\\\"}\"}}", map[bool]int{true: 1, false: 0}[id == "write-1"], id)
+	writeCall := func(id string) providersim.ToolCall {
+		return providersim.ToolCall{ID: id, Name: "write_file", Arguments: `{"path":"nested/out.txt","content":"x"}`}
 	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
 		call := requests.Add(1)
-		var request provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
+
 		switch call {
 		case 1:
-			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"read-1\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"nested/file.txt\\\"}\"}},")
-			writeCall(w, "write-1")
-			_, _ = fmt.Fprint(w, "]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n")
+			return providersim.CallTools(providersim.ToolCall{ID: "read-1", Name: "read_file", Arguments: `{"path":"nested/file.txt"}`}, writeCall("write-1"))
 		case 2:
 			if writes.Load() != 0 {
 				t.Error("write executed before scoped guidance reached the model")
@@ -206,23 +186,17 @@ func TestRunDefersScopedEffectsButRunsReadsUntilWholeGuidanceIsVisible(t *testin
 			if reads.Load() != 1 {
 				t.Errorf("read in the deferred batch ran %d times, want once", reads.Load())
 			}
-			var visible strings.Builder
-			for _, message := range request.Messages {
-				visible.WriteString(message.ContentString())
-			}
-			if !strings.Contains(visible.String(), "scoped-final-rule") || !strings.Contains(visible.String(), "not executed") || !strings.Contains(visible.String(), "File inspected.") {
-				text := visible.String()
+			visible := conversationText(r.Effective)
+			if !strings.Contains(visible, "scoped-final-rule") || !strings.Contains(visible, "not executed") || !strings.Contains(visible, "File inspected.") {
+				text := visible
 				t.Errorf("deferred batch did not deliver complete guidance with the read result: rule=%t deferred=%t read=%t", strings.Contains(text, "scoped-final-rule"), strings.Contains(text, "not executed"), strings.Contains(text, "File inspected."))
 			}
-			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[")
-			writeCall(w, "write-2")
-			_, _ = fmt.Fprint(w, "]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n")
+			return providersim.CallTools(writeCall("write-2"))
 		default:
-			writeChatSSE(w, "Finished after reading all applicable rules.", "stop")
+			return providersim.Text("Finished after reading all applicable rules.")
 		}
-	}))
-	defer server.Close()
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+	})
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "scoped-guidance-model"
 	provider.SetModelContext(p.Model, 200_000)
 	a := newTestAgent(t, p, p.Model)
@@ -286,13 +260,10 @@ func TestUnreadableGuidanceStopsBeforeProviderAndTools(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(dir, "AGENTS.md"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	var requests, executed atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requests.Add(1)
-		writeChatSSE(w, "Should not be requested.", "stop")
-	}))
-	defer server.Close()
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+	var executed atomic.Int32
+	server := providersim.New(t)
+	server.Script(providersim.Text("Should not be requested."))
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	a := newTestAgent(t, p, "blocked-guidance")
 	a.WorkDir = dir
 	a.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
@@ -301,8 +272,8 @@ func TestUnreadableGuidanceStopsBeforeProviderAndTools(t *testing.T) {
 	}
 	var events []AgentEvent
 	a.Run(context.Background(), []provider.ChatMessage{provider.NewTextMessage("user", "Modify this project")}, "system", func(event AgentEvent) { events = append(events, event) }, nil, "", nil)
-	if requests.Load() != 0 || executed.Load() != 0 || !hasEvent(events, "error") {
-		t.Fatalf("unreadable guidance did not fail closed: requests=%d tools=%d events=%v", requests.Load(), executed.Load(), events)
+	if len(server.Requests()) != 0 || executed.Load() != 0 || !hasEvent(events, "error") {
+		t.Fatalf("unreadable guidance did not fail closed: requests=%d tools=%d events=%v", len(server.Requests()), executed.Load(), events)
 	}
 }
 
@@ -312,22 +283,16 @@ func TestUnstableCompiledGuidanceStopsBeforeNormalWork(t *testing.T) {
 		t.Fatal(err)
 	}
 	var compilerCalls, normalCalls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-			return
-		}
-		if request.ToolChoice != "none" {
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
+		if string(r.ToolChoice) != `"none"` {
 			normalCalls.Add(1)
-			writeChatSSE(w, "Normal work must not start.", "stop")
-			return
+			return providersim.Text("Normal work must not start.")
 		}
 		call := compilerCalls.Add(1)
-		writeChatSSE(w, fmt.Sprintf("- replacement ledger revision %d", call), "stop")
-	}))
-	defer server.Close()
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+		return providersim.Text(fmt.Sprintf("- replacement ledger revision %d", call))
+	})
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "unstable-guidance-model"
 	p.SetContextWindow(16_000)
 	a := newTestAgent(t, p, p.Model)
@@ -349,34 +314,26 @@ func TestRunGuidanceRereadsPreserveCachePrefix(t *testing.T) {
 	}
 	requests, executed := 0, 0
 	var system string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
 		requests++
-		var request provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-			return
-		}
 		if requests == 1 {
-			system = request.Messages[0].ContentString()
-		} else if request.Messages[0].ContentString() != system {
+			system = simulatedText(r.System)
+		} else if simulatedText(r.System) != system {
 			t.Error("unchanged guidance reread rewrote the cache prefix")
 		}
-		projections := 0
-		for _, message := range request.Messages {
-			projections += strings.Count(message.ContentString(), "<loaded_project_guidance ")
-		}
+		projections := strings.Count(conversationText(r.Conversation), "<loaded_project_guidance ")
 		if projections != 1 {
 			t.Errorf("unchanged reread republished guidance: projections=%d", projections)
 		}
 		if requests <= 2 {
-			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"read-%d\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"AGENTS.md\\\",\\\"encoded\\\":true}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", requests)
+
+			return providersim.CallTools(providersim.ToolCall{ID: fmt.Sprintf("read-%d", requests), Name: "read_file", Arguments: `{"path":"AGENTS.md","encoded":true}`})
 		} else {
-			writeChatSSE(w, "Source inspected.", "stop")
+			return providersim.Text("Source inspected.")
 		}
-	}))
-	defer server.Close()
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+	})
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "reread-guidance-model"
 	a := newTestAgent(t, p, p.Model)
 	a.WorkDir = dir
@@ -405,18 +362,12 @@ func TestNextRunKeepsGuidanceEpochAndAppendsChange(t *testing.T) {
 	if err := os.WriteFile(path, []byte("original-rule"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	var requests []provider.ChatRequest
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-			return
-		}
-		requests = append(requests, request)
-		writeChatSSE(w, "Done.", "stop")
-	}))
-	defer server.Close()
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
+		return providersim.Text("Done.")
+	})
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "guidance-epoch-model"
 	base := rootprompt.BuildRoot(rootprompt.RootOptions{WorkDir: dir})
 	run := func(epoch *GuidanceEpoch, history []provider.ChatMessage, text string) (*GuidanceEpoch, []provider.ChatMessage) {
@@ -445,26 +396,27 @@ func TestNextRunKeepsGuidanceEpochAndAppendsChange(t *testing.T) {
 	}
 	_, _ = run(epoch, history, "third")
 	_, _ = run(nil, nil, "new context generation")
+	requests := server.Requests()
 	if len(requests) != 4 {
 		t.Fatalf("requests=%d, want 4", len(requests))
 	}
-	system := requests[0].Messages[0].ContentString()
+	system := simulatedText(requests[0].System)
 	if !strings.Contains(system, "original-rule") {
 		t.Fatal("first run did not load the guidance into the system prompt")
 	}
 	for i, request := range requests[1:3] {
-		if request.Messages[0].ContentString() != system {
+		if simulatedText(request.System) != system {
 			t.Fatalf("run %d rewrote the cached system prompt after an AGENTS.md edit", i+2)
 		}
 		projections := 0
-		for _, message := range request.Messages[1:] {
-			projections += strings.Count(message.ContentString(), "<loaded_project_guidance ")
+		for _, message := range request.Messages {
+			projections += strings.Count(simulatedText(message.Parts), "<loaded_project_guidance ")
 		}
 		if projections != 1 {
 			t.Fatalf("run %d sent %d guidance updates, want the one change", i+2, projections)
 		}
 	}
-	if got := requests[3].Messages[0].ContentString(); !strings.Contains(got, "current-rule") || strings.Contains(got, "original-rule") {
+	if got := simulatedText(requests[3].System); !strings.Contains(got, "current-rule") || strings.Contains(got, "original-rule") {
 		t.Fatal("a new context generation must load the current guidance into the system prompt")
 	}
 }
@@ -481,33 +433,28 @@ func TestRunGuidanceMutationsPublishOneUpdateAfterExecution(t *testing.T) {
 			}
 			requests, executed := 0, 0
 			var initialSystem string
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server := providersim.New(t)
+			server.Respond(func(r providersim.Request) providersim.Turn {
 				requests++
-				var request provider.ChatRequest
-				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-					t.Error(err)
-					return
-				}
 				if requests == 1 {
-					initialSystem = request.Messages[0].ContentString()
+					initialSystem = simulatedText(r.System)
 					name := "write_file"
 					if action == "delete" {
 						name = "delete_file"
 					}
-					w.Header().Set("Content-Type", "text/event-stream")
-					_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"mutate\",\"type\":\"function\",\"function\":{\"name\":%q,\"arguments\":\"{\\\"path\\\":\\\"AGENTS.md\\\",\\\"content\\\":\\\"current-rule\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", name)
-					return
+
+					return providersim.CallTools(providersim.ToolCall{ID: "mutate", Name: name, Arguments: `{"path":"AGENTS.md","content":"current-rule"}`})
 				}
-				if executed != 1 || request.Messages[0].ContentString() != initialSystem {
+				if executed != 1 || simulatedText(r.System) != initialSystem {
 					t.Error("guidance mutation was deferred unnecessarily or rewrote accepted prefix")
 				}
 				updates := 0
-				for _, message := range request.Messages[1:] {
-					if strings.Contains(message.ContentString(), "<loaded_project_guidance ") {
+				for _, message := range r.Messages {
+					if strings.Contains(simulatedText(message.Parts), "<loaded_project_guidance ") {
 						updates++
-						if strings.Contains(message.ContentString(), "original-rule") ||
-							(action != "delete" && !strings.Contains(message.ContentString(), "current-rule")) ||
-							(action == "delete" && strings.Contains(message.ContentString(), "<file ")) {
+						if strings.Contains(simulatedText(message.Parts), "original-rule") ||
+							(action != "delete" && !strings.Contains(simulatedText(message.Parts), "current-rule")) ||
+							(action == "delete" && strings.Contains(simulatedText(message.Parts), "<file ")) {
 							t.Error("next request did not receive the exact current guidance")
 						}
 					}
@@ -515,10 +462,9 @@ func TestRunGuidanceMutationsPublishOneUpdateAfterExecution(t *testing.T) {
 				if updates != 1 {
 					t.Errorf("guidance updates=%d want one", updates)
 				}
-				writeChatSSE(w, "Guidance changed.", "stop")
-			}))
-			defer server.Close()
-			p := provider.FromPreset("openai-chat", "key", server.URL)
+				return providersim.Text("Guidance changed.")
+			})
+			p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 			p.Model = "mutate-guidance-model"
 			a := newTestAgent(t, p, p.Model)
 			a.WorkDir, a.Yolo = dir, true
@@ -591,27 +537,19 @@ func TestRunGlobOperandExecutesEveryCallInBatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
 		call := requests.Add(1)
 		if call == 1 {
-			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"glob-path\",\"type\":\"function\",\"function\":{\"name\":\"grep_files\",\"arguments\":\"{\\\"pattern\\\":\\\"needle\\\",\\\"path\\\":\\\"tui/ui/text*\\\"}\"}},{\"index\":1,\"id\":\"sibling\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"AGENTS.md\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n")
-			return
+			return providersim.CallTools(providersim.ToolCall{ID: "glob-path", Name: "grep_files", Arguments: `{"pattern":"needle","path":"tui/ui/text*"}`}, providersim.ToolCall{ID: "sibling", Name: "read_file", Arguments: `{"path":"AGENTS.md"}`})
 		}
-		var request provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-		}
-		joined := ""
-		for _, message := range request.Messages {
-			joined += message.ContentString()
-		}
+		joined := conversationText(r.Conversation)
 		if strings.Count(joined, "executed ") != 2 {
 			t.Errorf("both calls should have executed: %s", joined)
 		}
-		writeChatSSE(w, "Recovered without parking.", "stop")
-	}))
-	defer server.Close()
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+		return providersim.Text("Recovered without parking.")
+	})
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "guidance-path-model"
 	a := newTestAgent(t, p, p.Model)
 	a.WorkDir = dir

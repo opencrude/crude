@@ -2,10 +2,7 @@ package turnloop
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +11,7 @@ import (
 	rootprompt "crude/agent/prompt"
 	"crude/agent/provider"
 	"crude/agent/tools"
+	"crude/internal/providersim"
 )
 
 // Guidance changed during a run is delivered as hidden runtime context. An
@@ -28,26 +26,22 @@ func TestAutomaticCompactionKeepsCurrentGuidanceAndBasePrompt(t *testing.T) {
 	}
 	stages := len(rootprompt.CompactionStages())
 	requests := 0
-	var final provider.ChatRequest
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var final providersim.Request
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
 		requests++
-		var request provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-		}
 		switch {
 		case requests == 1:
-			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"mutate\",\"type\":\"function\",\"function\":{\"name\":\"write_file\",\"arguments\":\"{\\\"path\\\":\\\"AGENTS.md\\\",\\\"content\\\":\\\"current-rule\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n")
+
+			return providersim.CallTools(providersim.ToolCall{ID: "mutate", Name: "write_file", Arguments: `{"path":"AGENTS.md","content":"current-rule"}`})
 		case requests <= 1+stages:
-			writeChatSSE(w, fmt.Sprintf("- stage: %d", requests-1), "stop")
+			return providersim.Text(fmt.Sprintf("- stage: %d", requests-1))
 		default:
-			final = request
-			writeChatSSE(w, "done", "stop")
+			final = r
+			return providersim.Text("done")
 		}
-	}))
-	defer server.Close()
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+	})
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "compaction-guidance-model"
 	provider.SetModelContext(p.Model, 1_000_000)
 	a := newTestAgent(t, p, p.Model)
@@ -58,18 +52,15 @@ func TestAutomaticCompactionKeepsCurrentGuidanceAndBasePrompt(t *testing.T) {
 	}
 	base := "<base_system>keep-me</base_system>"
 	a.Run(t.Context(), []provider.ChatMessage{provider.NewTextMessage("user", "Change guidance")}, base, nil, nil, "", nil)
-	if requests != stages+2 || len(final.Messages) == 0 {
+	if requests != stages+2 || len(final.System) == 0 {
 		t.Fatalf("requests=%d want one task request, %d stages and one continuation", requests, stages)
 	}
-	system := final.Messages[0].ContentString()
-	if final.Messages[0].Role != "system" || !strings.Contains(system, "keep-me") {
+	system := simulatedText(final.System)
+	if final.System[0].Role != "system" || !strings.Contains(system, "keep-me") {
 		t.Fatalf("continuation lost the base system prompt: %q", system)
 	}
-	var all strings.Builder
-	for _, message := range final.Messages {
-		all.WriteString(message.ContentString())
-	}
-	if !strings.Contains(system, "current-rule") || strings.Contains(all.String(), "original-rule") {
+	all := conversationText(final.Conversation)
+	if !strings.Contains(system, "current-rule") || strings.Contains(all, "original-rule") {
 		t.Fatalf("continuation does not carry current guidance; system=%q", system)
 	}
 }

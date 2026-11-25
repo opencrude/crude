@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -15,17 +14,9 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/tools"
+	"crude/internal/providersim"
 	"crude/types/toolresult"
 )
-
-func writeChatSSE(w http.ResponseWriter, content, finishReason string) {
-	w.Header().Set("Content-Type", "text/event-stream")
-	_, _ = fmt.Fprintf(w,
-		"data: {\"choices\":[{\"delta\":{\"content\":%q},\"finish_reason\":%q}]}\n\n"+
-			"data: [DONE]\n\n",
-		content, finishReason,
-	)
-}
 
 type agentRoundTripFunc func(*http.Request) (*http.Response, error)
 
@@ -51,12 +42,10 @@ func (b *eventThenErrorBody) Read(dst []byte) (int, error) {
 func (b *eventThenErrorBody) Close() error { return nil }
 
 func TestRunDoesNotSpinOnClosedRuntimeChannel(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeChatSSE(w, "done", "stop")
-	}))
-	defer server.Close()
+	server := providersim.New(t)
+	server.Script(providersim.Text("done"))
 
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "test-model"
 	agent := newTestAgent(t, p, p.Model)
 
@@ -219,32 +208,12 @@ func TestRunRestartsUploadToCoalesceQueuedHumanSteering(t *testing.T) {
 }
 
 func TestRunContinuesWithHumanSteeringArrivingDuringFinalCompletion(t *testing.T) {
-	var requests atomic.Int32
-	firstStarted := make(chan struct{}, 1)
-	releaseFirst := make(chan struct{})
-	secondStarted := make(chan struct{}, 1)
-	releaseSecond := make(chan struct{})
-	secondMessages := make(chan []provider.ChatMessage, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Errorf("decode request: %v", err)
-			return
-		}
-		if requests.Add(1) == 1 {
-			firstStarted <- struct{}{}
-			<-releaseFirst
-			writeChatSSE(w, "first response", "stop")
-			return
-		}
-		secondMessages <- request.Messages
-		secondStarted <- struct{}{}
-		<-releaseSecond
-		writeChatSSE(w, "second response", "stop")
-	}))
-	defer server.Close()
-
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+	first, second := providersim.NewGate(), providersim.NewGate()
+	server := providersim.New(t)
+	server.Script(providersim.Text("first response").WithGate(first), providersim.Text("second response").WithGate(second))
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "test-model"
 	agent := newTestAgent(t, p, p.Model)
 	runtimeMessages := make(chan RuntimeMessage, 1)
@@ -252,20 +221,24 @@ func TestRunContinuesWithHumanSteeringArrivingDuringFinalCompletion(t *testing.T
 	events := make(chan AgentEvent, 32)
 	done := make(chan []provider.ChatMessage, 1)
 	go func() {
-		done <- agent.Run(context.Background(), nil, "system", func(event AgentEvent) {
+		done <- agent.Run(ctx, nil, "system", func(event AgentEvent) {
 			events <- event
 		}, nil, "", runtimeMessages)
 	}()
 
-	<-firstStarted
+	if err := first.Wait(ctx); err != nil {
+		t.Fatal(err)
+	}
 	steeringMessage := provider.NewTextMessage("user", "use this in the next turn")
 	steeringMessage.InternalID = "steering-1"
 	runtimeMessages <- RuntimeMessage{Message: steeringMessage, Admit: func([]provider.ChatMessage) error {
 		admissions.Add(1)
 		return nil
 	}}
-	close(releaseFirst)
-	<-secondStarted
+	first.Release()
+	if err := second.Wait(ctx); err != nil {
+		t.Fatal(err)
+	}
 
 	var observed []AgentEvent
 	drainEvents := func() {
@@ -289,15 +262,15 @@ func TestRunContinuesWithHumanSteeringArrivingDuringFinalCompletion(t *testing.T
 			t.Fatal("second model output arrived before the response was released")
 		}
 	}
-	close(releaseSecond)
+	second.Release()
 
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("agent did not finish human-steering continuation")
 	}
-	if requests.Load() != 2 {
-		t.Fatalf("requests=%d want human steering to force a second request", requests.Load())
+	if len(server.Requests()) != 2 {
+		t.Fatalf("requests=%d want human steering to force a second request", len(server.Requests()))
 	}
 	drainEvents()
 	successful := map[string]bool{}
@@ -312,10 +285,10 @@ func TestRunContinuesWithHumanSteeringArrivingDuringFinalCompletion(t *testing.T
 	if len(successful) != 2 {
 		t.Fatalf("one actor turn made two successful API calls, accounted %+v", successful)
 	}
-	requestMessages := <-secondMessages
+	requestMessages := server.Requests()[1].Messages
 	foundSteering := false
 	for _, message := range requestMessages {
-		if message.Role == "user" && strings.Contains(message.ContentString(), "use this in the next turn") {
+		if message.Role == "user" && strings.Contains(simulatedText(message.Parts), "use this in the next turn") {
 			foundSteering = true
 			break
 		}
@@ -326,12 +299,10 @@ func TestRunContinuesWithHumanSteeringArrivingDuringFinalCompletion(t *testing.T
 }
 
 func TestRunRetainsAdmittedHumanSteeringWhenProviderRejectsRequest(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, "invalid request", http.StatusBadRequest)
-	}))
-	defer server.Close()
+	server := providersim.New(t)
+	server.Script(providersim.HTTPError(providersim.InvalidRequest))
 
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "test-model"
 	agent := newTestAgent(t, p, p.Model)
 	steeringMessage := provider.NewTextMessage("user", "persist once admitted")
@@ -431,23 +402,16 @@ func TestRunRetainsAdmittedHumanSteeringWhenCancelledDuringUpload(t *testing.T) 
 }
 
 func TestRunAutomaticallyContinuesTruncatedResponse(t *testing.T) {
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if requests.Add(1) == 1 {
-			writeChatSSE(w, "part one", "length")
-			return
-		}
-		writeChatSSE(w, "part two", "stop")
-	}))
-	defer server.Close()
+	server := providersim.New(t)
+	server.Script(providersim.Text("part one").WithFinish(providersim.FinishLength), providersim.Text("part two"))
 
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "test-model"
 	agent := newTestAgent(t, p, p.Model)
 
 	messages := agent.Run(context.Background(), nil, "system", func(AgentEvent) {}, nil, "", nil)
-	if requests.Load() != 2 {
-		t.Fatalf("requests = %d, want 2", requests.Load())
+	if len(server.Requests()) != 2 {
+		t.Fatalf("requests = %d, want 2", len(server.Requests()))
 	}
 	var assistantContent []string
 	for _, message := range messages {
@@ -461,25 +425,11 @@ func TestRunAutomaticallyContinuesTruncatedResponse(t *testing.T) {
 }
 
 func TestRunAutomaticallyContinuesInterruptedTextStream(t *testing.T) {
-	var requests atomic.Int32
-	secondRequest := make(chan []provider.ChatMessage, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Errorf("decode request: %v", err)
-			return
-		}
-		if requests.Add(1) == 1 {
-			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"part one\"}}]}\n\n")
-			return
-		}
-		secondRequest <- request.Messages
-		writeChatSSE(w, " part two", "stop")
-	}))
-	defer server.Close()
 
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+	server := providersim.New(t)
+	server.Script(providersim.Text("part one").WithCut(2), providersim.Text(" part two"))
+
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "test-model"
 	agent := newTestAgent(t, p, p.Model)
 
@@ -487,8 +437,8 @@ func TestRunAutomaticallyContinuesInterruptedTextStream(t *testing.T) {
 	messages := agent.Run(context.Background(), nil, "system", func(event AgentEvent) {
 		events = append(events, event)
 	}, nil, "", nil)
-	if requests.Load() != 2 {
-		t.Fatalf("requests = %d, want 2", requests.Load())
+	if len(server.Requests()) != 2 {
+		t.Fatalf("requests = %d, want 2", len(server.Requests()))
 	}
 	if hasEvent(events, "error") {
 		t.Fatalf("interrupted text stream surfaced an error: %+v", events)
@@ -509,14 +459,14 @@ func TestRunAutomaticallyContinuesInterruptedTextStream(t *testing.T) {
 		t.Fatalf("streamed content = %q", got)
 	}
 
-	requestMessages := <-secondRequest
+	requestMessages := server.Requests()[1].Messages
 	var sawPartial, sawContinuation bool
 	for _, message := range requestMessages {
-		if message.Role == "assistant" && message.ContentString() == "part one" {
+		if message.Role == "assistant" && simulatedText(message.Parts) == "part one" {
 			sawPartial = true
 		}
-		if message.Role == "user" && strings.HasPrefix(message.ContentString(), "<runtime_continuation ") &&
-			strings.Contains(message.ContentString(), "Continue the previous response") {
+		if message.Role == "user" && strings.HasPrefix(simulatedText(message.Parts), "<runtime_continuation ") &&
+			strings.Contains(simulatedText(message.Parts), "Continue the previous response") {
 			sawContinuation = true
 		}
 	}
@@ -536,20 +486,11 @@ func TestRunAutomaticallyContinuesInterruptedTextStream(t *testing.T) {
 }
 
 func TestRunRecoversInterruptedToolCallWithoutExecuting(t *testing.T) {
-	var requests atomic.Int32
 	var toolExecutions atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if requests.Add(1) > 1 {
-			writeChatSSE(w, "Recovered safely.", "stop")
-			return
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w,
-			`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"execute_command","arguments":"{\"command\":\"touch /tmp/never-run\""}}]}}]}`+"\n\n")
-	}))
-	defer server.Close()
+	server := providersim.New(t)
+	server.Script(providersim.CallTools(providersim.ToolCall{ID: "call_1", Name: "execute_command", Arguments: `{"command":"touch /tmp/never-run"`}).WithCut(3), providersim.Text("Recovered safely."))
 
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "test-model"
 	agent := newTestAgent(t, p, p.Model)
 	agent.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
@@ -561,8 +502,8 @@ func TestRunRecoversInterruptedToolCallWithoutExecuting(t *testing.T) {
 	agent.Run(context.Background(), nil, "system", func(event AgentEvent) {
 		events = append(events, event)
 	}, nil, "", nil)
-	if requests.Load() != 2 || toolExecutions.Load() != 0 {
-		t.Fatalf("requests = %d, tool executions = %d", requests.Load(), toolExecutions.Load())
+	if len(server.Requests()) != 2 || toolExecutions.Load() != 0 {
+		t.Fatalf("requests = %d, tool executions = %d", len(server.Requests()), toolExecutions.Load())
 	}
 	if hasEvent(events, "error") || !hasEvent(events, "retry") || !hasEvent(events, "done") {
 		t.Fatalf("partial tool call did not recover autonomously: %+v", events)
@@ -573,20 +514,16 @@ func TestRunRecoversInterruptedToolCallWithoutExecuting(t *testing.T) {
 }
 
 func TestRunDoesNotContinueAfterContextWindowExhaustion(t *testing.T) {
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests.Add(1)
-		writeChatSSE(w, "final partial", "model_context_window_exceeded")
-	}))
-	defer server.Close()
+	server := providersim.New(t)
+	server.Script(providersim.Text("final partial").WithFinish("model_context_window_exceeded"))
 
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "test-model"
 	agent := newTestAgent(t, p, p.Model)
 
 	messages := agent.Run(context.Background(), nil, "system", func(AgentEvent) {}, nil, "", nil)
-	if requests.Load() != 1 {
-		t.Fatalf("requests = %d, want 1", requests.Load())
+	if len(server.Requests()) != 1 {
+		t.Fatalf("requests = %d, want 1", len(server.Requests()))
 	}
 	if got := messages[len(messages)-1].ContentString(); got != "final partial" {
 		t.Fatalf("last message = %q", got)
@@ -594,23 +531,10 @@ func TestRunDoesNotContinueAfterContextWindowExhaustion(t *testing.T) {
 }
 
 func TestRunAppendsParallelToolResultsInCallOrder(t *testing.T) {
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if requests.Add(1) == 1 {
-			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = fmt.Fprint(w,
-				"data: {\"choices\":[{\"delta\":{\"tool_calls\":["+
-					"{\"index\":0,\"id\":\"call_slow\",\"type\":\"function\",\"function\":{\"name\":\"slow\",\"arguments\":\"{}\"}},"+
-					"{\"index\":1,\"id\":\"call_fast\",\"type\":\"function\",\"function\":{\"name\":\"fast\",\"arguments\":\"{}\"}}"+
-					"]},\"finish_reason\":\"tool_calls\"}]}\n\n"+
-					"data: [DONE]\n\n")
-			return
-		}
-		writeChatSSE(w, "finished", "stop")
-	}))
-	defer server.Close()
+	server := providersim.New(t)
+	server.Script(providersim.CallTools(providersim.ToolCall{ID: "call_slow", Name: "slow", Arguments: `{}`}, providersim.ToolCall{ID: "call_fast", Name: "fast", Arguments: `{}`}), providersim.Text("finished"))
 
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "test-model"
 	agent := newTestAgent(t, p, p.Model)
 	agent.ToolFn = func(ctx context.Context, name string, params map[string]any) (tools.ToolResult, error) {
@@ -642,17 +566,10 @@ func TestRunAppendsParallelToolResultsInCallOrder(t *testing.T) {
 }
 
 func TestRunPersistsPartialResponseWhenCancelled(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n")
-		if flusher, ok := w.(http.Flusher); ok {
-			flusher.Flush()
-		}
-		<-r.Context().Done()
-	}))
-	defer server.Close()
+	server := providersim.New(t)
+	server.Script(providersim.Text("partial").WithGateAfter(2, providersim.NewGate()))
 
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "test-model"
 	agent := newTestAgent(t, p, p.Model)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -787,15 +704,12 @@ func TestRunRecoversPartialToolCallWithoutExecutingIt(t *testing.T) {
 }
 
 func TestRunDoesNotExecuteTruncatedToolCalls(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w,
-			"data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"dangerous\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"length\"}]}\n\n"+
-				"data: [DONE]\n\n")
-	}))
-	defer server.Close()
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
+		return providersim.CallTools(providersim.ToolCall{ID: "call_1", Name: "dangerous", Arguments: `{}`}).WithFinish(providersim.FinishLength)
+	})
 
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "test-model"
 	agent := newTestAgent(t, p, p.Model)
 	var executions atomic.Int32
@@ -821,18 +735,10 @@ func TestRunDoesNotExecuteTruncatedToolCalls(t *testing.T) {
 }
 
 func TestRunBalancesToolCallsWhenCancelledDuringExecution(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w,
-			"data: {\"choices\":[{\"delta\":{\"tool_calls\":["+
-				"{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"slow_one\",\"arguments\":\"{}\"}},"+
-				"{\"index\":1,\"id\":\"call_2\",\"type\":\"function\",\"function\":{\"name\":\"slow_two\",\"arguments\":\"{}\"}}"+
-				"]},\"finish_reason\":\"tool_calls\"}]}\n\n"+
-				"data: [DONE]\n\n")
-	}))
-	defer server.Close()
+	server := providersim.New(t)
+	server.Script(providersim.CallTools(providersim.ToolCall{ID: "call_1", Name: "slow_one", Arguments: `{}`}, providersim.ToolCall{ID: "call_2", Name: "slow_two", Arguments: `{}`}))
 
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "test-model"
 	agent := newTestAgent(t, p, p.Model)
 	agent.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
@@ -888,28 +794,18 @@ func TestRunBalancesToolCallsWhenCancelledDuringExecution(t *testing.T) {
 // A tool panic is an ordinary tool error with uncertain effects: the loop
 // continues and the model inspects state, never a parked run awaiting a human.
 func TestRunContainsToolPanicAndContinuesTheLoop(t *testing.T) {
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if requests.Add(1) == 1 {
-			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = fmt.Fprint(w,
-				"data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"panic_tool\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n"+
-					"data: [DONE]\n\n")
-			return
-		}
-		writeChatSSE(w, "recovered", "stop")
-	}))
-	defer server.Close()
+	server := providersim.New(t)
+	server.Script(providersim.CallTools(providersim.ToolCall{ID: "call_1", Name: "panic_tool", Arguments: `{}`}), providersim.Text("recovered"))
 
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "test-model"
 	agent := newTestAgent(t, p, p.Model)
 	agent.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
 		panic("boom")
 	}
 	messages := agent.Run(context.Background(), nil, "system", func(AgentEvent) {}, nil, "", nil)
-	if requests.Load() != 2 || agent.RunFailure() != nil {
-		t.Fatalf("requests = %d, failure=%v; want the loop to continue after the panic", requests.Load(), agent.RunFailure())
+	if len(server.Requests()) != 2 || agent.RunFailure() != nil {
+		t.Fatalf("requests = %d, failure=%v; want the loop to continue after the panic", len(server.Requests()), agent.RunFailure())
 	}
 	var panicResult *provider.ChatMessage
 	for i := range messages {
@@ -925,27 +821,10 @@ func TestRunContainsToolPanicAndContinuesTheLoop(t *testing.T) {
 }
 
 func TestRunAppendsToolRoundWithoutSyntheticRuntimeMessages(t *testing.T) {
-	var requestCount atomic.Int32
-	requests := make(chan []provider.ChatMessage, 2)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Errorf("decode request: %v", err)
-			return
-		}
-		requests <- request.Messages
-		if requestCount.Add(1) == 1 {
-			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = fmt.Fprint(w,
-				"data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"main.go\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n"+
-					"data: [DONE]\n\n")
-			return
-		}
-		writeChatSSE(w, "finished", "stop")
-	}))
-	defer server.Close()
+	server := providersim.New(t)
+	server.Script(providersim.CallTools(providersim.ToolCall{ID: "call_1", Name: "read_file", Arguments: `{"path":"main.go"}`}), providersim.Text("finished"))
 
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "test-model"
 	agent := newTestAgent(t, p, p.Model)
 	agent.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
@@ -953,20 +832,21 @@ func TestRunAppendsToolRoundWithoutSyntheticRuntimeMessages(t *testing.T) {
 	}
 
 	agent.Run(context.Background(), []provider.ChatMessage{{Role: "user", Content: provider.TextContent("start")}}, "stable system", func(AgentEvent) {}, nil, "session", nil)
-	close(requests)
-
-	var captured [][]provider.ChatMessage
-	for request := range requests {
-		captured = append(captured, request)
+	log := server.Requests()
+	var captured [][]json.RawMessage
+	for _, request := range log {
+		var wire struct{ Messages []json.RawMessage }
+		if err := json.Unmarshal(request.Raw, &wire); err != nil {
+			t.Fatal(err)
+		}
+		captured = append(captured, wire.Messages)
 	}
 	if len(captured) != 2 {
 		t.Fatalf("request count = %d, want 2", len(captured))
 	}
-	for _, request := range captured {
-		for _, message := range request {
-			if strings.Contains(message.ContentString(), "## Runtime Status") {
-				t.Fatalf("agent injected per-step runtime context: %#v", request)
-			}
+	for _, request := range log {
+		if strings.Contains(conversationText(request.Conversation), "## Runtime Status") {
+			t.Fatalf("agent injected per-step runtime context: %#v", request.Raw)
 		}
 	}
 	second := captured[1]
@@ -974,30 +854,20 @@ func TestRunAppendsToolRoundWithoutSyntheticRuntimeMessages(t *testing.T) {
 		t.Fatalf("second request did not append to first: %#v", second)
 	}
 	for i := range captured[0] {
-		firstJSON, _ := json.Marshal(captured[0][i])
-		secondJSON, _ := json.Marshal(second[i])
+		firstJSON, secondJSON := captured[0][i], second[i]
 		if string(firstJSON) != string(secondJSON) {
 			t.Fatalf("wire prefix mutated at message %d\nfirst=%s\nsecond=%s", i, firstJSON, secondJSON)
 		}
 	}
-	if second[len(captured[0])].Role != "assistant" {
+	if log[1].Messages[len(log[0].Messages)].Role != "assistant" {
 		t.Fatalf("tool exchange did not extend the accepted prefix: %#v", second)
 	}
 }
 
 func TestUncompactedUserTurnsKeepPriorRequestAsExactPrefix(t *testing.T) {
-	requests := make(chan []provider.ChatMessage, 2)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-			return
-		}
-		requests <- request.Messages
-		writeChatSSE(w, "answer", "stop")
-	}))
-	defer server.Close()
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+	server := providersim.New(t)
+	server.Script(providersim.Text("answer"), providersim.Text("answer"))
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "prefix-model"
 	a := newTestAgent(t, p, p.Model)
 	a.ContextCompactionPercent = 0
@@ -1007,17 +877,20 @@ func TestUncompactedUserTurnsKeepPriorRequestAsExactPrefix(t *testing.T) {
 	secondInput := append(append([]provider.ChatMessage(nil), first[1:]...),
 		provider.NewTextMessage("user", "second request\n\n<turn_context>new recall</turn_context>"))
 	_ = a.Run(context.Background(), secondInput, "stable system", func(AgentEvent) {}, nil, "", nil)
-	close(requests)
-	var captured [][]provider.ChatMessage
-	for request := range requests {
-		captured = append(captured, request)
+	log := server.Requests()
+	var captured [][]json.RawMessage
+	for _, request := range log {
+		var wire struct{ Messages []json.RawMessage }
+		if err := json.Unmarshal(request.Raw, &wire); err != nil {
+			t.Fatal(err)
+		}
+		captured = append(captured, wire.Messages)
 	}
 	if len(captured) != 2 || len(captured[1]) <= len(captured[0]) {
 		t.Fatalf("captured requests = %#v", captured)
 	}
 	for i := range captured[0] {
-		firstJSON, _ := json.Marshal(captured[0][i])
-		secondJSON, _ := json.Marshal(captured[1][i])
+		firstJSON, secondJSON := captured[0][i], captured[1][i]
 		if string(firstJSON) != string(secondJSON) {
 			t.Fatalf("prior turn changed at message %d\nfirst=%s\nsecond=%s", i, firstJSON, secondJSON)
 		}
@@ -1026,21 +899,16 @@ func TestUncompactedUserTurnsKeepPriorRequestAsExactPrefix(t *testing.T) {
 
 func TestRunHasNoStepBudget(t *testing.T) {
 	const toolCycles = 25
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		request := int(requests.Add(1))
-		if request <= toolCycles {
-			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = fmt.Fprintf(w,
-				"data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_%d\",\"type\":\"function\",\"function\":{\"name\":\"progress_probe\",\"arguments\":\"{\\\"cycle\\\":%d}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n"+
-					"data: [DONE]\n\n", request, request)
-			return
-		}
-		writeChatSSE(w, "all cycles complete", "stop")
-	}))
-	defer server.Close()
 
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
+		if r.Index <= toolCycles {
+			return providersim.CallTools(providersim.ToolCall{ID: fmt.Sprintf("call_%d", r.Index), Name: "progress_probe", Arguments: fmt.Sprintf(`{"cycle":%d}`, r.Index)})
+		}
+		return providersim.Text("all cycles complete")
+	})
+
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "test-model"
 	a := newTestAgent(t, p, p.Model)
 	a.ToolFn = func(_ context.Context, _ string, params map[string]any) (tools.ToolResult, error) {
@@ -1051,7 +919,7 @@ func TestRunHasNoStepBudget(t *testing.T) {
 		events = append(events, event)
 	}, nil, "", nil)
 
-	if got := requests.Load(); got != toolCycles+1 {
+	if got := len(server.Requests()); got != toolCycles+1 {
 		t.Fatalf("requests=%d want %d; agent stopped before work completed", got, toolCycles+1)
 	}
 	if !hasEvent(events, "done") || hasEvent(events, "error") {
@@ -1086,14 +954,10 @@ func TestFailedWriteReportDoesNotMarkReportComplete(t *testing.T) {
 }
 
 func TestMissingFinalReportGetsOneBoundedReminder(t *testing.T) {
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requests.Add(1)
-		writeChatSSE(w, "report omitted", "stop")
-	}))
-	defer server.Close()
+	server := providersim.New(t)
+	server.Script(providersim.Text("report omitted"), providersim.Text("report omitted"))
 
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "test-model"
 	child := newTestAgent(t, p, p.Model)
 	child.Depth = 1
@@ -1104,7 +968,7 @@ func TestMissingFinalReportGetsOneBoundedReminder(t *testing.T) {
 		events = append(events, event)
 	}, nil, "", nil)
 
-	if got := requests.Load(); got != maxFinalReportReminders+1 {
+	if got := len(server.Requests()); got != maxFinalReportReminders+1 {
 		t.Fatalf("requests=%d want %d; missing report retried without a bound", got, maxFinalReportReminders+1)
 	}
 	reminders := 0
@@ -1229,13 +1093,9 @@ func hasEvent(events []AgentEvent, typ string) bool {
 // BeforeFinish buys exactly one more step per run, so an owner's end-of-turn
 // reconciliation can never loop.
 func TestBeforeFinishAddsOneStepPerRun(t *testing.T) {
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requests.Add(1)
-		writeChatSSE(w, "final answer", "stop")
-	}))
-	defer server.Close()
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+	server := providersim.New(t)
+	server.Script(providersim.Text("final answer"), providersim.Text("final answer"))
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "test-model"
 	a := newTestAgent(t, p, p.Model)
 	calls := 0
@@ -1244,7 +1104,7 @@ func TestBeforeFinishAddsOneStepPerRun(t *testing.T) {
 		return []provider.ChatMessage{provider.NewTextMessage("user", "<runtime_plan_reminder>reconcile</runtime_plan_reminder>")}
 	}
 	messages := a.Run(context.Background(), nil, "system", func(AgentEvent) {}, nil, "", nil)
-	if got := requests.Load(); got != 2 || calls != 1 {
+	if got := len(server.Requests()); got != 2 || calls != 1 {
 		t.Fatalf("requests=%d BeforeFinish calls=%d; want 2 and 1", got, calls)
 	}
 	found := false
@@ -1257,13 +1117,9 @@ func TestBeforeFinishAddsOneStepPerRun(t *testing.T) {
 }
 
 func TestTerminalSteeringSealDrainsLastAcceptedInputBeforeDone(t *testing.T) {
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requests.Add(1)
-		writeChatSSE(w, "accepted answer", "stop")
-	}))
-	defer server.Close()
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+	server := providersim.New(t)
+	server.Script(providersim.Text("accepted answer"), providersim.Text("accepted answer"))
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "terminal-steering-model"
 	a := newTestAgent(t, p, p.Model)
 	inbox := make(chan RuntimeMessage, 1)
@@ -1290,7 +1146,7 @@ func TestTerminalSteeringSealDrainsLastAcceptedInputBeforeDone(t *testing.T) {
 			count++
 		}
 	}
-	if requests.Load() != 2 || done != 1 || seals != 2 || reopened != 1 || count != 1 {
-		t.Fatalf("terminal admission stranded/replayed steering: requests=%d done=%d seals=%d reopened=%d notes=%d", requests.Load(), done, seals, reopened, count)
+	if len(server.Requests()) != 2 || done != 1 || seals != 2 || reopened != 1 || count != 1 {
+		t.Fatalf("terminal admission stranded/replayed steering: requests=%d done=%d seals=%d reopened=%d notes=%d", len(server.Requests()), done, seals, reopened, count)
 	}
 }

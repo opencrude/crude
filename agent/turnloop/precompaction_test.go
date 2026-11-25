@@ -2,10 +2,8 @@ package turnloop
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -14,6 +12,7 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/tools"
+	"crude/internal/providersim"
 )
 
 func economicAgent(t *testing.T, model string) *Agent {
@@ -158,42 +157,34 @@ type precompactionServer struct {
 	main                   atomic.Int32
 	compactions            atomic.Int32
 	rounds                 int32
-	finals                 []provider.ChatRequest
-	firstCheckpointRequest *provider.ChatRequest
+	finals                 []providersim.Request
+	firstCheckpointRequest *providersim.Request
 	extractionSources      []string
 	// usage reports provider token usage on main requests, with the previous
 	// request's prompt as the cached prefix, so spend accounting sees real cost.
-	usage  bool
-	cached int
+	usage bool
 }
 
-func (server *precompactionServer) handler(t *testing.T) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var request provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
+func (server *precompactionServer) start(t *testing.T) *providersim.Server {
+	t.Helper()
+	sim := providersim.New(t)
+	sim.Respond(func(r providersim.Request) providersim.Turn {
+		if server.missingModel != "" && r.Model == server.missingModel {
+			return providersim.HTTPError(providersim.ModelNotFound)
 		}
-		if server.missingModel != "" && request.Model == server.missingModel {
-			http.Error(w, `{"error":{"message":"model unavailable","type":"not_found"}}`, http.StatusNotFound)
-			return
-		}
-		var text strings.Builder
-		for _, message := range request.Messages {
-			text.WriteString(message.ContentString())
-		}
-		if strings.Contains(text.String(), "Context compaction extraction contract") {
+		text := conversationText(r.Effective)
+		if strings.Contains(text, "Context compaction extraction contract") {
 			server.compactions.Add(1)
 			server.mu.Lock()
-			server.extractionSources = append(server.extractionSources, text.String())
+			server.extractionSources = append(server.extractionSources, text)
 			server.mu.Unlock()
 			server.record("compaction")
-			writeChatSSE(w, "<<<intent>>>\n- finish the long task\n<<<work>>>\n- rounds summarized\n<<<state>>>\n- workspace clean\n<<<continuation>>>\n- continue with the next round", "stop")
-			return
+			return providersim.Text("<<<intent>>>\n- finish the long task\n<<<work>>>\n- rounds summarized\n<<<state>>>\n- workspace clean\n<<<continuation>>>\n- continue with the next round").WithoutUsage()
 		}
-		if strings.Contains(text.String(), "<context_checkpoint") {
+		if strings.Contains(text, "<context_checkpoint") {
 			server.mu.Lock()
 			if server.firstCheckpointRequest == nil {
-				server.firstCheckpointRequest = &request
+				server.firstCheckpointRequest = &r
 			}
 			server.mu.Unlock()
 		}
@@ -201,23 +192,17 @@ func (server *precompactionServer) handler(t *testing.T) http.HandlerFunc {
 		server.record("main")
 		if call > server.rounds {
 			server.mu.Lock()
-			server.finals = append(server.finals, request)
+			server.finals = append(server.finals, r)
 			server.mu.Unlock()
-			writeChatSSE(w, "finished", "stop")
-			return
+			return providersim.Text("finished").WithoutUsage()
 		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		usage := ""
-		if server.usage {
-			prompt := estimateCanonicalRequest(request.Messages, request.Tools, request.Model)
-			server.mu.Lock()
-			cached := min(server.cached, prompt)
-			server.cached = prompt
-			server.mu.Unlock()
-			usage = fmt.Sprintf(",\"usage\":{\"prompt_tokens\":%d,\"completion_tokens\":20,\"prompt_tokens_details\":{\"cached_tokens\":%d}}", prompt, cached)
+		turn := providersim.CallTools(providersim.ToolCall{ID: fmt.Sprintf("round-%d", call), Name: "read_file", Arguments: fmt.Sprintf(`{"path":"f%d"}`, call)})
+		if !server.usage {
+			return turn.WithoutUsage()
 		}
-		_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"round-%d\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"f%d\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]%s}\n\ndata: [DONE]\n\n", call, call, usage)
-	}
+		return turn.WithUsage(providersim.Usage{Input: r.Prefix.InputTokens, Output: 20, Cached: r.Prefix.CachedTokens})
+	})
+	return sim
 }
 
 func (server *precompactionServer) record(kind string) {
@@ -244,9 +229,8 @@ func precompactionAgent(t *testing.T, url, model string) *Agent {
 
 func TestBackgroundCheckpointDoesNotReplayToolHistoryOnColdRequest(t *testing.T) {
 	server := &precompactionServer{rounds: 14}
-	endpoint := httptest.NewServer(server.handler(t))
-	defer endpoint.Close()
-	a := precompactionAgent(t, endpoint.URL, "precompaction-model")
+	endpoint := server.start(t)
+	a := precompactionAgent(t, endpoint.BaseURL(providersim.Chat), "precompaction-model")
 	var mu sync.Mutex
 	var events []AgentEvent
 	a.Run(t.Context(), []provider.ChatMessage{provider.NewTextMessage("user", "Do the long task exactly as specified")}, "system", func(event AgentEvent) {
@@ -277,9 +261,12 @@ func TestBackgroundCheckpointDoesNotReplayToolHistoryOnColdRequest(t *testing.T)
 	if r := server.firstCheckpointRequest; r == nil {
 		t.Fatal("no continuation on wire")
 	} else {
+		if strings.Contains(simulatedText(r.System), strings.Repeat("evidence ", 100)) {
+			t.Fatal("first continuation replayed old evidence in the system message")
+		}
 		for _, m := range r.Messages {
-			if m.Role == "tool" || len(m.ToolCalls) > 0 || strings.Contains(m.ContentString(), strings.Repeat("evidence ", 100)) {
-				t.Fatalf("first continuation replayed a %d-byte %s message", len(m.ContentString()), m.Role)
+			if m.Role == "tool" || slices.ContainsFunc(m.Parts, func(p providersim.Part) bool { return p.Kind == providersim.PartToolCall }) || strings.Contains(simulatedText(m.Parts), strings.Repeat("evidence ", 100)) {
+				t.Fatalf("first continuation replayed a %d-byte %s message", len(simulatedText(m.Parts)), m.Role)
 			}
 		}
 	}
@@ -299,12 +286,9 @@ func TestBackgroundCheckpointDoesNotReplayToolHistoryOnColdRequest(t *testing.T)
 	if len(server.finals) != 1 {
 		t.Fatalf("final requests=%d", len(server.finals))
 	}
-	var final strings.Builder
-	for _, message := range server.finals[0].Messages {
-		final.WriteString(message.ContentString())
-	}
+	final := server.finals[0]
 	for _, want := range []string{"context_checkpoint", "Do the long task exactly as specified", "round-14"} {
-		if !strings.Contains(final.String(), want) && !strings.Contains(fmt.Sprint(server.finals[0].Messages), want) {
+		if !strings.Contains(string(final.Raw), want) {
 			t.Fatalf("continuation lacks %q", want)
 		}
 	}
@@ -314,8 +298,7 @@ func TestPreparedCheckpointAcrossRequestBoundaries(t *testing.T) {
 	for _, mode := range []string{"resume", "new-account", "manual"} {
 		t.Run(mode, func(t *testing.T) {
 			server := &precompactionServer{rounds: 0}
-			endpoint := httptest.NewServer(server.handler(t))
-			defer endpoint.Close()
+			endpoint := server.start(t)
 			var usageMu sync.Mutex
 			requests := map[string]bool{}
 			recordUsage := func(e AgentEvent) {
@@ -336,7 +319,7 @@ func TestPreparedCheckpointAcrossRequestBoundaries(t *testing.T) {
 			}
 			slot := NewPrecompactionSlot(t.Context(), recordUsage)
 			defer slot.Close()
-			a := precompactionAgent(t, endpoint.URL, "precompaction-slot-model")
+			a := precompactionAgent(t, endpoint.BaseURL(providersim.Chat), "precompaction-slot-model")
 			a.Precompaction = slot
 			history := []provider.ChatMessage{}
 			for turn := 0; turn < 8; turn++ {
@@ -390,10 +373,8 @@ func TestPreparedCheckpointAcrossRequestBoundaries(t *testing.T) {
 			if len(requests) != 2 {
 				t.Fatalf("want two independently accounted extractions, got %d", len(requests))
 			}
-			for _, m := range server.finals[len(server.finals)-1].Messages {
-				if strings.Contains(m.ContentString(), strings.Repeat("more detail ", 100)) {
-					t.Fatal("large post-snapshot input replayed cold")
-				}
+			if strings.Contains(conversationText(server.finals[len(server.finals)-1].Conversation), strings.Repeat("more detail ", 100)) {
+				t.Fatal("large post-snapshot input replayed cold")
 			}
 		})
 	}
@@ -401,13 +382,12 @@ func TestPreparedCheckpointAcrossRequestBoundaries(t *testing.T) {
 
 func TestDiscardedBackgroundSummaryEmitsTerminalAndNoLateProgress(t *testing.T) {
 	server := &precompactionServer{rounds: 0}
-	endpoint := httptest.NewServer(server.handler(t))
-	defer endpoint.Close()
+	endpoint := server.start(t)
 	var mu sync.Mutex
 	var events []AgentEvent
 	slot := NewPrecompactionSlot(t.Context(), func(event AgentEvent) { mu.Lock(); events = append(events, event); mu.Unlock() })
 	defer slot.Close()
-	a := precompactionAgent(t, endpoint.URL, "summary-discard-model")
+	a := precompactionAgent(t, endpoint.BaseURL(providersim.Chat), "summary-discard-model")
 	source := []provider.ChatMessage{provider.NewTextMessage("system", "system"), provider.NewTextMessage("user", strings.Repeat("prior work ", 1000))}
 	if !slot.start(a, source, nil, 20_000, 100_000, 5000) {
 		t.Fatal("job did not start")
@@ -433,17 +413,10 @@ func TestDiscardedBackgroundSummaryEmitsTerminalAndNoLateProgress(t *testing.T) 
 }
 
 func TestClosingBackgroundSummaryPublishesCancellation(t *testing.T) {
-	entered := make(chan struct{})
-	release := make(chan struct{})
-	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		close(entered)
-		select {
-		case <-r.Context().Done():
-		case <-release:
-		}
-	}))
-	defer endpoint.Close()
-	defer close(release)
+	gate := providersim.NewGate()
+	defer gate.Release()
+	endpoint := providersim.New(t)
+	endpoint.Script(providersim.Text("cancelled").WithGate(gate))
 	var mu sync.Mutex
 	var phases []string
 	slot := NewPrecompactionSlot(t.Context(), func(event AgentEvent) {
@@ -455,16 +428,17 @@ func TestClosingBackgroundSummaryPublishesCancellation(t *testing.T) {
 		}
 	})
 	defer slot.Close()
-	a := precompactionAgent(t, endpoint.URL, "summary-close-model")
+	a := precompactionAgent(t, endpoint.BaseURL(providersim.Chat), "summary-close-model")
 	source := []provider.ChatMessage{provider.NewTextMessage("system", "system"), provider.NewTextMessage("user", "prior work")}
 	if !slot.start(a, source, nil, 20_000, 100_000, 1000) {
 		t.Fatal("job did not start")
 	}
-	select {
-	case <-entered:
-	case <-time.After(5 * time.Second):
-		t.Fatal("extraction did not start")
+	wait, stop := context.WithTimeout(t.Context(), 5*time.Second)
+	defer stop()
+	if err := gate.Wait(wait); err != nil {
+		t.Fatalf("extraction did not start: %v", err)
 	}
+
 	slot.Close()
 	slot.Close()
 	mu.Lock()
@@ -480,9 +454,8 @@ func TestClosingBackgroundSummaryPublishesCancellation(t *testing.T) {
 // in the transcript (and resuming as an interrupted compaction).
 func TestUnusableBackgroundCheckpointSettlesItsAnnouncedBoundary(t *testing.T) {
 	server := &precompactionServer{rounds: 0}
-	endpoint := httptest.NewServer(server.handler(t))
-	defer endpoint.Close()
-	a := precompactionAgent(t, endpoint.URL, "unusable-background-model")
+	endpoint := server.start(t)
+	a := precompactionAgent(t, endpoint.BaseURL(providersim.Chat), "unusable-background-model")
 	history := []provider.ChatMessage{}
 	for turn := 0; turn < 8; turn++ {
 		user := provider.NewTextMessage("user", fmt.Sprintf("request %d", turn))
@@ -542,9 +515,8 @@ func TestUnusableBackgroundCheckpointSettlesItsAnnouncedBoundary(t *testing.T) {
 // a few hundred reclaimed tokens.
 func TestCheckpointNearAnExplicitThresholdDefersTheNextAttempt(t *testing.T) {
 	server := &precompactionServer{rounds: 14}
-	endpoint := httptest.NewServer(server.handler(t))
-	defer endpoint.Close()
-	a := precompactionAgent(t, endpoint.URL, "thrash-threshold-model")
+	endpoint := server.start(t)
+	a := precompactionAgent(t, endpoint.BaseURL(providersim.Chat), "thrash-threshold-model")
 	a.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
 		return tools.ToolResult{Content: strings.Repeat("evidence ", 150)}, nil
 	}
@@ -573,9 +545,8 @@ func TestCheckpointNearAnExplicitThresholdDefersTheNextAttempt(t *testing.T) {
 // deferred growth arrives. A replaced context is a new generation.
 func TestDeferredCompactionSurvivesTheEndOfARun(t *testing.T) {
 	server := &precompactionServer{rounds: 10}
-	endpoint := httptest.NewServer(server.handler(t))
-	defer endpoint.Close()
-	a := precompactionAgent(t, endpoint.URL, "deferral-across-runs-model")
+	endpoint := server.start(t)
+	a := precompactionAgent(t, endpoint.BaseURL(providersim.Chat), "deferral-across-runs-model")
 	a.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
 		return tools.ToolResult{Content: strings.Repeat("evidence ", 150)}, nil
 	}
@@ -638,16 +609,15 @@ func TestAutomaticCompactionWorksForEveryPriceTierAndMissingData(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			server := &precompactionServer{rounds: 30, usage: test.usage}
-			endpoint := httptest.NewServer(server.handler(t))
-			defer endpoint.Close()
+			endpoint := server.start(t)
 			model := strings.ReplaceAll("tier-"+name, "/", "-")
-			a := precompactionAgent(t, endpoint.URL, model+"-main")
+			a := precompactionAgent(t, endpoint.BaseURL(providersim.Chat), model+"-main")
 			a.ContextCompactionPercent = 0
 			price := func(input float64) provider.ModelPrice {
 				return provider.ModelPrice{InputPricePerToken: input, OutputPricePerToken: 4 * input, InputCachedPricePerToken: input / 10}
 			}
 			provider.SetModelPrice(a.Model, price(test.main.input))
-			compaction := provider.FromPreset("openai-chat", "key", endpoint.URL)
+			compaction := provider.FromPreset("openai-chat", "key", endpoint.BaseURL(providersim.Chat))
 			compaction.Model = model + "-errand"
 			provider.SetModelContext(compaction.Model, 100_000)
 			provider.SetModelPrice(compaction.Model, price(test.errand.input))
@@ -686,9 +656,8 @@ func TestAutomaticCompactionWorksForEveryPriceTierAndMissingData(t *testing.T) {
 
 func TestConnectionThatRefusedConcurrencyCompactsSynchronously(t *testing.T) {
 	server := &precompactionServer{rounds: 14}
-	endpoint := httptest.NewServer(server.handler(t))
-	defer endpoint.Close()
-	a := precompactionAgent(t, endpoint.URL, "serial-connection-model")
+	endpoint := server.start(t)
+	a := precompactionAgent(t, endpoint.BaseURL(providersim.Chat), "serial-connection-model")
 	if err := provider.RecordConcurrencyRefused(a.Provider, a.Model); err != nil {
 		t.Fatal(err)
 	}
@@ -707,22 +676,15 @@ func TestConnectionThatRefusedConcurrencyCompactsSynchronously(t *testing.T) {
 // with a stub would fit, but would send the remaining tool output cold.
 func TestRequiredCheckpointFailureNeverSendsPartlyRewrittenHistory(t *testing.T) {
 	var normal atomic.Int32
-	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Error(err)
-			return
-		}
-		// Checkpoint requests forbid tool use; the serving model still declares them.
-		if req.ToolChoice == "none" {
-			http.Error(w, `{"error":{"type":"authentication_error","message":"invalid credentials"}}`, http.StatusUnauthorized)
-			return
+	endpoint := providersim.New(t)
+	endpoint.Respond(func(r providersim.Request) providersim.Turn {
+		if string(r.ToolChoice) == `"none"` {
+			return providersim.HTTPError(providersim.Auth)
 		}
 		normal.Add(1)
-		writeChatSSE(w, "not expected", "stop")
-	}))
-	defer endpoint.Close()
-	a := precompactionAgent(t, endpoint.URL, "required-summary-model")
+		return providersim.Text("not expected")
+	})
+	a := precompactionAgent(t, endpoint.BaseURL(providersim.Chat), "required-summary-model")
 	a.Provider.SetContextWindow(100_000)
 	history := []provider.ChatMessage{provider.NewTextMessage("user", "Preserve the results")}
 	for i, tool := range []string{"read_file", "execute_command"} {
@@ -788,18 +750,14 @@ func TestFailingCompactionModelNeverStopsTheAgentBeforeCapacity(t *testing.T) {
 	const window, response = 100_000, 2048
 	hard := window - response - contextSafetyReserve(window)
 	var compactions, mains atomic.Int32
-	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request provider.ChatRequest
-		_ = json.NewDecoder(r.Body).Decode(&request)
-		var text strings.Builder
-		for _, message := range request.Messages {
-			text.WriteString(message.ContentString())
-		}
-		if strings.Contains(text.String(), "Context compaction extraction contract") {
+	endpoint := providersim.New(t)
+	endpoint.Respond(func(r providersim.Request) providersim.Turn {
+		text := conversationText(r.Effective)
+		if strings.Contains(text, "Context compaction extraction contract") {
 			compactions.Add(1)
-			http.Error(w, `{"error":{"message":"model overloaded","type":"server_error"}}`, http.StatusServiceUnavailable)
-			return
+			return providersim.HTTPError(providersim.Overload)
 		}
+		request := canonicalChatRequest(t, r)
 		input := estimateCanonicalRequest(request.Messages, request.Tools, request.Model)
 		if input >= hard {
 			t.Errorf("fixture reached capacity: %d of %d", input, hard)
@@ -809,14 +767,11 @@ func TestFailingCompactionModelNeverStopsTheAgentBeforeCapacity(t *testing.T) {
 			if input < hard/2 {
 				t.Error("fixture never reached background preparation pressure")
 			}
-			writeChatSSE(w, "finished", "stop")
-			return
+			return providersim.Text("finished")
 		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"r-%d\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"f%d\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", call, call)
-	}))
-	defer endpoint.Close()
-	a := precompactionAgent(t, endpoint.URL, "failing-compactor-model")
+		return providersim.CallTools(providersim.ToolCall{ID: fmt.Sprintf("r-%d", call), Name: "read_file", Arguments: fmt.Sprintf(`{"path":"f%d"}`, call)}).WithoutUsage()
+	})
+	a := precompactionAgent(t, endpoint.BaseURL(providersim.Chat), "failing-compactor-model")
 	// Keep all eleven requests below capacity without relying on emergency
 	// pruning. Required compaction failure is covered separately.
 	a.MaxOutputTokens = response
@@ -843,17 +798,16 @@ func TestFailingCompactionModelNeverStopsTheAgentBeforeCapacity(t *testing.T) {
 func TestMainModelWritesTheCheckpointWhenTheCompactionModelIsDown(t *testing.T) {
 	for _, sameEndpoint := range []bool{false, true} {
 		t.Run(fmt.Sprintf("same_endpoint=%t", sameEndpoint), func(t *testing.T) {
-			broken := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				http.Error(w, `{"error":{"message":"invalid credentials","type":"authentication_error"}}`, http.StatusUnauthorized)
-			}))
-			defer broken.Close()
+			broken := providersim.New(t)
+			broken.Respond(func(r providersim.Request) providersim.Turn {
+				return providersim.HTTPError(providersim.Auth)
+			})
 			server := &precompactionServer{rounds: 14, missingModel: "broken-compaction-model"}
-			endpoint := httptest.NewServer(server.handler(t))
-			defer endpoint.Close()
-			a := precompactionAgent(t, endpoint.URL, "main-fallback-model")
-			url := broken.URL
+			endpoint := server.start(t)
+			a := precompactionAgent(t, endpoint.BaseURL(providersim.Chat), "main-fallback-model")
+			url := broken.BaseURL(providersim.Chat)
 			if sameEndpoint {
-				url = endpoint.URL
+				url = endpoint.BaseURL(providersim.Chat)
 			}
 			compaction := provider.FromPreset("openai-chat", "key", url)
 			compaction.Model = "broken-compaction-model"
@@ -880,20 +834,17 @@ func TestMainModelWritesTheCheckpointWhenTheCompactionModelIsDown(t *testing.T) 
 // on the same compaction model; it neither aborts nor spends the main model.
 func TestRejectedCombinedExtractionFallsBackToStagedSections(t *testing.T) {
 	var combined, staged atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request provider.ChatRequest
-		_ = json.NewDecoder(r.Body).Decode(&request)
-		instruction := request.Messages[len(request.Messages)-1].ContentString()
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
+		instruction := simulatedText(r.Messages[len(r.Messages)-1].Parts)
 		if strings.Contains(instruction, "All four continuation sections") {
 			combined.Add(1)
-			http.Error(w, `{"error":{"message":"requested output is larger than this deployment serves","type":"invalid_request_error"}}`, http.StatusBadRequest)
-			return
+			return providersim.HTTPError(providersim.InvalidRequest).WithFaultMessage("requested output is larger than this deployment serves")
 		}
 		staged.Add(1)
-		writeChatSSE(w, "- section facts", "stop")
-	}))
-	defer server.Close()
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+		return providersim.Text("- section facts")
+	})
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "over-advertised-model"
 	provider.SetModelContext(p.Model, 200_000)
 	a := NewAgent(p, p.Model, nil)

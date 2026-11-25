@@ -1,13 +1,11 @@
 package turnloop
 
 import (
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"crude/agent/provider"
+	"crude/internal/providersim"
 )
 
 // TestCompleteStreamAttachesOAuth verifies a chat request to the codex backend
@@ -16,23 +14,18 @@ import (
 // "Authentication failed" when the token was missing.
 func TestCompleteStreamAttachesOAuth(t *testing.T) {
 	var gotAuth, gotAccountID, gotOriginator, gotSessionID, gotThreadID, gotUserAgent string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := providersim.New(t)
+	srv.Respond(func(r providersim.Request) providersim.Turn {
 		gotAuth = r.Header.Get("Authorization")
 		gotAccountID = r.Header.Get("chatgpt-account-id")
 		gotOriginator = r.Header.Get("originator")
 		gotSessionID = r.Header.Get("session-id")
 		gotThreadID = r.Header.Get("thread-id")
 		gotUserAgent = r.Header.Get("User-Agent")
-		// Drain the body so the server can respond.
-		_ = json.NewDecoder(r.Body).Decode(&map[string]any{})
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte("data: " + `{"type":"response.output_text.delta","delta":"hi"}` + "\n\n"))
-		_, _ = w.Write([]byte("data: " + `{"type":"response.completed","response":{"id":"r1","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1}}}` + "\n\n"))
-		_, _ = w.Write([]byte("data: [DONE]\n\n"))
-	}))
-	defer srv.Close()
+		return providersim.Text("hi").WithUsage(providersim.Usage{Input: 1, Output: 1})
+	})
 
-	p := provider.FromPreset("chatgpt", "", srv.URL+"/codex")
+	p := provider.FromPreset("chatgpt", "", srv.BaseURL(providersim.Codex))
 	p.SetOAuth(&provider.OAuthCredentials{
 		AccessToken: "AT-oauth",
 		AccountID:   "acct_1",
