@@ -57,3 +57,43 @@ its input was an invented shelf check. Crude validated a four-section portable
 checkpoint, and the next real request replayed the encrypted item and correctly
 identified the blue shelf. This establishes that route's behavior at the time of
 the check, not lasting capability, a cache hit, or a promised cost saving.
+
+**2026-11-25: why the Astra check fell back.** On one automatic boundary the
+session archived 420 messages and completed all four checkpoint sections.
+The estimated active context fell from 499,611 to 44,571 tokens. The same turn,
+human steering and running command continued. This was an Errand checkpoint,
+not a native one: the writer reported 505,146 input tokens. The first normal
+continuation reported 42,654 input tokens and zero cached; the second reported
+42,880 cached out of 48,731. These are request measurements, not a bill.
+
+At 17:09:32 UTC the gateway recorded HTTP 400 on the inline check:
+`'compaction_trigger' requires 'max_output_tokens' to be at least 20000 when specified.`
+The earlier standalone check on that route returned HTTP 404. The inline
+check had copied its 512-token text allowance to an operation that produces a
+compaction item. This was not evidence that the model could not compact.
+The trigger no longer sends that optional field or forces a larger text
+allowance. `TestNativeCheckpointDiscoveryAndReplay/trigger` reproduces the
+rejection and checks discovery, read-back and the next turn through the
+Responses simulator. No production conversation was replayed for the check.
+
+**2026-11-25: a model change sent the whole history to the new model.** At
+12:24 UTC-5 `gpt-6.2-astra` reached its usage limit. The user switched the
+session to `claude-opus-5-5` on the same Responses gateway, stopped the first
+turn after 1.8 seconds and typed `/compact`. Auto treated the human request like
+any native boundary: two synthetic checks (233 and 380 input tokens), then the
+real native compaction with 491,798 input tokens, none cached, $2.04 by the
+catalog price. The new model had never read this context, so no cache could
+help. The user stopped the read-back. Errand, a cheap model on the same account,
+was configured and could have written it. Now Errand writes every `/compact` in Auto, and every
+checkpoint of a context the serving model did not write. Provider only keeps
+the native route.
+
+**2026-11-25: a cut Responses stream re-uploaded the whole history.** At 12:09
+a stream ended with `stream closed before response.completed` after partial
+output. The recovery request planned `response_id_unavailable` and sent 419
+messages (3,781,412 bytes, 499,447 input tokens) instead of a delta after the
+previous completed response. The gateway still reported 480,896 cached tokens,
+so on this route the cost was the upload, not a cache miss. The latest
+completed response now anchors the delta, and the cut output travels once
+after it. The seven-wire matrix guards that each resume keeps the cut request
+as an exact prefix; it does not measure a provider bill.

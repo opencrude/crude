@@ -613,9 +613,19 @@ log records the encoded body size separately from provider cache-token usage.
 | [Gemini generateContent](https://ai.google.dev/gemini-api/docs/caching) | Implicit caching does not replace the request. Crude does not create billable explicit caches. |
 | [Gemini Interactions](https://ai.google.dev/gemini-api/docs/interactions) and Codex HTTP | These adapters deliberately send `store:false`. No stored conversation ID is assumed. Codex WebSocket continuation is not an HTTP storage contract. |
 
-The first request, a changed prefix/configuration, compaction, or a partial or
-unreferenced assistant response requires a complete upload. A model/account/
-protocol switch starts a new chain; later compatible requests can use deltas.
+The first request, a changed prefix/configuration or compaction requires a
+complete upload. The anchor is the latest completed response with a stored ID.
+Output without an ID, such as a response cut by a stream interruption or a stop,
+is uploaded once in the delta after that anchor, with its continuation request.
+The ID of a cut response is never stored, so it is never an anchor. If the
+latest anchor no longer matches its prefix or output, the request uploads
+everything. On 2026-11-25 a resume after a cut stream uploaded a whole
+499K-token history (3.78 MB) because only the last assistant message could
+anchor a delta. A model/account/protocol switch starts a new chain; later
+compatible requests can use deltas. On every registered wire the resume keeps
+the cut request as an exact prefix
+(`TestRegisteredProtocolsResumeKeepsTheCutRequestAsPrefix`); this guards
+prefix stability, not provider cache residency.
 Resume restores the reference passively and can continue it if the exact context
 still matches. No provider call or tool restart occurs solely to validate an ID.
 

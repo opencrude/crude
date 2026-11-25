@@ -268,7 +268,7 @@ func TestAutoUncertainNativeCheckpointUsesErrandAndContinues(t *testing.T) {
 	for i := range 14 {
 		history = append(history, provider.NewTextMessage("user", fmt.Sprintf("step %d", i)), provider.NewTextMessage("assistant", old+strings.Repeat("payload ", 1400)))
 	}
-	history = append(history, provider.NewTextMessage("user", "Continue the check."))
+	history = append(servedBy(p, history), provider.NewTextMessage("user", "Continue the check."))
 	var events []AgentEvent
 	a.Run(t.Context(), history, "system", func(e AgentEvent) { events = append(events, e) }, nil, "", nil)
 	var reason string
@@ -289,7 +289,9 @@ func TestAutoUncertainNativeCheckpointUsesErrandAndContinues(t *testing.T) {
 // model. Provider only never charges another model, Auto uses the serving
 // model when its cached context is cheaper or Errand cannot run, and Errand
 // only always uses Errand. A serving checkpoint declares the conversation's
-// tools (forbidden), so it reads the conversation's cached prefix.
+// tools (forbidden), so it reads the conversation's cached prefix. In Auto a
+// human /compact, or a context another model wrote, has no such prefix:
+// Errand writes it even when the serving model's cache reports were cheap.
 func TestServingModelWritesCheckpointOnWiresWithoutNativeCompaction(t *testing.T) {
 	const handoff = "<<<intent>>>\nKeep the build passing\n<<<work>>>\nChecked inputs\n<<<state>>>\nTarget is blue\n<<<continuation>>>\nCheck the target"
 	serve := func(t *testing.T) *providersim.Server {
@@ -303,14 +305,20 @@ func TestServingModelWritesCheckpointOnWiresWithoutNativeCompaction(t *testing.T
 	tools := []provider.ToolDef{{Type: "function", Function: provider.FunctionDef{Name: "read_file", Description: "Read a file.", Parameters: json.RawMessage(`{"type":"object"}`)}}}
 	for _, test := range []struct {
 		name, method, errandModel string
+		trigger, writtenBy        string
 		ratio                     float64
 		broken                    bool
 		serving                   bool
 	}{
 		{name: "provider only", method: provider.CompactionProviderOnly, errandModel: "errand-cheap", serving: true},
+		{name: "provider only human request", method: provider.CompactionProviderOnly, errandModel: "errand-cheap", trigger: CompactionTriggerManual, serving: true},
 		{name: "auto cached serving is cheaper", errandModel: "errand-flat", ratio: 0.95, serving: true},
+		{name: "auto human request", errandModel: "errand-flat", ratio: 0.95, trigger: CompactionTriggerManual},
+		{name: "auto in-run human request", errandModel: "errand-flat", ratio: 0.95, trigger: "requested"},
+		{name: "auto after a model change", errandModel: "errand-flat", ratio: 0.95, writtenBy: "previous-model"},
 		{name: "auto errand is cheaper", errandModel: "errand-cheap", ratio: 0.95},
 		{name: "auto errand cannot run", errandModel: "errand-cheap", broken: true, serving: true},
+		{name: "auto human request errand cannot run", errandModel: "errand-cheap", trigger: CompactionTriggerManual, broken: true, serving: true},
 		{name: "errand only", method: provider.CompactionErrandOnly, errandModel: "errand-flat", ratio: 0.95},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -332,11 +340,23 @@ func TestServingModelWritesCheckpointOnWiresWithoutNativeCompaction(t *testing.T
 			if test.broken {
 				a.CompactionConfigError = errors.New("Errand has no credentials")
 			}
-			history := []provider.ChatMessage{provider.NewTextMessage("user", "Review the build "+strings.Repeat("evidence ", 3000))}
+			history := []provider.ChatMessage{
+				provider.NewTextMessage("user", "Review the build "+strings.Repeat("evidence ", 3000)),
+				provider.NewTextMessage("assistant", "The build is under review."),
+				provider.NewTextMessage("user", "Continue."),
+			}
+			trigger := test.trigger
+			if trigger == "" {
+				trigger = "automatic"
+			}
 			var events []AgentEvent
-			msgs := append([]provider.ChatMessage{provider.NewTextMessage("system", "system")}, history...)
+			msgs := append([]provider.ChatMessage{provider.NewTextMessage("system", "system")}, servedBy(serving, history)...)
+			if test.writtenBy != "" {
+				// Same connection, another model: the user switched models.
+				msgs[2].ReplaySourceModel = test.writtenBy
+			}
 			// The decision uses the source size the run measured: 400K tokens.
-			outcome, err := a.compactWithModel(t.Context(), msgs, tools, "op", 400_000, CompactionTriggerManual, func(e AgentEvent) { events = append(events, e) })
+			outcome, err := a.compactWithModel(t.Context(), msgs, tools, "op", 400_000, trigger, func(e AgentEvent) { events = append(events, e) })
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -386,4 +406,82 @@ func hasSimulatedCheckpoint(c providersim.Conversation) bool {
 		}
 	}
 	return false
+}
+
+// On 2026-11-25 a user switched a session from one model to another on the
+// same Responses gateway, stopped the turn and compacted. Crude sent the
+// whole history (491,798 input tokens, none cached) to the new model's native
+// compaction. A model that did not write the context has none of it in cache,
+// so Errand writes that checkpoint, and a human request always uses Errand.
+// Only a context the serving model wrote may go to its native route.
+func TestCheckpointAfterModelChangeUsesErrand(t *testing.T) {
+	for _, test := range []struct {
+		name, writtenBy string
+		human, native   bool
+	}{
+		{name: "automatic after a model change", writtenBy: "previous-model"},
+		{name: "human request after a model change", writtenBy: "previous-model", human: true},
+		{name: "human request on the same model", writtenBy: "current-model", human: true},
+		{name: "automatic on the same model", writtenBy: "current-model", native: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			const old = "old assistant evidence "
+			var native, mainCalls atomic.Int32
+			gateway := providersim.New(t)
+			gateway.Respond(func(r providersim.Request) providersim.Turn {
+				if strings.HasSuffix(r.Path, "/compact") || strings.Contains(string(r.Raw), "compaction_trigger") {
+					native.Add(1)
+					return providersim.HTTPError(providersim.InvalidRequest).WithFaultMessage("unsupported compaction trigger")
+				}
+				mainCalls.Add(1)
+				if sent := conversationText(r.Conversation); strings.Contains(sent, old) || !strings.Contains(sent, "context_checkpoint") {
+					t.Error("the serving model received the old history instead of the checkpoint")
+				}
+				return providersim.Text("done")
+			})
+			recorder := &precompactionServer{}
+			summary := recorder.start(t)
+			p := &provider.Provider{ID: "custom", AccountID: "model-change-" + test.name, StandardName: "openai-responses", Model: "current-model", BaseURL: gateway.BaseURL(providersim.Responses)}
+			p.SetContextWindow(100_000)
+			a := newTestAgent(t, p, p.Model)
+			a.CompactionProvider = provider.FromPreset("openai-chat", "key", summary.BaseURL(providersim.Chat))
+			a.CompactionProvider.Model = "extractor-test"
+			a.CompactionProvider.SetContextWindow(200_000)
+			a.ContextCompactionPercent = 10
+			if test.human {
+				a.ContextCompactionPercent = CompactionOff
+				taken := false
+				a.CompactionRequest = func() string {
+					if taken {
+						return ""
+					}
+					taken = true
+					return "human-request"
+				}
+			}
+			var history []provider.ChatMessage
+			for i := range 14 {
+				history = append(history, provider.NewTextMessage("user", fmt.Sprintf("step %d", i)), provider.NewTextMessage("assistant", old+strings.Repeat("payload ", 1400)))
+			}
+			history = servedBy(p, history)
+			for i := range history {
+				if history[i].Role == "assistant" {
+					history[i].ReplaySourceModel = test.writtenBy
+				}
+			}
+			history = append(history, provider.NewTextMessage("user", "Continue the check."))
+			var commits []CompactionCommit
+			a.CommitCompaction = func(c CompactionCommit) error { commits = append(commits, c); return nil }
+			a.Run(t.Context(), history, "system", func(AgentEvent) {}, nil, "", nil)
+			if a.RunFailure() != nil || len(commits) != 1 || mainCalls.Load() != 1 {
+				t.Fatalf("failure=%v commits=%d main=%d", a.RunFailure(), len(commits), mainCalls.Load())
+			}
+			if test.native != (native.Load() > 0) {
+				t.Fatalf("native requests=%d; want them only for a context the serving model wrote", native.Load())
+			}
+			if recorder.compactions.Load() != 1 || commits[0].ModelID != "extractor-test" {
+				t.Fatalf("errand extractions=%d writer=%q; want Errand to write the checkpoint", recorder.compactions.Load(), commits[0].ModelID)
+			}
+		})
+	}
 }

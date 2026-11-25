@@ -112,7 +112,7 @@ func TestResponsesContinuationMediaReplayLearningIsAdaptive(t *testing.T) {
 }
 
 func TestResponsesContinuationResetsOnExactContextOrConnectionChange(t *testing.T) {
-	for _, change := range []string{"system", "output", "model", "account", "endpoint", "partial", "compaction", "attachment"} {
+	for _, change := range []string{"system", "output", "model", "account", "endpoint", "partial_after_changed_output", "compaction", "attachment"} {
 		t.Run(change, func(t *testing.T) {
 			p, req := continuationFixture(t, "https://api.openai.com/v1")
 			switch change {
@@ -129,7 +129,9 @@ func TestResponsesContinuationResetsOnExactContextOrConnectionChange(t *testing.
 			case "endpoint":
 				p.BaseURL = "https://other.invalid/v1"
 				req.ResponseContinuationScope = p.ResponseContinuationScope(req.Model)
-			case "partial":
+			case "partial_after_changed_output":
+				// Output without an ID never hides a changed anchor.
+				req.Messages[2].ToolCalls[0].Function.Arguments = "changed patch"
 				req.Messages = append(req.Messages, NewTextMessage("assistant", "unfinished"))
 			case "compaction":
 				req.Messages = req.Messages[1:]
@@ -142,6 +144,44 @@ func TestResponsesContinuationResetsOnExactContextOrConnectionChange(t *testing.
 				t.Fatalf("unsafe %s reused %s", change, previous)
 			}
 		})
+	}
+}
+
+// A response cut by a stream interruption or a stop has no stored ID. Its
+// accepted text and the continuation request follow the latest completed
+// response in the delta; they never force a whole-history upload.
+func TestResponsesContinuationKeepsAnchorAfterPartialOutput(t *testing.T) {
+	_, req := continuationFixture(t, "https://api.openai.com/v1")
+	req.Messages = append(req.Messages,
+		NewTextMessage("assistant", "partial answer before the cut"),
+		NewTextMessage("user", "Continue from the partial answer."))
+	if plan := PlanResponseContinuation(&req); plan.PreviousResponseID != "response-1" || plan.Start != 3 || plan.Reason != "delta" {
+		t.Fatalf("partial output dropped the completed anchor: %+v", plan)
+	}
+	body, err := (&OpenAIResponsesStandard{}).EncodeRequest(&req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire struct {
+		Previous string `json:"previous_response_id"`
+		Input    []struct {
+			Type, Role, CallID string
+			Content            json.RawMessage
+		} `json:"input"`
+	}
+	if err := json.Unmarshal(body, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if wire.Previous != "response-1" || len(wire.Input) != 3 || wire.Input[0].Type != "custom_tool_call_output" ||
+		wire.Input[1].Role != "assistant" || wire.Input[2].Role != "user" ||
+		strings.Count(string(body), "partial answer before the cut") != 1 || strings.Contains(string(body), "stable policy") {
+		t.Fatalf("delta after the cut = %s", body)
+	}
+	// Output without any stored ID cannot anchor a delta.
+	_, cut := continuationFixture(t, "https://api.openai.com/v1")
+	cut.Messages = append(cut.Messages[:2:2], NewTextMessage("assistant", "partial answer before the cut"))
+	if plan := PlanResponseContinuation(&cut); plan.PreviousResponseID != "" || plan.Reason != "response_id_unavailable" {
+		t.Fatalf("a cut response became an anchor: %+v", plan)
 	}
 }
 

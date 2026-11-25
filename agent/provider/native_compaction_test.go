@@ -52,7 +52,16 @@ func TestNativeCheckpointDiscoveryAndReplay(t *testing.T) {
 				if mode == "trigger" && strings.HasSuffix(r.Path, "/compact") {
 					return providersim.HTTPError(providersim.ModelNotFound)
 				}
-				if strings.HasSuffix(r.Path, "/compact") || strings.Contains(body, `"type":"compaction_trigger"`) || (anth && strings.Contains(body, `"compaction":`)) {
+				trigger := strings.Contains(body, `"type":"compaction_trigger"`)
+				if mode == "trigger" && trigger && r.OutputLimit != "" {
+					// One observed route accepts no limit, but rejects a small text
+					// allowance. Raising the caller's limit to its floor is not a fix.
+					if n, _ := r.OutputLimit.Int64(); n < 20_000 {
+						return providersim.HTTPError(providersim.InvalidRequest).WithFaultMessage("'compaction_trigger' requires 'max_output_tokens' to be at least 20000 when specified.")
+					}
+					t.Errorf("trigger forced an output allowance of %s", r.OutputLimit)
+				}
+				if strings.HasSuffix(r.Path, "/compact") || trigger || (anth && strings.Contains(body, `"compaction":`)) {
 					answer := "portable"
 					if !strings.Contains(body, "real-history-secret") {
 						if !strings.Contains(body, "blue-91") {
@@ -131,6 +140,9 @@ func TestNativeCheckpointDiscoveryAndReplay(t *testing.T) {
 			}
 			if mode == "trigger" {
 				expectedCalls++
+				if len(journal) == expectedCalls && (journal[2].OutputLimit != "96" || journal[4].OutputLimit.String() != fmt.Sprint(req.Limit)) {
+					t.Fatalf("text limits changed: probe replay=%s checkpoint read-back=%s", journal[2].OutputLimit, journal[4].OutputLimit)
+				}
 			}
 			if strings.Join(labels, " ") != want || len(journal) != expectedCalls {
 				t.Fatalf("paid operations: %v, want %s; HTTP requests=%d want %d", labels, want, len(journal), expectedCalls)

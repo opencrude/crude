@@ -19,8 +19,8 @@ type readBack struct {
 	stream        bool
 }
 
-// compactWithReadBacks runs a manual /compact on a Responses route whose
-// native operation works. answer decides each read-back reply; a portable
+// compactWithReadBacks runs an automatic checkpoint of a context the serving
+// model wrote, on a Responses route whose native operation works. answer decides each read-back reply; a portable
 // fallback gets the handoff unchanged.
 func compactWithReadBacks(t *testing.T, account, handoff string, answer func(index int, r readBack) providersim.Turn) (CompactResult, []readBack, []string, int) {
 	t.Helper()
@@ -51,13 +51,14 @@ func compactWithReadBacks(t *testing.T, account, handoff string, answer func(ind
 	p := &provider.Provider{ID: "custom", AccountID: account, StandardName: "openai-responses", Model: model, BaseURL: sim.BaseURL(providersim.Responses)}
 	p.SetContextWindow(1_000_000)
 	a := newTestAgent(t, p, model)
+	a.NativeCompactionProvider = p
 	var history []provider.ChatMessage
 	for i := range 12 {
 		history = append(history, provider.NewTextMessage("user", "step "+strconv.Itoa(i)), provider.NewTextMessage("assistant", strings.Repeat("old assistant evidence ", 2500)))
 	}
-	history = append(history, provider.NewTextMessage("user", "Continue the check."))
+	history = append(servedBy(p, history), provider.NewTextMessage("user", "Continue the check."))
 	var notices []string
-	result, err := a.Compact(t.Context(), history, "system", func(e AgentEvent) {
+	result, err := a.CompactWithRequestID(t.Context(), history, "system", "", "automatic", func(e AgentEvent) {
 		if e.Type == "compaction_route_notice" {
 			reason, _ := e.Data.(map[string]any)["reason"].(string)
 			notices = append(notices, reason)
@@ -79,7 +80,7 @@ func carriesProviderCheckpoint(result CompactResult, text string) bool {
 }
 
 // Reading a provider checkpoint back is a normal request of the serving model.
-// On 2026-11-25 a manual /compact of an 817K-token session on a Responses
+// On 2026-11-25 a /compact of an 817K-token session on a Responses
 // route lost its paid native result: the read-back was capped at 8,192 output
 // tokens while its instructions offered the whole continuation space (hundreds
 // of thousands of tokens) for the checkpoint.

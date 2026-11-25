@@ -26,7 +26,7 @@ func rejectionFixture(t *testing.T) (*providersim.Server, *Agent, []provider.Cha
 	a.CompactionProvider.SetContextWindow(200_000)
 	a.FilteredTools = FilterTools(tools.AgentTools, []string{"read_file"}, nil, "", false)
 	a.ContextCompactionPercent = 85
-	return sim, a, compactionTestHistory(provider.NewTextMessage("user", "Finish the audit."))
+	return sim, a, servedBy(p, compactionTestHistory(provider.NewTextMessage("user", "Finish the audit.")))
 }
 
 // A forced checkpoint may use another account after a quota rejection, but
@@ -103,8 +103,10 @@ func TestAutoCompactionRateLimitRecheck(t *testing.T) {
 				}
 				result, err := next.CompactWithRequestID(t.Context(), history, "Keep the audit intact.", "second", trigger, nil)
 				calls := sim.Requests()[before:]
+				// A held refusal skips the native check. A human /compact in
+				// Auto never asks the serving route: Errand writes it at once.
 				want := 2
-				if phase == "held" {
+				if phase == "held" || phase == "manual" {
 					want = 1
 				}
 				if err != nil || result.ModelID != "errand" || len(calls) != want || calls[len(calls)-1].Wire != providersim.Chat ||

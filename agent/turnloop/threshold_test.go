@@ -51,9 +51,9 @@ func TestThresholdMessagesTurnBoundary(t *testing.T) {
 	for _, fire := range []bool{true, false} {
 		t.Run(fmt.Sprint(fire), func(t *testing.T) {
 			s, a := thresholdMessages(t)
-			old := thresholdHistory(20000)
+			old := servedBy(a.Provider, thresholdHistory(20000))
 			if !fire {
-				old = thresholdHistory(3200)
+				old = servedBy(a.Provider, thresholdHistory(3200))
 			}
 			var events []AgentEvent
 			usage := providersim.Usage{Input: 72000, Output: 27, Cached: 114}
@@ -138,7 +138,7 @@ func TestThresholdResponsesSettlesMixedRound(t *testing.T) {
 	var events []AgentEvent
 	var committed CompactionCommit
 	a.CommitCompaction = func(c CompactionCommit) error { committed = c; return nil }
-	archive := a.Run(t.Context(), thresholdHistory(3800), "system contract", func(e AgentEvent) { events = append(events, e) }, nil, "", nil)
+	archive := a.Run(t.Context(), servedBy(p, thresholdHistory(3800)), "system contract", func(e AgentEvent) { events = append(events, e) }, nil, "", nil)
 	if a.RunFailure() != nil {
 		t.Fatal(a.RunFailure())
 	}
@@ -345,7 +345,7 @@ func TestThresholdMessagesFallbackKeepsSource(t *testing.T) {
 				return providersim.Text("finished")
 			})
 			var events []AgentEvent
-			out := a.Run(t.Context(), thresholdHistory(20000), "system contract", func(e AgentEvent) { events = append(events, e) }, nil, "", nil)
+			out := a.Run(t.Context(), servedBy(a.Provider, thresholdHistory(20000)), "system contract", func(e AgentEvent) { events = append(events, e) }, nil, "", nil)
 			if fault == "null_provider_only" {
 				if edits != 1 || len(errand.Requests()) != 0 || a.RunFailure() == nil || !hasEvent(events, "context_compaction_failed") || len(s.Requests()) != 2 || !strings.Contains(out[2].ContentString(), "source history") {
 					t.Fatalf("null summary lost source or billed another request; %v", a.RunFailure())
