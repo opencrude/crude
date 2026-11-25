@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -19,6 +17,7 @@ import (
 	"crude/agent/sessiondb"
 	"crude/agent/tools"
 	"crude/agent/turnloop"
+	"crude/internal/providersim"
 	recoverytypes "crude/types/recovery"
 )
 
@@ -46,7 +45,7 @@ func testGuidanceDeferredCheckpoint(t *testing.T, child bool, order string) {
 		t.Fatal(err)
 	}
 	var requests, reads, writes atomic.Int32
-	var calls []map[string]any
+	var calls []providersim.ToolCall
 	deferredIDs := map[string]bool{}
 	for i, name := range strings.Split(order, "-") {
 		id := fmt.Sprintf("call-%d", i)
@@ -60,26 +59,14 @@ func testGuidanceDeferredCheckpoint(t *testing.T, child bool, order string) {
 		case "batch":
 			name, args = "multi_tool_use.parallel", `{"tool_uses":[{"recipient_name":"functions.read_file","parameters":{"path":"nested/source.txt"}}]}`
 		}
-		calls = append(calls, map[string]any{"index": i, "id": id, "type": "function", "function": map[string]any{"name": name, "arguments": args}})
+		calls = append(calls, providersim.ToolCall{ID: id, Name: name, Arguments: args})
 	}
-	writeCalls := func(w http.ResponseWriter, calls []map[string]any) {
-		body, err := json.Marshal(map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"tool_calls": calls}, "finish_reason": "tool_calls"}}})
-		if err != nil {
-			t.Error(err)
-			return
-		}
-		_, _ = fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", body)
-	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-			return
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
+	server := providersim.New(t)
+	server.Respond(func(wire providersim.Request) providersim.Turn {
+		request := simDecodeRequest[provider.ChatRequest](t, wire)
 		switch requests.Add(1) {
 		case 1:
-			writeCalls(w, calls)
+			return providersim.CallTools(calls...)
 		case 2:
 			if writes.Load() != 0 {
 				t.Error("newly governed effect ran before the model received its guidance")
@@ -99,22 +86,20 @@ func testGuidanceDeferredCheckpoint(t *testing.T, child bool, order string) {
 				t.Error("next request did not receive the newly discovered rules")
 			}
 			for _, call := range calls {
-				if results[call["id"].(string)] != 1 {
-					t.Errorf("next request lacks exactly one result for %s", call["id"])
+				if results[call.ID] != 1 {
+					t.Errorf("next request lacks exactly one result for %s", call.ID)
 				}
 			}
 			if len(deferredIDs) != 0 {
-				writeCalls(w, []map[string]any{{"index": 0, "id": "reassessed-write", "type": "function", "function": map[string]any{"name": "write_file", "arguments": `{"path":"nested/out.txt","content":"checked"}`}}})
-				return
+				return simTool("reassessed-write", "write_file", `{"path":"nested/out.txt","content":"checked"}`)
 			}
 			fallthrough
 		default:
-			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"finished after guidance\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+			return providersim.Text("finished after guidance")
 		}
-	}))
-	defer server.Close()
+	})
 	home := t.TempDir()
-	s, err := NewWithSessionDir("", modelAttributionConfig(server.URL, "guidance-checkpoint"), home, home)
+	s, err := NewWithSessionDir("", modelAttributionConfig(server.BaseURL(providersim.Chat), "guidance-checkpoint"), home, home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +126,7 @@ func testGuidanceDeferredCheckpoint(t *testing.T, child bool, order string) {
 	run := newRecoveryRunState(provider.PlainInput("task"), &sessiondb.RecoveryCheckpoint{Archive: state.Messages, ActiveContext: state.Messages,
 		ContextOwnerID: owner, ContextRevision: state.Revision, ContextGeneration: 1, ContextReason: "test"})
 	status := recoverytypes.Status{ID: "guidance-incident", AgentID: owner, Generation: 1}
-	a := turnloop.NewAgent(provider.FromPreset("openai-chat", "key", server.URL), "guidance-checkpoint", s.logger)
+	a := turnloop.NewAgent(provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat)), "guidance-checkpoint", s.logger)
 	a.WorkDir, a.Yolo = dir, true
 	a.FilteredTools = append(append([]tools.ToolDef(nil), tools.AgentTools...), tools.ParallelTool())
 	a.ContextArchive, a.FrozenPrefix = state.Messages, state.Messages
@@ -251,37 +236,29 @@ func TestGuidanceDeferredRootStopAndResumeJourney(t *testing.T) {
 			writeArgs, _ := json.Marshal(map[string]string{"path": output, "content": "only after reassessment"})
 			var requests atomic.Int32
 			second := make(chan struct{})
-			release := make(chan struct{})
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				var request provider.ChatRequest
-				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-					t.Error(err)
-					return
-				}
-				w.Header().Set("Content-Type", "text/event-stream")
+			hold := providersim.NewGate()
+			server := providersim.New(t)
+			server.Respond(func(request providersim.Request) providersim.Turn {
 				switch requests.Add(1) {
 				case 1:
-					_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"deferred-write\",\"type\":\"function\",\"function\":{\"name\":\"write_file\",\"arguments\":%q}},{\"index\":1,\"id\":\"allowed-read\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":%q}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", string(writeArgs), string(readArgs))
+					return providersim.CallTools(
+						providersim.ToolCall{ID: "deferred-write", Name: "write_file", Arguments: string(writeArgs)},
+						providersim.ToolCall{ID: "allowed-read", Name: "read_file", Arguments: string(readArgs)},
+					)
 				case 2:
 					if _, err := os.Stat(output); !os.IsNotExist(err) {
 						t.Error("deferred file mutation executed before reassessment")
 					}
 					close(second)
 					if stop {
-						select {
-						case <-r.Context().Done():
-						case <-release:
-						}
-						return
+						return providersim.HTTPError(providersim.BadGateway).WithGate(hold)
 					}
-					_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"reassessed-write\",\"type\":\"function\",\"function\":{\"name\":\"write_file\",\"arguments\":%q}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", string(writeArgs))
+					return simTool("reassessed-write", "write_file", string(writeArgs))
 				default:
-					_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"normal work continues\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+					return providersim.Text("normal work continues")
 				}
-			}))
-			defer server.Close()
-			defer close(release)
-			cfg := modelAttributionConfig(server.URL, "guidance-root-journey")
+			})
+			cfg := modelAttributionConfig(server.BaseURL(providersim.Chat), "guidance-root-journey")
 			s, err := NewWithSessionDir("", cfg, home, sessions)
 			if err != nil {
 				t.Fatal(err)

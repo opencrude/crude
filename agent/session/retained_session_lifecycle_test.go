@@ -1,10 +1,7 @@
 package session
 
 import (
-	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -15,6 +12,7 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
+	"crude/internal/providersim"
 )
 
 // Optional acceptance against SQLite backup images, never live databases. This
@@ -31,21 +29,15 @@ func TestRetainedSessionStopSendLifecycle(t *testing.T) {
 	for _, path := range paths {
 		t.Run(filepath.Base(path), func(t *testing.T) {
 			var requests atomic.Int32
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				var request provider.ChatRequest
-				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-					t.Error(err)
-					return
-				}
+			server := providersim.New(t)
+			server.Respond(func(req providersim.Request) providersim.Turn {
 				requests.Add(1)
 				text := "Retained session accepts new work."
-				if request.ToolChoice == "none" {
+				if string(req.ToolChoice) == `"none"` {
 					text = "<<<intent>>>\nPreserve the original requirements.\n<<<work>>>\nRetain all accepted evidence.\n<<<state>>>\nPrevious turn stopped.\n<<<continuation>>>\nFollow the new input without replay."
 				}
-				w.Header().Set("Content-Type", "text/event-stream")
-				_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":%q},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n", text)
-			}))
-			defer server.Close()
+				return providersim.Text(text).WithoutUsage()
+			})
 			directory := t.TempDir()
 			copyPath := filepath.Join(directory, filepath.Base(path))
 			raw, err := os.ReadFile(path)
@@ -68,7 +60,7 @@ func TestRetainedSessionStopSendLifecycle(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = db.Close()
-			cfg := modelAttributionConfig(server.URL, "retained-lifecycle-model")
+			cfg := modelAttributionConfig(server.BaseURL(providersim.Chat), "retained-lifecycle-model")
 			account := cfg.Accounts["account"]
 			account.ID = meta.AccountID
 			cfg.Accounts[meta.AccountID] = account

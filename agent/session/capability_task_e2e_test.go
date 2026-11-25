@@ -17,6 +17,7 @@ import (
 	"crude/agent/provider"
 	"crude/agent/skills"
 	"crude/agent/turnloop"
+	"crude/internal/providersim"
 	captypes "crude/types/capability"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -65,16 +66,10 @@ func TestTaskAcquiresSkillActivatesMCPUsesToolAndResumesPassively(test *testing.
 	}
 	requests := make(chan map[string]any, 8)
 	var requestCount atomic.Int32
-	providerServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		var body map[string]any
-		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
-			if request.Context().Err() == nil {
-				test.Error(err)
-			}
-			return
-		}
+	providerServer := providersim.New(test)
+	providerServer.Respond(func(request providersim.Request) providersim.Turn {
+		body := simRawRequest(request)
 		requests <- body
-		writer.Header().Set("Content-Type", "text/event-stream")
 		var name string
 		arguments := map[string]any{}
 		switch requestCount.Add(1) {
@@ -92,18 +87,16 @@ func TestTaskAcquiresSkillActivatesMCPUsesToolAndResumesPassively(test *testing.
 			case offered && !used:
 				name = tool.Name
 			case loaded && used:
-				_, _ = fmt.Fprint(writer, "data: {\"choices\":[{\"delta\":{\"content\":\"Task used source instructions and exact SDK evidence.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-				return
+				return providersim.Text("Task used source instructions and exact SDK evidence.")
 			default:
 				name, arguments = "wait", map[string]any{"seconds": 15}
 			}
 		}
 
 		encoded, _ := json.Marshal(arguments)
-		_, _ = fmt.Fprintf(writer, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":%q,\"type\":\"function\",\"function\":{\"name\":%q,\"arguments\":%q}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", fmt.Sprintf("task-%d", requestCount.Load()), name, string(encoded))
-	}))
-	defer providerServer.Close()
-	config := modelAttributionConfig(providerServer.URL, "capability-task-model")
+		return simTool(fmt.Sprintf("task-%d", requestCount.Load()), name, string(encoded))
+	})
+	config := modelAttributionConfig(providerServer.BaseURL(providersim.Chat), "capability-task-model")
 	config.Capabilities = settings
 	home, directory := test.TempDir(), filepath.Join(test.TempDir(), "sessions")
 	owner, err := NewWithSessionDir("capability-task", config, home, directory)

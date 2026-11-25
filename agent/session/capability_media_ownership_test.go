@@ -5,17 +5,12 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"image"
 	"image/png"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,6 +18,7 @@ import (
 	"crude/agent/safety"
 	"crude/agent/tools"
 	"crude/agent/turnloop"
+	"crude/internal/providersim"
 )
 
 func TestAgentMediaPolicyRetainsExactRootSnapshot(t *testing.T) {
@@ -103,36 +99,16 @@ func TestDelegatedAgentMediaPolicyUsesChildSnapshot(t *testing.T) {
 			name = "explicitly-disabled"
 		}
 		t.Run(name, func(t *testing.T) {
-			entered, release := make(chan struct{}), make(chan struct{})
-			var releaseOnce sync.Once
-			releaseProvider := func() { releaseOnce.Do(func() { close(release) }) }
-			defer releaseProvider()
-			var requests atomic.Int32
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-				var body struct {
-					Model string `json:"model"`
+			gate := providersim.NewGate()
+			server := providersim.New(t)
+			server.Respond(func(request providersim.Request) providersim.Turn {
+				if request.Model != "delegated-media-model" {
+					t.Errorf("child used foreign model %q", request.Model)
 				}
-				if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
-					t.Error(err)
-					return
-				}
-				if body.Model != "delegated-media-model" {
-					t.Errorf("child used foreign model %q", body.Model)
-				}
-				if requests.Add(1) == 1 {
-					close(entered)
-				}
-				select {
-				case <-release:
-				case <-request.Context().Done():
-					return
-				}
-				w.Header().Set("Content-Type", "text/event-stream")
-				_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"observed\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-			}))
-			t.Cleanup(server.Close)
+				return providersim.Text("observed").WithGate(gate)
+			})
 			home := t.TempDir()
-			cfg := modelAttributionConfig(server.URL, "parent-media-model")
+			cfg := modelAttributionConfig(server.BaseURL(providersim.Chat), "parent-media-model")
 			profile := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
 			main := profile.Categories[CategoryDefault]
 			main.ModelModalities = []string{provider.ModalityAudio}
@@ -150,7 +126,7 @@ func TestDelegatedAgentMediaPolicyUsesChildSnapshot(t *testing.T) {
 			s.subAgentSup = runner
 			t.Cleanup(func() {
 				runner.SessionCancel()
-				releaseProvider()
+				gate.Release()
 				runner.Wait()
 			})
 			result, err := runner.StartAgent(t.Context(), map[string]any{"category": CategoryResearcher, "description": "retain exact role media capabilities", "isolation": "shared"})
@@ -163,10 +139,10 @@ func TestDelegatedAgentMediaPolicyUsesChildSnapshot(t *testing.T) {
 			if err := json.Unmarshal([]byte(result.Content), &identity); err != nil || identity.AgentID == "" {
 				t.Fatalf("child identity=%s err=%v", result.Content, err)
 			}
-			select {
-			case <-entered:
-			case <-time.After(5 * time.Second):
-				t.Fatal("real child request did not start")
+			wait, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			if err := gate.Wait(wait); err != nil {
+				t.Fatalf("real child request did not start: %v", err)
 			}
 			handle, exists := runner.Manager().Active(turnloop.AgentID(identity.AgentID))
 			if !exists || handle.Agent == nil || handle.Agent.MediaReadPolicy == nil {
@@ -179,7 +155,7 @@ func TestDelegatedAgentMediaPolicyUsesChildSnapshot(t *testing.T) {
 			// Stop before allowing a natural finish that requires another report
 			// request; this test observes construction through the actual launch.
 			handle.Cancel()
-			releaseProvider()
+			gate.Release()
 			runner.Wait()
 		})
 	}

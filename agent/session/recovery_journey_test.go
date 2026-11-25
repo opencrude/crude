@@ -1,9 +1,6 @@
 package session
 
 import (
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -12,19 +9,20 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
+	"crude/internal/providersim"
 	recoverytypes "crude/types/recovery"
 )
 
 func TestPassiveRecoveryRestoresAcceptedTranscriptAndClosesUnknownToolExchange(t *testing.T) {
 	home, directory := t.TempDir(), t.TempDir()
 	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := providersim.New(t)
+	server.Respond(func(providersim.Request) providersim.Turn {
 		requests.Add(1)
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"continued safely\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	defer server.Close()
-	cfg := modelAttributionConfig(server.URL, "resume-recovery-journey")
+		return providersim.Text("continued safely").WithoutUsage()
+	})
+
+	cfg := modelAttributionConfig(server.BaseURL(providersim.Chat), "resume-recovery-journey")
 	original, err := NewWithSessionDir("recovery-journey", cfg, home, directory)
 	if err != nil {
 		t.Fatal(err)
@@ -171,14 +169,14 @@ func TestAcceptedFinalBoundaryRetriesPersistenceWithoutAnotherProviderCall(t *te
 func checkNaturalCompletionPersistenceRetry(t *testing.T, boundary bool) {
 	t.Helper()
 	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := providersim.New(t)
+	server.Respond(func(providersim.Request) providersim.Turn {
 		requests.Add(1)
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"accepted final answer\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	defer server.Close()
+		return providersim.Text("accepted final answer").WithoutUsage()
+	})
+
 	home := t.TempDir()
-	s, err := NewWithSessionDir("finish-ledger", modelAttributionConfig(server.URL, "finish-ledger-model"), home, filepath.Join(home, "sessions"))
+	s, err := NewWithSessionDir("finish-ledger", modelAttributionConfig(server.BaseURL(providersim.Chat), "finish-ledger-model"), home, filepath.Join(home, "sessions"))
 	if err != nil {
 		t.Fatal(err)
 	}

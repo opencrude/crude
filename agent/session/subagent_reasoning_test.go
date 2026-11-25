@@ -2,64 +2,41 @@ package session
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"crude/agent/safety"
 	"crude/agent/turnloop"
+	"crude/internal/providersim"
 	"crude/types/reasoning"
 )
 
 func TestSubAgentClassifiesItsOwnFlattenedReasoningDuringToolLoop(t *testing.T) {
-	var requests atomic.Int32
 	trace := strings.Repeat("inspect the source carefully. ", 30)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		var body struct {
-			Model string `json:"model"`
+	server := providersim.New(t, providersim.WithChatGateway("child-model", providersim.DeepSeek))
+	server.Respond(func(request providersim.Request) providersim.Turn {
+		if request.Model != "child-model" {
+			t.Errorf("child used parent model: %q", request.Model)
+			return providersim.HTTPError(providersim.InvalidRequest)
 		}
-		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
-			t.Error(err)
-			return
-		}
-		if body.Model != "child-model" {
-			t.Errorf("child used parent model: %q", body.Model)
-			return
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		step := requests.Add(1)
-		delta := map[string]any{"reasoning_content": trace}
-		finish := "tool_calls"
-		switch step {
+		var turn providersim.Turn
+		switch request.Index {
 		case 1, 2:
-			delta["tool_calls"] = []any{map[string]any{"index": 0, "id": fmt.Sprintf("read-%d", step), "type": "function", "function": map[string]string{"name": "list_directory", "arguments": `{"path":"."}`}}}
+			turn = simTool(fmt.Sprintf("read-%d", request.Index), "list_directory", `{"path":"."}`)
 		case 3:
-			delta["tool_calls"] = []any{map[string]any{"index": 0, "id": "report", "type": "function", "function": map[string]string{"name": "publish_report", "arguments": `{"recipient_ids":["parent"],"kind":"final","summary":"Findings recorded","body":"Inspected the source."}`}}}
+			turn = simTool("report", "publish_report", `{"recipient_ids":["parent"],"kind":"final","summary":"Findings recorded","body":"Inspected the source."}`)
 		case 4:
-			delta["content"] = "Finished."
-			finish = "stop"
+			turn = providersim.Text("Finished.")
 		default:
-			t.Errorf("unexpected child request %d", step)
-			return
+			t.Errorf("unexpected child request %d", request.Index)
+			return providersim.HTTPError(providersim.InvalidRequest)
 		}
-		payload, err := json.Marshal(map[string]any{
-			"choices": []any{map[string]any{"delta": delta, "finish_reason": finish}},
-			"usage":   map[string]any{"prompt_tokens": 300, "completion_tokens": 260, "completion_tokens_details": map[string]int{"reasoning_tokens": 155}},
-		})
-		if err != nil {
-			t.Error(err)
-			return
-		}
-		_, _ = fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", payload)
-	}))
-	defer server.Close()
+		return turn.WithReasoning(trace, "", "").WithUsage(providersim.Usage{Input: 300, Output: 260, Reasoning: 155})
+	})
 
-	cfg := modelAttributionConfig(server.URL, "parent-model")
+	cfg := modelAttributionConfig(server.BaseURL(providersim.Chat), "parent-model")
 	profile := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
 	profile.Categories[CategoryResearcher] = CategoryConfig{AccountID: "account", Model: "child-model"}
 	cfg.Agents.Profiles[cfg.Agents.ActiveProfile] = profile
@@ -90,8 +67,8 @@ func TestSubAgentClassifiesItsOwnFlattenedReasoningDuringToolLoop(t *testing.T) 
 	if results := runner.Manager().CompletedResults(); len(results) != 1 || results[0].Status != turnloop.SubAgentCompleted || results[0].ReportID == "" {
 		t.Fatalf("child did not complete with its real final report: %+v", results)
 	}
-	if requests.Load() != 4 || handle.Agent.ReasoningContentKind != reasoning.InferredRaw {
-		t.Fatalf("child requests=%d inferred kind=%q", requests.Load(), handle.Agent.ReasoningContentKind)
+	if len(server.Requests()) != 4 || handle.Agent.ReasoningContentKind != reasoning.InferredRaw {
+		t.Fatalf("child requests=%d inferred kind=%q", len(server.Requests()), handle.Agent.ReasoningContentKind)
 	}
 	sender.mu.Lock()
 	events := append([]agentEvent(nil), sender.events...)

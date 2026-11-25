@@ -19,6 +19,7 @@ import (
 	"crude/agent/capability"
 	"crude/agent/provider"
 	"crude/agent/turnloop"
+	"crude/internal/providersim"
 	captypes "crude/types/capability"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -86,31 +87,20 @@ func testMCPOrderedJourney(t *testing.T, child, enabled bool) {
 		t.Fatal(err)
 	}
 	requests := make(chan map[string]any, 4)
-	var calls atomic.Int32
-	release := make(chan struct{})
-	modelHTTP := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Error(err)
-			return
+	gate := providersim.NewGate()
+	modelHTTP := providersim.New(t)
+	modelHTTP.Respond(func(request providersim.Request) providersim.Turn {
+		requests <- simRawRequest(request)
+		if request.Index == 1 {
+			return simTool("ordered-call", observed.Name, "{}")
 		}
-		requests <- body
-		w.Header().Set("Content-Type", "text/event-stream")
-		if calls.Add(1) == 1 {
-			_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"ordered-call\",\"type\":\"function\",\"function\":{\"name\":%q,\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", observed.Name)
-			return
-		}
+		turn := providersim.Text("inspected")
 		if child {
-			select {
-			case <-release:
-			case <-r.Context().Done():
-				return
-			}
+			turn = turn.WithGate(gate)
 		}
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"inspected\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	defer modelHTTP.Close()
-	cfg := modelAttributionConfig(modelHTTP.URL, "ordered-root")
+		return turn
+	})
+	cfg := modelAttributionConfig(modelHTTP.BaseURL(providersim.Chat), "ordered-root")
 	profile := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
 	modalities := []string{}
 	if enabled {
@@ -138,7 +128,7 @@ func testMCPOrderedJourney(t *testing.T, child, enabled bool) {
 	if child {
 		runner = NewSubAgentRunner(owner, 1)
 		owner.subAgentSup = runner
-		defer func() { runner.SessionCancel(); close(release); runner.Wait() }()
+		defer func() { runner.SessionCancel(); gate.Release(); runner.Wait() }()
 		if _, err := runner.StartAgent(t.Context(), map[string]any{"category": CategoryResearcher, "description": "Inspect ordered evidence", "isolation": "shared"}); err != nil {
 			t.Fatal(err)
 		}
@@ -195,8 +185,8 @@ func testMCPOrderedJourney(t *testing.T, child, enabled bool) {
 			t.Fatalf("SQLite lost structured/failure tail: %+v", parts)
 		}
 	}
-	if !found || calls.Load() != 2 || effects.Load() != 1 {
-		t.Fatalf("passive resume found=%t calls=%d effects=%d", found, calls.Load(), effects.Load())
+	if !found || len(modelHTTP.Requests()) != 2 || effects.Load() != 1 {
+		t.Fatalf("passive resume found=%t calls=%d effects=%d", found, len(modelHTTP.Requests()), effects.Load())
 	}
 }
 

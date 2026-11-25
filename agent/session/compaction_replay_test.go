@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -13,32 +11,30 @@ import (
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
 	"crude/agent/turnloop"
+	"crude/internal/providersim"
 )
 
 func TestAutomaticCompactionArchivesReplayAndResumesWithoutColdTail(t *testing.T) {
 	var extractions, continuations atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-			return
-		}
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
 		if request.Model == "adaptive-errand-model" {
 			extractions.Add(1)
-			writeAdaptiveCompactionSSE(t, w, "<<<intent>>>\nPreserve requirements.\n<<<work>>>\nOlder evidence reviewed.\n<<<state>>>\nNo files changed.\n<<<continuation>>>\nContinue the pending request.")
-			return
+			return providersim.Text("<<<intent>>>\nPreserve requirements.\n<<<work>>>\nOlder evidence reviewed.\n<<<state>>>\nNo files changed.\n<<<continuation>>>\nContinue the pending request.").WithoutUsage()
 		}
 		continuations.Add(1)
-		body, _ := json.Marshal(request.Messages)
-		if !bytes.Contains(body, []byte("context_checkpoint")) || !bytes.Contains(body, []byte("pending-requirement")) {
+		text := simText(request.System)
+		for _, msg := range request.Messages {
+			text += simText(msg.Parts)
+		}
+		if !strings.Contains(text, "context_checkpoint") || !strings.Contains(text, "pending-requirement") {
 			t.Error("continuation omitted the checkpoint or retained pending request")
 		}
-		if bytes.Contains(body, []byte("recent evidence")) || bytes.Contains(body, []byte("older evidence")) {
+		if strings.Contains(text, "recent evidence") || strings.Contains(text, "older evidence") {
 			t.Error("raw historical evidence reached the cold continuation")
 		}
-		writeAdaptiveCompactionSSE(t, w, "continued after checkpoint")
-	}))
-	defer server.Close()
+		return providersim.Text("continued after checkpoint").WithoutUsage()
+	})
 	var history []provider.ChatMessage
 	for turn := 0; turn < 5; turn++ {
 		history = append(history,
@@ -56,7 +52,7 @@ func TestAutomaticCompactionArchivesReplayAndResumesWithoutColdTail(t *testing.T
 		history[i].InternalID = fmt.Sprintf("source-%d", i)
 		history[i] = canonicalContextMessage(history[i])
 	}
-	s, dbPath := newAdaptiveCompactionSession(t, server.URL, 200_000, history)
+	s, dbPath := newAdaptiveCompactionSession(t, server.BaseURL(providersim.Chat), 200_000, history)
 	var deltas []sessiondb.ContextMessageDelta
 	for i, message := range history {
 		deltas = append(deltas, sessiondb.ContextMessageDelta{Message: message, CreatedAt: int64(i + 1), Turn: i/2 + 1, AgentID: s.sessionID})
@@ -72,7 +68,7 @@ func TestAutomaticCompactionArchivesReplayAndResumesWithoutColdTail(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "replay-tail-main"
 	provider.SetModelContext(p.Model, 200_000)
 	a := turnloop.NewAgent(p, p.Model, s.logger)

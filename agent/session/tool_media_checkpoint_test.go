@@ -3,10 +3,7 @@ package session
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -17,6 +14,7 @@ import (
 	"crude/agent/sessiondb"
 	"crude/agent/tools"
 	"crude/agent/turnloop"
+	"crude/internal/providersim"
 	recoverytypes "crude/types/recovery"
 )
 
@@ -39,48 +37,29 @@ func testToolMediaCheckpoint(t *testing.T, native, child bool) {
 	// of the projection helpers under test.
 	const pngBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a0WQAAAAASUVORK5CYII="
 	imageURL := "data:image/png;base64," + pngBase64
-	var requests, effects atomic.Int32
+	var effects atomic.Int32
 	nextRequest := make(chan map[string]any, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Errorf("decode provider request: %v", err)
-			http.Error(w, "invalid request", http.StatusBadRequest)
-			return
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		if requests.Add(1) > 1 {
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
+		if request.Index > 1 {
 			select {
-			case nextRequest <- body:
-			case <-r.Context().Done():
-				return
+			case nextRequest <- simRawRequest(request):
+			case <-t.Context().Done():
+				return providersim.HTTPError(providersim.InvalidRequest)
 			}
-			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"finished\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-			return
+			return providersim.Text("finished")
 		}
-		var calls []map[string]any
 		if native {
-			calls = append(calls, map[string]any{"index": 0, "id": "media-batch", "type": "function", "function": map[string]any{
-				"name": "multi_tool_use.parallel", "arguments": `{"tool_uses":[{"recipient_name":"functions.read_file","parameters":{"path":"slow"}},{"recipient_name":"functions.read_file","parameters":{"path":"fast"}}]}`,
-			}})
-		} else {
-			for i, path := range []string{"slow", "fast"} {
-				calls = append(calls, map[string]any{"index": i, "id": path, "type": "function", "function": map[string]any{
-					"name": "read_file", "arguments": fmt.Sprintf(`{"path":%q}`, path),
-				}})
-			}
+			return simTool("media-batch", "multi_tool_use.parallel", `{"tool_uses":[{"recipient_name":"functions.read_file","parameters":{"path":"slow"}},{"recipient_name":"functions.read_file","parameters":{"path":"fast"}}]}`)
 		}
-		encoded, err := json.Marshal(map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"tool_calls": calls}, "finish_reason": "tool_calls"}}})
-		if err != nil {
-			t.Errorf("encode fixture response: %v", err)
-			return
-		}
-		_, _ = fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", encoded)
-	}))
-	defer server.Close()
+		return providersim.CallTools(
+			providersim.ToolCall{ID: "slow", Name: "read_file", Arguments: `{"path":"slow"}`},
+			providersim.ToolCall{ID: "fast", Name: "read_file", Arguments: `{"path":"fast"}`},
+		)
+	})
 
 	home := t.TempDir()
-	s, err := NewWithSessionDir("", modelAttributionConfig(server.URL, "checkpoint-media"), home, home)
+	s, err := NewWithSessionDir("", modelAttributionConfig(server.BaseURL(providersim.Chat), "checkpoint-media"), home, home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +91,7 @@ func testToolMediaCheckpoint(t *testing.T, native, child bool) {
 		ContextRevision: state.Revision, ContextGeneration: 1, ContextReason: "test",
 	})
 	status := recoverytypes.Status{ID: "media-incident", AgentID: owner, Generation: 1}
-	a := turnloop.NewAgent(provider.FromPreset("openai-chat", "key", server.URL), "checkpoint-media", s.logger)
+	a := turnloop.NewAgent(provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat)), "checkpoint-media", s.logger)
 	a.FilteredTools = append(append([]tools.ToolDef(nil), tools.AgentTools...), tools.ParallelTool())
 	a.ContextArchive, a.FrozenPrefix = state.Messages, state.Messages
 	release := make(chan struct{})
@@ -203,8 +182,8 @@ func testToolMediaCheckpoint(t *testing.T, native, child bool) {
 	// is performed to rediscover a result already in durable evidence.
 	reconciled := reconcileInterruptedTools(checkpoint.ActiveContext, checkpoint.InFlightTools...)
 	assertCheckpointMediaURL(t, reconciled, imageURL)
-	if effects.Load() != 2 || requests.Load() != 1 {
-		t.Fatalf("passive reconciliation changed execution: effects=%d requests=%d", effects.Load(), requests.Load())
+	if effects.Load() != 2 || len(server.Requests()) != 1 {
+		t.Fatalf("passive reconciliation changed execution: effects=%d requests=%d", effects.Load(), len(server.Requests()))
 	}
 	releaseSlow()
 	select {
@@ -234,8 +213,8 @@ func testToolMediaCheckpoint(t *testing.T, native, child bool) {
 		t.Fatalf("load final media context: found=%t err=%v", found, err)
 	}
 	assertCheckpointMediaURL(t, current.Messages, imageURL)
-	if requests.Load() != 2 || effects.Load() != 2 {
-		t.Fatalf("media tool replayed: requests=%d effects=%d", requests.Load(), effects.Load())
+	if len(server.Requests()) != 2 || effects.Load() != 2 {
+		t.Fatalf("media tool replayed: requests=%d effects=%d", len(server.Requests()), effects.Load())
 	}
 }
 

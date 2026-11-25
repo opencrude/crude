@@ -1,18 +1,18 @@
 package session
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
 	"crude/internal/logger"
+	"crude/internal/providersim"
 )
 
 // A fork continues the same conversation as a new saved session: its first
@@ -22,20 +22,14 @@ import (
 func TestForkContinuesConversationAsNewSession(t *testing.T) {
 	requests := make(chan string, 8)
 	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body json.RawMessage
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Error(err)
-			return
-		}
+	server := providersim.New(t)
+	server.Respond(func(req providersim.Request) providersim.Turn {
 		n := calls.Add(1)
-		requests <- string(body)
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":\"reply %d\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":2}}\n\ndata: [DONE]\n\n", n)
-	}))
-	t.Cleanup(server.Close)
+		requests <- string(req.Raw)
+		return providersim.Text(fmt.Sprintf("reply %d", n)).WithUsage(providersim.Usage{Input: 10, Output: 2})
+	})
 	home, dir := t.TempDir(), t.TempDir()
-	cfg := mediaAttributionConfig(server.URL, "fork-model", "openai")
+	cfg := mediaAttributionConfig(server.BaseURL(providersim.Chat), "fork-model", "openai")
 	source, err := NewWithSessionDir("", cfg, home, dir)
 	if err != nil {
 		t.Fatal(err)
@@ -98,22 +92,11 @@ func TestForkContinuesConversationAsNewSession(t *testing.T) {
 
 // Nothing mid-flight may be duplicated: a fork is refused while a turn runs.
 func TestForkRefusesWhileTurnRuns(t *testing.T) {
-	release := make(chan struct{})
-	started := make(chan struct{}, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		started <- struct{}{}
-		select {
-		case <-release:
-		case <-r.Context().Done():
-			return
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"done\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	t.Cleanup(server.Close)
-	t.Cleanup(func() { close(release) })
+	gate := providersim.NewGate()
+	server := providersim.New(t)
+	server.Script(providersim.Text("done").WithoutUsage().WithGate(gate))
 	home, dir := t.TempDir(), t.TempDir()
-	source, err := NewWithSessionDir("", mediaAttributionConfig(server.URL, "fork-model", "openai"), home, dir)
+	source, err := NewWithSessionDir("", mediaAttributionConfig(server.BaseURL(providersim.Chat), "fork-model", "openai"), home, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +108,11 @@ func TestForkRefusesWhileTurnRuns(t *testing.T) {
 	if !o.SubmitInput(provider.PlainInput("work")) {
 		t.Fatal("submit rejected")
 	}
-	<-started
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	if err := gate.Wait(ctx); err != nil {
+		t.Fatalf("fork test turn did not reach provider: %v", err)
+	}
 	id := logger.NewSessionID()
 	if err := source.Fork(dir, id); err == nil || !strings.Contains(err.Error(), "stop the running turn") {
 		t.Fatalf("fork during a turn = %v", err)

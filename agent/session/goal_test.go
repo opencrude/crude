@@ -3,7 +3,6 @@ package session
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,12 +14,13 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
+	"crude/internal/providersim"
 	"crude/types/conversation"
 )
 
 type goalProviderCall struct {
 	request provider.ChatRequest
-	reply   chan map[string]any
+	reply   chan providersim.Turn
 }
 
 func goalRequestText(request provider.ChatRequest) string {
@@ -59,13 +59,10 @@ func TestGoalContinuesUntilAnIndependentVerifierConfirms(t *testing.T) {
 	const rootModel, verifierModel = "goal-root", "goal-verifier"
 	rootCalls, verifierCalls := make(chan goalProviderCall, 16), make(chan goalProviderCall, 16)
 	var continuations atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-			return
-		}
-		call := goalProviderCall{request: request, reply: make(chan map[string]any, 1)}
+	server := providersim.New(t)
+	server.Respond(func(wire providersim.Request) providersim.Turn {
+		request := simDecodeRequest[provider.ChatRequest](t, wire)
+		call := goalProviderCall{request: request, reply: make(chan providersim.Turn, 1)}
 		calls := rootCalls
 		if request.Model == verifierModel {
 			calls = verifierCalls
@@ -75,25 +72,13 @@ func TestGoalContinuesUntilAnIndependentVerifierConfirms(t *testing.T) {
 		}
 		select {
 		case calls <- call:
-		case <-r.Context().Done():
-			return
+		case <-t.Context().Done():
+			return providersim.HTTPError(providersim.InvalidRequest)
 		}
-		select {
-		case delta := <-call.reply:
-			finish := "stop"
-			if _, ok := delta["tool_calls"]; ok {
-				finish = "tool_calls"
-			}
-			frame, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"delta": delta, "finish_reason": finish}}})
-			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", frame)
-		case <-r.Context().Done():
-		}
-	}))
-	defer server.Close()
-	tool := func(id, name string, params map[string]any) map[string]any {
-		arguments, _ := json.Marshal(params)
-		return map[string]any{"tool_calls": []any{map[string]any{"index": 0, "id": id, "type": "function", "function": map[string]any{"name": name, "arguments": string(arguments)}}}}
+		return simReply(t, call.reply).WithoutUsage()
+	})
+	tool := func(id, name string, params map[string]any) providersim.Turn {
+		return providersim.CallTools(simToolArgs(id, name, params))
 	}
 	next := func(calls <-chan goalProviderCall, phase string) goalProviderCall {
 		t.Helper()
@@ -107,7 +92,7 @@ func TestGoalContinuesUntilAnIndependentVerifierConfirms(t *testing.T) {
 	}
 
 	home, project := t.TempDir(), t.TempDir()
-	cfg := modelAttributionConfig(server.URL, rootModel)
+	cfg := modelAttributionConfig(server.BaseURL(providersim.Chat), rootModel)
 	profile := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
 	profile.Categories[CategoryCrafter] = CategoryConfig{AccountID: "account", Model: verifierModel}
 	cfg.Agents.Profiles[cfg.Agents.ActiveProfile] = profile
@@ -157,7 +142,7 @@ func TestGoalContinuesUntilAnIndependentVerifierConfirms(t *testing.T) {
 		t.Fatalf("goal while verifying = %+v", goal)
 	}
 	afterClaim := next(rootCalls, "worker learns a verifier is checking")
-	afterClaim.reply <- map[string]any{"content": "A verifier is checking."}
+	afterClaim.reply <- providersim.Text("A verifier is checking.")
 	audit.reply <- tool("look", "read_file", map[string]any{"path": filepath.Join(project, "done.txt")})
 	verdict := next(verifierCalls, "verifier reports")
 	verdict.reply <- tool("report", "publish_report", map[string]any{
@@ -165,7 +150,7 @@ func TestGoalContinuesUntilAnIndependentVerifierConfirms(t *testing.T) {
 		"body": "Requirement: done.txt contains ok. Evidence: read_file returned ok.", "verdict": "achieved",
 	})
 	finish := next(verifierCalls, "verifier finishes")
-	finish.reply <- map[string]any{"content": "Verified."}
+	finish.reply <- providersim.Text("Verified.")
 
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -181,7 +166,7 @@ func TestGoalContinuesUntilAnIndependentVerifierConfirms(t *testing.T) {
 		}
 		select {
 		case call := <-rootCalls:
-			call.reply <- map[string]any{"content": "Noted."}
+			call.reply <- providersim.Text("Noted.")
 		case <-time.After(20 * time.Millisecond):
 		}
 	}
@@ -193,7 +178,7 @@ func TestGoalContinuesUntilAnIndependentVerifierConfirms(t *testing.T) {
 	for {
 		select {
 		case call := <-rootCalls:
-			call.reply <- map[string]any{"content": "Goal confirmed."}
+			call.reply <- providersim.Text("Goal confirmed.")
 			continue
 		case <-quiet:
 		}
@@ -212,21 +197,18 @@ func TestGoalContinuesUntilAnIndependentVerifierConfirms(t *testing.T) {
 // Stop pauses the goal; resume continues it; a reopened session waits for
 // the user instead of starting work by itself.
 func TestGoalStopPausesAndReopenWaits(t *testing.T) {
-	started, done := make(chan struct{}, 8), make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	started := make(chan struct{}, 8)
+	gate := providersim.NewGate()
+	server := providersim.New(t)
+	server.Respond(func(providersim.Request) providersim.Turn {
 		select {
 		case started <- struct{}{}:
 		default:
 		}
-		select {
-		case <-r.Context().Done():
-		case <-done:
-		}
-	}))
-	defer server.Close()
-	defer close(done)
+		return providersim.HTTPError(providersim.BadGateway).WithGate(gate)
+	})
 	home := t.TempDir()
-	cfg := modelAttributionConfig(server.URL, "goal-root")
+	cfg := modelAttributionConfig(server.BaseURL(providersim.Chat), "goal-root")
 	dir := filepath.Join(home, "sessions")
 	s, err := NewWithSessionDir("", cfg, home, dir)
 	if err != nil {
@@ -304,32 +286,16 @@ func TestGoalStopPausesAndReopenWaits(t *testing.T) {
 // starts, and the goal cannot be resumed past its budget.
 func TestGoalStopsAtItsTokenBudget(t *testing.T) {
 	calls := make(chan goalProviderCall, 16)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-			return
-		}
-		call := goalProviderCall{request: request, reply: make(chan map[string]any, 1)}
+	server := providersim.New(t)
+	server.Respond(func(wire providersim.Request) providersim.Turn {
+		call := goalProviderCall{request: simDecodeRequest[provider.ChatRequest](t, wire), reply: make(chan providersim.Turn, 1)}
 		select {
 		case calls <- call:
-		case <-r.Context().Done():
-			return
+		case <-t.Context().Done():
+			return providersim.HTTPError(providersim.InvalidRequest)
 		}
-		select {
-		case delta := <-call.reply:
-			finish := "stop"
-			if _, ok := delta["tool_calls"]; ok {
-				finish = "tool_calls"
-			}
-			frame, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"delta": delta, "finish_reason": finish}},
-				"usage": map[string]any{"prompt_tokens": 150, "completion_tokens": 5}})
-			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", frame)
-		case <-r.Context().Done():
-		}
-	}))
-	defer server.Close()
+		return simReply(t, call.reply).WithUsage(providersim.Usage{Input: 150, Output: 5})
+	})
 	next := func(phase string) goalProviderCall {
 		t.Helper()
 		select {
@@ -341,7 +307,7 @@ func TestGoalStopsAtItsTokenBudget(t *testing.T) {
 		}
 	}
 	home, project := t.TempDir(), t.TempDir()
-	s, err := NewWithSessionDir("", modelAttributionConfig(server.URL, "goal-root"), home, filepath.Join(home, "sessions"))
+	s, err := NewWithSessionDir("", modelAttributionConfig(server.BaseURL(providersim.Chat), "goal-root"), home, filepath.Join(home, "sessions"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -361,14 +327,12 @@ func TestGoalStopsAtItsTokenBudget(t *testing.T) {
 	if text := goalRequestText(work.request); !strings.Contains(text, "Token budget: 100. Tokens remaining: 100.") {
 		t.Fatalf("continuation lacks the budget: %s", text)
 	}
-	arguments, _ := json.Marshal(map[string]any{"path": "notes.txt", "content": "draft"})
-	work.reply <- map[string]any{"tool_calls": []any{map[string]any{"index": 0, "id": "write", "type": "function",
-		"function": map[string]any{"name": "write_file", "arguments": string(arguments)}}}}
+	work.reply <- providersim.CallTools(simToolArgs("write", "write_file", map[string]any{"path": "notes.txt", "content": "draft"}))
 	wrap := next("the turn's next step")
 	if text := goalRequestText(wrap.request); !strings.Contains(text, "<goal_budget_limit>") {
 		t.Fatalf("the running turn was not told to wrap up: %s", text)
 	}
-	wrap.reply <- map[string]any{"content": "Wrote a draft; the budget is used."}
+	wrap.reply <- providersim.Text("Wrote a draft; the budget is used.")
 	select {
 	case call := <-calls:
 		t.Fatalf("a goal turn started past its budget: %s", goalRequestText(call.request))

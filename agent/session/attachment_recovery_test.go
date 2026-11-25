@@ -2,10 +2,6 @@ package session
 
 import (
 	"encoding/base64"
-	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +12,7 @@ import (
 	"crude/agent/collaboration"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
+	"crude/internal/providersim"
 )
 
 func TestFaultyImageDoesNotStrandHumanInput(t *testing.T) {
@@ -24,35 +21,19 @@ func TestFaultyImageDoesNotStrandHumanInput(t *testing.T) {
 			t.Run(route+"/"+corruption, func(t *testing.T) {
 				requests := make(chan string, 4)
 				var calls atomic.Int32
-				release := make(chan struct{})
-				defer func() {
-					select {
-					case <-release:
-					default:
-						close(release)
-					}
-				}()
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					var body json.RawMessage
-					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-						t.Error(err)
-						return
-					}
+				gate := providersim.NewGate()
+				server := providersim.New(t)
+				server.Respond(func(request providersim.Request) providersim.Turn {
 					attempt := calls.Add(1)
-					requests <- string(body)
+					requests <- string(request.Raw)
+					turn := providersim.Text("continued safely").WithoutUsage()
 					if route == "steering" && attempt == 1 {
-						select {
-						case <-release:
-						case <-r.Context().Done():
-							return
-						}
+						turn = turn.WithGate(gate)
 					}
-					w.Header().Set("Content-Type", "text/event-stream")
-					_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"continued safely\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-				}))
-				t.Cleanup(server.Close)
+					return turn
+				})
 				home, dir, project := t.TempDir(), t.TempDir(), t.TempDir()
-				cfg := mediaAttributionConfig(server.URL, "attachment-recovery", "openai", provider.ModalityImage)
+				cfg := mediaAttributionConfig(server.BaseURL(providersim.Chat), "attachment-recovery", "openai", provider.ModalityImage)
 				s, err := NewWithSessionDir("attachment-recovery", cfg, home, dir)
 				if err != nil {
 					t.Fatal(err)
@@ -110,7 +91,7 @@ func TestFaultyImageDoesNotStrandHumanInput(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					close(release)
+					gate.Release()
 				}
 				var body string
 				select {

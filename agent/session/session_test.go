@@ -1,10 +1,7 @@
 package session
 
 import (
-	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,6 +11,7 @@ import (
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
 	"crude/internal/logger"
+	"crude/internal/providersim"
 	"crude/types/conversation"
 	"crude/types/toolresult"
 )
@@ -229,27 +227,14 @@ func TestFinalizeTurnPersistsActiveContextSeparatelyFromFullArchive(t *testing.T
 func TestManualCompactRebuildsActiveContextWithoutDeletingArchive(t *testing.T) {
 	var calls int
 	var requestModels []string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-		}
-		requestModels = append(requestModels, request.Model)
+	server := providersim.New(t)
+	server.Respond(func(req providersim.Request) providersim.Turn {
+		requestModels = append(requestModels, req.Model)
 		calls++
 		// One combined extraction answers every checkpoint section at once.
-		encoded, _ := json.Marshal(fmt.Sprintf("<<<intent>>>\n- stage: %d\n<<<work>>>\n- exact evidence retained\n<<<state>>>\n- clean\n<<<continuation>>>\n- None", calls))
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":%s},\"finish_reason\":\"stop\"}]}\n\n", encoded)
-		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
-	}))
-	defer server.Close()
-	var history []provider.ChatMessage
-	for i := 0; i < 20; i++ {
-		history = append(history,
-			provider.NewTextMessage("assistant", strings.Repeat("analysis ", 1000)),
-			provider.NewTextMessage("tool", strings.Repeat("output ", 1000)),
-		)
-	}
+		return providersim.Text(fmt.Sprintf("<<<intent>>>\n- stage: %d\n<<<work>>>\n- exact evidence retained\n<<<state>>>\n- clean\n<<<continuation>>>\n- None", calls)).WithoutUsage()
+	})
+	history := denseToolHistory()
 	lg, err := logger.New(logger.Options{HomeDir: t.TempDir(), SessionID: "compact"})
 	if err != nil {
 		t.Fatal(err)
@@ -279,7 +264,7 @@ func TestManualCompactRebuildsActiveContextWithoutDeletingArchive(t *testing.T) 
 	}
 	account := s.cfg.Accounts["account"]
 	providerConfig := account.Connection
-	providerConfig.ProviderURL = server.URL
+	providerConfig.ProviderURL = server.BaseURL(providersim.Chat)
 	account.Connection = providerConfig
 	s.cfg.Accounts["account"] = account
 	result := s.HandleCompact()

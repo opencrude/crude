@@ -5,8 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -16,6 +14,7 @@ import (
 	"crude/agent/provider"
 	"crude/agent/skills"
 	"crude/agent/turnloop"
+	"crude/internal/providersim"
 	captypes "crude/types/capability"
 	"crude/types/setting"
 	"os"
@@ -67,24 +66,16 @@ func TestAutoReviewAcquiresLaunchesAndUsesMCPWithoutHumanResponse(test *testing.
 	}
 	requests := make(chan map[string]any, 8)
 	var requestCount atomic.Int32
-	providerServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		var body map[string]any
-		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
-			if request.Context().Err() == nil {
-				test.Error(err)
-			}
-			return
-		}
-		if body["model"] == "review-model" {
+	providerServer := providersim.New(test)
+	providerServer.Respond(func(request providersim.Request) providersim.Turn {
+		body := simRawRequest(request)
+		if request.Model == "review-model" {
 			if body["tools"] != nil {
 				test.Error("reviewer was given tools")
 			}
-			writer.Header().Set("Content-Type", "application/json")
-			_, _ = fmt.Fprint(writer, `{"choices":[{"message":{"role":"assistant","content":"{\"decision\":\"allow\",\"reason\":\"exact task fixture operation\"}"},"finish_reason":"stop"}]}`)
-			return
+			return providersim.Text(`{"decision":"allow","reason":"exact task fixture operation"}`)
 		}
 		requests <- body
-		writer.Header().Set("Content-Type", "text/event-stream")
 		var name string
 		arguments := map[string]any{}
 		switch requestCount.Add(1) {
@@ -102,18 +93,16 @@ func TestAutoReviewAcquiresLaunchesAndUsesMCPWithoutHumanResponse(test *testing.
 			case offered && !used:
 				name = tool.Name
 			case loaded && used:
-				_, _ = fmt.Fprint(writer, "data: {\"choices\":[{\"delta\":{\"content\":\"Task used source instructions and exact SDK evidence.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-				return
+				return providersim.Text("Task used source instructions and exact SDK evidence.")
 			default:
 				name, arguments = "wait", map[string]any{"seconds": 15}
 			}
 		}
 
 		encoded, _ := json.Marshal(arguments)
-		_, _ = fmt.Fprintf(writer, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":%q,\"type\":\"function\",\"function\":{\"name\":%q,\"arguments\":%q}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", fmt.Sprintf("task-%d", requestCount.Load()), name, string(encoded))
-	}))
-	defer providerServer.Close()
-	config := modelAttributionConfig(providerServer.URL, "capability-task-model")
+		return simTool(fmt.Sprintf("task-%d", requestCount.Load()), name, string(encoded))
+	})
+	config := modelAttributionConfig(providerServer.BaseURL(providersim.Chat), "capability-task-model")
 	config.Capabilities = settings
 	config.Safety.AutoPermission = setting.AutoPermission{Enabled: "on", Provider: "openrouter", AccountID: "account", Model: "review-model", DenyMode: "deny", ThinkingEffort: "low", ResponseFormat: setting.AutoPermissionFormatPrompt, TimeoutSeconds: 8, MaxOutputTokens: 96, MaxAttempts: 1, RetryTokenGrowth: setting.AutoPermissionGrowthFixed, MaxRetryOutputTokens: 96, MaxInputBytes: 64 << 10}
 	home, directory := test.TempDir(), filepath.Join(test.TempDir(), "sessions")

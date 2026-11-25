@@ -3,10 +3,7 @@ package session
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"html"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +14,7 @@ import (
 	"crude/agent/collaboration"
 	"crude/agent/provider"
 	"crude/agent/turnloop"
+	"crude/internal/providersim"
 )
 
 // TestParentControlsStoppedChildWithoutHuman: a child whose provider rejects
@@ -34,62 +32,43 @@ func checkParentControlsStoppedChild(t *testing.T, operation string) {
 	const rootModel, childModel = "stopped-child-root", "stopped-child-model"
 	type providerCall struct {
 		request provider.ChatRequest
-		reply   chan map[string]any
+		reply   chan providersim.Turn
 	}
 	rootCalls, childCalls := make(chan providerCall, 8), make(chan providerCall, 8)
 	var rootRequests, childRequests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		call := providerCall{request: request, reply: make(chan map[string]any, 1)}
+	server := providersim.New(t)
+	server.Respond(func(wire providersim.Request) providersim.Turn {
+		request := simDecodeRequest[provider.ChatRequest](t, wire)
+		call := providerCall{request: request, reply: make(chan providersim.Turn, 1)}
 		var calls chan providerCall
 		switch request.Model {
 		case rootModel:
 			if rootRequests.Add(1) > 4 {
-				call.reply <- map[string]any{"content": "Noted."}
+				call.reply <- providersim.Text("Noted.")
 			} else {
 				calls = rootCalls
 			}
 		case childModel:
 			if childRequests.Add(1) == 1 {
-				w.WriteHeader(http.StatusUnauthorized)
-				_, _ = fmt.Fprint(w, `{"error":{"type":"authentication_error","message":"credentials rejected"}}`)
-				return
+				return providersim.HTTPError(providersim.Auth).WithFaultMessage("credentials rejected")
 			}
 			calls = childCalls
 		default:
-			w.WriteHeader(http.StatusBadRequest)
-			return
+			return providersim.HTTPError(providersim.InvalidRequest)
 		}
 		if calls != nil {
 			select {
 			case calls <- call:
-			case <-r.Context().Done():
-				return
+			case <-t.Context().Done():
+				return providersim.HTTPError(providersim.InvalidRequest)
 			}
 		}
-		select {
-		case delta := <-call.reply:
-			finish := "stop"
-			if _, ok := delta["tool_calls"]; ok {
-				finish = "tool_calls"
-			}
-			frame, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"delta": delta, "finish_reason": finish}}})
-			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", frame)
-		case <-r.Context().Done():
-		case <-time.After(5 * time.Second):
-			t.Error("scripted provider response was not released within its bound")
-		}
-	}))
-	defer server.Close()
+		return simReply(t, call.reply)
+	})
 
 	home, project := t.TempDir(), t.TempDir()
 	sessions := filepath.Join(home, "sessions")
-	cfg := modelAttributionConfig(server.URL, rootModel)
+	cfg := modelAttributionConfig(server.BaseURL(providersim.Chat), rootModel)
 	applySessionMultiAgent(cfg, true)
 	profile := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
 	profile.Categories[CategoryCrafter] = CategoryConfig{AccountID: "account", Model: childModel}
@@ -126,10 +105,7 @@ func checkParentControlsStoppedChild(t *testing.T, operation string) {
 			return providerCall{}
 		}
 	}
-	tool := func(index int, id, name string, params map[string]any) map[string]any {
-		arguments, _ := json.Marshal(params)
-		return map[string]any{"index": index, "id": id, "type": "function", "function": map[string]any{"name": name, "arguments": string(arguments)}}
-	}
+
 	result := func(request provider.ChatRequest, id string) string {
 		t.Helper()
 		for _, message := range request.Messages {
@@ -145,9 +121,9 @@ func checkParentControlsStoppedChild(t *testing.T, operation string) {
 	}
 
 	first := next(rootCalls, "root launch")
-	first.reply <- map[string]any{"tool_calls": []any{tool(0, "launch", "agent_start", map[string]any{
+	first.reply <- providersim.CallTools(simToolArgs("launch", "agent_start", map[string]any{
 		"description": "Publish a short report.", "category": CategoryCrafter, "isolation": "shared",
-	})}}
+	}))
 	second := next(rootCalls, "root receives allocated child")
 	var launched struct {
 		AgentID string `json:"agent_id"`
@@ -157,7 +133,7 @@ func checkParentControlsStoppedChild(t *testing.T, operation string) {
 	}
 	// The parent waits on its child; the stopped child ends the wait with its
 	// exact incident instead of a silent timeout.
-	second.reply <- map[string]any{"tool_calls": []any{tool(0, "wait", "agent_wait", map[string]any{"agent_id": launched.AgentID, "timeout_seconds": 5})}}
+	second.reply <- providersim.CallTools(simToolArgs("wait", "agent_wait", map[string]any{"agent_id": launched.AgentID, "timeout_seconds": 5}))
 	third := next(rootCalls, "root observes the stopped child")
 	var waited collaborationWaitObservation
 	if err := json.Unmarshal([]byte(result(third.request, "wait")), &waited); err != nil {
@@ -168,7 +144,7 @@ func checkParentControlsStoppedChild(t *testing.T, operation string) {
 	}
 	incident := waited.Recovery
 
-	third.reply <- map[string]any{"tool_calls": []any{tool(0, "inspect", "agent_inspect", map[string]any{"agent_id": launched.AgentID})}}
+	third.reply <- providersim.CallTools(simToolArgs("inspect", "agent_inspect", map[string]any{"agent_id": launched.AgentID}))
 	fourth := next(rootCalls, "root inspects the stopped child")
 	var inspection struct {
 		Agent    collaboration.Agent `json:"agent"`
@@ -189,10 +165,10 @@ func checkParentControlsStoppedChild(t *testing.T, operation string) {
 		t.Fatal("parent never received the stopped-child notice with its exact controls")
 	}
 
-	fourth.reply <- map[string]any{"tool_calls": []any{tool(0, "control", "agent_control", map[string]any{
+	fourth.reply <- providersim.CallTools(simToolArgs("control", "agent_control", map[string]any{
 		"agent_id": launched.AgentID, "operation": operation,
 		"recovery_id": incident.ID, "recovery_generation": incident.Generation,
-	})}}
+	}))
 	if operation == "cancel" {
 		waitTurnDone(t, sender, root.ID)
 		s.recoveryMu.Lock()
@@ -209,12 +185,12 @@ func checkParentControlsStoppedChild(t *testing.T, operation string) {
 	}
 	// The credentials were fixed; the parent's continue starts a new attempt.
 	resumed := next(childCalls, "child resumes after the parent's continue")
-	resumed.reply <- map[string]any{"tool_calls": []any{tool(0, "report", "publish_report", map[string]any{
+	resumed.reply <- providersim.CallTools(simToolArgs("report", "publish_report", map[string]any{
 		"recipient_ids": []string{root.ID}, "kind": "final", "summary": "Report published after the parent continued me.", "body": "done",
-	})}}
+	}))
 	last := next(childCalls, "child receives its report publication")
 	result(last.request, "report")
-	last.reply <- map[string]any{"content": "Done."}
+	last.reply <- providersim.Text("Done.")
 	joined := make(chan struct{})
 	go func() { s.SubAgentRunner().Wait(); close(joined) }()
 	select {

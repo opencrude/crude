@@ -19,6 +19,7 @@ import (
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
 	"crude/agent/turnloop"
+	"crude/internal/providersim"
 	recoverytypes "crude/types/recovery"
 )
 
@@ -49,7 +50,25 @@ func checkHTTPGatewayDisconnectRecovery(t *testing.T, owner string, stop bool) {
 	var requests atomic.Int32
 	var mu sync.Mutex
 	var replacementAt time.Time
-	fixture := sessionSupervisedProtocolFixtures()["openai"]
+	sim := providersim.New(t)
+	var positive atomic.Int32
+	sim.Respond(func(request providersim.Request) providersim.Turn {
+		if request.Model == parentModel {
+			return providersim.Text("parent seed complete").WithoutUsage()
+		}
+		switch n := positive.Add(1); {
+		case n == 1:
+			return providersim.CallTools(simToolArgs(callID, "write_file", map[string]any{"path": path, "content": content})).WithoutUsage()
+		case owner == "child" && n == 2:
+			return providersim.CallTools(simToolArgs("gateway-final-report", "publish_report", map[string]any{
+				"recipient_ids": []string{parentID}, "kind": "final", "summary": "Gateway recovered",
+				"body": "The completed effect was retained exactly once.",
+			})).WithoutUsage()
+		default:
+			return providersim.Text("gateway task completed").WithoutUsage()
+		}
+	})
+	forward := simChatForwarder(t, sim)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var raw json.RawMessage
 		if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
@@ -61,22 +80,16 @@ func checkHTTPGatewayDisconnectRecovery(t *testing.T, owner string, stop bool) {
 			t.Error(err)
 			return
 		}
-		w.Header().Set("Content-Type", "text/event-stream")
 		if body.Model == parentModel {
-			_, _ = fmt.Fprint(w, fixture.reply("parent seed complete", "", ""))
+			forward(w, r, raw)
 			return
 		}
 		if body.Model != model || r.URL.Path != "/v1/chat/completions" {
 			t.Errorf("wrong actual gateway adapter: model=%q path=%q", body.Model, r.URL.Path)
 		}
-		switch index := requests.Add(1); index {
+		switch requests.Add(1) {
 		case 1:
-			args, err := json.Marshal(map[string]string{"path": path, "content": content})
-			if err != nil {
-				t.Error(err)
-				return
-			}
-			_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":%q,\"type\":\"function\",\"function\":{\"name\":\"write_file\",\"arguments\":%q}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", callID, string(args))
+			forward(w, r, raw)
 		case 2:
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusRequestTimeout)
@@ -94,16 +107,7 @@ func checkHTTPGatewayDisconnectRecovery(t *testing.T, owner string, stop bool) {
 			if strings.Count(wire, original) != 1 || !strings.Contains(wire, callID) || !strings.Contains(wire, "runtime_recovery") {
 				t.Errorf("replacement lost accepted input/tool evidence or recovery control")
 			}
-			if owner == "child" && index == 3 {
-				args, err := json.Marshal(map[string]any{"recipient_ids": []string{parentID}, "kind": "final", "summary": "Gateway recovered", "body": "The completed effect was retained exactly once."})
-				if err != nil {
-					t.Error(err)
-					return
-				}
-				_, _ = fmt.Fprint(w, fixture.reply("", "gateway-final-report", string(args)))
-			} else {
-				_, _ = fmt.Fprint(w, fixture.reply("gateway task completed", "", ""))
-			}
+			forward(w, r, raw)
 		}
 	}))
 	t.Cleanup(server.Close)

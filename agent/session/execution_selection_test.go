@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +14,7 @@ import (
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
 	"crude/agent/worktree"
+	"crude/internal/providersim"
 )
 
 func TestExecutionSelectionDurableQueueCaptureAndPassiveResume(t *testing.T) {
@@ -44,14 +43,14 @@ func TestExecutionSelectionDurableQueueCaptureAndPassiveResume(t *testing.T) {
 		}
 	}
 	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := providersim.New(t)
+	server.Respond(func(providersim.Request) providersim.Turn {
 		calls.Add(1)
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"unexpected execution\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	t.Cleanup(server.Close)
+		return providersim.Text("unexpected execution").WithoutUsage()
+	})
+
 	home, dir := t.TempDir(), t.TempDir()
-	cfg := modelAttributionConfig(server.URL, "selection-model")
+	cfg := modelAttributionConfig(server.BaseURL(providersim.Chat), "selection-model")
 	s, err := NewWithSessionDir("selection-resume", cfg, home, dir)
 	if err != nil {
 		t.Fatal(err)

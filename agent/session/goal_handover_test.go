@@ -5,9 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -17,6 +14,7 @@ import (
 	"crude/agent/collaboration"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
+	"crude/internal/providersim"
 	"crude/types/control"
 	"crude/types/conversation"
 	"crude/types/handover"
@@ -576,29 +574,18 @@ func TestGoalHandoverOwnerReadyColdReopenRequiresExplicitPermit(t *testing.T) {
 
 func TestGoalHandoverNaturalTerminalRealTurnAndNoDuplicateTurn(t *testing.T) {
 	calls := make(chan goalProviderCall, 8)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-			return
-		}
-		call := goalProviderCall{request: request, reply: make(chan map[string]any, 1)}
+	server := providersim.New(t)
+	server.Respond(func(wire providersim.Request) providersim.Turn {
+		call := goalProviderCall{request: simDecodeRequest[provider.ChatRequest](t, wire), reply: make(chan providersim.Turn, 1)}
 		select {
 		case calls <- call:
-		case <-r.Context().Done():
-			return
+		case <-t.Context().Done():
+			return providersim.HTTPError(providersim.InvalidRequest)
 		}
-		select {
-		case delta := <-call.reply:
-			raw, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"delta": delta, "finish_reason": "stop"}}})
-			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", raw)
-		case <-r.Context().Done():
-		}
-	}))
-	t.Cleanup(server.Close)
+		return simReply(t, call.reply).WithoutUsage()
+	})
 	home := t.TempDir()
-	cfg := modelAttributionConfig(server.URL, "handover-model")
+	cfg := modelAttributionConfig(server.BaseURL(providersim.Chat), "handover-model")
 	s, err := NewWithSessionDir("", cfg, home, filepath.Join(home, "sessions"))
 	if err != nil {
 		t.Fatal(err)
@@ -643,7 +630,7 @@ func TestGoalHandoverNaturalTerminalRealTurnAndNoDuplicateTurn(t *testing.T) {
 	}
 	// Setting the goal after the turn started is intentional: the handover
 	// owner still needs the root's natural durable boundary, not goalTurnBegin.
-	first.reply <- map[string]any{"content": "source completed naturally"}
+	first.reply <- providersim.Text("source completed naturally")
 	deadline := time.After(8 * time.Second)
 	for {
 		select {
@@ -683,7 +670,7 @@ ready:
 	if _, err := s.PauseGoal("test final pause"); err != nil {
 		t.Fatal(err)
 	}
-	continuation.reply <- map[string]any{"content": "continued once"}
+	continuation.reply <- providersim.Text("continued once")
 	waitTurnDone(t, sender, o.ID)
 	select {
 	case <-calls:

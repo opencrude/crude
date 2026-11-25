@@ -3,10 +3,6 @@ package session
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -16,6 +12,7 @@ import (
 	"crude/agent/collaboration"
 	"crude/agent/provider"
 	"crude/agent/turnloop"
+	"crude/internal/providersim"
 	captypes "crude/types/capability"
 )
 
@@ -38,36 +35,25 @@ func attachDelegationTestCollaboration(t *testing.T, sess *Session) *collaborati
 
 func TestLiveDelegationToggleAtRequestAndExecutionBoundaries(t *testing.T) {
 	requests := make(chan provider.ChatRequest, 8)
-	releases := make(chan struct{}, 8)
-	requestCount := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-			return
-		}
-		requests <- request
-		select {
-		case <-releases:
-		case <-r.Context().Done():
-			return
-		}
-		requestCount++
-		w.Header().Set("Content-Type", "text/event-stream")
-		switch requestCount {
+	gates := []*providersim.Gate{providersim.NewGate(), providersim.NewGate(), providersim.NewGate(), providersim.NewGate()}
+	server := providersim.New(t)
+	server.Respond(func(wire providersim.Request) providersim.Turn {
+		requests <- simDecodeRequest[provider.ChatRequest](t, wire)
+		switch wire.Index {
 		case 1:
 			// This was advertised when the request started, but the user disabled
 			// delegation while the model was generating the call.
-			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"spawn-stale\",\"type\":\"function\",\"function\":{\"name\":\"agent_start\",\"arguments\":\"{\\\"description\\\":\\\"must not launch\\\",\\\"category\\\":\\\"crafter\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n")
+			return simTool("spawn-stale", "agent_start", `{"description":"must not launch","category":"crafter"}`).WithGate(gates[0])
 		case 2:
-			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"plan-check\",\"type\":\"function\",\"function\":{\"name\":\"get_plan\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n")
+			return simTool("plan-check", "get_plan", "{}").WithGate(gates[1])
+		case 3, 4:
+			return providersim.Text("continued directly").WithGate(gates[wire.Index-1])
 		default:
-			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"continued directly\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+			t.Errorf("unexpected provider request %d", wire.Index)
+			return providersim.HTTPError(providersim.InvalidRequest)
 		}
-	}))
-	defer server.Close()
-	defer close(releases)
-	cfg := modelAttributionConfig(server.URL, "toggle-model")
+	})
+	cfg := modelAttributionConfig(server.BaseURL(providersim.Chat), "toggle-model")
 	applySessionMultiAgent(cfg, true)
 	sess, err := NewWithSessionDir("toggle", cfg, t.TempDir(), t.TempDir())
 	if err != nil {
@@ -126,7 +112,7 @@ func TestLiveDelegationToggleAtRequestAndExecutionBoundaries(t *testing.T) {
 		t.Fatal("enabled request missing launch tool")
 	}
 	setEpochDelegation(t, sess, false)
-	releases <- struct{}{}
+	gates[0].Release()
 	second := nextRequest()
 	assertEpochPrefix(t, first, second)
 	assertEpochUpdate(t, second.Messages[len(first.Messages):], `type="solo"`)
@@ -151,7 +137,7 @@ func TestLiveDelegationToggleAtRequestAndExecutionBoundaries(t *testing.T) {
 		t.Fatal("disabled stale call allocated a runner")
 	}
 	setEpochDelegation(t, sess, true)
-	releases <- struct{}{}
+	gates[1].Release()
 	third := nextRequest()
 	assertEpochPrefix(t, second, third)
 	assertEpochUpdate(t, third.Messages[len(second.Messages):], `type="orchestrator"`)
@@ -164,7 +150,7 @@ func TestLiveDelegationToggleAtRequestAndExecutionBoundaries(t *testing.T) {
 	if !enabledNotice {
 		t.Fatal("parent did not receive re-enable notice")
 	}
-	releases <- struct{}{}
+	gates[2].Release()
 	waitTurnDone(t, sender, orch.ID)
 	waitAssistantCount(t, sess, 1)
 	if !orch.SubmitInput(provider.PlainInput("Continue.")) {
@@ -173,7 +159,7 @@ func TestLiveDelegationToggleAtRequestAndExecutionBoundaries(t *testing.T) {
 	fourth := nextRequest()
 	assertEpochPrefix(t, third, fourth)
 	assertEpochUpdate(t, fourth.Messages[len(third.Messages):])
-	releases <- struct{}{}
+	gates[3].Release()
 	waitTurnDone(t, sender, orch.ID)
 	// A settings-origin refusal is not a failed child and persists as runtime
 	// context rather than being attributed to human chat.

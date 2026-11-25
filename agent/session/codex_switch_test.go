@@ -1,46 +1,34 @@
 package session
 
 import (
-	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"crude/agent/codexio"
 	"crude/agent/provider"
+	"crude/internal/providersim"
 	"crude/types/setting"
 )
 
 func TestModelSwitchSwapsGPTPromptAndToolsOnRealRequests(t *testing.T) {
-	requests := make(chan string, 4)
+	requests := make(chan providersim.Request, 4)
 	var canonicalSystem string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Model    string                 `json:"model"`
-			Messages []provider.ChatMessage `json:"messages"`
-			Tools    []struct {
+	server := providersim.New(t)
+	endpoint, setWire := simStableEndpoint(t, server, providersim.Chat)
+	server.Respond(func(wire providersim.Request) providersim.Turn {
+		req := simDecodeRequest[struct {
+			Tools []struct {
 				Type     string         `json:"type"`
 				Name     string         `json:"name"`
 				Function map[string]any `json:"function"`
 				Custom   map[string]any `json:"custom"`
 			} `json:"tools"`
-			Input []struct {
-				Role    string `json:"role"`
-				Content []struct {
-					Text string `json:"text"`
-				} `json:"content"`
-			} `json:"input"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Error(err)
-			return
-		}
-		gpt := codexio.IsGPT(req.Model)
-		responses := strings.HasSuffix(r.URL.Path, "/responses")
+		}](t, wire)
+		gpt := codexio.IsGPT(wire.Model)
+		responses := wire.Wire == providersim.Responses
 		patch, edit, write := false, false, false
 		for _, tool := range req.Tools {
 			if tool.Custom != nil || (!responses && tool.Type != "function") {
@@ -58,14 +46,9 @@ func TestModelSwitchSwapsGPTPromptAndToolsOnRealRequests(t *testing.T) {
 			}
 		}
 		if gpt != patch || gpt == edit || gpt == write {
-			t.Errorf("%s: patch=%t edit=%t write=%t", req.Model, patch, edit, write)
+			t.Errorf("%s: patch=%t edit=%t write=%t", wire.Model, patch, edit, write)
 		}
-		system := ""
-		if responses && len(req.Input) > 0 && len(req.Input[0].Content) > 0 {
-			system = req.Input[0].Content[0].Text
-		} else if len(req.Messages) > 0 {
-			system = req.Messages[0].ContentString()
-		}
+		system := simText(wire.System)
 		if !strings.Contains(system, `<crude_agent version="3">`) || !strings.Contains(system, "stable-project-policy") {
 			t.Error("model switch lost canonical Crude prompt")
 		}
@@ -74,16 +57,13 @@ func TestModelSwitchSwapsGPTPromptAndToolsOnRealRequests(t *testing.T) {
 		} else if system != canonicalSystem {
 			t.Error("model/protocol switch changed unchanged guidance prompt bytes")
 		}
-		requests <- req.Model
-		w.Header().Set("Content-Type", "text/event-stream")
-		if responses {
-			_, _ = fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"done\"}]}]}}\n\n")
-		} else {
-			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"done\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-		}
-	}))
-	defer server.Close()
-	cfg := modelAttributionConfig(server.URL, "gpt-5.5")
+		requests <- wire
+		return providersim.Text("done").WithoutUsage()
+	})
+	cfg := modelAttributionConfig(endpoint, "gpt-5.5")
+	account := cfg.Accounts["account"]
+	account.Connection.Protocol = &provider.ProtocolSettings{Store: new(false)}
+	cfg.Accounts["account"] = account
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("stable-project-policy"), 0600); err != nil {
 		t.Fatal(err)
@@ -104,10 +84,13 @@ func TestModelSwitchSwapsGPTPromptAndToolsOnRealRequests(t *testing.T) {
 	} {
 		model := selection.model
 		if i > 0 {
+			setWire(sessionSimWire(selection.protocol))
+			account.Connection.APIStandard = selection.protocol
+			cfg.Accounts["account"] = account
+			s.UpdateWorkspaceDefaults(setting.App{Accounts: cfg.Accounts})
 			settings := s.SettingsSnapshot()
 			settings.Model = model
-			settings.ProviderID = "openrouter"
-			settings.SessionOverrides = map[string]setting.Category{CategoryDefault: {Provider: "openrouter", Model: model, APIStandard: selection.protocol}}
+			settings.SessionOverrides = map[string]setting.Category{CategoryDefault: {AccountID: account.ID, Model: model}}
 			if err := s.HandleSettingsSave(settings); err != nil {
 				t.Fatal(err)
 			}
@@ -115,8 +98,21 @@ func TestModelSwitchSwapsGPTPromptAndToolsOnRealRequests(t *testing.T) {
 		if !orch.SubmitInput(provider.PlainInput("continue")) {
 			t.Fatal("turn rejected")
 		}
-		if got := waitRequestedModel(t, requests); got != model {
-			t.Fatal(got)
+		select {
+		case got := <-requests:
+			if got.Model != model || got.Wire != sessionSimWire(selection.protocol) {
+				t.Fatalf("request %d used %s/%s, want %s/%s", i+1, got.Model, got.Wire, model, selection.protocol)
+			}
+		case <-time.After(5 * time.Second):
+			var seen []string
+			for _, request := range server.Requests() {
+				seen = append(seen, string(request.Wire)+" "+request.Path+": "+request.Violation)
+			}
+			if log, err := os.ReadFile(filepath.Join(s.SessionDir(), "session.log")); err == nil {
+				lines := strings.Split(string(log), "\n")
+				t.Log(strings.Join(lines[max(0, len(lines)-12):], "\n"))
+			}
+			t.Fatalf("request %d for %s/%s did not arrive; seen %v", i+1, model, selection.protocol, seen)
 		}
 		waitTurnDone(t, sender, orch.ID)
 		waitAssistantCount(t, s, i+1)

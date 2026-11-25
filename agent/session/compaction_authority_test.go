@@ -2,11 +2,6 @@ package session
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -14,6 +9,7 @@ import (
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
 	"crude/internal/logger"
+	"crude/internal/providersim"
 	"crude/types/conversation"
 	"crude/workspace/fileio"
 )
@@ -23,23 +19,12 @@ import (
 func compactableSession(t *testing.T) (*Session, *atomic.Int32) {
 	t.Helper()
 	var extractions atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-		}
+	server := providersim.New(t)
+	server.Respond(func(providersim.Request) providersim.Turn {
 		extractions.Add(1)
-		encoded, _ := json.Marshal("<<<intent>>>\n- keep the request\n<<<work>>>\n- evidence retained\n<<<state>>>\n- clean\n<<<continuation>>>\n- None")
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":%s},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n", encoded)
-	}))
-	t.Cleanup(server.Close)
-	var history []provider.ChatMessage
-	for range 20 {
-		history = append(history,
-			provider.NewTextMessage("assistant", strings.Repeat("analysis ", 1000)),
-			provider.NewTextMessage("tool", strings.Repeat("output ", 1000)))
-	}
+		return providersim.Text("<<<intent>>>\n- keep the request\n<<<work>>>\n- evidence retained\n<<<state>>>\n- clean\n<<<continuation>>>\n- None").WithoutUsage()
+	})
+	history := denseToolHistory()
 	lg, err := logger.New(logger.Options{HomeDir: t.TempDir(), SessionID: "authority"})
 	if err != nil {
 		t.Fatal(err)
@@ -64,7 +49,7 @@ func compactableSession(t *testing.T) (*Session, *atomic.Int32) {
 	provider.SetModelContext("authority-errand-model", 200_000)
 	account := cfg.Accounts["account"]
 	connection := account.Connection
-	connection.ProviderURL = server.URL
+	connection.ProviderURL = server.BaseURL(providersim.Chat)
 	account.Connection = connection
 	cfg.Accounts["account"] = account
 	return &Session{

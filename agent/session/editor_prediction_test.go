@@ -2,14 +2,11 @@ package session
 
 import (
 	"encoding/json"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 
 	"crude/agent/provider"
+	"crude/internal/providersim"
 	"crude/types/setting"
 )
 
@@ -29,21 +26,9 @@ func suggestionConfig(endpoint string) *Config {
 // Suggestions follow Errand's account and model by default, always send
 // thinking "none", and a Suggestions account replaces Errand's completely.
 func TestSuggestionCompleterUsesErrandAndSendsNoThinking(t *testing.T) {
-	var mu sync.Mutex
-	var bodies []map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		raw, _ := io.ReadAll(r.Body)
-		var body map[string]any
-		_ = json.Unmarshal(raw, &body)
-		mu.Lock()
-		bodies = append(bodies, body)
-		mu.Unlock()
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = io.WriteString(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"<|editable_region_start|>\\nx\\n<|editable_region_end|>\"}}]}\n\n")
-		_, _ = io.WriteString(w, "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5}}\n\ndata: [DONE]\n\n")
-	}))
-	defer server.Close()
-	cfg := suggestionConfig(server.URL)
+	server := providersim.New(t)
+	server.Script(providersim.Text("<|editable_region_start|>\nx\n<|editable_region_end|>").WithUsage(providersim.Usage{Input: 10, Output: 5}))
+	cfg := suggestionConfig(server.BaseURL(providersim.Chat))
 	completer, err := cfg.SuggestionCompleter()
 	if err != nil {
 		t.Fatal(err)
@@ -67,17 +52,17 @@ func TestSuggestionCompleterUsesErrandAndSendsNoThinking(t *testing.T) {
 	if !strings.Contains(text.String(), "editable_region_end") {
 		t.Fatalf("answer = %q", text.String())
 	}
-	mu.Lock()
-	body := bodies[0]
-	mu.Unlock()
-	if body["model"] != "errand-model" {
-		t.Fatalf("model = %v", body["model"])
+	request, _ := server.Last()
+	if request.Model != "errand-model" {
+		t.Fatalf("model = %v", request.Model)
 	}
-	if effort, ok := body["reasoning_effort"]; ok && effort != "none" {
-		t.Fatalf("suggestions sent thinking %v, want none", effort)
+	var body map[string]json.RawMessage
+	_ = json.Unmarshal(request.Raw, &body)
+	if effort, exists := body["reasoning_effort"]; exists && string(effort) != `"none"` {
+		t.Fatalf("suggestions sent thinking %s, want none", effort)
 	}
-	if strings.Contains(string(suggestionJSON(body)), "high") {
-		t.Fatalf("Errand's own thinking level leaked into a suggestion: %s", suggestionJSON(body))
+	if strings.Contains(string(request.Raw), "high") {
+		t.Fatalf("Errand's own thinking level leaked into a suggestion: %s", request.Raw)
 	}
 
 	cfg.Agents.Suggestions = setting.Suggestion{AccountID: "fast-account", Model: "fast-model", TimeoutSeconds: 3}
@@ -140,5 +125,3 @@ func TestSuggestionConnectionIdentityFollowsTheDestination(t *testing.T) {
 		t.Fatal("a removed account kept the old consent")
 	}
 }
-
-func suggestionJSON(v any) []byte { raw, _ := json.Marshal(v); return raw }

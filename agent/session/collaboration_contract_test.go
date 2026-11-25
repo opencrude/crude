@@ -5,9 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,6 +17,7 @@ import (
 	"crude/agent/sessiondb"
 	"crude/agent/tools"
 	"crude/agent/turnloop"
+	"crude/internal/providersim"
 	"crude/types/setting"
 )
 
@@ -221,16 +219,16 @@ func TestCollaborationReportNotificationCarriesExactReadableArtifact(t *testing.
 
 func TestCollaborationResumeReconcilesLocalCommitWithoutProviderReplay(t *testing.T) {
 	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := providersim.New(t)
+	server.Respond(func(providersim.Request) providersim.Turn {
 		calls.Add(1)
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"New peer input handled.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	defer server.Close()
+		return providersim.Text("New peer input handled.").WithoutUsage()
+	})
+
 	home, project := t.TempDir(), t.TempDir()
 	cfg := testConfig()
 	template := cfg.Accounts["account"].Connection
-	template.ProviderURL = server.URL + "/v1"
+	template.ProviderURL = server.BaseURL(providersim.Chat)
 	a := cfg.Accounts["account"]
 	a.Connection = template
 	cfg.Accounts["account"] = a
@@ -350,27 +348,20 @@ func TestCollaborationResumeReconcilesLocalCommitWithoutProviderReplay(t *testin
 func TestAgentStartSelectsExactConfiguredProfileAndRejectsInvalidSelections(t *testing.T) {
 	var parentID atomic.Value
 	var childCalls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request struct{ Model string }
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-			return
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		if request.Model != "profile-model" || childCalls.Add(1) > 1 {
-			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Peer evidence received.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-			return
+	server := providersim.New(t)
+	server.Respond(func(req providersim.Request) providersim.Turn {
+		if req.Model != "profile-model" || childCalls.Add(1) > 1 {
+			return providersim.Text("Peer evidence received.").WithoutUsage()
 		}
 		arguments, _ := json.Marshal(map[string]any{
 			"recipient_ids": []string{parentID.Load().(string)}, "kind": "final", "summary": "Profile used", "body": "The configured profile connection and instructions were selected.",
 		})
-		_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"profile-report\",\"type\":\"function\",\"function\":{\"name\":\"publish_report\",\"arguments\":%q}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", string(arguments))
-	}))
-	defer server.Close()
+		return providersim.CallTools(providersim.ToolCall{ID: "profile-report", Name: "publish_report", Arguments: string(arguments)}).WithoutUsage()
+	})
 	home := t.TempDir()
 	cfg := testConfig()
 	template := cfg.Accounts["account"].Connection
-	template.ProviderURL = server.URL + "/v1"
+	template.ProviderURL = server.BaseURL(providersim.Chat)
 	a := cfg.Accounts["account"]
 	a.Connection = template
 	cfg.Accounts["account"] = a

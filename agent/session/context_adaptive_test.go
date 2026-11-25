@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -15,6 +13,7 @@ import (
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
 	"crude/internal/logger"
+	"crude/internal/providersim"
 )
 
 type adaptiveCompactionProbe struct {
@@ -26,12 +25,9 @@ type adaptiveCompactionProbe struct {
 	sawCorrection atomic.Bool
 }
 
-func (probe *adaptiveCompactionProbe) readRequest(t *testing.T, request *http.Request) (provider.ChatRequest, int32) {
+func (probe *adaptiveCompactionProbe) readRequest(t *testing.T, request providersim.Request) (provider.ChatRequest, int32) {
 	t.Helper()
-	var body provider.ChatRequest
-	if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
-		t.Errorf("decode compaction request: %v", err)
-	}
+	body := simDecodeRequest[provider.ChatRequest](t, request)
 	call := probe.calls.Add(1)
 	input := provider.EstimateMessagesTotal(body.Messages, body.Model)
 	output := max(body.MaxTokens, body.MaxCompletionTokens)
@@ -54,19 +50,6 @@ func (probe *adaptiveCompactionProbe) readRequest(t *testing.T, request *http.Re
 		}
 	}
 	return body, call
-}
-
-func writeAdaptiveCompactionSSE(t *testing.T, writer http.ResponseWriter, text string) {
-	t.Helper()
-	encoded, err := json.Marshal(text)
-	if err != nil {
-		t.Errorf("encode SSE content: %v", err)
-		return
-	}
-	writer.Header().Set("Content-Type", "text/event-stream")
-	if _, err := fmt.Fprintf(writer, "data: {\"choices\":[{\"delta\":{\"content\":%s},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n", encoded); err != nil {
-		t.Errorf("write compaction SSE: %v", err)
-	}
 }
 
 func adaptiveCompactionMessages(t *testing.T, role string) []provider.ChatMessage {
@@ -158,14 +141,14 @@ func TestSessionAdaptiveCompactionInstallsCheckpointAndResumesPassively(t *testi
 	}{{capacity: 64_000, role: "assistant"}, {capacity: 128_000, role: "tool"}} {
 		t.Run(fmt.Sprintf("%d_%s", fixture.capacity, fixture.role), func(t *testing.T) {
 			probe := &adaptiveCompactionProbe{capacity: fixture.capacity, model: "adaptive-errand-model"}
-			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			server := providersim.New(t)
+			server.Respond(func(request providersim.Request) providersim.Turn {
 				_, call := probe.readRequest(t, request)
-				writeAdaptiveCompactionSSE(t, writer, fmt.Sprintf("- extraction %d: parser.go unchanged; no-delete constraint; failing test evidence retained", call))
-			}))
-			defer server.Close()
+				return providersim.Text(fmt.Sprintf("- extraction %d: parser.go unchanged; no-delete constraint; failing test evidence retained", call)).WithoutUsage()
+			})
 			history := adaptiveCompactionMessages(t, fixture.role)
 			original := adaptiveMessageBytes(t, history)
-			session, dbPath := newAdaptiveCompactionSession(t, server.URL, fixture.capacity, history)
+			session, dbPath := newAdaptiveCompactionSession(t, server.BaseURL(providersim.Chat), fixture.capacity, history)
 			result := session.HandleCompact()
 			if result.Error != "" || result.Cancelled || result.OperationID == "" {
 				t.Fatalf("adaptive compaction failed: %+v", result)
@@ -261,26 +244,22 @@ func TestSessionCompactionLearnsOutputLimitAcrossNewSessions(t *testing.T) {
 	provider.UseModelCatalog(catalog)
 	t.Cleanup(func() { _ = catalog.Close() })
 	var outputs []int
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		var body provider.ChatRequest
-		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
-			t.Error(err)
-			return
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
+		output, err := request.OutputLimit.Int64()
+		if err != nil {
+			t.Errorf("invalid output limit: %v", err)
 		}
-		output := max(body.MaxTokens, body.MaxCompletionTokens)
-		outputs = append(outputs, output)
+		outputs = append(outputs, int(output))
 		if output > 393216 {
-			writer.WriteHeader(http.StatusBadRequest)
-			_, _ = fmt.Fprintf(writer, `{"error":{"type":"invalid_request_error","message":"max_tokens (current value: %d) must be between 0 and 393216"}}`, output)
-			return
+			return providersim.HTTPError(providersim.InvalidRequest).WithFaultMessage(fmt.Sprintf("max_tokens (current value: %d) must be between 0 and 393216", output))
 		}
-		writeAdaptiveCompactionSSE(t, writer, "- original evidence, correction and ownership preserved")
-	}))
-	defer server.Close()
+		return providersim.Text("- original evidence, correction and ownership preserved").WithoutUsage()
+	})
 	for run := 0; run < 2; run++ {
 		history := adaptiveCompactionMessages(t, "assistant")
 		original := adaptiveMessageBytes(t, history)
-		s, _ := newAdaptiveCompactionSession(t, server.URL, 1_050_000, history)
+		s, _ := newAdaptiveCompactionSession(t, server.BaseURL(providersim.Chat), 1_050_000, history)
 		profile := s.cfg.Agents.Profiles[s.cfg.Agents.ActiveProfile]
 		errand := profile.Categories[CategoryErrand]
 		errand.ModelMaxOutput = 600000
@@ -312,7 +291,8 @@ func TestSessionAdaptiveCompactionLaterChunkFailurePreservesDurableSource(t *tes
 			probe := &adaptiveCompactionProbe{capacity: 64_000, model: "adaptive-errand-model"}
 			var session *Session
 			var original []byte
-			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			server := providersim.New(t)
+			server.Respond(func(request providersim.Request) providersim.Turn {
 				body, call := probe.readRequest(t, request)
 				if call == 1 {
 					source, found, err := sessiondb.LoadContextState(session.db, session.sessionID, session.sessionID)
@@ -325,18 +305,15 @@ func TestSessionAdaptiveCompactionLaterChunkFailurePreservesDurableSource(t *tes
 						t.Errorf("failure did not occur on the later source chunk: call=%d", call)
 					}
 					if failure == "permanent_401" {
-						http.Error(writer, `{"error":{"message":"invalid Errand credentials","type":"authentication_error"}}`, http.StatusUnauthorized)
-						return
+						return providersim.HTTPError(providersim.Auth).WithFaultMessage("invalid Errand credentials")
 					}
-					writeAdaptiveCompactionSSE(t, writer, "")
-					return
+					return providersim.Text("").WithoutUsage()
 				}
-				writeAdaptiveCompactionSSE(t, writer, "- partial evidence retained")
-			}))
-			defer server.Close()
+				return providersim.Text("- partial evidence retained").WithoutUsage()
+			})
 			history := adaptiveCompactionMessages(t, "tool")
 			original = adaptiveMessageBytes(t, history)
-			session, _ = newAdaptiveCompactionSession(t, server.URL, probe.capacity, history)
+			session, _ = newAdaptiveCompactionSession(t, server.BaseURL(providersim.Chat), probe.capacity, history)
 			prepared, early := session.PrepareCompaction(session.sessionID)
 			if early.Error != "" || prepared.Run == nil || prepared.ModelID != probe.model {
 				t.Fatalf("prepare adaptive compaction: prepared=%+v early=%+v", prepared, early)

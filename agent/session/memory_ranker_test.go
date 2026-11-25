@@ -14,6 +14,7 @@ import (
 
 	"crude/agent/memory"
 	"crude/agent/provider"
+	"crude/internal/providersim"
 	"crude/types/setting"
 )
 
@@ -67,16 +68,15 @@ func testRankingJourney(t *testing.T, unavailable bool) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"answers": answers})
 	}))
 	defer decision.Close()
-	chat := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		var body struct{ Messages []provider.ChatMessage }
-		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-			t.Error(err)
-			return
-		}
+	chat := providersim.New(t)
+	chat.Respond(func(req providersim.Request) providersim.Turn {
 		n := chats.Add(1)
 		var copies int
-		for _, m := range body.Messages {
-			text := m.ContentString()
+		texts := []string{simText(req.System)}
+		for _, m := range req.Messages {
+			texts = append(texts, simText(m.Parts))
+		}
+		for _, text := range texts {
 			if strings.Contains(text, keep) {
 				copies++
 			}
@@ -91,20 +91,17 @@ func testRankingJourney(t *testing.T, unavailable bool) {
 		if copies != want {
 			t.Errorf("request %d has %d ranked blocks, want %d", n, copies, want)
 		}
-		w.Header().Set("Content-Type", "text/event-stream")
 		if n <= 2 {
 			target := "ordinary.txt"
 			if n == 2 {
 				target = "spindle.txt"
 			}
 			args, _ := json.Marshal(map[string]string{"path": target})
-			fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call%d\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":%q}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", n, string(args))
-			return
+			return providersim.CallTools(providersim.ToolCall{ID: fmt.Sprintf("call%d", n), Name: "read_file", Arguments: string(args)}).WithoutUsage()
 		}
-		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Complete.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	defer chat.Close()
-	cfg := modelAttributionConfig(chat.URL, "coding")
+		return providersim.Text("Complete.").WithoutUsage()
+	})
+	cfg := modelAttributionConfig(chat.BaseURL(providersim.Chat), "coding")
 	acc := cfg.Accounts["account"]
 	acc.ID = "decision"
 	acc.APIKey = "rank-only"

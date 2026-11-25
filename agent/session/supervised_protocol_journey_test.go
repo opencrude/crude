@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -20,6 +22,7 @@ import (
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
 	"crude/agent/turnloop"
+	"crude/internal/providersim"
 	recoverytypes "crude/types/recovery"
 )
 
@@ -185,68 +188,52 @@ func checkSessionSupervisedProtocolJourney(t *testing.T, protocol, owner, outcom
 	var bodiesMu sync.Mutex
 	var bodies [][]byte
 	var requestTimes []time.Time
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var raw json.RawMessage
-		if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
-			t.Errorf("decode local request: %v", err)
-			return
-		}
-		var request struct{ Model string }
-		if err := json.Unmarshal(raw, &request); err != nil {
-			t.Error(err)
-			return
-		}
-		// Gemini generateContent names the model in the path, not the body.
-		if _, name, ok := strings.Cut(r.URL.Path, "/models/"); ok && request.Model == "" {
-			request.Model, _, _ = strings.Cut(name, ":")
-		}
-		w.Header().Set("Content-Type", fixture.contentType)
-		if owner == "child" && request.Model == parentModel {
-			parentRequests.Add(1)
-			if _, err := fmt.Fprint(w, fixture.reply("parent seed finished", "", "")); err != nil {
-				t.Error(err)
-			}
-			return
-		}
-		if request.Model != model {
-			t.Errorf("unexpected owner model %q", request.Model)
-		}
+	record := func(raw []byte) int32 {
 		bodiesMu.Lock()
-		bodies = append(bodies, append([]byte(nil), raw...))
+		defer bodiesMu.Unlock()
+		bodies = append(bodies, bytes.Clone(raw))
 		requestTimes = append(requestTimes, time.Now())
-		bodiesMu.Unlock()
-		index := requests.Add(1)
-		var response string
+		return requests.Add(1)
+	}
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
+		if owner == "child" && r.Model == parentModel {
+			parentRequests.Add(1)
+			return providersim.Text("parent seed finished")
+		}
+		if r.Model != model {
+			t.Errorf("unexpected owner model %q", r.Model)
+		}
+		index := record(r.Raw)
 		switch {
 		case !partial:
-			status := http.StatusBadRequest
-			response = `{"error":{"type":"invalid_request_error","param":"tools[0]","message":"invalid tool schema"}}`
+			kind, message := providersim.InvalidRequest, "invalid tool schema"
 			switch outcome {
 			case "auth":
-				status, response = http.StatusUnauthorized, `{"error":{"type":"authentication_error","message":"invalid credential"}}`
+				kind, message = providersim.Auth, "invalid credential"
 			case "quota":
-				status, response = http.StatusTooManyRequests, `{"error":{"code":"insufficient_quota","message":"billing limit"}}`
+				kind, message = providersim.Quota, "billing limit"
 			}
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(status)
+			return providersim.HTTPError(kind).WithFaultMessage(message)
 		case index == 1:
-			response = fixture.partial(accepted, partialID)
+			return fixture.partial(accepted, partialID)
 		case owner == "child" && index == 2:
-			arguments, err := json.Marshal(map[string]any{"recipient_ids": []string{parentID}, "kind": "final",
-				"summary": "Supervised journey finished", "body": "The retained assignment and accepted work were continued without executing the incomplete write."})
-			if err != nil {
-				t.Error(err)
-				return
+			turn := providersim.CallTools(simToolArgs("final-report-call", "publish_report", map[string]any{
+				"recipient_ids": []string{parentID}, "kind": "final", "summary": "Supervised journey finished",
+				"body": "The retained assignment and accepted work were continued without executing the incomplete write.",
+			}))
+			if fixture.wire == providersim.Gemini {
+				turn = turn.WithReasoning("", "c2ln", "")
 			}
-			response = fixture.reply("", "final-report-call", string(arguments))
+			return turn
 		default:
-			response = fixture.reply("journey finished", "", "")
+			return providersim.Text("journey finished")
 		}
-		if _, err := fmt.Fprint(w, response); err != nil {
-			t.Error(err)
-		}
-	}))
-	t.Cleanup(server.Close)
+	})
+	endpoint := server.BaseURL(fixture.wire)
+	if fixture.wire == providersim.Ollama && (partial || outcome == "quota") {
+		endpoint = ollamaSupervisedGateway(t, endpoint, model, accepted, partialID, outcome, record)
+	}
 	home, sessions, project := t.TempDir(), t.TempDir(), t.TempDir()
 	guard := filepath.Join(project, "guard.txt")
 	const guardText = "unchanged local evidence\n"
@@ -257,9 +244,10 @@ func checkSessionSupervisedProtocolJourney(t *testing.T, protocol, owner, outcom
 	if owner == "child" {
 		rootModel = parentModel
 	}
-	cfg := modelAttributionConfig(server.URL, rootModel)
+	cfg := modelAttributionConfig(endpoint, rootModel)
 	account := cfg.Accounts["account"]
 	account.Connection.APIStandard = protocol
+	account.Connection.Protocol = &provider.ProtocolSettings{Store: new(false)}
 	account.Connection.Dialer = &provider.DialSettings{MaxAttempts: 1}
 	cfg.Accounts["account"] = account
 	profile := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
@@ -743,63 +731,69 @@ func assertSessionSupervisedJourneyIdentities(t *testing.T, first, terminal sess
 }
 
 type sessionSupervisedProtocolFixture struct {
-	contentType string
-	partial     func(accepted, partialID string) string
-	reply       func(text, callID, arguments string) string
+	wire     providersim.Wire
+	cutAfter int
 }
 
 func sessionSupervisedProtocolFixtures() map[string]sessionSupervisedProtocolFixture {
-	responses := sessionSupervisedProtocolFixture{"text/event-stream", func(text, id string) string {
-		return fmt.Sprintf("data: {\"type\":\"response.created\",\"response\":{\"id\":\"partial-response\",\"status\":\"in_progress\",\"store\":true,\"output\":[]}}\n\ndata: {\"type\":\"response.output_text.delta\",\"delta\":%q}\n\ndata: {\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"id\":%q,\"type\":\"function_call\",\"call_id\":%q,\"name\":\"write_file\",\"arguments\":\"\"}}\n\ndata: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":1,\"delta\":\"{\\\"path\\\":\\\"guard.txt\\\",\\\"content\\\":\"}\n\n", text, id, id)
-	}, func(text, id, args string) string {
-		output := fmt.Sprintf("{\"type\":\"message\",\"id\":\"final-message\",\"role\":\"assistant\",\"status\":\"completed\",\"content\":[{\"type\":\"output_text\",\"text\":%q}]}", text)
-		if id != "" {
-			output = fmt.Sprintf("{\"type\":\"function_call\",\"call_id\":%q,\"name\":\"publish_report\",\"arguments\":%q,\"status\":\"completed\"}", id, args)
-		}
-		return fmt.Sprintf("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"final-response\",\"status\":\"completed\",\"store\":false,\"output\":[%s]}}\n\n", output)
-	}}
+	// Cut after the first partial argument event, before argument or turn
+	// completion. Gemini sends an object and stops before its finish event.
 	return map[string]sessionSupervisedProtocolFixture{
-		"openai": {"text/event-stream", func(text, id string) string {
-			return fmt.Sprintf("data: {\"choices\":[{\"delta\":{\"content\":%q}}]}\n\ndata: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":%q,\"type\":\"function\",\"function\":{\"name\":\"write_file\",\"arguments\":\"{\\\"path\\\":\\\"guard.txt\\\",\\\"content\\\":\"}}]}}]}\n\n", text, id)
-		}, func(text, id, args string) string {
-			if id != "" {
-				return fmt.Sprintf("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":%q,\"type\":\"function\",\"function\":{\"name\":\"publish_report\",\"arguments\":%q}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", id, args)
-			}
-			return fmt.Sprintf("data: {\"choices\":[{\"delta\":{\"content\":%q},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n", text)
-		}},
-		"openai-responses": responses,
-		"codex":            responses,
-		"anthropic": {"text/event-stream", func(text, id string) string {
-			return fmt.Sprintf("data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":%q}}\n\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"tool_use\",\"id\":%q,\"name\":\"write_file\",\"input\":{}}}\n\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"path\\\":\\\"guard.txt\\\",\\\"content\\\":\"}}\n\n", text, id)
-		}, func(text, id, args string) string {
-			if id != "" {
-				return fmt.Sprintf("data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":%q,\"name\":\"publish_report\",\"input\":{}}}\n\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":%q}}\n\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"}}\n\ndata: {\"type\":\"message_stop\"}\n\n", id, args)
-			}
-			return fmt.Sprintf("data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":%q}}\n\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\ndata: {\"type\":\"message_stop\"}\n\n", text)
-		}},
-		"gemini": {"text/event-stream", func(text, id string) string {
-			return fmt.Sprintf("data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":%q}]}}]}\n\ndata: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"functionCall\":{\"id\":%q,\"name\":\"write_file\",\"args\":{\"path\":\"guard.txt\"}},\"thoughtSignature\":\"c2ln\"}]}}]}\n\n", text, id)
-		}, func(text, id, args string) string {
-			if id != "" {
-				return fmt.Sprintf("data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"functionCall\":{\"id\":%q,\"name\":\"publish_report\",\"args\":%s},\"thoughtSignature\":\"c2ln\"}]},\"finishReason\":\"STOP\"}]}\n\n", id, args)
-			}
-			return fmt.Sprintf("data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":%q}]},\"finishReason\":\"STOP\"}]}\n\n", text)
-		}},
-		"gemini-interactions": {"text/event-stream", func(text, id string) string {
-			return fmt.Sprintf("event: step.start\ndata: {\"index\":0,\"step\":{\"type\":\"model_output\",\"content\":[{\"type\":\"text\",\"text\":%q}]},\"event_type\":\"step.start\"}\n\nevent: step.start\ndata: {\"index\":1,\"step\":{\"type\":\"function_call\",\"id\":%q,\"name\":\"write_file\",\"arguments\":{}},\"event_type\":\"step.start\"}\n\nevent: step.delta\ndata: {\"index\":1,\"delta\":{\"type\":\"arguments_delta\",\"arguments\":\"{\\\"path\\\":\\\"guard.txt\\\",\\\"content\\\":\"},\"event_type\":\"step.delta\"}\n\n", text, id)
-		}, func(text, id, args string) string {
-			if id != "" {
-				return fmt.Sprintf("event: step.start\ndata: {\"index\":0,\"step\":{\"type\":\"function_call\",\"id\":%q,\"name\":\"publish_report\",\"arguments\":%s},\"event_type\":\"step.start\"}\n\nevent: step.stop\ndata: {\"index\":0,\"event_type\":\"step.stop\"}\n\nevent: interaction.completed\ndata: {\"interaction\":{\"status\":\"requires_action\"},\"event_type\":\"interaction.completed\"}\n\n", id, args)
-			}
-			return fmt.Sprintf("event: step.start\ndata: {\"index\":0,\"step\":{\"type\":\"model_output\",\"content\":[{\"type\":\"text\",\"text\":%q}]},\"event_type\":\"step.start\"}\n\nevent: step.stop\ndata: {\"index\":0,\"event_type\":\"step.stop\"}\n\nevent: interaction.completed\ndata: {\"interaction\":{\"status\":\"completed\"},\"event_type\":\"interaction.completed\"}\n\n", text)
-		}},
-		"ollama": {"application/x-ndjson", func(text, id string) string {
-			return fmt.Sprintf("{\"model\":\"m\",\"message\":{\"role\":\"assistant\",\"content\":%q}}\n{\"model\":\"m\",\"message\":{\"role\":\"assistant\",\"tool_calls\":[{\"id\":%q,\"function\":{\"name\":\"write_file\",\"arguments\":\"{\\\"path\\\":\\\"guard.txt\\\",\\\"content\\\":\"}}]}}\n", text, id)
-		}, func(text, id, args string) string {
-			if id != "" {
-				return fmt.Sprintf("{\"model\":\"m\",\"message\":{\"role\":\"assistant\",\"tool_calls\":[{\"id\":%q,\"function\":{\"name\":\"publish_report\",\"arguments\":%s}}]},\"done\":true,\"done_reason\":\"stop\"}\n", id, args)
-			}
-			return fmt.Sprintf("{\"model\":\"m\",\"message\":{\"role\":\"assistant\",\"content\":%q},\"done\":true,\"done_reason\":\"stop\"}\n", text)
-		}},
+		"openai":              {providersim.Chat, 4},
+		"openai-responses":    {providersim.Responses, 10},
+		"codex":               {providersim.Codex, 10},
+		"anthropic":           {providersim.Messages, 7},
+		"gemini":              {providersim.Gemini, 2},
+		"gemini-interactions": {providersim.Interactions, 6},
+		"ollama":              {providersim.Ollama, 0},
 	}
+}
+
+func (f sessionSupervisedProtocolFixture) partial(text, id string) providersim.Turn {
+	if f.wire == providersim.Gemini {
+		return simTool(id, "write_file", `{"path":"guard.txt"}`).WithText(text).
+			WithReasoning("", "c2ln", "").WithCut(f.cutAfter)
+	}
+	return providersim.Text(text).WithToolArgumentDeltas(id, "write_file",
+		`{"path":"guard.txt","content":`, `"should never be written"}`).WithCut(f.cutAfter)
+}
+
+// The Ollama SDK requires object-valued function.arguments. A string holding
+// broken JSON is accepted by some gateways, and this exact malformed shape is
+// what the recovery journey must reject. Ollama's native 429 means rate
+// limiting, not a permanent quota error. Keep the gateway's quota code.
+// The simulator validates and serves the other requests in both journeys.
+func ollamaSupervisedGateway(t *testing.T, endpoint, model, text, id, outcome string, record func([]byte) int32) string {
+	t.Helper()
+	target, err := url.Parse(endpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target.Path = strings.TrimSuffix(target.Path, "/api")
+	proxy := simReverseProxy(t, func() *url.URL { return target })
+	var sent atomic.Bool
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		body := simDecodeRequest[struct{ Model string }](t, providersim.Request{Raw: raw})
+		if body.Model == model && sent.CompareAndSwap(false, true) {
+			record(raw)
+			if outcome == "quota" {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = w.Write([]byte(`{"error":{"code":"insufficient_quota","message":"billing limit"}}`))
+				return
+			}
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			_, _ = fmt.Fprintf(w, "{\"model\":\"m\",\"message\":{\"role\":\"assistant\",\"content\":%q}}\n{\"model\":\"m\",\"message\":{\"role\":\"assistant\",\"tool_calls\":[{\"id\":%q,\"function\":{\"name\":\"write_file\",\"arguments\":\"{\\\"path\\\":\\\"guard.txt\\\",\\\"content\\\":\"}}]}}\n", text, id)
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(raw))
+		proxy.ServeHTTP(w, r)
+	}))
+	t.Cleanup(gateway.Close)
+	return gateway.URL + "/api"
 }

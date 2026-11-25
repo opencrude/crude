@@ -3,46 +3,33 @@ package session
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
+	"crude/internal/providersim"
 	"crude/types/conversation"
 	"crude/types/setting"
 )
 
 func TestModelSwitchAppliesToNextRequestWithoutRelabelingActiveTurn(t *testing.T) {
 	requestedModels := make(chan string, 2)
-	releaseRequest := make(chan struct{}, 2)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		var body struct {
-			Model string `json:"model"`
+	firstGate, secondGate := providersim.NewGate(), providersim.NewGate()
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
+		requestedModels <- request.Model
+		gate := firstGate
+		if request.Index > 1 {
+			gate = secondGate
 		}
-		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
-			t.Errorf("decode request: %v", err)
-			return
-		}
-		requestedModels <- body.Model
-		<-releaseRequest
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprintf(w,
-			"data: {\"choices\":[{\"delta\":{\"content\":%q},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
-			"reply from "+body.Model,
-		)
-	}))
-	defer server.Close()
-	defer close(releaseRequest)
+		return providersim.Text("reply from " + request.Model).WithoutUsage().WithGate(gate)
+	})
 
-	cfg := modelAttributionConfig(server.URL, "model-a")
+	cfg := modelAttributionConfig(server.BaseURL(providersim.Chat), "model-a")
 	home := t.TempDir()
 	sessionDir := filepath.Join(t.TempDir(), "sessions")
 	sess, err := NewWithSessionDir("model-attribution", cfg, home, sessionDir)
@@ -73,7 +60,7 @@ func TestModelSwitchAppliesToNextRequestWithoutRelabelingActiveTurn(t *testing.T
 	if err := sess.HandleSettingsSave(settings); err != nil {
 		t.Fatalf("switch model while first request active: %v", err)
 	}
-	releaseRequest <- struct{}{}
+	firstGate.Release()
 	firstIdentity := waitTurnDone(t, sender, orchestrator.ID)
 	if firstIdentity.ProviderID != "openrouter" || firstIdentity.ModelID != "model-a" || firstIdentity.Generation != 1 {
 		t.Fatalf("first turn identity = %#v", firstIdentity)
@@ -86,7 +73,7 @@ func TestModelSwitchAppliesToNextRequestWithoutRelabelingActiveTurn(t *testing.T
 	if got := waitRequestedModel(t, requestedModels); got != "model-b" {
 		t.Fatalf("second request model = %q, want model-b", got)
 	}
-	releaseRequest <- struct{}{}
+	secondGate.Release()
 	secondIdentity := waitTurnDone(t, sender, orchestrator.ID)
 	if secondIdentity.ProviderID != "openrouter" || secondIdentity.ModelID != "model-b" || secondIdentity.Generation != 2 {
 		t.Fatalf("second turn identity = %#v", secondIdentity)
@@ -220,37 +207,21 @@ func TestRunningTurnReadsSessionCompactionWithoutRewritingPrefix(t *testing.T) {
 		Messages []json.RawMessage `json:"messages"`
 		Tools    json.RawMessage   `json:"tools"`
 	}
-	requests := make(chan payload, 4)
-	release := make(chan struct{})
-	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var p payload
-		if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
-			t.Error(err)
-			return
+	requests := make(chan providersim.Request, 4)
+	gate := providersim.NewGate()
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
+		requests <- request
+		if request.Index == 1 {
+			return providersim.CallTools(providersim.ToolCall{ID: "plan-1", Name: "get_plan", Arguments: "{}"}).WithoutUsage().WithGate(gate)
 		}
-		requests <- p
-		w.Header().Set("Content-Type", "text/event-stream")
-		if calls.Add(1) == 1 {
-			select {
-			case <-r.Context().Done():
-				return
-			case <-release:
-			}
-			fmt.Fprint(w, `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"plan-1","type":"function","function":{"name":"get_plan","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}`+"\n\ndata: [DONE]\n\n")
-			return
-		}
-		writeAdaptiveCompactionSSE(t, w, "done")
-	}))
-	defer server.Close()
-	sess, err := NewWithSessionDir("live-percent", modelAttributionConfig(server.URL, "live-percent-model"), t.TempDir(), filepath.Join(t.TempDir(), "sessions"))
+		return providersim.Text("done").WithoutUsage()
+	})
+	sess, err := NewWithSessionDir("live-percent", modelAttributionConfig(server.BaseURL(providersim.Chat), "live-percent-model"), t.TempDir(), filepath.Join(t.TempDir(), "sessions"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer sess.Close()
-	var once sync.Once
-	unblock := func() { once.Do(func() { close(release) }) }
-	defer unblock()
 	sender := newMockEventSender()
 	o, err := sess.NewOrchestrator(sender)
 	if err != nil {
@@ -261,7 +232,10 @@ func TestRunningTurnReadsSessionCompactionWithoutRewritingPrefix(t *testing.T) {
 	}
 	next := func() payload {
 		select {
-		case p := <-requests:
+		case request := <-requests:
+			// The prefix comparison below checks exact wire fields, not equivalent text.
+			var p payload
+			_ = json.Unmarshal(request.Raw, &p)
 			return p
 		case <-time.After(8 * time.Second):
 			t.Fatal("no provider request")
@@ -281,7 +255,7 @@ func TestRunningTurnReadsSessionCompactionWithoutRewritingPrefix(t *testing.T) {
 	if err := sess.HandleSettingsSave(settings); err != nil {
 		t.Fatal(err)
 	}
-	unblock()
+	gate.Release()
 	second := next()
 	waitTurnDone(t, sender, o.ID)
 	if len(second.Messages) <= len(first.Messages) || !reflect.DeepEqual(first.Messages, second.Messages[:len(first.Messages)]) || !bytes.Equal(first.Tools, second.Tools) {

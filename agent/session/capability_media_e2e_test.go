@@ -13,13 +13,13 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"crude/agent/capability"
 	"crude/agent/provider"
 	"crude/agent/tools"
 	"crude/agent/turnloop"
+	"crude/internal/providersim"
 	captypes "crude/types/capability"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -105,26 +105,16 @@ func TestMCPMediaActualStartedChildUsesOwnSelection(t *testing.T) {
 		t.Run(fmt.Sprint(enabled), func(t *testing.T) {
 			runtime, settings, payload, root := mcpMediaFixture(t)
 			requests := make(chan map[string]any, 4)
-			release := make(chan struct{})
-			var count atomic.Int32
-			endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				var body map[string]any
-				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-					return
+			gate := providersim.NewGate()
+			endpoint := providersim.New(t)
+			endpoint.Respond(func(request providersim.Request) providersim.Turn {
+				requests <- simRawRequest(request)
+				if request.Index == 1 {
+					return simTool("child-media", "mcp_read_resource", `{"connection_id":"media","uri":"fixture://image"}`)
 				}
-				requests <- body
-				w.Header().Set("Content-Type", "text/event-stream")
-				if count.Add(1) == 1 {
-					_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"child-media\",\"type\":\"function\",\"function\":{\"name\":\"mcp_read_resource\",\"arguments\":\"{\\\"connection_id\\\":\\\"media\\\",\\\"uri\\\":\\\"fixture://image\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n")
-					return
-				}
-				select {
-				case <-release:
-				case <-r.Context().Done():
-				}
-			}))
-			defer endpoint.Close()
-			cfg := modelAttributionConfig(endpoint.URL, "parent-media")
+				return providersim.Turn{}.WithGate(gate)
+			})
+			cfg := modelAttributionConfig(endpoint.BaseURL(providersim.Chat), "parent-media")
 			profile := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
 			main := profile.Categories[CategoryDefault]
 			main.ModelModalities = []string{provider.ModalityAudio}
@@ -148,7 +138,7 @@ func TestMCPMediaActualStartedChildUsesOwnSelection(t *testing.T) {
 			attachDelegationTestCollaboration(t, owner)
 			runner := NewSubAgentRunner(owner, 1)
 			owner.subAgentSup = runner
-			defer func() { runner.SessionCancel(); close(release); runner.Wait() }()
+			defer func() { runner.SessionCancel(); gate.Release(); runner.Wait() }()
 			// This standalone media journey has no workspace execution owner.
 			_, err = runner.StartAgent(t.Context(), map[string]any{"category": CategoryResearcher, "description": "Inspect actual MCP image", "isolation": "shared"})
 			if err != nil {
@@ -176,23 +166,15 @@ func TestMCPMediaActualStartedChildUsesOwnSelection(t *testing.T) {
 func TestMCPMediaActualRootRequestAndPassiveResume(t *testing.T) {
 	runtime, settings, payload, root := mcpMediaFixture(t)
 	requests := make(chan map[string]any, 4)
-	var count atomic.Int32
-	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Error(err)
-			return
+	endpoint := providersim.New(t)
+	endpoint.Respond(func(request providersim.Request) providersim.Turn {
+		requests <- simRawRequest(request)
+		if request.Index == 1 {
+			return simTool("media-call", "mcp_read_resource", `{"connection_id":"media","uri":"fixture://image"}`)
 		}
-		requests <- body
-		w.Header().Set("Content-Type", "text/event-stream")
-		if count.Add(1) == 1 {
-			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"media-call\",\"type\":\"function\",\"function\":{\"name\":\"mcp_read_resource\",\"arguments\":\"{\\\"connection_id\\\":\\\"media\\\",\\\"uri\\\":\\\"fixture://image\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n")
-			return
-		}
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Inspected image\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	defer endpoint.Close()
-	cfg := modelAttributionConfig(endpoint.URL, "mcp-root-media")
+		return providersim.Text("Inspected image")
+	})
+	cfg := modelAttributionConfig(endpoint.BaseURL(providersim.Chat), "mcp-root-media")
 	profile := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
 	main := profile.Categories[CategoryDefault]
 	main.ModelModalities = []string{provider.ModalityImage}
@@ -238,7 +220,7 @@ func TestMCPMediaActualRootRequestAndPassiveResume(t *testing.T) {
 			}
 		}
 	}
-	if !found || count.Load() != 2 {
-		t.Fatalf("persisted media=%v provider calls=%d", found, count.Load())
+	if !found || len(endpoint.Requests()) != 2 {
+		t.Fatalf("persisted media=%v provider calls=%d", found, len(endpoint.Requests()))
 	}
 }

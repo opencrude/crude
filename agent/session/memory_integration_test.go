@@ -5,13 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"crude/agent/memory"
 	"crude/agent/provider"
+	"crude/internal/providersim"
 	"crude/types/command"
 )
 
@@ -47,35 +46,25 @@ func memoryIntegrationProposal() memory.ExtractionResult {
 	}, Summary: &memory.ExtractedSummary{Title: "Parser correction", Summary: "Fixed the focused parser case; slow validation remains unmeasured.", Outcome: "in-progress"}}
 }
 
-func memoryExtractionServer(t *testing.T, proposal memory.ExtractionResult, inspect func(string)) *httptest.Server {
+func memoryExtractionServer(t *testing.T, proposal memory.ExtractionResult, inspect func(string)) *providersim.Server {
 	t.Helper()
 	payload, err := json.Marshal(proposal)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		var body struct {
-			Messages []provider.ChatMessage `json:"messages"`
-		}
-		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
-			t.Errorf("decode extraction request: %v", err)
-		}
+	sim := providersim.New(t)
+	sim.Respond(func(request providersim.Request) providersim.Turn {
 		var transcript strings.Builder
-		for _, message := range body.Messages {
-			transcript.WriteString(message.ContentString())
+		transcript.WriteString(simText(request.System))
+		for _, message := range request.Messages {
+			transcript.WriteString(simText(message.Parts))
 		}
 		if inspect != nil {
 			inspect(transcript.String())
 		}
-		response, err := json.Marshal(map[string]any{"choices": []any{map[string]any{
-			"message": map[string]any{"role": "assistant", "content": string(payload)}, "finish_reason": "stop"}}})
-		if err != nil {
-			t.Errorf("encode response: %v", err)
-			return
-		}
-		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write(response)
-	}))
+		return providersim.Text(string(payload))
+	})
+	return sim
 }
 
 func TestMemoryIntegrationObservedEvidenceExtractionAndEpisodes(t *testing.T) {
@@ -86,8 +75,7 @@ func TestMemoryIntegrationObservedEvidenceExtractionAndEpisodes(t *testing.T) {
 			t.Errorf("extraction omitted source evidence or leaked credentials: %s", prompt)
 		}
 	})
-	defer server.Close()
-	session := &Session{sessionID: "evidence-session", memoryStore: store, cfg: modelAttributionConfig(server.URL, "curator-model")}
+	session := &Session{sessionID: "evidence-session", memoryStore: store, cfg: modelAttributionConfig(server.BaseURL(providersim.Chat), "curator-model")}
 	record := turnRecordFromMessages(session.sessionID, 1, memoryIntegrationMessages(), "The assistant claims all work passed")
 	if err := store.RecordTurn(t.Context(), record); err != nil {
 		t.Fatal(err)
@@ -130,8 +118,7 @@ func TestMemoryIntegrationLateExtractionCannotOverwriteCorrection(t *testing.T) 
 			t.Errorf("concurrent correction: %v", err)
 		}
 	})
-	defer server.Close()
-	session := &Session{sessionID: "late-session", memoryStore: store, cfg: modelAttributionConfig(server.URL, "curator-model")}
+	session := &Session{sessionID: "late-session", memoryStore: store, cfg: modelAttributionConfig(server.BaseURL(providersim.Chat), "curator-model")}
 	if err := store.RecordTurn(t.Context(), turnRecordFromMessages(session.sessionID, 1, memoryIntegrationMessages(), "claims")); err != nil {
 		t.Fatal(err)
 	}
@@ -255,8 +242,7 @@ func TestMemoryExtractionKeepsTheOutcomeOfALongTurn(t *testing.T) {
 	server := memoryExtractionServer(t, memory.ExtractionResult{Summary: &memory.ExtractedSummary{
 		Title: "Layout enforcement", Summary: "The assistant reported the restructure committed and pushed.", Outcome: "completed"}},
 		func(prompt string) { prompts = append(prompts, prompt) })
-	defer server.Close()
-	session := &Session{sessionID: "long-turn", memoryStore: store, cfg: modelAttributionConfig(server.URL, "curator-model")}
+	session := &Session{sessionID: "long-turn", memoryStore: store, cfg: modelAttributionConfig(server.BaseURL(providersim.Chat), "curator-model")}
 	if err := store.RecordTurn(t.Context(), turnRecordFromMessages(session.sessionID, 1, messages, report)); err != nil {
 		t.Fatal(err)
 	}
@@ -289,8 +275,7 @@ func TestMemoryExtractionCoversEveryPendingTurnInBoundedRequests(t *testing.T) {
 	server := memoryExtractionServer(t, memory.ExtractionResult{Summary: &memory.ExtractedSummary{
 		Title: "Long session", Summary: "Several large turns.", Outcome: "in-progress"}},
 		func(prompt string) { prompts = append(prompts, prompt) })
-	defer server.Close()
-	session := &Session{sessionID: "large-turns", memoryStore: store, cfg: modelAttributionConfig(server.URL, "curator-model")}
+	session := &Session{sessionID: "large-turns", memoryStore: store, cfg: modelAttributionConfig(server.BaseURL(providersim.Chat), "curator-model")}
 	const turns = 6
 	for turn := 1; turn <= turns; turn++ {
 		human := provider.NewTextMessage("user", fmt.Sprintf("request %d: ", turn)+strings.Repeat("detail ", 1200))

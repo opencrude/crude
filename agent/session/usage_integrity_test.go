@@ -9,15 +9,16 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
+	"crude/internal/providersim"
 )
 
 func TestUsageLedgerKeepsRequestsAcrossResume(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":10,\"prompt_tokens_details\":{\"cached_tokens\":20},\"completion_tokens_details\":{\"reasoning_tokens\":3}}}\n\ndata: [DONE]\n\n")
-	}))
-	defer server.Close()
-	cfg := modelAttributionConfig(server.URL, "accounting-model")
+	server := providersim.New(t)
+	server.Respond(func(providersim.Request) providersim.Turn {
+		return providersim.Text("ok").WithUsage(providersim.Usage{Input: 100, Output: 10, Cached: 20, Reasoning: 3})
+	})
+
+	cfg := modelAttributionConfig(server.BaseURL(providersim.Chat), "accounting-model")
 	home, directory := t.TempDir(), filepath.Join(t.TempDir(), "sessions")
 	s, err := NewWithSessionDir("usage-integrity", cfg, home, directory)
 	if err != nil {
@@ -80,24 +81,35 @@ func TestUsagePreservesUnsignedTurnGeneration(t *testing.T) {
 }
 
 func TestUsageAccountingAllProtocolsAcrossResume(t *testing.T) {
-	for _, protocol := range []string{"openai", "anthropic", "ollama", "openai-responses", "codex"} {
+	for _, tc := range []struct {
+		protocol string
+		wire     providersim.Wire
+		usage    providersim.Usage
+	}{
+		{"openai", providersim.Chat, providersim.Usage{Input: 100, Output: 10, Cached: 20, Reasoning: 3}},
+		{"anthropic", providersim.Messages, providersim.Usage{Input: 100, Output: 10, Cached: 20, CacheWrite: 10}},
+		{"ollama", providersim.Ollama, providersim.Usage{Input: 100, Output: 10, OmitCacheRead: true}},
+		{protocol: "openai-responses"},
+		{protocol: "codex"},
+	} {
+		protocol := tc.protocol
 		t.Run(protocol, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.Header().Set("Content-Type", "text/event-stream")
-				switch protocol {
-				case "anthropic":
-					_, _ = fmt.Fprint(w, "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":70,\"output_tokens\":1,\"cache_read_input_tokens\":20,\"cache_creation_input_tokens\":10}}}\n\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":10}}\n\ndata: {\"type\":\"message_stop\"}\n\n")
-				case "ollama":
-					w.Header().Set("Content-Type", "application/x-ndjson")
-					_, _ = fmt.Fprintln(w, `{"done":true,"message":{"role":"assistant","content":"ok"},"prompt_eval_count":100,"eval_count":10,"eval_duration":500000000}`)
-				case "openai-responses", "codex":
+			var baseURL string
+			if tc.wire == "" {
+				// A reduced gateway reply can omit cache_write_tokens, which
+				// schemas/responses.json#/$defs/ResponseUsage requires.
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.Header().Set("Content-Type", "text/event-stream")
 					_, _ = fmt.Fprint(w, "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"response\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"ok\"}]}],\"usage\":{\"input_tokens\":100,\"output_tokens\":10,\"input_tokens_details\":{\"cached_tokens\":20},\"output_tokens_details\":{\"reasoning_tokens\":3}}}}\n\n")
-				default:
-					_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":10,\"prompt_tokens_details\":{\"cached_tokens\":20},\"completion_tokens_details\":{\"reasoning_tokens\":3}}}\n\ndata: [DONE]\n\n")
-				}
-			}))
-			defer server.Close()
-			cfg := modelAttributionConfig(server.URL, "accounting-model")
+				}))
+				t.Cleanup(server.Close)
+				baseURL = server.URL
+			} else {
+				server := providersim.New(t)
+				server.Respond(func(providersim.Request) providersim.Turn { return providersim.Text("ok").WithUsage(tc.usage) })
+				baseURL = server.BaseURL(tc.wire)
+			}
+			cfg := modelAttributionConfig(baseURL, "accounting-model")
 			pc := cfg.Accounts["account"].Connection
 			pc.APIStandard = protocol
 			account := cfg.Accounts["account"]

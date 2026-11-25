@@ -1,64 +1,39 @@
 package session
 
 import (
-	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"reflect"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"crude/agent/collaboration"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
+	"crude/internal/providersim"
 	recoverytypes "crude/types/recovery"
 )
 
 func TestStoppedRootControlSurvivesFollowingTurnsAndResume(t *testing.T) {
 	for _, timing := range []string{"before-stop", "after-stop", "during-next-turn"} {
 		t.Run(timing, func(t *testing.T) {
-			var calls atomic.Int32
-			requests := make(chan map[string]any, 8)
-			releaseFirst, releaseNext := make(chan struct{}), make(chan struct{})
-			var firstOnce, nextOnce sync.Once
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				var body map[string]any
-				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-					t.Errorf("decode request: %v", err)
-					return
+			requests := make(chan map[string]any, 16)
+			firstGate, nextGate := providersim.NewGate(), providersim.NewGate()
+			server := providersim.New(t)
+			server.Respond(func(request providersim.Request) providersim.Turn {
+				requests <- simRawRequest(request)
+				turn := providersim.Text("The first message was hello how are you.")
+				switch request.Index {
+				case 1:
+					return turn.WithGate(firstGate)
+				case 2:
+					return simTool("following-turn-read", "list_directory", `{"path":"."}`).WithGate(nextGate)
+				default:
+					return turn
 				}
-				attempt := calls.Add(1)
-				requests <- body
-				if attempt == 1 || attempt == 2 {
-					release := releaseFirst
-					if attempt == 2 {
-						release = releaseNext
-					}
-					select {
-					case <-release:
-					case <-r.Context().Done():
-						return
-					}
-				}
-				w.Header().Set("Content-Type", "text/event-stream")
-				if attempt == 2 {
-					_, _ = fmt.Fprint(w, `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"following-turn-read","type":"function","function":{"name":"list_directory","arguments":"{\"path\":\".\"}"}}]},"finish_reason":"tool_calls"}]}`+"\n\ndata: [DONE]\n\n")
-					return
-				}
-				_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"The first message was hello how are you.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-			}))
-			t.Cleanup(server.Close)
-			t.Cleanup(func() {
-				firstOnce.Do(func() { close(releaseFirst) })
-				nextOnce.Do(func() { close(releaseNext) })
 			})
 			home, directory, project := t.TempDir(), t.TempDir(), t.TempDir()
-			cfg := modelAttributionConfig(server.URL, "stopped-control-"+timing)
+			cfg := modelAttributionConfig(server.BaseURL(providersim.Chat), "stopped-control-"+timing)
 			s, err := NewWithSessionDir("stop-control", cfg, home, directory)
 			if err != nil {
 				t.Fatal(err)
@@ -132,7 +107,7 @@ func TestStoppedRootControlSurvivesFollowingTurnsAndResume(t *testing.T) {
 				t.Fatal("immediate Stop was rejected")
 			}
 			waitControlJourneyTurn(t, sender, o, "cancelled")
-			firstOnce.Do(func() { close(releaseFirst) })
+			firstGate.Release()
 			if timing == "after-stop" {
 				control = publishStop()
 				waitControlJourneyAdmission(t, sender, o.ID, control.ID)
@@ -177,7 +152,7 @@ func TestStoppedRootControlSurvivesFollowingTurnsAndResume(t *testing.T) {
 				wantControl = 0
 			}
 			assertRequest(secondRequest, wantControl)
-			nextOnce.Do(func() { close(releaseNext) })
+			nextGate.Release()
 			assertRequest(request(), wantControl)
 			waitControlJourneyTurn(t, sender, o, "completed")
 			assertDurable := func() []sessiondb.MessageWithMeta {
@@ -217,8 +192,8 @@ func TestStoppedRootControlSurvivesFollowingTurnsAndResume(t *testing.T) {
 			assertRequest(request(), 1)
 			waitControlJourneyTurn(t, sender, o, "completed")
 			beforeResume := assertDurable()
-			if calls.Load() != 4 {
-				t.Fatalf("Stop/follow-up replayed provider work: requests=%d want=4", calls.Load())
+			if len(server.Requests()) != 4 {
+				t.Fatalf("Stop/follow-up replayed provider work: requests=%d want=4", len(server.Requests()))
 			}
 			path := s.dbPath
 			s.Close()
@@ -242,15 +217,15 @@ func TestStoppedRootControlSurvivesFollowingTurnsAndResume(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if afterResume := assertDurable(); !reflect.DeepEqual(afterResume, beforeResume) || calls.Load() != 4 {
+			if afterResume := assertDurable(); !reflect.DeepEqual(afterResume, beforeResume) || len(server.Requests()) != 4 {
 				t.Fatal("passive resume rewrote history or replayed execution")
 			}
 			submit(provider.UserInput{InternalID: "resumed-original", Text: "new explicit turn after resume"})
 			assertRequest(request(), 1)
 			waitControlJourneyTurn(t, sender, o, "completed")
 			assertDurable()
-			if calls.Load() != 5 {
-				t.Fatalf("resumed turn replayed historical requests: %d", calls.Load())
+			if len(server.Requests()) != 5 {
+				t.Fatalf("resumed turn replayed historical requests: %d", len(server.Requests()))
 			}
 		})
 	}
