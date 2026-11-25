@@ -358,7 +358,15 @@ func (c *MessageContent) UnmarshalJSON(data []byte) error {
 	return fmt.Errorf("message content must be a string, array, or null")
 }
 
+// AnsweredRequest preserves the authored text and source identity for the next
+// checkpoint. It is local context metadata, not a provider protocol item.
+type AnsweredRequest struct {
+	SourceID string `json:"source_id,omitempty"`
+	Text     string `json:"text"`
+}
+
 type ChatMessage struct {
+	AnsweredRequests  []AnsweredRequest   `json:"answered_requests,omitempty"`
 	nativeReplay      bool                // Set only on a checked outgoing projection; never persisted.
 	InternalID        string              `json:"internal_id,omitempty"`
 	DisplayContent    string              `json:"display_content,omitempty"`
