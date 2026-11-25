@@ -2,49 +2,32 @@ package turnloop
 
 import (
 	"context"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
 	"crude/agent/provider"
+	"crude/internal/providersim"
+	"crude/types/reasoning"
 )
 
 // TestCompleteStreamRecordsReasoningDuration verifies that reasoning time is
 // measured across the reasoning deltas of a real stream.
 func TestCompleteStreamRecordsReasoningDuration(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w,
-			"event: content_block_start\n"+
-				"data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\"}}\n\n"+
-				"event: content_block_delta\n"+
-				"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"reason\"}}\n\n"+
-				"event: content_block_stop\n"+
-				"data: {\"type\":\"content_block_stop\",\"index\":0}\n\n")
-		w.(http.Flusher).Flush()
-		time.Sleep(20 * time.Millisecond)
-		_, _ = fmt.Fprint(w,
-			"event: content_block_start\n"+
-				"data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"+
-				"event: content_block_delta\n"+
-				"data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"answer\"}}\n\n"+
-				"event: message_delta\n"+
-				"data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":3}}\n\n"+
-				"event: message_stop\n"+
-				"data: {\"type\":\"message_stop\"}\n\n")
-	}))
-	defer server.Close()
+	server := providersim.New(t)
+	gate := providersim.NewGate()
+	defer gate.Release()
+	server.Script(providersim.Text("answer").WithReasoning("reason", "", "").WithGateAfter(4, gate))
 
-	p := provider.FromPreset("anthropic", "key", server.URL)
+	p := provider.FromPreset("anthropic", "key", server.BaseURL(providersim.Messages))
 	p.Model = "claude-test"
 	agent := newTestAgent(t, p, p.Model)
 
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
 	result, err := agent.completeStream(
-		context.Background(),
+		ctx,
 		[]provider.ChatMessage{provider.NewTextMessage("user", "hello")},
-		nil, nil, nil, nil, nil, nil, nil, nil,
+		nil, nil, func(reasoning.Delta) { time.AfterFunc(20*time.Millisecond, gate.Release) }, nil, nil, nil, nil, nil,
 	)
 	if err != nil {
 		t.Fatalf("completeStream: %v", err)

@@ -2,10 +2,7 @@ package turnloop
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -14,12 +11,13 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/tools"
+	"crude/internal/providersim"
 	recoverytypes "crude/types/recovery"
 )
 
 func TestRegisteredProtocolsSupervisedPartialToolRecovery(t *testing.T) {
 	t.Parallel()
-	fixtures := supervisedProtocolFixtures()
+	fixtures := supervisedWires
 	protocols := provider.ProtocolList()
 	if len(fixtures) != len(protocols) {
 		t.Fatalf("fixtures=%d registered protocols=%d", len(fixtures), len(protocols))
@@ -39,28 +37,10 @@ func TestRegisteredProtocolsSupervisedPartialToolRecovery(t *testing.T) {
 				original := "ORIGINAL-" + id + "-" + owner.name
 				acceptedText := "ACCEPTED-" + id + "-" + owner.name
 				partialID := "incomplete-" + id + "-" + owner.name
-				var requests atomic.Int32
-				var bodiesMu sync.Mutex
-				var bodies [][]byte
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					var raw json.RawMessage
-					if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
-						t.Errorf("decode request: %v", err)
-						return
-					}
-					bodiesMu.Lock()
-					bodies = append(bodies, append([]byte(nil), raw...))
-					bodiesMu.Unlock()
-					w.Header().Set("Content-Type", fixture.contentType)
-					if requests.Add(1) == 1 {
-						_, _ = fmt.Fprint(w, fixture.partial(acceptedText, partialID))
-						return
-					}
-					_, _ = fmt.Fprint(w, fixture.complete)
-				}))
-				defer server.Close()
-
-				p := provider.FromPreset("openai-chat", "key", server.URL)
+				server := providersim.New(t)
+				partial := fixture.interruptedCall(acceptedText, partialID)
+				server.Script(partial, providersim.Text("finished"))
+				p := provider.FromPreset("openai-chat", "key", server.BaseURL(fixture.wire))
 				if err := p.SetProtocolID(id); err != nil {
 					t.Fatal(err)
 				}
@@ -98,15 +78,13 @@ func TestRegisteredProtocolsSupervisedPartialToolRecovery(t *testing.T) {
 				started := time.Now()
 				result := a.RunSupervised(t.Context(), []provider.ChatMessage{provider.NewTextMessage("user", original)},
 					"system", emit, nil, "session", nil, SupervisedRunOptions{Supervisor: supervisor})
-				if result.State != SupervisedRunCompleted || requests.Load() != 2 || effects.Load() != 0 {
-					t.Fatalf("state=%s requests=%d effects=%d failure=%v", result.State, requests.Load(), effects.Load(), result.Failure.Cause)
+				if result.State != SupervisedRunCompleted || len(server.Requests()) != 2 || effects.Load() != 0 {
+					t.Fatalf("state=%s requests=%d effects=%d failure=%v", result.State, len(server.Requests()), effects.Load(), result.Failure.Cause)
 				}
 				if elapsed := time.Since(started); elapsed < 900*time.Millisecond || elapsed > 5*time.Minute {
 					t.Fatalf("automatic cooldown elapsed=%s", elapsed)
 				}
-				bodiesMu.Lock()
-				second := string(bodies[1])
-				bodiesMu.Unlock()
+				second := string(server.Requests()[1].Raw)
 				if strings.Count(second, original) != 1 || strings.Count(second, acceptedText) != 1 ||
 					!strings.Contains(second, "runtime_recovery") || strings.Contains(second, partialID) || strings.Contains(second, "previous_response_id") {
 					t.Fatalf("unsafe or incomplete semantic replacement: %s", second)
@@ -136,14 +114,9 @@ func TestRegisteredProtocolsSupervisedPartialToolRecovery(t *testing.T) {
 }
 
 func TestSupervisedPartialContinuationStopsDuringCooldown(t *testing.T) {
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requests.Add(1)
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"accepted\"}}]}\n\n")
-	}))
-	defer server.Close()
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+	server := providersim.New(t)
+	server.Script(providersim.Text("accepted").WithCut(2))
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.SetDialSettings(provider.DialSettings{MaxAttempts: 1})
 	a := newTestAgent(t, p, "stop-cooldown")
 	ctx, cancel := context.WithCancel(t.Context())
@@ -161,13 +134,14 @@ func TestSupervisedPartialContinuationStopsDuringCooldown(t *testing.T) {
 	}
 	supervisor.Emit = emit
 	go func() {
-		done <- a.RunSupervised(ctx, []provider.ChatMessage{provider.NewTextMessage("user", "work")}, "system", emit, nil, "session", nil, SupervisedRunOptions{Supervisor: supervisor})
+		done <- a.RunSupervised(ctx, []provider.ChatMessage{provider.NewTextMessage("user", "work")},
+			"system", emit, nil, "session", nil, SupervisedRunOptions{Supervisor: supervisor})
 	}()
 	<-waiting
 	cancel()
 	result := <-done
-	if result.State != SupervisedRunCancelled || requests.Load() != 1 {
-		t.Fatalf("state=%s requests=%d", result.State, requests.Load())
+	if result.State != SupervisedRunCancelled || len(server.Requests()) != 1 {
+		t.Fatalf("state=%s requests=%d", result.State, len(server.Requests()))
 	}
 }
 
@@ -175,23 +149,33 @@ func TestRegisteredProtocolsPermanentFailuresParkWithoutRetry(t *testing.T) {
 	for _, protocol := range provider.ProtocolList() {
 		id := protocol.Info().ID
 		for _, failure := range []struct {
-			name, body string
-			status     int
-		}{
-			{"schema", `{"error":{"type":"invalid_request_error","param":"tools[0]","message":"invalid tool schema"}}`, http.StatusBadRequest},
-			{"auth", `{"error":{"type":"authentication_error","message":"invalid credential"}}`, http.StatusUnauthorized},
-			{"quota", `{"error":{"code":"insufficient_quota","message":"billing limit"}}`, http.StatusTooManyRequests},
-		} {
-			t.Run(id+"/"+failure.name, func(t *testing.T) {
+			name string
+			kind providersim.FaultKind
+		}{{"schema", providersim.InvalidRequest}, {"auth", providersim.Auth}, {"quota", providersim.Quota}} {
+			label := failure.name
+			if id == "ollama" && failure.kind == providersim.Quota {
+				label = "gateway_quota"
+			}
+			t.Run(id+"/"+label, func(t *testing.T) {
 				t.Parallel()
-				var requests atomic.Int32
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-					requests.Add(1)
-					w.WriteHeader(failure.status)
-					_, _ = fmt.Fprint(w, failure.body)
-				}))
-				defer server.Close()
-				p := provider.FromPreset("openai-chat", "key", server.URL)
+				server := providersim.New(t)
+				wire := supervisedWires[id].wire
+				base := server.BaseURL(wire)
+				if wire == providersim.Ollama && failure.kind == providersim.Quota {
+					// Native quota is not applicable: https://docs.ollama.com/api/errors
+					// documents rate limiting only. This is a gateway billing rejection.
+					server.Script(providersim.HTTPError(providersim.RateLimit))
+					base = translatingGateway(t, server, wire, func(r *http.Response) error {
+						if err := r.Body.Close(); err != nil {
+							return err
+						}
+						gatewayBody(r, `{"error":{"code":"insufficient_quota","message":"billing limit"}}`)
+						return nil
+					})
+				} else {
+					server.Script(providersim.HTTPError(failure.kind))
+				}
+				p := provider.FromPreset("openai-chat", "key", base)
 				if err := p.SetProtocolID(id); err != nil {
 					t.Fatal(err)
 				}
@@ -199,6 +183,12 @@ func TestRegisteredProtocolsPermanentFailuresParkWithoutRetry(t *testing.T) {
 				p.SetDialSettings(provider.DialSettings{MaxAttempts: 1})
 				a := newTestAgent(t, p, p.Model)
 				supervisor := NewSupervisor("root", 9, nil)
+				// A permanent verdict must not enter a cooldown. End a mistaken retry
+				// immediately rather than issuing another paid model request.
+				supervisor.Wait = func(context.Context, time.Duration) error {
+					t.Error("permanent failure scheduled a retry")
+					return context.Canceled
+				}
 				supervisor.Persist = func(recoverytypes.Status) error { return nil }
 				result := a.RunSupervised(t.Context(), []provider.ChatMessage{provider.NewTextMessage("user", "ORIGINAL-negative-"+id)},
 					"system", nil, nil, "session", nil, SupervisedRunOptions{
@@ -206,42 +196,35 @@ func TestRegisteredProtocolsPermanentFailuresParkWithoutRetry(t *testing.T) {
 						OnAttention: func(RecoveryFailure) AttentionDisposition { return AttentionParkAttempt },
 					})
 				if result.State != SupervisedRunParked || result.Incident.State != recoverytypes.NeedsAttention ||
-					!result.Incident.RetryAt.IsZero() || requests.Load() != 1 {
-					t.Fatalf("state=%s incident=%+v requests=%d failure=%v", result.State, result.Incident, requests.Load(), result.Failure.Cause)
+					!result.Incident.RetryAt.IsZero() || len(server.Requests()) != 1 {
+					t.Fatalf("state=%s incident=%+v requests=%d failure=%v", result.State, result.Incident, len(server.Requests()), result.Failure.Cause)
 				}
 			})
 		}
 	}
 }
 
-type supervisedProtocolFixture struct {
-	contentType string
-	partial     func(accepted, partialID string) string
-	complete    string
+// Frame counts through the incomplete call, after the accepted text. On
+// object-valued wires the call itself is atomic; its enclosing turn is not.
+type supervisedWire struct {
+	wire          providersim.Wire
+	partialFrames int
 }
 
-func supervisedProtocolFixtures() map[string]supervisedProtocolFixture {
-	responsesPartial := func(accepted, partialID string) string {
-		return fmt.Sprintf("data: {\"type\":\"response.output_text.delta\",\"delta\":%q}\n\ndata: {\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"id\":%q,\"type\":\"function_call\",\"call_id\":%q,\"name\":\"read_file\",\"arguments\":\"\"}}\n\ndata: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":1,\"delta\":\"{\\\"path\\\":\"}\n\n", accepted, partialID, partialID)
+var supervisedWires = map[string]supervisedWire{
+	"openai":              {providersim.Chat, 4},
+	"openai-responses":    {providersim.Responses, 10},
+	"codex":               {providersim.Codex, 10},
+	"anthropic":           {providersim.Messages, 6},
+	"gemini":              {providersim.Gemini, 2},
+	"gemini-interactions": {providersim.Interactions, 5},
+	"ollama":              {providersim.Ollama, 2},
+}
+
+func (f supervisedWire) interruptedCall(accepted, id string) providersim.Turn {
+	args := `{"path":"partial.go"}`
+	if f.wire == providersim.Chat || f.wire == providersim.Codex || f.wire == providersim.Responses {
+		args = `{"path":`
 	}
-	responsesComplete := "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"finished\"}]}]}}\n\n"
-	return map[string]supervisedProtocolFixture{
-		"openai": {"text/event-stream", func(a, id string) string {
-			return fmt.Sprintf("data: {\"choices\":[{\"delta\":{\"content\":%q}}]}\n\ndata: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":%q,\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\"}}]}}]}\n\n", a, id)
-		}, "data: {\"choices\":[{\"delta\":{\"content\":\"finished\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"},
-		"openai-responses": {"text/event-stream", responsesPartial, responsesComplete},
-		"codex":            {"text/event-stream", responsesPartial, responsesComplete},
-		"anthropic": {"text/event-stream", func(a, id string) string {
-			return fmt.Sprintf("data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":%q}}\n\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"tool_use\",\"id\":%q,\"name\":\"read_file\",\"input\":{}}}\n\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"path\\\":\"}}\n\n", a, id)
-		}, "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"finished\"}}\n\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\ndata: {\"type\":\"message_stop\"}\n\n"},
-		"gemini": {"text/event-stream", func(a, id string) string {
-			return fmt.Sprintf("data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":%q}]}}]}\n\ndata: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"functionCall\":{\"id\":%q,\"name\":\"read_file\",\"args\":{}},\"thoughtSignature\":\"c2ln\"}]}}]}\n\n", a, id)
-		}, "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"finished\"}]},\"finishReason\":\"STOP\"}]}\n\n"},
-		"gemini-interactions": {"text/event-stream", func(a, id string) string {
-			return fmt.Sprintf("event: step.start\ndata: {\"index\":0,\"step\":{\"type\":\"model_output\",\"content\":[{\"type\":\"text\",\"text\":%q}]},\"event_type\":\"step.start\"}\n\nevent: step.start\ndata: {\"index\":1,\"step\":{\"type\":\"function_call\",\"id\":%q,\"name\":\"read_file\",\"arguments\":{}},\"event_type\":\"step.start\"}\n\nevent: step.delta\ndata: {\"index\":1,\"delta\":{\"type\":\"arguments_delta\",\"arguments\":\"{\\\"path\\\":\"},\"event_type\":\"step.delta\"}\n\n", a, id)
-		}, "event: step.start\ndata: {\"index\":0,\"step\":{\"type\":\"model_output\",\"content\":[{\"type\":\"text\",\"text\":\"finished\"}]},\"event_type\":\"step.start\"}\n\nevent: step.stop\ndata: {\"index\":0,\"event_type\":\"step.stop\"}\n\nevent: interaction.completed\ndata: {\"interaction\":{\"status\":\"completed\"},\"event_type\":\"interaction.completed\"}\n\n"},
-		"ollama": {"application/x-ndjson", func(a, id string) string {
-			return fmt.Sprintf("{\"model\":\"m\",\"message\":{\"role\":\"assistant\",\"content\":%q}}\n{\"model\":\"m\",\"message\":{\"role\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":%q,\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\"}}]}}\n", a, id)
-		}, "{\"model\":\"m\",\"message\":{\"role\":\"assistant\",\"content\":\"finished\"},\"done\":true,\"done_reason\":\"stop\"}\n"},
-	}
+	return providersim.Text(accepted).WithTools(providersim.ToolCall{ID: id, Name: "read_file", Arguments: args}).WithCut(f.partialFrames)
 }

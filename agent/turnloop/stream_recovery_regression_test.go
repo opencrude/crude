@@ -2,24 +2,24 @@ package turnloop
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"crude/agent/provider"
 	"crude/agent/tools"
+	"crude/internal/providersim"
 	recoverytypes "crude/types/recovery"
 )
 
 func TestGatewayStreamDisconnectSupervisedProtocolOwners(t *testing.T) {
 	t.Parallel()
-	fixtures := supervisedProtocolFixtures()
+	fixtures := supervisedWires
 	protocols := provider.ProtocolList()
 	if len(fixtures) != len(protocols) {
 		t.Fatalf("fixtures=%d registered protocols=%d", len(fixtures), len(protocols))
@@ -39,34 +39,30 @@ func TestGatewayStreamDisconnectSupervisedProtocolOwners(t *testing.T) {
 				original := "ORIGINAL-" + id + "-" + owner.name
 				acceptedText := "ACCEPTED-" + id + "-" + owner.name
 				partialID := "incomplete-" + id + "-" + owner.name
-				var requests atomic.Int32
-				var bodiesMu sync.Mutex
-				var bodies [][]byte
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					var raw json.RawMessage
-					if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
-						t.Errorf("decode request: %v", err)
-						return
+				server := providersim.New(t)
+				server.Script(fixture.interruptedCall(acceptedText, partialID), providersim.Text("finished"))
+				// This gateway closes an interrupted provider stream with its own diagnostic.
+				var translations atomic.Int32
+				base := translatingGateway(t, server, fixture.wire, func(resp *http.Response) error {
+					payload, err := io.ReadAll(resp.Body)
+					if closeErr := resp.Body.Close(); closeErr != nil {
+						return closeErr
 					}
-					bodiesMu.Lock()
-					bodies = append(bodies, append([]byte(nil), raw...))
-					bodiesMu.Unlock()
-					w.Header().Set("Content-Type", fixture.contentType)
-					if requests.Add(1) == 1 {
-						_, _ = fmt.Fprint(w, fixture.partial(acceptedText, partialID))
+					if errors.Is(err, io.ErrUnexpectedEOF) {
+						translations.Add(1)
 						const diagnostic = "stream error: stream disconnected before completion: stream closed before response.completed"
 						if id == "ollama" {
-							_, _ = fmt.Fprintf(w, "{\"error\":%q}\n", diagnostic)
+							payload = fmt.Appendf(payload, "{\"error\":%q}\n", diagnostic)
 						} else {
-							_, _ = fmt.Fprintf(w, "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":%q}}\n\n", diagnostic)
+							payload = fmt.Appendf(payload, "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":%q}}\n\n", diagnostic)
 						}
-						return
+					} else if err != nil {
+						return err
 					}
-					_, _ = fmt.Fprint(w, fixture.complete)
-				}))
-				defer server.Close()
-
-				p := provider.FromPreset("openai-chat", "key", server.URL)
+					gatewayBody(resp, string(payload))
+					return nil
+				})
+				p := provider.FromPreset("openai-chat", "key", base)
 				if err := p.SetProtocolID(id); err != nil {
 					t.Fatal(err)
 				}
@@ -104,15 +100,16 @@ func TestGatewayStreamDisconnectSupervisedProtocolOwners(t *testing.T) {
 				started := time.Now()
 				result := a.RunSupervised(t.Context(), []provider.ChatMessage{provider.NewTextMessage("user", original)},
 					"system", emit, nil, "session", nil, SupervisedRunOptions{Supervisor: supervisor, OnAttention: func(RecoveryFailure) AttentionDisposition { return AttentionParkAttempt }})
-				if result.State != SupervisedRunCompleted || requests.Load() != 2 || effects.Load() != 0 {
-					t.Fatalf("state=%s requests=%d effects=%d failure=%v", result.State, requests.Load(), effects.Load(), result.Failure.Cause)
+				if got := translations.Load(); got != 1 {
+					t.Fatalf("gateway translated %d failures; want 1", got)
+				}
+				if result.State != SupervisedRunCompleted || len(server.Requests()) != 2 || effects.Load() != 0 {
+					t.Fatalf("state=%s requests=%d effects=%d failure=%v", result.State, len(server.Requests()), effects.Load(), result.Failure.Cause)
 				}
 				if elapsed := time.Since(started); elapsed < 900*time.Millisecond || elapsed > 5*time.Minute {
 					t.Fatalf("automatic cooldown elapsed=%s", elapsed)
 				}
-				bodiesMu.Lock()
-				second := string(bodies[1])
-				bodiesMu.Unlock()
+				second := string(server.Requests()[1].Raw)
 				if strings.Count(second, original) != 1 || strings.Count(second, acceptedText) != 1 ||
 					!strings.Contains(second, "runtime_recovery") || strings.Contains(second, partialID) || strings.Contains(second, "previous_response_id") {
 					t.Fatalf("unsafe or incomplete semantic replacement: %s", second)

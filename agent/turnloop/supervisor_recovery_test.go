@@ -2,10 +2,7 @@ package turnloop
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -14,6 +11,7 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/tools"
+	"crude/internal/providersim"
 	"crude/internal/retry"
 	recoverytypes "crude/types/recovery"
 )
@@ -121,18 +119,10 @@ func TestSupervisorPermanentFailureWaitsForExplicitWake(t *testing.T) {
 }
 
 func TestRunSupervisedRetriesTransientExhaustionWithoutTerminalError(t *testing.T) {
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		if requests.Add(1) == 1 {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = fmt.Fprint(w, `{"error":{"type":"server_error","message":"temporary outage"}}`)
-			return
-		}
-		writeChatSSE(w, "finished after recovery", "stop")
-	}))
-	defer server.Close()
+	server := providersim.New(t)
+	server.Script(providersim.HTTPError(providersim.Overload), providersim.Text("finished after recovery"))
 
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.SetDialSettings(provider.DialSettings{MaxAttempts: 1})
 	a := newTestAgent(t, p, "supervised-model")
 	a.ContextCompactionPercent = 0
@@ -155,8 +145,8 @@ func TestRunSupervisedRetriesTransientExhaustionWithoutTerminalError(t *testing.
 		nil, "session", nil,
 		SupervisedRunOptions{Supervisor: supervisor},
 	)
-	if requests.Load() != 2 {
-		t.Fatalf("requests=%d want=2", requests.Load())
+	if len(server.Requests()) != 2 {
+		t.Fatalf("requests=%d want=2", len(server.Requests()))
 	}
 	for _, event := range events {
 		if event.Type == "error" {
@@ -181,27 +171,19 @@ func TestRunSupervisedRetriesTransientExhaustionWithoutTerminalError(t *testing.
 }
 
 func TestRunSupervisedDiscardsTruncatedToolArgumentsAndContinues(t *testing.T) {
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
+
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
+		if r.Index == 1 {
+			return providersim.Text("Planning safely.").WithTools(providersim.ToolCall{ID: "partial", Name: "write_file", Arguments: `{"path":"danger`}).WithFinish(providersim.FinishLength)
 		}
-		if requests.Add(1) == 1 {
-			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = fmt.Fprint(w,
-				"data: {\"choices\":[{\"delta\":{\"content\":\"Planning safely.\",\"tool_calls\":[{\"index\":0,\"id\":\"partial\",\"type\":\"function\",\"function\":{\"name\":\"write_file\",\"arguments\":\"{\\\"path\\\":\\\"danger\"}}]},\"finish_reason\":\"length\"}]}\n\n"+
-					"data: [DONE]\n\n")
-			return
-		}
-		last := request.Messages[len(request.Messages)-1].ContentString()
+		last := simulatedText(r.Messages[len(r.Messages)-1].Parts)
 		if !strings.Contains(last, `runtime_recovery kind="partial_tool_call"`) {
 			t.Errorf("second request lacked canonical partial-tool recovery: %q", last)
 		}
-		writeChatSSE(w, "continued without replay", "stop")
-	}))
-	defer server.Close()
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+		return providersim.Text("continued without replay")
+	})
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.SetDialSettings(provider.DialSettings{MaxAttempts: 1})
 	a := newTestAgent(t, p, "supervised-model")
 	a.ContextCompactionPercent = 0
@@ -218,8 +200,8 @@ func TestRunSupervisedDiscardsTruncatedToolArgumentsAndContinues(t *testing.T) {
 		"system", func(AgentEvent) {}, nil, "child", nil,
 		SupervisedRunOptions{Supervisor: supervisor},
 	)
-	if requests.Load() != 2 || executions.Load() != 0 {
-		t.Fatalf("requests=%d executions=%d", requests.Load(), executions.Load())
+	if len(server.Requests()) != 2 || executions.Load() != 0 {
+		t.Fatalf("requests=%d executions=%d", len(server.Requests()), executions.Load())
 	}
 	for _, message := range result.Archive {
 		if len(message.ToolCalls) > 0 {
@@ -229,18 +211,15 @@ func TestRunSupervisedDiscardsTruncatedToolArgumentsAndContinues(t *testing.T) {
 }
 
 func TestRunSupervisedWithoutOwnerDoesNotStartProvider(t *testing.T) {
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		requests.Add(1)
-	}))
-	defer server.Close()
-	a := newTestAgent(t, provider.FromPreset("openai-chat", "key", server.URL), "model")
+	server := providersim.New(t)
+	server.Script(providersim.Text("must not be used"))
+	a := newTestAgent(t, provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat)), "model")
 	var events []AgentEvent
 	input := []provider.ChatMessage{provider.NewTextMessage("user", "pending")}
 	result := a.RunSupervised(t.Context(), input, "system", func(event AgentEvent) {
 		events = append(events, event)
 	}, nil, "session", nil, SupervisedRunOptions{})
-	if requests.Load() != 0 || len(result.Archive) != 1 || result.State != SupervisedRunParked || len(events) != 1 || events[0].Type != "error" {
-		t.Fatalf("unowned run executed: requests=%d result=%+v events=%+v", requests.Load(), result, events)
+	if len(server.Requests()) != 0 || len(result.Archive) != 1 || result.State != SupervisedRunParked || len(events) != 1 || events[0].Type != "error" {
+		t.Fatalf("unowned run executed: requests=%d result=%+v events=%+v", len(server.Requests()), result, events)
 	}
 }

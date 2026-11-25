@@ -13,8 +13,10 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/tools"
+	"crude/internal/providersim"
 )
 
+// This gateway emits an in-band termination; see docs/reference/run-recovery.md#one-supervisor-separate-budgets.
 func TestGatewayInterruptionContinuesWithoutReplayingOrExecutingPartialTools(t *testing.T) {
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -73,15 +75,9 @@ func TestGatewayInterruptionContinuesWithoutReplayingOrExecutingPartialTools(t *
 }
 
 func TestStopDuringRetryDoesNotStartAnotherAttempt(t *testing.T) {
-	var requests atomic.Int32
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requests.Add(1)
-		w.Header().Set("Retry-After", "10")
-		w.WriteHeader(503)
-		_, _ = fmt.Fprint(w, `{"error":{"type":"server_error","message":"unavailable"}}`)
-	}))
-	defer s.Close()
-	a := newTestAgent(t, provider.FromPreset("openai-chat", "key", s.URL), "test")
+	s := providersim.New(t)
+	s.Script(providersim.HTTPError(providersim.Overload).WithRetryHint(providersim.RetryAfterSeconds(10)))
+	a := newTestAgent(t, provider.FromPreset("openai-chat", "key", s.BaseURL(providersim.Chat)), "test")
 	a.MaxRetries = 3
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -93,8 +89,8 @@ func TestStopDuringRetryDoesNotStartAnotherAttempt(t *testing.T) {
 			cancel()
 		}
 	}, nil, "", nil)
-	if time.Since(started) > time.Second || requests.Load() != 1 || retries != 1 {
-		t.Fatalf("stop failed to interrupt backoff: requests=%d retries=%d elapsed=%s", requests.Load(), retries, time.Since(started))
+	if time.Since(started) > time.Second || len(s.Requests()) != 1 || retries != 1 {
+		t.Fatalf("stop failed to interrupt backoff: requests=%d retries=%d elapsed=%s", len(s.Requests()), retries, time.Since(started))
 	}
 	if history[len(history)-1].EffectiveOrigin() != provider.OriginTurnStopped {
 		t.Fatal("stop boundary missing from durable context")
@@ -102,16 +98,9 @@ func TestStopDuringRetryDoesNotStartAnotherAttempt(t *testing.T) {
 }
 
 func TestStopPreservesPartialResponseWithoutCallingProviderAgain(t *testing.T) {
-	var requests atomic.Int32
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests.Add(1)
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Useful findings so far.\"}}]}\n\n")
-		w.(http.Flusher).Flush()
-		<-r.Context().Done()
-	}))
-	defer s.Close()
-	a := newTestAgent(t, provider.FromPreset("openai-chat", "key", s.URL), "test")
+	s := providersim.New(t)
+	s.Script(providersim.Text("Useful findings so far.").WithGateAfter(2, providersim.NewGate()))
+	a := newTestAgent(t, provider.FromPreset("openai-chat", "key", s.BaseURL(providersim.Chat)), "test")
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	history := a.Run(ctx, nil, "system", func(event AgentEvent) {
@@ -123,11 +112,12 @@ func TestStopPreservesPartialResponseWithoutCallingProviderAgain(t *testing.T) {
 	for _, msg := range history {
 		found = found || msg.ContentString() == "Useful findings so far."
 	}
-	if !found || requests.Load() != 1 || history[len(history)-1].EffectiveOrigin() != provider.OriginTurnStopped {
-		t.Fatalf("stop lost accepted work or reissued request: found=%v requests=%d", found, requests.Load())
+	if !found || len(s.Requests()) != 1 || history[len(history)-1].EffectiveOrigin() != provider.OriginTurnStopped {
+		t.Fatalf("stop lost accepted work or reissued request: found=%v requests=%d", found, len(s.Requests()))
 	}
 }
 
+// This gateway emits an in-band termination; see docs/reference/run-recovery.md#one-supervisor-separate-budgets.
 func TestRepeatedPartialFailuresHaveBoundedContinuations(t *testing.T) {
 	var requests atomic.Int32
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

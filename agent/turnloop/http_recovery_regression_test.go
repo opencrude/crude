@@ -4,18 +4,18 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"crude/agent/provider"
+	"crude/internal/providersim"
 	"crude/internal/retry"
 	recoverytypes "crude/types/recovery"
 )
 
 func TestHTTPGatewayRecoveryContinuesBeyondMaximumCooldownForEveryProtocol(t *testing.T) {
-	fixtures := supervisedProtocolFixtures()
+	fixtures := supervisedWires
 	for _, protocol := range provider.ProtocolList() {
 		id := protocol.Info().ID
 		fixture, ok := fixtures[id]
@@ -24,19 +24,23 @@ func TestHTTPGatewayRecoveryContinuesBeyondMaximumCooldownForEveryProtocol(t *te
 		}
 		for _, child := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/child=%t", id, child), func(t *testing.T) {
-				var requests atomic.Int32
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-					if requests.Add(1) <= 3 {
-						w.Header().Set("Retry-After", "86400")
-						w.WriteHeader(http.StatusRequestTimeout)
-						_, _ = fmt.Fprint(w, `{"error":{"type":"invalid_request_error","message":"stream error: stream disconnected before completion: stream closed before response.completed"}}`)
-						return
+				server := providersim.New(t)
+				timeout := providersim.HTTPError(providersim.RequestTimeout).WithRetryHint(providersim.RetryAfterSeconds(86400))
+				server.Script(timeout, timeout, timeout, providersim.Text("finished"))
+				// This gateway reports a timeout as invalid input on every downstream wire.
+				var translations atomic.Int32
+				base := translatingGateway(t, server, fixture.wire, func(resp *http.Response) error {
+					if resp.StatusCode == http.StatusRequestTimeout {
+						translations.Add(1)
+						if err := resp.Body.Close(); err != nil {
+							return err
+						}
+						resp.Header.Set("Content-Type", "application/json")
+						gatewayBody(resp, `{"error":{"type":"invalid_request_error","message":"stream error: stream disconnected before completion: stream closed before response.completed"}}`)
 					}
-					w.Header().Set("Content-Type", fixture.contentType)
-					_, _ = fmt.Fprint(w, fixture.complete)
-				}))
-				defer server.Close()
-				p := provider.FromPreset("openai-chat", "key", server.URL)
+					return nil
+				})
+				p := provider.FromPreset("openai-chat", "key", base)
 				if err := p.SetProtocolID(id); err != nil {
 					t.Fatal(err)
 				}
@@ -65,8 +69,11 @@ func TestHTTPGatewayRecoveryContinuesBeyondMaximumCooldownForEveryProtocol(t *te
 				// of hanging the test or needing a human wake to make it pass.
 				result := a.RunSupervised(t.Context(), []provider.ChatMessage{provider.NewTextMessage("user", "retained task")}, "system", nil, nil, "session", nil,
 					SupervisedRunOptions{Supervisor: supervisor, OnAttention: func(RecoveryFailure) AttentionDisposition { return AttentionParkAttempt }})
-				if result.State != SupervisedRunCompleted || requests.Load() != 4 || len(waits) != 3 || len(countdowns) != 3 {
-					t.Fatalf("state=%s requests=%d waits=%v countdowns=%+v cause=%v", result.State, requests.Load(), waits, countdowns, result.Failure.Cause)
+				if got := translations.Load(); got != 3 {
+					t.Fatalf("gateway translated %d failures; want 3", got)
+				}
+				if result.State != SupervisedRunCompleted || len(server.Requests()) != 4 || len(waits) != 3 || len(countdowns) != 3 {
+					t.Fatalf("state=%s requests=%d waits=%v countdowns=%+v cause=%v", result.State, len(server.Requests()), waits, countdowns, result.Failure.Cause)
 				}
 				for i, status := range countdowns {
 					if waits[i] != retry.MaxCooldown || status.RetryAt.Sub(now) != 5*time.Minute || status.State != recoverytypes.Recovering || status.ID != "ongoing-incident" || status.AgentID != "owner" || status.Generation != 7 {

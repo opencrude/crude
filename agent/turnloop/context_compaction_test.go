@@ -2,11 +2,9 @@ package turnloop
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -15,6 +13,7 @@ import (
 
 	rootprompt "crude/agent/prompt"
 	"crude/agent/provider"
+	"crude/internal/providersim"
 )
 
 var compactionStagesForTest = rootprompt.CompactionStages()
@@ -144,18 +143,11 @@ func TestConfiguredRetentionBudgetAppliesToPendingAndAnsweredInput(t *testing.T)
 }
 
 func TestCompactUsesSameConversationAndDisablesTools(t *testing.T) {
-	requests := make(chan provider.ChatRequest, len(compactionStagesForTest))
-	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-		}
-		requests <- request
-		writeChatSSE(w, fmt.Sprintf("- stage: %d\n- fact: exact", calls.Add(1)), "stop")
-	}))
-	defer server.Close()
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
+		return providersim.Text(fmt.Sprintf("- stage: %d\n- fact: exact", r.Index))
+	})
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "compact-model"
 	provider.SetModelContext(p.Model, 200_000)
 	a := newTestAgent(t, p, p.Model)
@@ -166,13 +158,16 @@ func TestCompactUsesSameConversationAndDisablesTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for range compactionStagesForTest {
-		request := <-requests
-		if request.ToolChoice != "none" {
+	requests := server.Requests()
+	if len(requests) != len(compactionStagesForTest) {
+		t.Fatalf("extraction requests = %d", len(requests))
+	}
+	for _, request := range requests {
+		if string(request.ToolChoice) != `"none"` {
 			t.Fatalf("tool choice = %#v, want none", request.ToolChoice)
 		}
-		if len(request.Messages) != len(history)+3 || request.Messages[0].ContentString() != "<system>stable</system>" ||
-			!strings.Contains(request.Messages[len(request.Messages)-2].ContentString(), "plain text only") {
+		if len(request.Messages) != len(history)+2 || len(request.System) != 1 || request.System[0].Text != "<system>stable</system>" ||
+			!strings.Contains(simulatedText(request.Messages[len(request.Messages)-2].Parts), "plain text only") {
 			t.Fatalf("compaction request did not preserve the common prefix: messages=%d", len(request.Messages))
 		}
 	}
@@ -198,23 +193,17 @@ func compactionTestHistory(last provider.ChatMessage) []provider.ChatMessage {
 
 func TestCompactEndsWithFreshContinuationNotHistoricalUserInput(t *testing.T) {
 	var calls atomic.Int32
-	normalRequests := make(chan provider.ChatRequest, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
 		call := calls.Add(1)
 		if call > int32(len(compactionStagesForTest)) {
-			var body provider.ChatRequest
-			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
-				t.Error(err)
-			}
-			normalRequests <- body
-			writeChatSSE(w, "Continued only the unfinished work.", "stop")
-			return
+			return providersim.Text("Continued only the unfinished work.")
 		}
 		// Deliberately omit runtime facts: they cannot depend on model recall.
-		writeChatSSE(w, "- previous user request: already answered\n- next: inspect the running build", "stop")
-	}))
-	defer server.Close()
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+		return providersim.Text("- previous user request: already answered\n- next: inspect the running build")
+	})
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "continuation-handoff-model"
 	provider.SetModelContext(p.Model, 200_000)
 	a := newTestAgent(t, p, p.Model)
@@ -251,7 +240,11 @@ func TestCompactEndsWithFreshContinuationNotHistoricalUserInput(t *testing.T) {
 	}
 	a.ContextCompactionPercent = 0
 	a.Run(context.Background(), result.Messages, "system", nil, nil, "", nil)
-	request := <-normalRequests
+	lastRequest, ok := server.Last()
+	if !ok {
+		t.Fatal("missing post-compaction request")
+	}
+	request := canonicalChatRequest(t, lastRequest)
 	if len(request.Messages) == 0 || !strings.Contains(request.Messages[len(request.Messages)-1].ContentString(), "<runtime_continuity>") {
 		t.Fatalf("post-compaction request has no runtime handoff: %+v", request.Messages)
 	}
@@ -281,11 +274,11 @@ func TestCompactEndsWithFreshContinuationNotHistoricalUserInput(t *testing.T) {
 }
 
 func TestCompactUsesDurableCompletedTurnWhenAssistantProjectionIsAbsent(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		writeChatSSE(w, "- request already completed; no pending response", "stop")
-	}))
-	defer server.Close()
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
+		return providersim.Text("- request already completed; no pending response")
+	})
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "durable-turn-compaction"
 	p.SetContextWindow(128_000)
 	a := newTestAgent(t, p, p.Model)
@@ -305,16 +298,15 @@ func TestCompactUsesDurableCompletedTurnWhenAssistantProjectionIsAbsent(t *testi
 func TestCompactRetriesOnlyFailedStage(t *testing.T) {
 	var calls atomic.Int32
 	var events []AgentEvent
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
 		call := calls.Add(1)
 		if call == 2 {
-			w.WriteHeader(http.StatusBadGateway)
-			return
+			return providersim.HTTPError(providersim.Overload)
 		}
-		writeChatSSE(w, fmt.Sprintf("- extraction: %d", call), "stop")
-	}))
-	defer server.Close()
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+		return providersim.Text(fmt.Sprintf("- extraction: %d", call))
+	})
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "compact-model-retry"
 	provider.SetModelContext(p.Model, 200_000)
 	a := newTestAgent(t, p, p.Model)
@@ -335,12 +327,12 @@ func TestCompactRetriesOnlyFailedStage(t *testing.T) {
 
 func TestCompactRejectsEmptyStageWithoutResult(t *testing.T) {
 	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
 		calls.Add(1)
-		writeChatSSE(w, "", "stop")
-	}))
-	defer server.Close()
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+		return providersim.Text("")
+	})
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "compact-model-invalid"
 	provider.SetModelContext(p.Model, 200_000)
 	a := newTestAgent(t, p, p.Model)
@@ -354,16 +346,11 @@ func TestCompactRejectsEmptyStageWithoutResult(t *testing.T) {
 }
 
 func TestCompactCancellationDoesNotRetry(t *testing.T) {
-	started := make(chan struct{}, 1)
-	release := make(chan struct{})
-	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
-		calls.Add(1)
-		started <- struct{}{}
-		<-release
-	}))
-	defer server.Close()
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+	gate := providersim.NewGate()
+	server := providersim.New(t)
+	server.Script(providersim.Text("cancelled").WithGate(gate))
+	defer gate.Release()
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "compact-model-cancel"
 	provider.SetModelContext(p.Model, 200_000)
 	a := newTestAgent(t, p, p.Model)
@@ -374,13 +361,13 @@ func TestCompactCancellationDoesNotRetry(t *testing.T) {
 		_, err := a.Compact(ctx, compactionTestHistory(provider.NewTextMessage("user", "request")), "system", nil)
 		done <- err
 	}()
-	select {
-	case <-started:
-		cancel()
-		close(release)
-	case <-time.After(time.Second):
-		t.Fatal("compaction request did not start")
+	wait, stop := context.WithTimeout(t.Context(), time.Second)
+	defer stop()
+	if err := gate.Wait(wait); err != nil {
+		t.Fatalf("compaction request did not start: %v", err)
 	}
+	cancel()
+
 	select {
 	case err := <-done:
 		if err == nil || !errors.Is(err, context.Canceled) {
@@ -389,23 +376,22 @@ func TestCompactCancellationDoesNotRetry(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("cancelled compaction did not stop")
 	}
-	if calls.Load() != 1 {
-		t.Fatalf("cancelled compaction retried %d requests", calls.Load())
+	if len(server.Requests()) != 1 {
+		t.Fatalf("cancelled compaction retried %d requests", len(server.Requests()))
 	}
 }
 
 func TestProviderBaselineAboveTwoPercentTriggersAutomaticCompaction(t *testing.T) {
 	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
 		call := calls.Add(1)
 		if call <= int32(len(compactionStagesForTest)) {
-			writeChatSSE(w, fmt.Sprintf("- stage: %d\n- state: retained", call), "stop")
-			return
+			return providersim.Text(fmt.Sprintf("- stage: %d\n- state: retained", call))
 		}
-		writeChatSSE(w, "continued", "stop")
-	}))
-	defer server.Close()
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+		return providersim.Text("continued")
+	})
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "two-percent-model"
 	provider.SetModelContext(p.Model, 1_000_000)
 	a := newTestAgent(t, p, p.Model)
@@ -451,17 +437,11 @@ func TestProviderBaselineAboveTwoPercentTriggersAutomaticCompaction(t *testing.T
 }
 
 func TestChildCompactPreservesAssignmentAndReportContract(t *testing.T) {
-	requests := make(chan provider.ChatRequest, len(compactionStagesForTest))
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-		}
-		requests <- request
-		writeChatSSE(w, "- child assignment: preserved\n- report: required", "stop")
-	}))
-	defer server.Close()
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
+		return providersim.Text("- child assignment: preserved\n- report: required")
+	})
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "child-compact-model"
 	provider.SetModelContext(p.Model, 200_000)
 	a := newTestAgent(t, p, p.Model)
@@ -472,9 +452,13 @@ func TestChildCompactPreservesAssignmentAndReportContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := <-requests
-	if !strings.Contains(request.Messages[len(request.Messages)-2].ContentString(), "child agent") {
-		t.Fatalf("child compaction prompt = %q", request.Messages[len(request.Messages)-2].ContentString())
+	requests := server.Requests()
+	if len(requests) == 0 {
+		t.Fatal("missing child extraction")
+	}
+	request := requests[0]
+	if !strings.Contains(simulatedText(request.Messages[len(request.Messages)-2].Parts), "child agent") {
+		t.Fatalf("child compaction prompt = %q", simulatedText(request.Messages[len(request.Messages)-2].Parts))
 	}
 	if len(result.Messages) != 3 || result.Messages[1].EffectiveOrigin() != provider.OriginAssignment || result.Messages[2].EffectiveOrigin() != provider.OriginRuntimeContext ||
 		!strings.Contains(result.Messages[0].ContentString(), "<continuation>") {
@@ -487,23 +471,22 @@ func TestChildCompactPreservesAssignmentAndReportContract(t *testing.T) {
 // full context, continues, and retries later.
 func TestFailedAutomaticCompactionWithHeadroomContinuesRun(t *testing.T) {
 	var compactorCalls, mainCalls atomic.Int32
-	compactorServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	compactorServer := providersim.New(t)
+	compactorServer.Respond(func(r providersim.Request) providersim.Turn {
 		compactorCalls.Add(1)
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = fmt.Fprint(w, `{"error":{"message":"model is overloaded with this request shape","type":"invalid_request_error"}}`)
-	}))
-	defer compactorServer.Close()
-	mainServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		return providersim.HTTPError(providersim.InvalidRequest).WithFaultMessage("model is overloaded with this request shape")
+	})
+	mainServer := providersim.New(t)
+	mainServer.Respond(func(r providersim.Request) providersim.Turn {
 		mainCalls.Add(1)
-		writeChatSSE(w, "continued", "stop")
-	}))
-	defer mainServer.Close()
-	p := provider.FromPreset("openai-chat", "key", mainServer.URL)
+		return providersim.Text("continued")
+	})
+	p := provider.FromPreset("openai-chat", "key", mainServer.BaseURL(providersim.Chat))
 	p.Model = "headroom-main-model"
 	provider.SetModelContext(p.Model, 1_000_000)
 	a := newTestAgent(t, p, p.Model)
 	a.ContextCompactionPercent = 2
-	compactor := provider.FromPreset("openai-chat", "key", compactorServer.URL)
+	compactor := provider.FromPreset("openai-chat", "key", compactorServer.BaseURL(providersim.Chat))
 	compactor.Model = "unstable-cheap-compactor"
 	provider.SetModelContext(compactor.Model, 1_000_000)
 	a.CompactionProvider = compactor
@@ -536,11 +519,11 @@ func TestFailedAutomaticCompactionWithHeadroomContinuesRun(t *testing.T) {
 // marked history; the running turn's prompt and steering stay verbatim, in
 // order, so the agent continues the same work instead of restarting it.
 func TestMidRunCheckpointSeparatesAnsweredPromptsFromTheRunningTurn(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		writeChatSSE(w, "- running: step 3 of the migration; next: rerun the gate", "stop")
-	}))
-	defer server.Close()
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
+		return providersim.Text("- running: step 3 of the migration; next: rerun the gate")
+	})
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "mid-run-checkpoint"
 	p.SetContextWindow(128_000)
 	steering := provider.NewTextMessage("user", "[USER INTERRUPTION] also update the docs")

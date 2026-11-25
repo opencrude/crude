@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -14,26 +12,24 @@ import (
 	"unicode/utf8"
 
 	"crude/agent/provider"
+	"crude/internal/providersim"
 )
 
 func TestCompactOversizedHistoryWithSmallerExtractionModel(t *testing.T) {
 	var calls atomic.Int32
 	var requests []provider.ChatRequest
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		var body provider.ChatRequest
-		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
-			t.Error(err)
-		}
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
+		body := canonicalChatRequest(t, r)
 		requests = append(requests, body)
 		input := estimateCanonicalRequest(body.Messages, body.Tools, body.Model)
 		output := max(body.MaxTokens, body.MaxCompletionTokens)
 		if input+output >= 256_000 {
 			t.Errorf("oversized extraction sent: input=%d output=%d", input, output)
 		}
-		writeChatSSE(writer, fmt.Sprintf("- extraction %d: evidence retained", calls.Add(1)), "stop")
-	}))
-	defer server.Close()
-	connection := provider.FromPreset("openai-chat", "key", server.URL)
+		return providersim.Text(fmt.Sprintf("- extraction %d: evidence retained", calls.Add(1)))
+	})
+	connection := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	connection.Model = "adaptive-small-compactor"
 	provider.SetModelContext(connection.Model, 256_000)
 	agent := newTestAgent(t, connection, connection.Model)
@@ -119,22 +115,17 @@ func TestExtractionFragmentsCoverOversizedToolArgumentsAndResults(t *testing.T) 
 func TestCompactAdaptsAfterProviderRejectsEstimatedCapacity(t *testing.T) {
 	var rejected atomic.Int32
 	var attempts atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		var body provider.ChatRequest
-		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
-			t.Error(err)
-		}
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
+		body := canonicalChatRequest(t, r)
 		attempts.Add(1)
 		if estimateCanonicalRequest(body.Messages, nil, body.Model) > 30_000 {
 			rejected.Add(1)
-			writer.WriteHeader(http.StatusBadRequest)
-			_, _ = fmt.Fprint(writer, `{"error":{"code":"context_length_exceeded","message":"maximum context length exceeded"}}`)
-			return
+			return providersim.HTTPError(providersim.ContextOverflow)
 		}
-		writeChatSSE(writer, "- parser.go: evidence preserved", "stop")
-	}))
-	defer server.Close()
-	connection := provider.FromPreset("openai-chat", "key", server.URL)
+		return providersim.Text("- parser.go: evidence preserved")
+	})
+	connection := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	connection.Model = "adaptive-provider-rejection"
 	connection.SetContextWindow(200_000)
 	agent := newTestAgent(t, connection, connection.Model)
@@ -152,25 +143,19 @@ func TestCompactAdaptsAfterProviderRejectsEstimatedCapacity(t *testing.T) {
 func TestRunRecoversOverflowOnlyThroughReducedCheckpoint(t *testing.T) {
 	var requests []provider.ChatRequest
 	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		var body provider.ChatRequest
-		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
-			t.Error(err)
-		}
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
+		body := canonicalChatRequest(t, r)
 		requests = append(requests, body)
 		if calls.Add(1) == 1 {
-			writer.WriteHeader(http.StatusBadRequest)
-			_, _ = fmt.Fprint(writer, `{"error":{"type":"invalid_request_error","message":"The input is longer than the model's context length"}}`)
-			return
+			return providersim.HTTPError(providersim.ContextOverflow)
 		}
-		if body.ToolChoice == "none" {
-			writeChatSSE(writer, "- parser constraint: retained", "stop")
-			return
+		if string(r.ToolChoice) == `"none"` {
+			return providersim.Text("- parser constraint: retained")
 		}
-		writeChatSSE(writer, "recovered", "stop")
-	}))
-	defer server.Close()
-	connection := provider.FromPreset("openai-chat", "key", server.URL)
+		return providersim.Text("recovered")
+	})
+	connection := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	connection.Model = "adaptive-run-recovery"
 	connection.SetContextWindow(200_000)
 	agent := newTestAgent(t, connection, connection.Model)
@@ -192,20 +177,17 @@ func TestRunRecoversOverflowOnlyThroughReducedCheckpoint(t *testing.T) {
 
 func TestRunIncludesRuntimeNoticeInCompactionPressure(t *testing.T) {
 	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		var body provider.ChatRequest
-		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
-			t.Error(err)
-		}
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
+
 		calls.Add(1)
-		if body.ToolChoice == "none" {
-			writeChatSSE(writer, "- child report: preserved", "stop")
+		if string(r.ToolChoice) == `"none"` {
+			return providersim.Text("- child report: preserved")
 		} else {
-			writeChatSSE(writer, "continued", "stop")
+			return providersim.Text("continued")
 		}
-	}))
-	defer server.Close()
-	connection := provider.FromPreset("openai-chat", "key", server.URL)
+	})
+	connection := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	connection.Model = "adaptive-runtime-notice"
 	connection.SetContextWindow(100_000)
 	agent := newTestAgent(t, connection, connection.Model)
@@ -258,21 +240,19 @@ func TestCompactionRejectsTruncatedStageAndPermanentFailures(t *testing.T) {
 	for _, failure := range []string{"truncated", "unauthorized", "quota"} {
 		t.Run(failure, func(t *testing.T) {
 			var calls atomic.Int32
-			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			server := providersim.New(t)
+			server.Respond(func(r providersim.Request) providersim.Turn {
 				calls.Add(1)
-				if failure == "unauthorized" {
-					writer.WriteHeader(http.StatusUnauthorized)
-					return
+				switch failure {
+				case "unauthorized":
+					return providersim.HTTPError(providersim.Auth)
+				case "quota":
+					return providersim.HTTPError(providersim.Quota)
+				default:
+					return providersim.Text("apparently valid partial extraction").WithFinish(providersim.FinishLength)
 				}
-				if failure == "quota" {
-					writer.WriteHeader(http.StatusTooManyRequests)
-					_, _ = fmt.Fprint(writer, `{"error":{"code":"insufficient_quota","message":"billing limit"}}`)
-					return
-				}
-				writeChatSSE(writer, "apparently valid partial extraction", "length")
-			}))
-			defer server.Close()
-			connection := provider.FromPreset("openai-chat", "key", server.URL)
+			})
+			connection := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 			connection.Model = "adaptive-" + failure
 			connection.SetContextWindow(200_000)
 			agent := newTestAgent(t, connection, connection.Model)
@@ -296,15 +276,15 @@ func TestChunkedCompactionCancellationPreservesSource(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
 		if calls.Add(1) == 2 {
 			cancel()
-			return
+			return providersim.Turn{}
 		}
-		writeChatSSE(writer, "- first chunk: extracted", "stop")
-	}))
-	defer server.Close()
-	connection := provider.FromPreset("openai-chat", "key", server.URL)
+		return providersim.Text("- first chunk: extracted")
+	})
+	connection := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	connection.Model = "adaptive-chunk-cancel"
 	connection.SetContextWindow(64_000)
 	agent := newTestAgent(t, connection, connection.Model)
@@ -324,11 +304,11 @@ func TestChunkedCompactionCancellationPreservesSource(t *testing.T) {
 }
 
 func TestCompactSizesHugeHumanInputForContinuationModel(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-		writeChatSSE(writer, "- assignment: preserve ownership, parser.go and publish_report obligation", "stop")
-	}))
-	defer server.Close()
-	connection := provider.FromPreset("openai-chat", "key", server.URL)
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
+		return providersim.Text("- assignment: preserve ownership, parser.go and publish_report obligation")
+	})
+	connection := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	connection.Model = "adaptive-large-extractor-small-target"
 	connection.SetContextWindow(128_000)
 	agent := newTestAgent(t, connection, connection.Model)
@@ -351,12 +331,12 @@ func TestCompactSizesHugeHumanInputForContinuationModel(t *testing.T) {
 
 func TestRunRequestAdmissionUsesMeasuredBaseline(t *testing.T) {
 	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
 		calls.Add(1)
-		writeChatSSE(writer, "accepted measured context", "stop")
-	}))
-	defer server.Close()
-	connection := provider.FromPreset("openai-chat", "key", server.URL)
+		return providersim.Text("accepted measured context")
+	})
+	connection := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	connection.Model = "adaptive-measured-admission"
 	connection.SetContextWindow(64_000)
 	agent := newTestAgent(t, connection, connection.Model)
@@ -375,18 +355,14 @@ func TestRunRequestAdmissionUsesMeasuredBaseline(t *testing.T) {
 
 func TestExtractorLearnsFromReportedUsage(t *testing.T) {
 	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		var body provider.ChatRequest
-		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
-			t.Error(err)
-		}
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
+		body := canonicalChatRequest(t, r)
 		calls.Add(1)
 		input := estimateCanonicalRequest(body.Messages, nil, body.Model)
-		writer.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprintf(writer, "data: {\"choices\":[{\"delta\":{\"content\":\"- facts: preserved\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":%d,\"completion_tokens\":10}}\n\ndata: [DONE]\n\n", input*2)
-	}))
-	defer server.Close()
-	connection := provider.FromPreset("openai-chat", "key", server.URL)
+		return providersim.Text("- facts: preserved").WithUsage(providersim.Usage{Input: input * 2, Output: 10})
+	})
+	connection := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	connection.Model = "adaptive-usage-calibration"
 	connection.SetContextWindow(64_000)
 	agent := newTestAgent(t, connection, connection.Model)
@@ -405,15 +381,9 @@ func TestExtractorLearnsFromReportedUsage(t *testing.T) {
 }
 
 func TestRunWithoutUsageCountsToolSchemasInContextBaseline(t *testing.T) {
-	var requestBody provider.ChatRequest
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if err := json.NewDecoder(request.Body).Decode(&requestBody); err != nil {
-			t.Error(err)
-		}
-		writeChatSSE(writer, "complete", "stop")
-	}))
-	defer server.Close()
-	connection := provider.FromPreset("openai-chat", "key", server.URL)
+	server := providersim.New(t)
+	server.Script(providersim.Text("complete").WithoutUsage())
+	connection := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	connection.Model = "adaptive-no-usage-schema"
 	agent := newTestAgent(t, connection, connection.Model)
 	var contextTokens int
@@ -423,6 +393,11 @@ func TestRunWithoutUsageCountsToolSchemasInContextBaseline(t *testing.T) {
 			contextTokens, _ = data["context_prompt"].(int)
 		}
 	}, nil, "", nil)
+	r, ok := server.Last()
+	if !ok {
+		t.Fatal("no request reached the provider")
+	}
+	requestBody := canonicalChatRequest(t, r)
 	if len(requestBody.Tools) == 0 || contextTokens <= provider.EstimateMessagesTotal(requestBody.Messages, connection.Model) {
 		t.Fatalf("tool schemas omitted from fallback context: tokens=%d tools=%d", contextTokens, len(requestBody.Tools))
 	}

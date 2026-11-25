@@ -3,38 +3,32 @@ package turnloop
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"crude/agent/provider"
+	"crude/internal/providersim"
 )
 
 // TestCompleteTextOneShot exercises the background-job completion helper:
 // a full request/response round trip with no tools, no streaming callbacks,
 // and no session state.
 func TestCompleteTextOneShot(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Errorf("decode request: %v", err)
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(r.Raw, &fields); err != nil {
+			t.Error(err)
 		}
-		if _, hasTools := request["tools"]; hasTools {
+		if _, present := fields["tools"]; present {
 			t.Error("one-shot completion must not send tools")
 		}
-		msgs, _ := request["messages"].([]any)
-		if len(msgs) != 2 {
-			t.Errorf("messages = %d, want system+user", len(msgs))
+		if len(r.System) != 1 || len(r.Messages) != 1 || r.Messages[0].Role != "user" {
+			t.Errorf("want system+user, got %+v", r.Conversation)
 		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w,
-			"data: {\"choices\":[{\"delta\":{\"content\":\"{\\\"memories\\\":[]}\"},\"finish_reason\":\"stop\"}]}\n\n"+
-				"data: [DONE]\n\n")
-	}))
-	defer server.Close()
+		return providersim.Text(`{"memories":[]}`)
+	})
 
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "test-model"
 	out, err := CompleteText(context.Background(), p, p.Model,
 		"You are the memory curator.", "NEW TURNS:\n--- turn 1 ---\nUSER: hi")

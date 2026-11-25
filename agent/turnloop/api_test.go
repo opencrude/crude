@@ -13,6 +13,7 @@ import (
 
 	"crude/agent/provider"
 	"crude/internal/logger"
+	"crude/internal/providersim"
 )
 
 func newTestAgent(t *testing.T, p *provider.Provider, model string) *Agent {
@@ -55,15 +56,16 @@ func TestProviderDisplayNamePrefersConfiguredName(t *testing.T) {
 }
 
 func TestCompleteStreamOpenAIChatPreservesUsageOnlyChunk(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/chat/completions" {
-			t.Errorf("path = %q", r.URL.Path)
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
+		if r.Path != "/v1/chat/completions" {
+			t.Errorf("path = %q", r.Path)
 		}
 		if r.Header.Get("Authorization") != "Bearer key" {
 			t.Errorf("authorization = %q", r.Header.Get("Authorization"))
 		}
 		var request map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		if err := json.Unmarshal(r.Raw, &request); err != nil {
 			t.Errorf("decode request: %v", err)
 		}
 		if _, ok := request["max_tokens"]; !ok {
@@ -73,15 +75,10 @@ func TestCompleteStreamOpenAIChatPreservesUsageOnlyChunk(t *testing.T) {
 			t.Errorf("request contains max_completion_tokens: %#v", request)
 		}
 
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w,
-			"data: {\"choices\":[{\"delta\":{\"content\":\"hello\"},\"finish_reason\":\"stop\"}]}\n\n"+
-				"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":3,\"prompt_tokens_details\":{\"cached_tokens\":4}}}\n\n"+
-				"data: [DONE]\n\n")
-	}))
-	defer server.Close()
+		return providersim.Text("hello").WithUsage(providersim.Usage{Input: 12, Output: 3, Cached: 4})
+	})
 
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "test-model"
 	agent := newTestAgent(t, p, p.Model)
 
@@ -99,9 +96,10 @@ func TestCompleteStreamOpenAIChatPreservesUsageOnlyChunk(t *testing.T) {
 }
 
 func TestCompleteStreamAnthropicToolUse(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/messages" {
-			t.Errorf("path = %q", r.URL.Path)
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
+		if r.Path != "/v1/messages" {
+			t.Errorf("path = %q", r.Path)
 		}
 		if r.Header.Get("x-api-key") != "key" {
 			t.Errorf("x-api-key = %q", r.Header.Get("x-api-key"))
@@ -109,22 +107,10 @@ func TestCompleteStreamAnthropicToolUse(t *testing.T) {
 		if r.Header.Get("anthropic-version") == "" {
 			t.Error("missing anthropic-version")
 		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w,
-			"event: message_start\n"+
-				"data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":10,\"output_tokens\":1,\"cache_read_input_tokens\":2}}}\n\n"+
-				"event: content_block_start\n"+
-				"data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"read_file\",\"input\":{}}}\n\n"+
-				"event: content_block_delta\n"+
-				"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"path\\\":\\\"a.go\\\"}\"}}\n\n"+
-				"event: message_delta\n"+
-				"data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":7}}\n\n"+
-				"event: message_stop\n"+
-				"data: {\"type\":\"message_stop\"}\n\n")
-	}))
-	defer server.Close()
+		return providersim.CallTools(providersim.ToolCall{ID: "toolu_1", Name: "read_file", Arguments: `{"path":"a.go"}`}).WithUsage(providersim.Usage{Input: 12, Output: 7, Cached: 2})
+	})
 
-	p := provider.FromPreset("anthropic", "key", server.URL)
+	p := provider.FromPreset("anthropic", "key", server.BaseURL(providersim.Messages))
 	p.Model = "claude-test"
 	agent := newTestAgent(t, p, p.Model)
 
@@ -158,22 +144,15 @@ func TestCompleteStreamAnthropicToolUse(t *testing.T) {
 }
 
 func TestCompleteStreamOpenAIResponsesPreservesReasoningItem(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/responses" {
-			t.Errorf("path = %q", r.URL.Path)
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
+		if r.Path != "/v1/responses" {
+			t.Errorf("path = %q", r.Path)
 		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w,
-			"event: response.output_item.done\n"+
-				"data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"rs_1\",\"type\":\"reasoning\",\"summary\":[]}}\n\n"+
-				"event: response.output_text.delta\n"+
-				"data: {\"type\":\"response.output_text.delta\",\"output_index\":1,\"delta\":\"answer\"}\n\n"+
-				"event: response.completed\n"+
-				"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"output\":[{\"id\":\"rs_1\",\"type\":\"reasoning\",\"summary\":[]},{\"id\":\"msg_1\",\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"answer\"}]}],\"usage\":{\"input_tokens\":8,\"output_tokens\":2}}}\n\n")
-	}))
-	defer server.Close()
+		return providersim.Text("answer").WithReasoning("Checking.", "", "")
+	})
 
-	p := provider.FromPreset("openai", "key", server.URL)
+	p := provider.FromPreset("openai", "key", server.BaseURL(providersim.Responses))
 	p.Model = "gpt-test"
 	agent := newTestAgent(t, p, p.Model)
 
@@ -187,21 +166,10 @@ func TestCompleteStreamOpenAIResponsesPreservesReasoningItem(t *testing.T) {
 }
 
 func TestCompleteStreamRetriesRetryableStatus(t *testing.T) {
-	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if calls.Add(1) == 1 {
-			w.Header().Set("Retry-After", "0")
-			http.Error(w, `{"error":{"message":"busy"}}`, http.StatusTooManyRequests)
-			return
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w,
-			"data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n"+
-				"data: [DONE]\n\n")
-	}))
-	defer server.Close()
+	server := providersim.New(t)
+	server.Script(providersim.HTTPError(providersim.RateLimit).WithRetryHint(providersim.RetryAfterSeconds(0)), providersim.Text("ok"))
 
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "test-model"
 	agent := newTestAgent(t, p, p.Model)
 	agent.MaxRetries = 2
@@ -210,26 +178,22 @@ func TestCompleteStreamRetriesRetryableStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("completeStream: %v", err)
 	}
-	if result.Content != "ok" || calls.Load() != 2 {
-		t.Fatalf("result=%+v calls=%d", result, calls.Load())
+	if result.Content != "ok" || len(server.Requests()) != 2 {
+		t.Fatalf("result=%+v calls=%d", result, len(server.Requests()))
 	}
 }
 
 func TestCompleteStreamAccumulatesUsageWithinOneStream(t *testing.T) {
 	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
 		if calls.Add(1) != 1 {
 			t.Errorf("unexpected extra request: stream retries must not happen after output")
 		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w,
-			"data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n"+
-				"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":1}}\n\n"+
-				"data: [DONE]\n\n")
-	}))
-	defer server.Close()
+		return providersim.Text("ok").WithUsage(providersim.Usage{Input: 3, Output: 1})
+	})
 
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "test-model"
 	agent := newTestAgent(t, p, p.Model)
 
@@ -249,15 +213,10 @@ func TestCompleteStreamAccumulatesUsageWithinOneStream(t *testing.T) {
 }
 
 func TestCompleteStreamSurfacesSSEError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w,
-			"event: error\n"+
-				"data: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"bad input\"}}\n\n")
-	}))
-	defer server.Close()
+	server := providersim.New(t)
+	server.Script(providersim.StreamError(0, providersim.InvalidRequest).WithFaultMessage("bad input"))
 
-	p := provider.FromPreset("anthropic", "key", server.URL)
+	p := provider.FromPreset("anthropic", "key", server.BaseURL(providersim.Messages))
 	p.Model = "claude-test"
 	agent := newTestAgent(t, p, p.Model)
 
@@ -356,15 +315,10 @@ func TestCompleteStreamPreservesUsageOnPartialError(t *testing.T) {
 }
 
 func TestCompleteStreamWorksWithoutLogger(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w,
-			"data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n"+
-				"data: [DONE]\n\n")
-	}))
-	defer server.Close()
+	server := providersim.New(t)
+	server.Script(providersim.Text("ok"))
 
-	p := provider.FromPreset("openai-chat", "key", server.URL)
+	p := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.Model = "test-model"
 	agent := NewAgent(p, p.Model, nil)
 	agent.MaxRetries = 1
