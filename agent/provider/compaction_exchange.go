@@ -1,11 +1,16 @@
 package provider
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
+	"time"
+
+	"crude/internal/retry"
 )
 
 // compactExchange sends the two distinct requests in native compaction. The
@@ -47,37 +52,64 @@ func (x *compactExchange) send(ctx context.Context, path string, body []byte) ([
 	if err != nil || !strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
 		return data, err
 	}
-	return responsesStreamBody(data)
+	data, err = responsesStreamBody(data, c.proto)
+	if err != nil && strings.EqualFold(strings.TrimSpace(resp.Header.Get("x-should-retry")), "false") {
+		err = &streamRetryVetoError{cause: err}
+	}
+	if rejection := RejectedAccount(err); rejection != nil {
+		now := time.Now()
+		if delay, ok := retry.AdvisedDelay(resp, now); ok {
+			rejection.RecheckAt = now.Add(delay)
+		}
+		return nil, rejection
+	}
+	return data, err
 }
 
+// A rate-limit failure as the first event rejects the write. Once any
+// earlier event has arrived, the same failure cannot rule out paid work.
+type firstEventRateLimit struct{ *APIError }
+
+func (e *firstEventRateLimit) Unwrap() error { return e.APIError }
+
 // responsesStreamBody rebuilds the final Responses object from a streamed
-// body, for a backend that only streams. Completed output items fill an
-// empty final output; an error event is an uncertain provider failure.
-func responsesStreamBody(data []byte) ([]byte, error) {
+// body. Completed output items fill an empty final output. The wire's own
+// decoder classifies a failure, just as it does for an ordinary request.
+func responsesStreamBody(data []byte, proto Protocol) ([]byte, error) {
 	var final map[string]any
 	var items []any
-	for _, line := range strings.Split(string(data), "\n") {
-		payload, ok := strings.CutPrefix(strings.TrimRight(line, "\r"), "data:")
-		if !ok || strings.TrimSpace(payload) == "[DONE]" {
-			continue
+	reader := NewSSEReader(bytes.NewReader(data))
+	for first := true; ; first = false {
+		frame, err := reader.Next()
+		if errors.Is(err, io.EOF) || bytes.Equal(bytes.TrimSpace(frame.Data), []byte("[DONE]")) {
+			break
+		}
+		if err != nil {
+			return nil, err
 		}
 		var event struct {
 			Type     string
 			Item     any
 			Response map[string]any
-			Code     string
-			Message  string
 		}
-		if json.Unmarshal([]byte(strings.TrimSpace(payload)), &event) != nil {
+		if json.Unmarshal(frame.Data, &event) != nil {
 			return nil, errNoWindow
 		}
-		switch event.Type {
+		switch firstNonEmpty(event.Type, frame.Event) {
 		case "response.output_item.done":
 			items = append(items, event.Item)
-		case "response.completed", "response.incomplete", "response.failed":
+		case "response.completed", "response.incomplete":
 			final = event.Response
-		case "error":
-			return nil, &StatusError{StatusCode: http.StatusBadGateway, Message: event.Message, APICode: event.Code}
+		case "error", "response.failed":
+			_, cause := proto.NewStreamDecoder().Decode(frame)
+			if cause == nil {
+				return nil, errNoWindow
+			}
+			var api *APIError
+			if first && errors.As(cause, &api) && (rateLimitAPIError(api.codes()) || quotaAPIError(api.codes())) {
+				return nil, &firstEventRateLimit{api}
+			}
+			return nil, cause
 		}
 	}
 	if final == nil {

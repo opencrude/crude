@@ -15,7 +15,9 @@ sections below describe how.
    [native compaction](#native-compaction-on-custom-connections) on the
    selected account. When it is not available or fails, Crude writes a portable
    checkpoint of the whole history, as manual `/compact` does. It never trims
-   or drops history to fit.
+   or drops history to fit. If the provider confirms a quota limit or asks
+   Crude not to retry, only a different connection can write that checkpoint.
+   Without one, Crude keeps the history and reports the reason.
 2. **A running agent keeps its momentum.** Automatic compaction happens at a
    safe request boundary and does not stop the run. After the checkpoint the
    agent continues the same step: the turn in progress, its steering, running
@@ -515,6 +517,19 @@ change of method goes to Notices; later fallbacks in the same cooldown are silen
 Provider only never charges Errand. On a definite refusal or an unsupported
 wire, the serving model writes the portable checkpoint. A transient provider
 error retains its cause for run recovery.
+
+A quota limit or an explicit instruction not to retry is an account decision,
+not a failed capability check. Crude does not record it in the model catalog.
+Auto uses Errand only on a different connection, even when another model on the
+same account would cost less. The notice gives the reason. If no writer can
+finish, Crude keeps the source and stops with the provider's verdict. It does
+not send the history back to the rejected connection as a last resort.
+
+The decision lasts for the current run attempt. A successful main request on
+that connection clears it. A provider's stated retry time permits a new check;
+without one, Crude does not guess a time. An explicit `/compact` or a new
+attempt after **Continue run** also checks again. None of these rules turns an
+uncertain native submission into a confirmed rejection.
 
 Only a refused synthetic check, or a second definite failure in a row, is negative
 evidence. One failure of a verified route is a cooldown; the next eligible compaction

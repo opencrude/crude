@@ -1059,6 +1059,7 @@ type StatusError struct {
 	// RetryAfter is a bounded server-advised cooldown, retained when a request
 	// attempt budget is exhausted so the supervising task can pace recovery.
 	RetryAfter time.Duration
+	recheckAt  time.Time // Account limits can outlast the automatic cooldown ceiling.
 }
 
 func (e *StatusError) Error() string {
@@ -1091,19 +1092,9 @@ func readStatusError(resp *http.Response, maxBody int64) *StatusError {
 	}
 
 	var envelope struct {
-		Error *struct {
-			Param   string `json:"param"`
-			Type    string `json:"type"`
-			Code    any    `json:"code"`
-			Message string `json:"message"`
-			// Status and Details are the google.rpc.Status fields every Google
-			// API (Gemini included) returns.
-			Status  string            `json:"status"`
-			Details []json.RawMessage `json:"details"`
-		} `json:"error"`
-		Message string `json:"message"`
+		Error   *wireError `json:"error"`
+		Message string     `json:"message"`
 	}
-	var google googleErrorFacts
 	if json.Unmarshal(body, &envelope) == nil {
 		if envelope.Error != nil && envelope.Error.Message != "" {
 			message = envelope.Error.Message
@@ -1117,29 +1108,16 @@ func readStatusError(resp *http.Response, maxBody int64) *StatusError {
 		} else if envelope.Message != "" {
 			message = envelope.Message
 		}
-		if envelope.Error != nil {
-			google = parseGoogleErrorDetails(envelope.Error.Details)
-		}
 	}
 	if message == "" {
 		message = http.StatusText(resp.StatusCode)
 	}
-	code := ""
-	param := ""
-	apiType := ""
-	apiCode := ""
+	api := &APIError{}
 	if envelope.Error != nil {
-		apiType = envelope.Error.Type
-		if apiType == "" && envelope.Error.Status != "" {
-			apiType = strings.ToLower(envelope.Error.Status)
-		}
-		code = apiType + " " + fmt.Sprint(envelope.Error.Code)
-		if len(google.Markers) > 0 {
-			code += " " + strings.Join(google.Markers, " ")
-		}
-		param = envelope.Error.Param
-		apiCode = fmt.Sprint(envelope.Error.Code)
+		api = envelope.Error.decoded()
 	}
+	code := api.codes()
+	google := api.details
 	now := time.Now()
 	retryAfter := retry.ServerDelay(resp, 0, now)
 	if google.RetryDelay > retryAfter {
@@ -1148,20 +1126,26 @@ func readStatusError(resp *http.Response, maxBody int64) *StatusError {
 	// A server that asks for a wait longer than quotaWindow is reporting a
 	// quota window (a daily request limit), not momentary throttling: no
 	// automatic retry within the cooldown ceiling can succeed.
-	advised, _ := retry.AdvisedDelay(resp, now)
-	if resp.StatusCode == http.StatusTooManyRequests && max(advised, google.RetryDelay) > quotaWindow && !strings.Contains(code, "insufficient_quota") {
+	advised, hasAdvice := retry.AdvisedDelay(resp, now)
+	advised = max(advised, google.RetryDelay)
+	var recheckAt time.Time
+	if hasAdvice || google.RetryDelay > 0 {
+		recheckAt = now.Add(advised)
+	}
+	if resp.StatusCode == http.StatusTooManyRequests && advised > quotaWindow && !strings.Contains(code, "insufficient_quota") {
 		code = strings.TrimSpace(code + " insufficient_quota")
 	}
 	return &StatusError{
-		Param:      param,
-		APIType:    apiType,
-		APICode:    apiCode,
+		Param:      api.Param,
+		APIType:    api.Type,
+		APICode:    api.Code,
 		StatusCode: resp.StatusCode,
 		Message:    message,
 		RequestID:  firstNonEmptyString(resp.Header.Get("request-id"), resp.Header.Get("x-request-id")),
 		Code:       code,
 		RetryHint:  strings.ToLower(strings.TrimSpace(resp.Header.Get("x-should-retry"))),
 		RetryAfter: retryAfter,
+		recheckAt:  recheckAt,
 	}
 }
 

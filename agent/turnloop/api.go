@@ -605,16 +605,13 @@ func (a *Agent) emitError(emit func(AgentEvent), err error) {
 
 	display := err.Error()
 	var apiErr *apiCallError
-	if errors.As(err, &apiErr) {
+	if rejection := provider.RejectedAccount(err); rejection != nil {
+		display = rejection.Error()
+	} else if errors.As(err, &apiErr) {
 		display = provider.ErrorSummary(apiErr.Cause)
 		switch apiErr.StatusCode {
 		case http.StatusTooManyRequests:
-			var status *provider.StatusError
-			if errors.As(apiErr.Cause, &status) && !status.Retryable() {
-				display += ". Check this account's quota or billing before continuing."
-			} else {
-				display += ". The unfinished run remains recoverable."
-			}
+			display += ". The unfinished run remains recoverable."
 		case http.StatusUnauthorized:
 			if a.Provider != nil && a.Provider.OAuth() != nil {
 				display = "Authentication failed — re-sign in with ChatGPT in Settings → Accounts"

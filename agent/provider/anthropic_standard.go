@@ -651,10 +651,7 @@ type anthropicResponse struct {
 	Content    []json.RawMessage `json:"content"`
 	StopReason string            `json:"stop_reason"`
 	Usage      anthropicUsage    `json:"usage"`
-	Error      *struct {
-		Type    string `json:"type"`
-		Message string `json:"message"`
-	} `json:"error"`
+	Error      *wireError        `json:"error"`
 }
 
 type anthropicUsage struct {
@@ -733,7 +730,7 @@ func (r *anthropicResponse) toChatResponse() (*ChatResponse, error) {
 		if r.Error == nil {
 			return nil, &APIError{Type: "anthropic_error", Message: "Anthropic request failed"}
 		}
-		return nil, &APIError{Type: r.Error.Type, Message: r.Error.Message}
+		return nil, r.Error.decoded()
 	}
 	if r.Type != "message" {
 		return nil, fmt.Errorf("anthropic response has invalid type %q", r.Type)
@@ -836,10 +833,7 @@ func (d *anthropicStreamDecoder) Decode(event StreamEvent) (StreamUpdate, error)
 			Citation    json.RawMessage `json:"citation"`
 		} `json:"delta"`
 		Usage anthropicUsage `json:"usage"`
-		Error *struct {
-			Type    string `json:"type"`
-			Message string `json:"message"`
-		} `json:"error"`
+		Error *wireError     `json:"error"`
 	}
 	if err := json.Unmarshal(data, &envelope); err != nil {
 		return StreamUpdate{}, fmt.Errorf("decode Anthropic stream event: %w", err)
@@ -880,7 +874,7 @@ func (d *anthropicStreamDecoder) Decode(event StreamEvent) (StreamUpdate, error)
 		if envelope.Error == nil {
 			return StreamUpdate{}, &APIError{Type: "anthropic_stream_error", Message: "Anthropic stream failed"}
 		}
-		return StreamUpdate{}, &APIError{Type: envelope.Error.Type, Message: envelope.Error.Message}
+		return StreamUpdate{}, envelope.Error.decoded()
 	default:
 		// Ignore unknown event types so newer optional events remain compatible.
 		return StreamUpdate{}, nil

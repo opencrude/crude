@@ -182,6 +182,10 @@ func (c *supportCache) end(key string, f *supportFlight) {
 var errAccountChanged = errors.New("the account changed. Try the new connection")
 
 func (c *supportCache) record(key string, flight *supportFlight, p *Provider, model, state, method string) error {
+	return c.recordWithDelay(key, flight, p, model, state, method, 0)
+}
+
+func (c *supportCache) recordWithDelay(key string, flight *supportFlight, p *Provider, model, state, method string, advised time.Duration) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.flights[key] != flight {
@@ -198,7 +202,8 @@ func (c *supportCache) record(key string, flight *supportFlight, p *Provider, mo
 	default:
 		f.state, f.expires = prior.state, prior.expires
 		f.failures = min(prior.failures+1, 8)
-		f.retryAt = now.Add(retry.Exponential(f.failures, time.Minute, retry.MaxCooldown)).Unix()
+		delay := max(retry.Exponential(f.failures, time.Minute, retry.MaxCooldown), retry.Clamp(advised))
+		f.retryAt = now.Add(delay).Unix()
 	}
 	if c.db != nil {
 		if _, err := c.db.Exec(`INSERT OR REPLACE INTO compaction_support(scope,account,model,state,expires,failures,retry_at,method) VALUES(?,?,?,?,?,?,?,?)`, key, f.account, model, f.state, f.expires, f.failures, f.retryAt, f.method); err != nil {

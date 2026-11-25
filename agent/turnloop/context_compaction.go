@@ -228,7 +228,7 @@ func (a *Agent) compactWithModel(
 // compactSource keeps the exact history authoritative for archival, human
 // intent and continuation. Only extraction may substitute an already verified
 // summary for the prefix that produced it.
-func (a *Agent) compactSource(ctx context.Context, msgs, source []provider.ChatMessage, tools []provider.ToolDef, requestID string, beforeTokens int, trigger string, emit func(AgentEvent)) (compactOutcome, error) {
+func (a *Agent) compactSource(ctx context.Context, msgs, source []provider.ChatMessage, tools []provider.ToolDef, requestID string, beforeTokens int, trigger string, emit func(AgentEvent)) (_ compactOutcome, outcomeErr error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -298,7 +298,12 @@ func (a *Agent) compactSource(ctx context.Context, msgs, source []provider.ChatM
 	}
 	var fallback string
 	var fallbackChanged, transient bool
-	if main != nil && main.UsesNativeCompaction() {
+	explicit := trigger == CompactionTriggerManual || trigger == "requested"
+	if explicit {
+		a.checkpointRoute.clear(main)
+	}
+	rejection := a.checkpointRoute.current(main)
+	if main != nil && main.UsesNativeCompaction() && rejection == nil {
 		owner := NewAgent(main, targetModel, a.logger)
 		owner.MaxOutputTokens = a.CompactionTargetOutput
 		// Reading the checkpoint back is a normal request of the serving model,
@@ -338,24 +343,40 @@ func (a *Agent) compactSource(ctx context.Context, msgs, source []provider.ChatM
 			checkpoint, e = validateContextCheckpoint(xml, role, checkpointBudget)
 			return e
 		}
-		r, e := main.NativeCheckpoint(ctx, provider.NativeCheckpointRequest{ValidatePortable: validate, Owner: string(a.AgentID), Explicit: trigger == CompactionTriggerManual || trigger == "requested", Model: targetModel, Messages: msgs, Tools: tools, Limit: limit, Directive: directive, Verify: directive, Shorter: instructions(max(1, textBudget/2)), ProbeAnswer: ticket, ProbeSource: probe, ProbeQuestion: question, Stage: stage, Usage: func(kind string, u provider.TokenUsage, ok bool) {
+		r, e := main.NativeCheckpoint(ctx, provider.NativeCheckpointRequest{ValidatePortable: validate, Owner: string(a.AgentID), Explicit: explicit, Model: targetModel, Messages: msgs, Tools: tools, Limit: limit, Directive: directive, Verify: directive, Shorter: instructions(max(1, textBudget/2)), ProbeAnswer: ticket, ProbeSource: probe, ProbeQuestion: question, Stage: stage, Usage: func(kind string, u provider.TokenUsage, ok bool) {
 			usage = usage.Add(u)
 			owner.emitCompactionUsage(emit, u, provider.NewMessageID(), requestID, trigger, role, kind, false, ok)
 		}}, opts...)
-		if e != nil {
+		if errors.As(e, &rejection) {
+			a.checkpointRoute.remember(main, rejection)
+			fallbackChanged = true
+		} else if e != nil {
 			return compactOutcome{AccountID: main.AccountID, ProviderID: main.ID, ModelID: targetModel, Usage: usage}, &nativeCheckpointError{e}
-		}
-		if r.Fallback == "" {
+		} else if r.Fallback == "" {
 			r.Message.Content = provider.TextContent(checkpoint)
 			outcome, finishErr := a.finishCheckpoint(ctx, msgs, tools, r.Message, targetModel, continuationLimit, fixed, compactOutcome{Usage: usage, ContextWindow: ctxWindow, RequestID: requestID, SourceTokens: beforeTokens, Role: role, Trigger: trigger, AccountID: main.AccountID, ProviderID: main.ID, ModelID: targetModel})
 			if finishErr != nil {
 				return outcome, &nativeCheckpointError{finishErr}
 			}
 			return outcome, nil
+		} else {
+			fallback, fallbackChanged, transient = r.Fallback, r.Changed, r.Transient
 		}
-		fallback, fallbackChanged, transient = r.Fallback, r.Changed, r.Transient
 	}
-	if writer := a.servingWriter(main, targetModel, beforeTokens, min(8192, checkpointBudget), transient); writer != nil {
+	if rejection != nil {
+		if main.CompactionMethod() == provider.CompactionProviderOnly || a.CompactionConfigError != nil || a.Model == "" || provider.SameConnection(main, a.Provider) {
+			return compactOutcome{AccountID: main.AccountID, ProviderID: main.ID, ModelID: targetModel, ContextWindow: ctxWindow, RequestID: requestID, Trigger: trigger, Role: role}, &nativeCheckpointError{rejection}
+		}
+		fallback = rejection.Reason()
+		// This is the only eligible writer. Preserve the native verdict if it
+		// fails; the capacity fallback must not return to the rejected account.
+		defer func() {
+			if outcomeErr != nil && ctx.Err() == nil {
+				a.logger.Warn("COMPACT", "distinct_writer_failed", "error", outcomeErr.Error())
+				outcomeErr = &nativeCheckpointError{rejection}
+			}
+		}()
+	} else if writer := a.servingWriter(main, targetModel, beforeTokens, min(8192, checkpointBudget), transient); writer != nil {
 		if fallbackChanged {
 			emit(AgentEvent{Type: "compaction_route_notice", Data: map[string]any{"reason": fallback + " The agent's model writes the checkpoint."}})
 		} else if a.CompactionConfigError != nil && main.CompactionMethod() != provider.CompactionProviderOnly {
@@ -368,7 +389,11 @@ func (a *Agent) compactSource(ctx context.Context, msgs, source []provider.ChatM
 		data["stage_name"], data["stage_label"] = "Using Errand for compaction", "Using Errand for compaction"
 		emit(AgentEvent{Type: "context_compaction_stage", Data: data})
 		if fallbackChanged {
-			emit(AgentEvent{Type: "compaction_route_notice", Data: map[string]any{"reason": fallback + " Using Errand."}})
+			notice := fallback + " Using Errand."
+			if rejection != nil {
+				notice = fallback + " Errand writes the checkpoint."
+			}
+			emit(AgentEvent{Type: "compaction_route_notice", Data: map[string]any{"reason": notice}})
 		}
 	}
 	// The serving model writing its own checkpoint keeps the conversation's
@@ -548,11 +573,56 @@ func (a *Agent) servingWriter(main *provider.Provider, model string, source, out
 	return w
 }
 
-// nativeCheckpointError is a Provider only failure. No other model may write
-// that checkpoint; run recovery still sees a transient provider cause.
+// nativeCheckpointError means there is no further writer for this checkpoint.
+// The original cause stays available to run recovery.
 type nativeCheckpointError struct{ error }
 
 func (e *nativeCheckpointError) Unwrap() error { return e.error }
+
+// checkpointRoute retains account evidence for this attempt, not a model
+// capability. A preparation worker can finish beside the main request.
+type checkpointRoute struct {
+	mu        sync.Mutex
+	account   *provider.Provider
+	rejection *provider.AccountRejection
+}
+
+func (r *checkpointRoute) remember(account *provider.Provider, rejection *provider.AccountRejection) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.account, r.rejection = account, rejection
+	r.mu.Unlock()
+}
+
+func (r *checkpointRoute) clear(account *provider.Provider) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if provider.SameConnection(r.account, account) {
+		r.account, r.rejection = nil, nil
+	}
+}
+
+// current releases the verdict at the provider's advised time. No time is
+// invented when the provider gave none.
+func (r *checkpointRoute) current(account *provider.Provider) *provider.AccountRejection {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.rejection == nil || !provider.SameConnection(r.account, account) {
+		return nil
+	}
+	if until := r.rejection.RecheckAt; !until.IsZero() && !time.Now().Before(until) {
+		r.account, r.rejection = nil, nil
+	}
+	return r.rejection
+}
 
 func (a *Agent) finishCheckpoint(ctx context.Context, msgs []provider.ChatMessage, tools []provider.ToolDef, checkpointMsg provider.ChatMessage, targetModel string, continuationLimit, fixed int, result compactOutcome) (compactOutcome, error) {
 	role := result.Role

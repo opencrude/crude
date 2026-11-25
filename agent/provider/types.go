@@ -595,6 +595,11 @@ type APIError struct {
 	Code    string
 	Message string
 	Param   string
+	details googleErrorFacts
+}
+
+func (e *APIError) codes() string {
+	return strings.Join(append([]string{e.Type, e.Code}, e.details.Markers...), " ")
 }
 
 func (e *APIError) Error() string {
@@ -695,6 +700,40 @@ type ChatAPIError struct {
 	Type    string `json:"type,omitempty"`
 	Code    any    `json:"code,omitempty"`
 	Param   string `json:"param,omitempty"`
+}
+
+// wireError keeps each service's structured error details in its own shape.
+// It is used for HTTP refusals and the same envelope inside a stream.
+type wireError struct {
+	ChatAPIError
+	Status  string          `json:"status"`
+	Details json.RawMessage `json:"details"`
+}
+
+func (w *wireError) decoded() *APIError {
+	e := &APIError{Type: firstNonEmpty(w.Type, strings.ToLower(w.Status)), Message: w.Message, Param: w.Param}
+	if w.Code != nil {
+		e.Code = fmt.Sprint(w.Code)
+	}
+	if len(w.Details) > 0 {
+		switch w.Details[0] {
+		case '{':
+			// https://platform.claude.com/docs/en/api/errors#error-codes
+			// Messages identifies its spend cap in details, not in type.
+			var d struct {
+				Code string `json:"error_code"`
+			}
+			if json.Unmarshal(w.Details, &d) == nil && e.Code == "" {
+				e.Code = d.Code
+			}
+		case '[':
+			var list []json.RawMessage
+			if json.Unmarshal(w.Details, &list) == nil {
+				e.details = parseGoogleErrorDetails(list)
+			}
+		}
+	}
+	return e
 }
 
 type ToolDef struct {

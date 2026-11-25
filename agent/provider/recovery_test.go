@@ -73,6 +73,29 @@ func TestExplicitRetryHeadersAndPermanentQuota(t *testing.T) {
 	}
 }
 
+// Messages uses the same outer type for a spend cap and a short rate limit.
+// Check the published envelope itself, not the simulator's interpretation.
+func TestMessagesRateLimitSpendCap(t *testing.T) {
+	const payload = `{"type":"error","error":{"type":"rate_limit_error","message":"Limit reached.","details":{"error_code":"enforced_spend_limit_reached"}}}`
+	wire := &AnthropicStandard{}
+	for _, transport := range []string{"http", "response", "stream"} {
+		t.Run(transport, func(t *testing.T) {
+			var err error
+			switch transport {
+			case "http":
+				err = readStatusError(&http.Response{StatusCode: 429, Body: io.NopCloser(strings.NewReader(payload))}, 1<<20)
+			case "response":
+				_, err = wire.DecodeResponse([]byte(payload))
+			case "stream":
+				_, err = wire.NewStreamDecoder().Decode(StreamEvent{Event: "error", Data: []byte(payload)})
+			}
+			if !Permanent(err) || Retryable(err) || !strings.Contains(strings.ToLower(ErrorSummary(err)), "quota") {
+				t.Fatalf("spend cap classified as %q, permanent=%v", ErrorSummary(err), Permanent(err))
+			}
+		})
+	}
+}
+
 func TestRecoveryClassificationIsSpecific(t *testing.T) {
 	for _, tc := range []struct {
 		err  error
