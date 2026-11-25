@@ -30,7 +30,9 @@ sections below describe how.
    The prompt and steering of the turn in progress come first and stay pending.
    Prompts that were already answered stay verbatim in one marked
    `<answered_human_requests>` block, so their requirements still bind but are
-   not answered again. A child keeps its whole latest assignment when it fits.
+   not answered again. Each later checkpoint selects from that block and newer
+   human input. It does not need the model to quote older requirements. A child
+   keeps its whole latest assignment when it fits.
    An input too large for the budget is carried by the checkpoint text, and the
    full original history stays archived.
 5. **No raw history behind a checkpoint.** A checkpoint written by Errand or by
@@ -184,7 +186,7 @@ provider/tool/child replay. One-off alignment tools do not ship in the product.
 2. Decide when to compact with the adaptive policy below (or the user's
    explicit percentage, bounded by the main model's normal response and
    safety reserves). Extraction plans each request independently against the
-   resolved Errand connection's capacity; a small extraction model uses smaller
+   selected writer's capacity; a small extraction model uses smaller
    source chunks instead of forcing early compaction of a larger main model.
 3. Persist the exact source before any extraction. A fitting source preserves message order; extraction on a different model, endpoint, or no-tools envelope need not share a cache entry. Oversized sources use
    chronological fragments;
@@ -226,11 +228,10 @@ provider/tool/child replay. One-off alignment tools do not ship in the product.
    older verbatim human input is retained newest-first up to the size of the
    checkpoint itself (an explicit agent setting of 1,000 to 200,000 estimated
    tokens replaces that bound), then further bounded by whatever continuation
-   space actually remains. Answered
-   human requirements use the same limit inside their marked context-only history
-   block. Oversized individual
-   inputs are represented in the checkpoint rather than retained unboundedly
-   alongside it; the original source remains archived. Reject empty,
+   space actually remains. The current turn gets this space first. Consider
+   both newly answered requests and those retained at the previous checkpoint
+   for the remaining space. The escaped history block must also fit. Leave an
+   oversized request to extraction; the original source remains archived. Reject empty,
    tool-calling, control-invalid, truncated, nonshrinking, or over-budget results.
 7. Commit the complete checkpoint, previous generation, and terminal lifecycle
    atomically. Only then consume notices and BTW admission. Cancellation or any
@@ -437,7 +438,9 @@ Responses delta uploads and inline-image replay recovery are specified in
   the compaction model's adaptive handling (chunking, staged sections,
   learned output ceilings, retries) has failed because the connection is
   unavailable (credentials, missing model, outage), the agent's own
-  model writes that one checkpoint, including when it shares the endpoint with a different extractor model. Provider only never does this. If no full checkpoint fits, stop recoverably with the original history. Do not commit a partial rewrite and send its cold tool tail.
+  model can write that checkpoint. It need not have a separate endpoint.
+  Provider only never switches to Errand. If no complete checkpoint fits, keep
+  the original history for recovery. Do not send a partial rewrite.
 - **Visibility.** Preparation is reported as `context_precompaction`
   (`started`, `progress`, `ready`, `failed`, `cancelled`, `discarded`). The
   owning slot publishes lifecycle directly; extractor progress uses one adapter,
@@ -467,13 +470,15 @@ Provider only never charges an Errand fallback.
 |---|---|
 | OpenAI Responses, including a translated model | Try `responses/compact`. A valid stored-response anchor and a delta of at most 32 KiB can do real work without a probe. Without that proof use an inert challenge. On a missing or incompatible standalone operation, test the final `compaction_trigger` item on the configured Responses endpoint using synthetic input. Learn the working operation; do not send the actual history to both. |
 | Anthropic Messages | Read the exact model's `capabilities.compaction.summarize.supported` with `compact-2026-09-04`. Use the on-demand `compaction` parameter. A missing declaration is not a refusal. Check an unadvertised route with synthetic input and a continuation carrying its signed block. |
-| Chat Completions, Gemini generateContent, Gemini Interactions, Ollama, ChatGPT Codex HTTP | No bounded native check is implemented for these adapters. Auto uses a full portable checkpoint without probing. Provider only reports the limitation. In particular the streaming Codex subscription adapter strips output caps; public Responses compatibility is not evidence for a cheap subscription probe. |
+| ChatGPT Codex HTTP | Try the standalone `responses/compact` operation with top-level instructions. The alternate check sends a final `compaction_trigger` on the streamed Responses route with `store: false`. Keep only the returned compaction item from the trigger. Verify support on the selected account; public Responses support is not proof. |
+| Chat Completions, Gemini generateContent, Gemini Interactions, Ollama | These adapters have no native check. Use a full portable checkpoint without probing. |
 
 A successful HTTP status or a text summary does not establish support. Require a
 valid native item and a continuation on that account. The synthetic check asks for a
 random code that is absent from the follow-up prompt. It has a 20-second deadline,
-small input and output allowances, no tools, no redirects and no automatic HTTP
-retries. Unsupported account request overrides are not silently discarded. The native
+a small input, no tools, no redirects and no automatic HTTP retries. It requests
+small output where the route supports a limit; Codex streaming sets its own limit.
+Unsupported account request overrides are not silently discarded. The native
 operation, verification and export each account for their own reported usage.
 
 **What is saved.** Keep the complete returned Responses window, or the signed
@@ -495,14 +500,14 @@ removing/reconnecting the account or changing its compaction policy fences in-fl
 work. Removing the account clears its evidence and attempt records. A clone has a new
 identity. Startup prunes orphaned or superseded support observations.
 
-**Recovery.** In Auto a native failure does not stop a run. When the native route
-cannot finish a checkpoint (a refusal, timeout, outage, unusable item or incomplete
-handoff), Errand writes the full portable checkpoint for that boundary and the run
-continues; the portable rules above apply if Errand also fails. The first change of method goes to Notices rather than inserting a new
-agent message; later fallbacks during the same cooldown are silent. Provider only
-never charges Errand. A definite refusal stops recoverably and names the setting to
-change. An outage or uncertain result keeps its provider cause, so run recovery
-retries it with the normal countdown.
+**Recovery.** In Auto, use a full portable checkpoint when the native operation
+cannot finish. Errand can write it. The serving model can write it instead if
+Errand is not configured to run, or if its cached context fits and costs less.
+Prefer a working Errand connection after a transient native failure. The first
+change of method goes to Notices; later fallbacks in the same cooldown are silent.
+Provider only never charges Errand. On a definite refusal or an unsupported
+wire, the serving model writes the portable checkpoint. A transient provider
+error retains its cause for run recovery.
 
 Only a refused synthetic check, or a second definite failure in a row, is negative
 evidence. One failure of a verified route is a cooldown; the next eligible compaction
@@ -512,11 +517,11 @@ standalone operation is sent once to the create operation instead.
 
 A native POST has no idempotency contract. A write-ahead fingerprint of the owner,
 route and source stops automatic resubmission of that source for five minutes (the
-shared retry ceiling), including after a crash. Meanwhile Auto uses Errand and
-Provider only waits. A confirmed input rejection releases the marker, an explicit
-`/compact` can send again, and forgetting a check does not clear it. If the core
-cannot open the catalog, Auto uses Errand and Provider only stops: native billing is
-not attempted with an in-memory substitute.
+shared retry ceiling), including after a crash. While the marker is active, use
+portable compaction instead of repeating the native POST. A confirmed input
+rejection releases the marker. An explicit `/compact` can send again. Forgetting
+a check does not clear it. If the core cannot open the catalog, skip the native
+POST. Do not use an in-memory substitute for the billing guard.
 
 A rejected saved artifact before output can use portable text without rerunning any
 tool. If doing so would replay more than 8,192 estimated tokens behind a changed
@@ -537,10 +542,9 @@ particular request paths; they are not a total billing guarantee.
   about checkpoint size and is left alone. A human `/compact` already registered
   makes it unnecessary. The replaced context records reason `loop_end_compaction`.
 
-- For the portable method, automatic and manual compaction use the resolved Errand category model for
-  a combined no-tools extraction of four sections (intent, work, state,
-  continuation) over one immutable durable source, falling back to one request
-  per section when needed. Fitting sources preserve message order but are not guaranteed cache hits; oversized
+- For portable compaction, the selected writer extracts four sections (intent,
+  work, state, continuation) from one immutable source without tool calls.
+  Start with one request. Use one per section if needed. Fitting sources preserve message order but are not guaranteed cache hits; oversized
   histories or individual tool inputs/results use complete chronological,
   origin-attributed text fragments and bounded model-backed chunk-and-reduce,
   never oldest-history deletion. Each fragment repeats its source role/origin
@@ -617,18 +621,17 @@ particular request paths; they are not a total billing guarantee.
   selection, child identities/statuses, and command-owner snapshots. Extraction
   may describe those facts but never owns them. Refresh the handoff after all
   extraction stages because commands and children may settle during compaction.
-- Retain a verbatim human tail as input only for a request that is still
-  pending. Human input after the last terminal assistant answer belongs to the
-  turn in progress: its prompt and steering stay verbatim, in order, first
-  within the retention budget. Every earlier request was already answered:
-  never append it as a pending user turn (the next invocation would answer it
-  again, or mistake it for the current task); carry those requests verbatim in
-  one code-authored, context-only `<answered_human_requests>` history block so
-  their requirements stay binding without being re-answered. Durable turn
-  state wins when known: a completed turn has nothing pending, and a running
-  turn keeps at least its latest human input pending after an interim answer. A child's latest assignment may use
-  all available continuation space, not only the recent-input cap; only an
-  assignment that cannot fit at all is left to extraction.
+- Give the pending turn first use of the verbatim retention budget. If durable
+  state says the turn is running, keep its original prompt and steering in
+  order, even across an interim answer. A completed turn has nothing pending.
+  Without durable state, use human input after the last final answer.
+- Keep answered requests in one context-only `<answered_human_requests>` block.
+  Save their original text and source IDs with that block in the active
+  context. At the next checkpoint, select from these requests and more recent
+  human input, newest first. Show the selected words in chronological order.
+  Do not resend the archive or treat an answered request as new work.
+- A child's latest assignment may use all available continuation space, not
+  only the recent-input cap. Leave it to extraction only if it cannot fit.
 - In-run automatic compaction rebuilds the continuation system message from the
   current guidance render. Guidance updates admitted during the run live in
   runtime messages that the checkpoint replaces; never continue on the run's

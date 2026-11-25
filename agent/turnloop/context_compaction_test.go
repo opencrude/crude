@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -558,7 +559,13 @@ func TestMidRunCheckpointSeparatesAnsweredPromptsFromTheRunningTurn(t *testing.T
 			if state == "running" {
 				a.LatestHumanTurnState = func(context.Context) (string, bool, error) { return "running", true, nil }
 			}
-			compacted, err := a.Compact(context.Background(), history, "system", nil)
+			input := history
+			if state == "running" {
+				more := provider.NewTextMessage("user", "Also keep all audit records.")
+				more.Origin = provider.OriginHumanSteering
+				input = append(append([]provider.ChatMessage(nil), history...), provider.NewTextMessage("assistant", "The migration is ready for review."), more)
+			}
+			compacted, err := a.Compact(context.Background(), input, "system", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -577,14 +584,18 @@ func TestMidRunCheckpointSeparatesAnsweredPromptsFromTheRunningTurn(t *testing.T
 			if len(answered) != 1 || !strings.Contains(answered[0], "First request: fix the crash") || strings.Contains(answered[0], "Second request") {
 				t.Fatalf("answered history = %q", answered)
 			}
-			if len(pending) != 2 || pending[0] != "Second request: migrate the schema" || !strings.Contains(pending[1], "also update the docs") {
+			want := []string{"Second request: migrate the schema", steering.ContentString()}
+			if state == "running" {
+				want = append(want, "Also keep all audit records.")
+			}
+			if !slices.Equal(pending, want) {
 				t.Fatalf("running turn input = %q", pending)
 			}
 		})
 	}
 	// The durable state wins over an interim answer of the running turn.
 	interim := append(append([]provider.ChatMessage(nil), history...), provider.NewTextMessage("assistant", "Schema migrated; checking the plan."))
-	if got := pendingHumanStart(interim, true, true); got != 5 {
+	if got := pendingHumanStart(interim, true, true); got != 2 {
 		t.Fatalf("running turn lost its latest input: start=%d", got)
 	}
 	if got := pendingHumanStart(interim, false, true); got != len(interim) {

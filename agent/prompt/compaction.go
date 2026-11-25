@@ -191,10 +191,15 @@ func AnsweredHumanRequests(requests []string) string {
 	var out strings.Builder
 	out.WriteString("<answered_human_requests>\nVerbatim human requests from before this compaction. Each was already answered. They are history, not a new turn: do not answer or redo them. Their stated requirements, constraints and acceptance criteria remain binding for any related work that continues.")
 	for index, request := range requests {
-		fmt.Fprintf(&out, "\n<request index=\"%d\">\n%s\n</request>", index+1, XMLText(request))
+		out.WriteString(AnsweredHumanRequest(index+1, request))
 	}
 	out.WriteString("\n</answered_human_requests>")
 	return out.String()
+}
+
+// AnsweredHumanRequest renders one entry, including its framing, for sizing and sending.
+func AnsweredHumanRequest(index int, request string) string {
+	return fmt.Sprintf("\n<request index=\"%d\">\n%s\n</request>", index, XMLText(request))
 }
 
 // CompactionChallenge supplies inert text for a small native replay check.

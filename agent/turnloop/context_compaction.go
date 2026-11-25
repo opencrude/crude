@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	rand2 "math/rand/v2"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -563,7 +564,7 @@ func (a *Agent) finishCheckpoint(ctx context.Context, msgs []provider.ChatMessag
 		retention = provider.EstimateTokens(checkpointMsg.ContentString(), targetModel)
 	}
 	retentionBudget := min(retention, available)
-	source := msgs[1:]
+	source := withoutAnsweredDuplicates(msgs[1:])
 	// Human input before pendingFrom was already answered; from there on it
 	// belongs to the turn still in progress. A child's assignment is always
 	// its pending instruction set.
@@ -587,20 +588,9 @@ func (a *Agent) finishCheckpoint(ctx context.Context, msgs []provider.ChatMessag
 	for _, message := range recentUsers {
 		used += provider.EstimateMessageTokens(message, targetModel)
 	}
-	if pendingFrom > 0 {
-		// Answered requests must not read as new turns, but their verbatim
-		// requirements must survive: carry them as marked history.
-		if answeredHumans := boundedRecentUserContext(source[:pendingFrom], role, max(0, retentionBudget-used), available-used, targetModel); len(answeredHumans) > 0 {
-			requests := make([]string, 0, len(answeredHumans))
-			for _, human := range answeredHumans {
-				requests = append(requests, human.ContentString())
-			}
-			history := provider.NewTextMessage("user", rootprompt.AnsweredHumanRequests(requests))
-			history.InternalID = provider.NewMessageID()
-			history.Origin, history.Visibility = provider.OriginCheckpoint, provider.VisibilityContextOnly
-			if provider.EstimateMessageTokens(history, targetModel) <= available-used {
-				compacted = append(compacted, history)
-			}
+	if role == "root" {
+		if history, ok := boundedAnsweredHistory(source, pendingFrom, retentionBudget-used, available-used, targetModel); ok {
+			compacted = append(compacted, history)
 		}
 	}
 	compacted = append(compacted, recentUsers...)
@@ -775,35 +765,88 @@ func boundedRecentUserContext(messages []provider.ChatMessage, role string, budg
 	return selected
 }
 
-// pendingHumanStart returns where the human input of the unfinished turn
-// begins: after the last final answer. Durable turn state is authoritative
-// when known; a running turn keeps at least its latest human message pending
-// even after an interim answer, and a completed turn has nothing pending.
-func pendingHumanStart(messages []provider.ChatMessage, running, known bool) int {
-	latestHuman := -1
-	for index := len(messages) - 1; index >= 0; index-- {
-		if messages[index].IsGenuineUserInput() {
-			latestHuman = index
-			break
+// withoutAnsweredDuplicates ensures an already answered identity cannot look
+// like a new turn. Do not modify the source generation that will be archived.
+func withoutAnsweredDuplicates(source []provider.ChatMessage) []provider.ChatMessage {
+	ids := map[string]bool{}
+	for _, m := range source {
+		if m.Origin == provider.OriginCheckpoint {
+			for _, r := range m.AnsweredRequests {
+				if r.SourceID != "" {
+					ids[r.SourceID] = true
+				}
+			}
 		}
 	}
-	if latestHuman < 0 || known && !running {
+	duplicate := func(m provider.ChatMessage) bool { return m.IsGenuineUserInput() && ids[m.InternalID] }
+	if len(ids) != 0 && slices.ContainsFunc(source, duplicate) {
+		return slices.DeleteFunc(slices.Clone(source), duplicate)
+	}
+	return source
+}
+
+// boundedAnsweredHistory considers both the previous checkpoint's requests and
+// newly answered input, newest first. Charge the original words to the retention
+// budget and the escaped, framed text to the continuation's remaining space.
+func boundedAnsweredHistory(source []provider.ChatMessage, pendingFrom, budget, available int, model string) (provider.ChatMessage, bool) {
+	available -= provider.EstimateTokens(rootprompt.AnsweredHumanRequests(nil), model)
+	var kept []provider.AnsweredRequest
+	consider := func(r provider.AnsweredRequest) {
+		cost := provider.EstimateTokens(r.Text, model)
+		if cost > budget || cost > available {
+			return
+		}
+		// Indexes run from 1 to the number selected regardless of their order.
+		wire := provider.EstimateTokens(rootprompt.AnsweredHumanRequest(len(kept)+1, r.Text), model)
+		if wire > available {
+			return
+		}
+		kept = append(kept, r)
+		budget -= cost
+		available -= wire
+	}
+	for i, m := range slices.Backward(source) {
+		if m.Origin == provider.OriginCheckpoint {
+			for _, r := range slices.Backward(m.AnsweredRequests) {
+				consider(r)
+			}
+		} else if i < pendingFrom && m.IsGenuineUserInput() {
+			consider(provider.AnsweredRequest{SourceID: m.InternalID, Text: m.ContentString()})
+		}
+	}
+	if len(kept) == 0 {
+		return provider.ChatMessage{}, false
+	}
+	slices.Reverse(kept)
+	texts := make([]string, len(kept))
+	for i, r := range kept {
+		texts[i] = r.Text
+	}
+	m := provider.NewTextMessage("user", rootprompt.AnsweredHumanRequests(texts))
+	m.InternalID, m.Origin, m.Visibility = provider.NewMessageID(), provider.OriginCheckpoint, provider.VisibilityContextOnly
+	m.AnsweredRequests = kept
+	return m, true
+}
+
+// pendingHumanStart finds the active turn's original prompt. With durable
+// running state, assistant text is interim and steering is part of that turn.
+// Without a turn owner, only the message order distinguishes pending input.
+func pendingHumanStart(messages []provider.ChatMessage, running, known bool) int {
+	if known && !running {
 		return len(messages)
 	}
-	start := 0
-	for index := len(messages) - 1; index >= 0; index-- {
-		if finalAnswer(messages[index]) {
-			start = index + 1
+	start := len(messages)
+	for i, m := range slices.Backward(messages) {
+		if m.IsGenuineUserInput() {
+			start = i
+			if known && m.EffectiveOrigin() == provider.OriginHuman {
+				break
+			}
+		} else if !known && finalAnswer(m) {
 			break
 		}
 	}
-	if start <= latestHuman {
-		return start
-	}
-	if known {
-		return latestHuman
-	}
-	return len(messages)
+	return start
 }
 
 func finalAnswer(message provider.ChatMessage) bool {
