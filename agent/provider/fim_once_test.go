@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"reflect"
 	"strings"
 	"sync/atomic"
@@ -15,6 +17,7 @@ import (
 	"time"
 
 	"crude/internal/network"
+	"crude/internal/providersim"
 )
 
 func fimRequest() FIMOnceRequest {
@@ -52,14 +55,13 @@ func fimServer(t *testing.T, body string) (*Provider, *atomic.Int32) {
 func TestFIMDialectLiteralWire(t *testing.T) {
 	for _, test := range []struct {
 		dialect                      FIMDialect
-		mount, path, wantPath, event string
+		wire                         providersim.Wire
+		finish                       providersim.FinishReason
+		model, mount, path, wantPath string
 	}{
-		{FIMOpenAI, "", "completions", "/v1/completions",
-			`{"choices":[{"index":0,"text":"\t é😀\\uD800 \r\n","finish_reason":"stop"}]}`},
-		{FIMDeepSeek, "/beta", "/completions", "/beta/completions",
-			`{"choices":[{"index":0,"text":"\t é\uD83D\uDE00\\uD800 \r\n","finish_reason":"length"}]}`},
-		{FIMCodestral, "/gateway/v1/", "fim/completions", "/gateway/v1/fim/completions",
-			`{"choices":[{"index":0,"delta":{"role":"assistant","content":"\t é😀\\uD800 \r\n","tool_calls":null},"finish_reason":"stop"}]}`},
+		{FIMOpenAI, providersim.FIMOpenAI, providersim.FinishStop, "literal/model", "", "completions", "/v1/completions"},
+		{FIMDeepSeek, providersim.FIMDeepSeek, providersim.FinishLength, "deepseek-flash", "/beta", "/completions", "/beta/completions"},
+		{FIMCodestral, providersim.FIMCodestral, providersim.FinishStop, "literal/model", "/gateway/v1/", "fim/completions", "/gateway/v1/fim/completions"},
 	} {
 		t.Run(string(test.dialect), func(t *testing.T) {
 			var calls atomic.Int32
@@ -70,6 +72,23 @@ func TestFIMDialectLiteralWire(t *testing.T) {
 			if test.dialect == FIMCodestral {
 				prefix = ""
 			}
+			const reply = "\t é😀\\uD800 \r\n"
+			sim := providersim.New(t)
+			sim.Script(providersim.Text(reply).WithFinish(test.finish).WithUsage(providersim.Usage{}))
+			upstream, err := url.Parse(sim.BaseURL(test.wire))
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Keep the exact public and gateway mount paths under test. The proxy
+			// observes the original URI and lets the simulator write the response.
+			route := strings.TrimPrefix(test.wantPath, strings.TrimSuffix(test.mount, "/"))
+			if test.dialect == FIMOpenAI {
+				route = strings.TrimPrefix(route, "/v1")
+			}
+			proxy := httputil.NewSingleHostReverseProxy(upstream)
+			transport := &http.Transport{DisableKeepAlives: true}
+			proxy.Transport = transport
+			t.Cleanup(transport.CloseIdleConnections)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls.Add(1)
 				if r.Method != "POST" || r.URL.RequestURI() != test.wantPath {
@@ -79,33 +98,31 @@ func TestFIMDialectLiteralWire(t *testing.T) {
 					r.Header.Get("Authorization") != "" || r.Header.Get("Content-Type") != "application/json" {
 					t.Errorf("headers: %v", r.Header)
 				}
-				var got map[string]any
-				if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
-					t.Error(err)
-				}
-				want := map[string]any{"model": "literal/model", "prompt": prefix,
-					"suffix": suffix, "max_tokens": float64(32), "stream": true}
-				if test.dialect != FIMCodestral {
-					want["stream_options"] = map[string]any{"include_usage": true}
-				}
-				if !reflect.DeepEqual(got, want) {
-					t.Errorf("wire = %#v; want %#v", got, want)
-				}
-				w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
-				_, _ = io.WriteString(w, fimSSE(test.event,
-					`{"choices":[],"usage":{"prompt_tokens":0,"completion_tokens":0}}`)+fimDone)
+				r.URL.Path = route
+				proxy.ServeHTTP(w, r)
 			}))
 			defer server.Close()
 			p := &Provider{BaseURL: server.URL + test.mount, StandardName: "openai", APIKey: "secret",
 				authType: AuthCustomHeader, authHeader: "X-Credential", headers: map[string]string{"X-Recipe": "literal"}}
 			req := fimRequest()
-			req.Dialect = test.dialect
+			req.Dialect, req.Model = test.dialect, test.model
 			req.Prefix, req.Suffix = prefix, suffix
 			req.EndpointPath = test.path
 			got, err := p.CompleteFIMOnce(context.Background(), req)
-			if err != nil || got.Text != "\t é😀\\uD800 \r\n" || !got.Accepted ||
+			if err != nil || got.Text != reply || !got.Accepted ||
 				!got.UsageComplete || got.Usage == nil || *got.Usage != (TokenUsage{}) || calls.Load() != 1 {
 				t.Fatalf("result=%+v usage=%+v error=%v calls=%d", got, got.Usage, err, calls.Load())
+			}
+			request, _ := sim.Last()
+			var body map[string]any
+			_ = json.Unmarshal(request.Raw, &body)
+			want := map[string]any{"model": test.model, "prompt": prefix,
+				"suffix": suffix, "max_tokens": float64(32), "stream": true}
+			if test.dialect != FIMCodestral {
+				want["stream_options"] = map[string]any{"include_usage": true}
+			}
+			if !reflect.DeepEqual(body, want) {
+				t.Errorf("wire = %#v; want %#v", body, want)
 			}
 		})
 	}
@@ -142,6 +159,22 @@ func TestFIMUsageEvidence(t *testing.T) {
 	got, err := p.CompleteFIMOnce(context.Background(), fimRequest())
 	if err != nil || !got.UsageComplete || got.Usage.PromptTokens != 7 || got.Usage.CompletionTokens != 2 {
 		t.Fatalf("trailing partial usage: %+v, %v", got, err)
+	}
+}
+
+func TestFIMDeepSeekDecodesEscapedSurrogatePair(t *testing.T) {
+	// The simulator emits valid UTF-8 directly. Keep this one lexical fixture
+	// to exercise a gateway that spells the same rune as two JSON escapes.
+	p, _ := fimServer(t, fimSSE(
+		`{"choices":[{"index":0,"text":"\t é\uD83D\uDE00\\uD800 \r\n","finish_reason":"length"}]}`,
+		`{"choices":[],"usage":{"prompt_tokens":0,"completion_tokens":0}}`,
+	)+fimDone)
+	req := fimRequest()
+	req.Dialect, req.Model = FIMDeepSeek, "deepseek-flash"
+	got, err := p.CompleteFIMOnce(t.Context(), req)
+	if err != nil || got.Text != "\t é😀\\uD800 \r\n" || !got.Accepted ||
+		!got.UsageComplete || got.Usage == nil || *got.Usage != (TokenUsage{}) {
+		t.Fatalf("escaped JSON completion: result=%+v usage=%+v error=%v", got, got.Usage, err)
 	}
 }
 
@@ -283,8 +316,10 @@ func TestFIMResponseBounds(t *testing.T) {
 			}
 		})
 	}
-	chunk := `{"choices":[{"index":0,"text":"` + strings.Repeat("x", 16384) + `","finish_reason":null}]}`
-	p, _ := fimServer(t, strings.Repeat(fimSSE(chunk), 4)+fimSSE(fimFinish)+fimDone)
+	chunk := strings.Repeat("x", 16384)
+	sim := providersim.New(t)
+	sim.Script(providersim.Turn{}.WithTextDeltas(chunk, chunk, chunk, chunk).WithoutUsage())
+	p := &Provider{BaseURL: sim.BaseURL(providersim.FIMOpenAI), StandardName: "openai"}
 	req := fimRequest()
 	req.MaxOutputBytes = 64 << 10
 	got, err := p.CompleteFIMOnce(context.Background(), req)

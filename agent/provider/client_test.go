@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"crude/internal/providersim"
 )
 
 // --- URL resolution ---
@@ -68,22 +70,9 @@ func TestOllamaCloudChatURLIsNotDoubled(t *testing.T) {
 // --- chat ---
 
 func TestClientCompleteDecodesAndSendsAuth(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/chat/completions" {
-			t.Errorf("path = %q", r.URL.Path)
-		}
-		if got := r.Header.Get("Authorization"); got != "Bearer key" {
-			t.Errorf("authorization = %q", got)
-		}
-		if got := r.Header.Get("Accept"); got != "text/event-stream, application/x-ndjson, application/json" {
-			t.Errorf("accept = %q", got)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}]}`)
-	}))
-	defer server.Close()
-
-	p := FromPreset("openai-chat", "key", server.URL)
+	server := providersim.New(t)
+	server.Script(providersim.Text("hi").WithoutUsage())
+	p := FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	client, err := p.Client()
 	if err != nil {
 		t.Fatalf("Client: %v", err)
@@ -98,22 +87,25 @@ func TestClientCompleteDecodesAndSendsAuth(t *testing.T) {
 	if resp.Choices[0].Message.ContentString() != "hi" {
 		t.Fatalf("response = %+v", resp)
 	}
+	request, _ := server.Last()
+	if request.Path != "/v1/chat/completions" {
+		t.Errorf("path = %q", request.Path)
+	}
+	if got := request.Header.Get("Authorization"); got != "Bearer key" {
+		t.Errorf("authorization = %q", got)
+	}
+	if got := request.Header.Get("Accept"); got != "text/event-stream, application/x-ndjson, application/json" {
+		t.Errorf("accept = %q", got)
+	}
 }
 
 func TestClientRetriesRetryableStatusWithBackoff(t *testing.T) {
-	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if calls.Add(1) == 1 {
-			w.Header().Set("Retry-After", "0")
-			http.Error(w, `{"error":{"message":"overloaded"}}`, http.StatusTooManyRequests)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`)
-	}))
-	defer server.Close()
-
-	p := FromPreset("openai-chat", "key", server.URL)
+	server := providersim.New(t)
+	server.Script(
+		providersim.HTTPError(providersim.RateLimit).WithRetryHint(providersim.RetryAfterSeconds(0)).WithFaultMessage("overloaded"),
+		providersim.Text("ok").WithoutUsage(),
+	)
+	p := FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	client, err := p.Client()
 	if err != nil {
 		t.Fatalf("Client: %v", err)
@@ -122,20 +114,15 @@ func TestClientRetriesRetryableStatusWithBackoff(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
-	if resp.Choices[0].Message.ContentString() != "ok" || calls.Load() != 2 {
-		t.Fatalf("response=%+v calls=%d", resp, calls.Load())
+	if calls := len(server.Requests()); resp.Choices[0].Message.ContentString() != "ok" || calls != 2 {
+		t.Fatalf("response=%+v calls=%d", resp, calls)
 	}
 }
 
 func TestClientDoesNotRetryClientErrorsAndWrapsExhaustion(t *testing.T) {
-	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
-		http.Error(w, `{"error":{"message":"bad key"}}`, http.StatusUnauthorized)
-	}))
-	defer server.Close()
-
-	p := FromPreset("openai-chat", "key", server.URL)
+	server := providersim.New(t)
+	server.Script(providersim.HTTPError(providersim.Auth).WithFaultMessage("bad key"))
+	p := FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.SetDialSettings(DialSettings{MaxAttempts: 3})
 	client, err := p.Client()
 	if err != nil {
@@ -149,21 +136,17 @@ func TestClientDoesNotRetryClientErrorsAndWrapsExhaustion(t *testing.T) {
 	if status.Retryable() {
 		t.Fatal("401 must not be retryable")
 	}
-	if calls.Load() != 1 {
-		t.Fatalf("calls = %d, want 1 (no retry on 401)", calls.Load())
+	if calls := len(server.Requests()); calls != 1 {
+		t.Fatalf("calls = %d, want 1 (no retry on 401)", calls)
 	}
 }
 
 func TestClientWrapsRetriesExhausted(t *testing.T) {
-	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
-		w.Header().Set("Retry-After", "0")
-		http.Error(w, `{}`, http.StatusServiceUnavailable)
-	}))
-	defer server.Close()
-
-	p := FromPreset("openai-chat", "key", server.URL)
+	server := providersim.New(t)
+	server.Respond(func(providersim.Request) providersim.Turn {
+		return providersim.HTTPError(providersim.Overload).WithRetryHint(providersim.RetryAfterSeconds(0))
+	})
+	p := FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.SetDialSettings(DialSettings{MaxAttempts: 3})
 	client, err := p.Client()
 	if err != nil {
@@ -174,32 +157,17 @@ func TestClientWrapsRetriesExhausted(t *testing.T) {
 	if !errors.As(err, &exhausted) || exhausted.Attempts != 3 {
 		t.Fatalf("error = %v, want ExhaustedError with 3 attempts", err)
 	}
-	if calls.Load() != 3 {
-		t.Fatalf("calls = %d, want 3", calls.Load())
+	if calls := len(server.Requests()); calls != 3 {
+		t.Fatalf("calls = %d, want 3", calls)
 	}
 }
 
 // --- streaming ---
 
 func TestClientStreamRetriesOnlyBeforeFirstUpdate(t *testing.T) {
-	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		if calls.Add(1) == 1 {
-			// Connection established, then dropped before any output.
-			_, _ = fmt.Fprint(w, ": warmup\n\n")
-			if flusher, ok := w.(http.Flusher); ok {
-				flusher.Flush()
-			}
-			panic(http.ErrAbortHandler)
-		}
-		_, _ = fmt.Fprint(w,
-			"data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n"+
-				"data: [DONE]\n\n")
-	}))
-	defer server.Close()
-
-	p := FromPreset("openai-chat", "key", server.URL)
+	server := providersim.New(t)
+	server.Script(providersim.CutStream(0), providersim.Text("ok").WithoutUsage())
+	p := FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	p.SetDialSettings(DialSettings{MaxAttempts: 3})
 	client, err := p.Client()
 	if err != nil {
@@ -222,8 +190,8 @@ func TestClientStreamRetriesOnlyBeforeFirstUpdate(t *testing.T) {
 		}
 		content.WriteString(update.ContentDelta)
 	}
-	if content.String() != "ok" || calls.Load() != 2 {
-		t.Fatalf("content=%q calls=%d", content.String(), calls.Load())
+	if calls := len(server.Requests()); content.String() != "ok" || calls != 2 {
+		t.Fatalf("content=%q calls=%d", content.String(), calls)
 	}
 }
 
