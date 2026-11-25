@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"image"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -401,7 +402,14 @@ func TestSixelAttachmentPacedDragThroughTerminalWriter(t *testing.T) {
 		for {
 			select {
 			case write := <-sink.out:
-				terminal.Feed(write.data)
+				// With nil input, Bubble Tea uses cooked Unix cursor movement:
+				// the tty maps LF to CRLF before the terminal sees it. Our
+				// writer has no tty. Replay that mapping, but measure raw writes.
+				wire := write.data
+				if runtime.GOOS != "windows" && bytes.IndexByte(wire, '\n') >= 0 {
+					wire = bytes.ReplaceAll(wire, []byte("\n"), []byte("\r\n"))
+				}
+				terminal.Feed(wire)
 				received++
 				longest = max(longest, len(write.data))
 				last = fmt.Sprintf("%q", write.data[:min(70, len(write.data))])
@@ -465,7 +473,8 @@ func TestSixelAttachmentPacedDragThroughTerminalWriter(t *testing.T) {
 				}
 				want, ok := ink[image.Pt(x-i, y)]
 				if !ok || !nativeFrameColorEqual(cell.FG, want.fg) || !nativeFrameColorEqual(cell.BG, want.bg) {
-					t.Fatalf("motion %d: unexpected preview cell or colours at (%d,%d)", i+1, x, y)
+					t.Fatalf("motion %d: unexpected preview cell or colours at (%d,%d): physical FG=%+v BG=%+v, expected cell=%t FG=%#x BG=%#x; writer bytes=%d",
+						i+1, x, y, cell.FG, cell.BG, ok, want.fg, want.bg, len(preview.data))
 				}
 				seen++
 			}

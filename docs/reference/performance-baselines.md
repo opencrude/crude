@@ -1211,7 +1211,9 @@ older entries, so it does not keep rebuilding an evicted current view. That test
 (685,440 pixels) is above the native-motion limit, so its moves still preview. This measures the writer sink,
 not the emulator's paint latency. The paced drag check also replays the
 actual VT in libghostty-vt: every half-block and both colours must move exactly
-one column per pointer step. Moving a verified suffix with ICH/DCH does not
+one column per pointer step. On Unix, the test's cooked output path expands
+LF to CRLF before terminal replay, as a tty does. Byte counts and times still
+come from the unmodified writer output. Moving a verified suffix with ICH/DCH does not
 require sending its glyphs again. With the synthetic gradient, later steps
 sent 947 bytes without losing any preview cells.
 
