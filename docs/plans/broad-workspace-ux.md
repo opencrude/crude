@@ -9,6 +9,13 @@ OS-known home, personal folders, and filesystem roots are navigation locations o
 The admission check runs before the workspace factory, including for explicit paths.
 No Open anyway action or trust database was added.
 
+> **Decision change (2026-11-25).** The user reversed the navigation-only rule
+> for explicit choices. A launch in a top-level folder still shows the welcome
+> page, but an explicit selection opens it with Local History and language
+> servers off, and the button reads **New workspace**. Direct file launches
+> are added too. See
+> [the open immediate actions](../issues/2026-11-25-composer-entry-and-errand-setup.md).
+
 Established project launches keep the current project experience.
 The Crude repository, empty folders, and non-Git projects remain valid projects.
 LSP implementation and the current workspace-switch confirmation are unchanged.
