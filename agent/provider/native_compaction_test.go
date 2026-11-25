@@ -246,13 +246,14 @@ func TestNativePolicyAndUncertainSpend(t *testing.T) {
 	if r, e := p.NativeCheckpoint(t.Context(), compactFixture(p)); e != nil || r.Changed || r.Fallback == "" || real.Load() != 1 {
 		t.Fatal("auto resent a possibly paid request or repeated the notice")
 	}
-	// Provider only never charges Errand; recovery waits for the marker.
+	// Provider only never charges Errand: while the marker holds, the serving
+	// model writes a portable checkpoint instead of resending the native call.
 	p.SetProtocolSettings(&ProtocolSettings{Compaction: CompactionProviderOnly})
 	r, e := p.NativeCheckpoint(t.Context(), compactFixture(p))
-	var status *StatusError
-	if !errors.As(e, &status) || status.StatusCode != http.StatusServiceUnavailable || status.RetryAfter <= 0 || status.RetryAfter > attemptHold || r.Fallback != "" || real.Load() != 1 || probe.Load() != 1 {
-		t.Fatalf("provider-only did not wait: %v", e)
+	if e != nil || r.Fallback == "" || r.Transient || real.Load() != 1 || probe.Load() != 1 {
+		t.Fatalf("provider-only resent or stopped: %+v %v", r, e)
 	}
+	var status *StatusError
 	// An explicit /compact may resend once the route cooldown has passed.
 	c := currentSupport()
 	k := p.compactionScope(p.Model)
@@ -268,9 +269,9 @@ func TestNativePolicyAndUncertainSpend(t *testing.T) {
 	}
 }
 
-// Provider only reports a definite refusal as the route's answer with the
-// setting to change; run recovery must not retry it as an outage.
-func TestProviderOnlyRefusalNamesTheSetting(t *testing.T) {
+// A definite refusal in Provider only is the route's answer, not an outage:
+// the serving model writes the portable checkpoint and the run continues.
+func TestProviderOnlyRefusalLetsTheServingModelWrite(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.ReadAll(r.Body)
 		http.Error(w, `{"error":{"message":"compaction is not supported for this model"}}`, http.StatusBadRequest)
@@ -278,10 +279,9 @@ func TestProviderOnlyRefusalNamesTheSetting(t *testing.T) {
 	defer server.Close()
 	p := &Provider{ID: "custom", AccountID: "refusal", Model: "m", BaseURL: server.URL, StandardName: "openai-responses"}
 	p.SetProtocolSettings(&ProtocolSettings{Compaction: CompactionProviderOnly})
-	_, err := p.NativeCheckpoint(t.Context(), compactFixture(p))
-	var status *StatusError
-	if err == nil || errors.As(err, &status) || err.Error() != "The provider rejected native compaction (HTTP 400). "+providerOnlyAdvice {
-		t.Fatalf("refusal: %v", err)
+	r, err := p.NativeCheckpoint(t.Context(), compactFixture(p))
+	if err != nil || r.Transient || r.Fallback != "The provider rejected native compaction (HTTP 400)." {
+		t.Fatalf("refusal: %+v %v", r, err)
 	}
 	if c := currentSupport().fact(p.compactionScope("m")); c.state != supportUnavailable {
 		t.Fatalf("refused probe was not negative evidence: %+v", c)
@@ -561,5 +561,110 @@ func TestAccountRemovalClearsCompactionEvidence(t *testing.T) {
 	}
 	if err := c.PruneCompactionSupport(map[string]Account{}); err != nil || rows("compaction_attempts") != 0 {
 		t.Fatalf("kept attempt markers for a deleted account: %v", err)
+	}
+}
+
+// The ChatGPT Codex backend only streams and requires top-level
+// instructions. Discovery tries the standalone operation, learns the
+// streamed trigger when it is missing, keeps only the compaction item, and
+// the next Codex request replays it.
+func TestCodexNativeCompactionStreams(t *testing.T) {
+	for _, mode := range []string{"standalone", "trigger"} {
+		t.Run(mode, func(t *testing.T) {
+			var standalone, triggers, follows atomic.Int32
+			sse := func(w http.ResponseWriter, items ...string) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				for _, item := range items {
+					fmt.Fprintf(w, "event: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"item\":%s}\n\n", item)
+				}
+				fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"object\":\"response\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":12,\"output_tokens\":3}}}\n\n")
+			}
+			endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				raw, _ := io.ReadAll(r.Body)
+				s := string(raw)
+				var body map[string]any
+				_ = json.Unmarshal(raw, &body)
+				if instructions, _ := body["instructions"].(string); instructions == "" || strings.Contains(s, `"role":"system"`) {
+					t.Errorf("codex request without top-level instructions: %s", s)
+				}
+				token := "codex-probe"
+				if strings.Contains(s, "real-history-secret") {
+					token = "codex-real"
+				}
+				if strings.HasSuffix(r.URL.Path, "/compact") {
+					standalone.Add(1)
+					if mode == "trigger" {
+						http.NotFound(w, r)
+						return
+					}
+					fmt.Fprintf(w, `{"object":"response.compaction","output":[{"type":"compaction","encrypted_content":%q}],"usage":{"input_tokens":9,"output_tokens":2}}`, token)
+					return
+				}
+				if body["stream"] != true || body["store"] != false {
+					t.Errorf("codex create request must stream without storage: %s", s)
+				}
+				if strings.Contains(s, "compaction_trigger") {
+					triggers.Add(1)
+					sse(w, fmt.Sprintf(`{"type":"compaction","encrypted_content":%q}`, token), `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ignored reply"}]}`)
+					return
+				}
+				follows.Add(1)
+				answer := "portable"
+				if strings.Contains(s, "codex-probe") {
+					answer = "blue-91"
+				}
+				sse(w, fmt.Sprintf(`{"type":"message","role":"assistant","content":[{"type":"output_text","text":%q}]}`, answer))
+			}))
+			defer endpoint.Close()
+			p := &Provider{ID: "custom", AccountID: "codex-" + mode, Model: "m", APIKey: "k", BaseURL: endpoint.URL, StandardName: "codex"}
+			got, err := p.NativeCheckpoint(t.Context(), compactFixture(p))
+			if err != nil || got.Fallback != "" || got.Message.ContentString() != "portable" {
+				t.Fatalf("codex native result %+v %v", got, err)
+			}
+			wantTriggers := int32(0)
+			if mode == "trigger" {
+				wantTriggers = 2
+			}
+			if triggers.Load() != wantTriggers || follows.Load() != 2 || standalone.Load() == 0 {
+				t.Fatalf("standalone=%d triggers=%d follows=%d", standalone.Load(), triggers.Load(), follows.Load())
+			}
+			item := got.Message.ProviderItems[0]
+			if item.Standard != "openai-responses" || strings.Contains(string(item.Data), "ignored reply") || !strings.Contains(string(item.Data), "codex-real") {
+				t.Fatalf("window = %s (%s)", item.Data, item.Standard)
+			}
+			history, _ := ProjectReplayMessages([]ChatMessage{compactFixture(p).Messages[0], got.Message, NewTextMessage("user", "next")}, p)
+			b, err := p.Protocol().EncodeRequest(&ChatRequest{Model: p.Model, Messages: history})
+			if err != nil || !strings.Contains(string(b), "codex-real") {
+				t.Fatalf("next codex request lost the window: %s %v", b, err)
+			}
+		})
+	}
+}
+
+// OpenAI documents that /responses/compact takes the window as the
+// conversation renders it, without instructions. The system message stays the
+// first input item, so the call shares the conversation's cached prefix, and
+// a retained copy of it in the returned window is not replayed twice.
+func TestResponsesCompactKeepsTheConversationPrefix(t *testing.T) {
+	s := &OpenAIResponsesStandard{}
+	req := &ChatRequest{Model: "m", Messages: []ChatMessage{NewTextMessage("system", "conversation rules"), NewTextMessage("user", "history")}}
+	body, err := s.compactBody(req, "four sections", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(body)
+	normal, _ := s.EncodeRequest(req)
+	var compact, create struct{ Input []json.RawMessage }
+	_ = json.Unmarshal(encoded, &compact)
+	_ = json.Unmarshal(normal, &create)
+	if _, ok := body["instructions"]; ok || len(compact.Input) != 2 || string(compact.Input[0]) != string(create.Input[0]) || strings.Contains(string(encoded), "four sections") {
+		t.Fatalf("compact body diverges from the conversation prefix: %s", encoded)
+	}
+	w, _, err := s.compactResult([]byte(`{"object":"response.compaction","output":[{"type":"message","role":"system","content":[{"type":"input_text","text":"conversation rules"}]},{"type":"compaction","encrypted_content":"x"},{"type":"message","role":"user","content":[{"type":"input_text","text":"kept"}]}]}`))
+	if err != nil || strings.Contains(string(w.raw), "conversation rules") || !strings.Contains(string(w.raw), "kept") {
+		t.Fatalf("window = %s %v", w.raw, err)
+	}
+	if _, _, err := s.compactResult([]byte(`{"object":"response.compaction","output":[{"type":"compaction","encrypted_content":"x"},{"type":"message","role":"developer","content":[]}]}`)); !errors.Is(err, errNoWindow) {
+		t.Fatalf("a developer item after the summary was accepted: %v", err)
 	}
 }

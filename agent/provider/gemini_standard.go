@@ -31,6 +31,7 @@ func (s *GeminiStandard) Info() ProtocolInfo {
 		WebSearch:           WebSearchTool,
 		ListsDecisionModels: true,
 		Streaming:           FramingSSE,
+		ToolChoiceNone:      true,
 		Options: ProtocolOptions{
 			ReasoningSummaries: true,
 			ServiceTiers:       []string{"standard", "flex", "priority"},

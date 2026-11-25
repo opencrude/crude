@@ -1760,7 +1760,7 @@ func (r *SubAgentRunner) runSubAgentLoop(
 		if compactionCfg := cfg.CategoryConfig(CategoryErrand); compactionCfg.Model != "" {
 			compactionProvider, compactionErr := cfg.providerForCategory(compactionCfg)
 			handle.Agent.CompactionConfigError = compactionErr
-			if compactionErr != nil && !currentProvider.UsesNativeCompaction() {
+			if compactionErr != nil && currentProvider.CompactionMethod() == provider.CompactionErrandOnly {
 				return "", compactionErr
 			}
 			handle.Agent.CompactionProvider = compactionProvider

@@ -32,31 +32,30 @@ var errIgnoredCompaction = errors.New("the provider answered normally instead of
 var errNoWindow = errors.New("the provider did not return a usable compaction item")
 var errUnusableCheckpoint = errors.New("the provider returned a checkpoint that Crude cannot use")
 
-const (
-	nativeOptionsReason = "Native compaction cannot keep this account's request options."
-	providerOnlyAdvice  = "To continue, set Compaction to Auto or Errand only for this account."
-)
+const nativeOptionsReason = "Native compaction cannot keep this account's request options."
 
-func (s *OpenAIResponsesStandard) compactBody(req *ChatRequest, directive string, extras map[string]any) (map[string]any, error) {
-	plan := PlanResponseContinuation(req)
-	start := plan.Start
-	// For a stateless compact call the system prompt belongs in instructions,
-	// not in the canonical output window that the next request must replay.
-	if start == 0 && len(req.Messages) > 0 && req.Messages[0].Role == "system" {
-		start = 1
+// nativeStandard is the item format a wire replays: the Responses family
+// shares one, so a window is stamped by format rather than by route.
+func nativeStandard(proto Protocol) string {
+	if proto.Info().Options.NativeCompaction == "responses/compact" {
+		return "openai-responses"
 	}
-	input, err := encodeResponsesInput(req.Messages, start)
+	return proto.Info().ID
+}
+
+// compactBody sends the window exactly as the conversation renders it, so
+// the system message and history keep their cached prefix. OpenAI documents
+// that instructions are omitted on this call; the portable handoff is
+// requested from the returned window instead.
+func (s *OpenAIResponsesStandard) compactBody(req *ChatRequest, _ string, extras map[string]any) (map[string]any, error) {
+	plan := PlanResponseContinuation(req)
+	input, err := encodeResponsesInput(req.Messages, plan.Start)
 	if err != nil {
 		return nil, err
 	}
-	instructions := directive
-	if len(req.Messages) > 0 && req.Messages[0].Role == "system" {
-		instructions = req.Messages[0].ContentString() + "\n\n" + directive
-	}
-	wire := map[string]any{"model": req.Model, "input": input, "instructions": instructions}
+	wire := map[string]any{"model": req.Model, "input": input}
 	if plan.PreviousResponseID != "" {
 		wire["previous_response_id"] = plan.PreviousResponseID
-		wire["instructions"] = directive
 	}
 	for _, k := range []string{"provider", "service_tier", "prompt_cache_key", "prompt_cache_retention", "prompt_cache_options"} {
 		if v, ok := extras[k]; ok {
@@ -71,10 +70,12 @@ func (s *OpenAIResponsesStandard) compactResult(body []byte) (nativeWindow, Toke
 
 // The Responses create API also accepts an explicit final compaction trigger.
 // Some gateways mount create but not /compact. Never send both real histories.
-type triggerWire struct{ OpenAIResponsesStandard }
+// The request is the wire's own create request, so a backend that only
+// streams (the ChatGPT Codex backend) still receives a valid one.
+type triggerWire struct{ enc Protocol }
 
 func (s *triggerWire) compactBody(req *ChatRequest, directive string, extras map[string]any) (map[string]any, error) {
-	b, err := s.EncodeRequest(req)
+	b, err := s.enc.EncodeRequest(req)
 	if err != nil {
 		return nil, err
 	}
@@ -85,12 +86,38 @@ func (s *triggerWire) compactBody(req *ChatRequest, directive string, extras map
 	mergeExtras(wire, extras, nil)
 	input, _ := wire["input"].([]any)
 	wire["input"] = append(input, map[string]any{"type": "compaction_trigger"})
-	wire["stream"] = false
 	wire["store"] = false
+	// A backend that requires top-level instructions gets the directive
+	// when a synthetic check has no system message of its own.
+	if v, ok := wire["instructions"].(string); ok && v == "" {
+		wire["instructions"] = directive
+	}
 	return wire, nil
 }
+
+// compactResult keeps only the compaction item: the trigger's other output
+// is a reply to the old window, not part of the next one.
 func (s *triggerWire) compactResult(body []byte) (nativeWindow, TokenUsage, error) {
-	return responsesWindow(body, "response")
+	w, u, err := responsesWindow(body, "response")
+	if err != nil {
+		return w, u, err
+	}
+	var items []json.RawMessage
+	if json.Unmarshal(w.raw, &items) != nil {
+		return nativeWindow{}, u, errNoWindow
+	}
+	var kept []json.RawMessage
+	for _, raw := range items {
+		var item struct{ Type string }
+		if json.Unmarshal(raw, &item) == nil && item.Type == "compaction" {
+			kept = append(kept, raw)
+		}
+	}
+	if len(kept) != 1 {
+		return nativeWindow{}, u, errNoWindow
+	}
+	w.raw, _ = json.Marshal(kept)
+	return w, u, nil
 }
 func responsesWindow(body []byte, object string) (nativeWindow, TokenUsage, error) {
 	var v struct {
@@ -111,13 +138,28 @@ func responsesWindow(body []byte, object string) (nativeWindow, TokenUsage, erro
 	if v.Object != object || object == "response" && v.Status != "completed" || len(v.Output) > maxNativeWindowBytes {
 		return nativeWindow{}, u, errNoWindow
 	}
-	var items []struct {
+	var raws []json.RawMessage
+	if json.Unmarshal(v.Output, &raws) != nil {
+		return nativeWindow{}, u, errNoWindow
+	}
+	// A window may retain the instructions it was given ahead of the summary.
+	// The next request supplies the current system message itself.
+	for len(raws) > 0 {
+		var lead struct{ Type, Role string }
+		if json.Unmarshal(raws[0], &lead) != nil || lead.Type != "message" && lead.Type != "" || lead.Role != "system" && lead.Role != "developer" {
+			break
+		}
+		raws = raws[1:]
+	}
+	items := make([]struct {
 		Type      string
 		Encrypted string `json:"encrypted_content"`
 		Role      string
-	}
-	if json.Unmarshal(v.Output, &items) != nil {
-		return nativeWindow{}, u, errNoWindow
+	}, len(raws))
+	for i, raw := range raws {
+		if json.Unmarshal(raw, &items[i]) != nil {
+			return nativeWindow{}, u, errNoWindow
+		}
 	}
 	found := false
 	for _, i := range items {
@@ -143,7 +185,11 @@ func responsesWindow(body []byte, object string) (nativeWindow, TokenUsage, erro
 	if !found {
 		return nativeWindow{}, u, errNoWindow
 	}
-	return nativeWindow{raw: v.Output}, u, nil
+	raw, err := json.Marshal(raws)
+	if err != nil {
+		return nativeWindow{}, u, errNoWindow
+	}
+	return nativeWindow{raw: raw}, u, nil
 }
 func (s *AnthropicStandard) compactBody(req *ChatRequest, directive string, extras map[string]any) (map[string]any, error) {
 	body, err := s.EncodeRequest(req)
@@ -216,7 +262,7 @@ func nativeMessage(p *Provider, model string, w nativeWindow, portable string, s
 	msg.ReplayScope = p.ReplayScope()
 	msg.ReplayPrefixHash = MessagePrefixHash([]ChatMessage{system})
 	msg.ReplaySourceModel = model
-	msg.ProviderItems = []Item{{Standard: p.ProtocolID(), Type: nativeWindowItem, Data: bytes.Clone(w.raw), ReplayScope: p.compactionScope(model), SourceModel: model, PrefixHash: msg.ReplayPrefixHash}}
+	msg.ProviderItems = []Item{{Standard: nativeStandard(p.Protocol()), Type: nativeWindowItem, Data: bytes.Clone(w.raw), ReplayScope: p.compactionScope(model), SourceModel: model, PrefixHash: msg.ReplayPrefixHash}}
 	return msg
 }
 func compactRejection(err error) bool {
@@ -300,7 +346,7 @@ func (p *Provider) RecoverNativeReplay(messages []ChatMessage, cause error) ([]C
 		return nil, false
 	}
 	for i, msg := range messages {
-		item := nativeItem(msg, p.ProtocolID())
+		item := nativeItem(msg, nativeStandard(p.Protocol()))
 		if item == nil || msg.ContentString() == "" {
 			continue
 		}

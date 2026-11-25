@@ -48,7 +48,7 @@ func (extractor *compactionExtractor) request(source []provider.ChatMessage, dir
 	instruction.Origin, instruction.Visibility = provider.OriginCompactionRequest, provider.VisibilityContextOnly
 	messages := append([]provider.ChatMessage{extractor.system}, source...)
 	messages = append(messages, extractor.common, instruction)
-	input := estimateCanonicalRequest(provider.FilterReplayMessages(messages, extractor.agent.Provider), nil, extractor.agent.Model)
+	input := estimateCanonicalRequest(provider.FilterReplayMessages(messages, extractor.agent.Provider), extractor.agent.extractionTools, extractor.agent.Model)
 	window := extractor.agent.Provider.ContextWindow(extractor.agent.Model)
 	// Each recursive source reduction gains its own response allowance; only a
 	// provider-confirmed output ceiling stays fixed across those requests.
@@ -72,7 +72,7 @@ func (extractor *compactionExtractor) request(source []provider.ChatMessage, dir
 		if input > extractor.inputBudget {
 			return extractor.partition(source, directive, depth)
 		}
-		completion, err := extractor.agent.completeStreamWithOptions(extractor.ctx, messages, nil, nil, nil, nil, nil, nil, nil, nil,
+		completion, err := extractor.agent.completeStreamWithOptions(extractor.ctx, messages, extractor.agent.extractionTools, nil, nil, nil, nil, nil, nil, nil,
 			completionRequestOptions{toolChoice: "none", maxOutputTokens: extractor.responseBudget, maxAttempts: 1, compaction: true})
 		// Preparation, subsequent reduction and fallback share one operation,
 		// but each billable request needs its own durable usage row.

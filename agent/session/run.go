@@ -877,7 +877,8 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		}
 		compactionCfg = effectiveCfg.CategoryConfig(CategoryErrand)
 		compactionProvider, compactionConfigErr = effectiveCfg.providerForCategory(compactionCfg)
-		if turnProvider.UsesNativeCompaction() {
+		// The serving model writes checkpoints when Errand cannot.
+		if turnProvider.CompactionMethod() != provider.CompactionErrandOnly {
 			return nil
 		}
 		return compactionConfigErr
@@ -1201,7 +1202,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		currentCompactionCfg := current.CategoryConfig(CategoryErrand)
 		currentCompactionProvider, err := current.providerForCategory(currentCompactionCfg)
 		ag.CompactionConfigError = err
-		if err != nil && !currentProvider.UsesNativeCompaction() {
+		if err != nil && currentProvider.CompactionMethod() == provider.CompactionErrandOnly {
 			return "", err
 		}
 		activeCfg = category

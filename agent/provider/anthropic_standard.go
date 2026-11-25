@@ -21,14 +21,15 @@ type AnthropicStandard struct{}
 
 func (s *AnthropicStandard) Info() ProtocolInfo {
 	return ProtocolInfo{
-		ID:          "anthropic",
-		Name:        "Anthropic Messages",
-		Description: "Native Claude Messages with signed thinking blocks.",
-		Root:        "/v1",
-		ChatPath:    "messages",
-		ModelsPath:  "models",
-		WebSearch:   WebSearchTool,
-		Streaming:   FramingSSE,
+		ID:             "anthropic",
+		Name:           "Anthropic Messages",
+		Description:    "Native Claude Messages with signed thinking blocks.",
+		Root:           "/v1",
+		ChatPath:       "messages",
+		ModelsPath:     "models",
+		WebSearch:      WebSearchTool,
+		Streaming:      FramingSSE,
+		ToolChoiceNone: true,
 		// "fast" is fast mode (the speed parameter), not a service tier.
 		Options: ProtocolOptions{NativeCompaction: "messages", ServiceTiers: []string{"auto", "standard_only", "fast"}},
 	}

@@ -43,7 +43,50 @@ func (x *compactExchange) send(ctx context.Context, path string, body []byte) ([
 		return nil, readStatusError(resp, c.dial.MaxResponseBytes)
 	}
 	defer resp.Body.Close()
-	return readBounded(resp.Body, c.dial.MaxResponseBytes)
+	data, err := readBounded(resp.Body, c.dial.MaxResponseBytes)
+	if err != nil || !strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
+		return data, err
+	}
+	return responsesStreamBody(data)
+}
+
+// responsesStreamBody rebuilds the final Responses object from a streamed
+// body, for a backend that only streams. Completed output items fill an
+// empty final output; an error event is an uncertain provider failure.
+func responsesStreamBody(data []byte) ([]byte, error) {
+	var final map[string]any
+	var items []any
+	for _, line := range strings.Split(string(data), "\n") {
+		payload, ok := strings.CutPrefix(strings.TrimRight(line, "\r"), "data:")
+		if !ok || strings.TrimSpace(payload) == "[DONE]" {
+			continue
+		}
+		var event struct {
+			Type     string
+			Item     any
+			Response map[string]any
+			Code     string
+			Message  string
+		}
+		if json.Unmarshal([]byte(strings.TrimSpace(payload)), &event) != nil {
+			return nil, errNoWindow
+		}
+		switch event.Type {
+		case "response.output_item.done":
+			items = append(items, event.Item)
+		case "response.completed", "response.incomplete", "response.failed":
+			final = event.Response
+		case "error":
+			return nil, &StatusError{StatusCode: http.StatusBadGateway, Message: event.Message, APICode: event.Code}
+		}
+	}
+	if final == nil {
+		return nil, errNoWindow
+	}
+	if output, _ := final["output"].([]any); len(output) == 0 {
+		final["output"] = items
+	}
+	return json.Marshal(final)
 }
 func (x *compactExchange) post(ctx context.Context, q *ChatRequest, directive, label string) (nativeWindow, error) {
 	var empty nativeWindow
@@ -88,6 +131,16 @@ func (x *compactExchange) follow(ctx context.Context, w nativeWindow, instructio
 	raw, err := c.encodeChatRequest(q)
 	if err != nil {
 		return "", err
+	}
+	// A backend that requires top-level instructions continues under the
+	// conversation's own system message rather than an invented one.
+	if wire, e := decodeJSONObject(raw); e == nil {
+		if v, ok := wire["instructions"].(string); ok && v == "" && len(r.Messages) > 0 && r.Messages[0].Role == "system" {
+			wire["instructions"] = r.Messages[0].ContentString()
+			if raw, err = json.Marshal(wire); err != nil {
+				return "", err
+			}
+		}
 	}
 	data, err := x.send(ctx, c.proto.Info().ChatPath, raw)
 	if err != nil {

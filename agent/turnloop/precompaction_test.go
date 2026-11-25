@@ -752,7 +752,7 @@ func TestOneLargeJumpDoesNotKeepTheAgentNearCapacity(t *testing.T) {
 	if plan := planner.evaluate(a, 80_000, 1_000, 100_000, 120_000, false); !plan.swap {
 		t.Fatalf("a 70K jump to 80K of 100K must count as near capacity: %+v", plan)
 	}
-	planner.learn(a, 80_000, 5_000, 20_000, provider.TokenUsage{})
+	planner.learn(a, 80_000, 5_000, 20_000, provider.TokenUsage{}, false)
 	if plan := planner.evaluate(a, 21_000, 1_000, 100_000, 120_000, false); plan.swap || plan.prepare {
 		t.Fatalf("after a checkpoint the old jump still forces compaction: %+v", plan)
 	}
