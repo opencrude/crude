@@ -20,6 +20,10 @@ BenchmarkBlit_80x24 0 0
 # Four warm 2,001-row children; no render clock invalidates settled rows.
 BenchmarkDenseChildPaneSync 0 0
 BenchmarkDenseChildPanePaint 14400 111
+# First sync and compact render over 100 Go diffs and 100 command results.
+BenchmarkDenseChildPaneUpdate/TextDelta 10400 71
+BenchmarkDenseChildPaneUpdate/ToolResult 272000 120
+BenchmarkDenseChildPaneUpdate/OffscreenToolResult 318000 197
 BenchmarkFillRectDenseSpans 8 0
 BenchmarkWriteString_Line 0 0
 # Every label passes the bidi check; right-to-left labels hit the arranged-line cache.

@@ -580,6 +580,7 @@ func (ml *messageLines) appendRichToolBody(msg conversation.ChatMessage, resultC
 	// Rows whose colors are still being lexed repaint on the next activity
 	// phase, like an animating row, and stop once the colors arrive.
 	ml.frameSensitive = ml.frameSensitive || syntaxPending
+	ml.syntaxPending = syntaxPending
 	if len(diffRows) > 0 {
 		for _, pl := range diffRows {
 			ml.lines = append(ml.lines, pl.PlainText())

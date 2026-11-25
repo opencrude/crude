@@ -30,13 +30,8 @@ type subPaneProjection struct {
 	// scrollbar/cursor state; this projection does.
 	scroll *ui.ScrollModel
 
-	// Compact titles retain source/geometry caches; only active dots depend on phase.
-	compactToolLines  []chatprojection.SubPaneLine
-	compactCacheWidth int
-	compactMsgVersion uint64
-	compactMsgCount   int
-	compactAlternates map[int]chatprojection.SubPaneLine
-	compactPhase      bool
+	// Visible scratch only. The renderer owns all per-message variants.
+	compactToolLines []chatprojection.SubPaneLine
 	// expanded mirrors the parent chat block's disclosure state so completed
 	// panes retain their scrollbar when reopened.
 	expanded bool
@@ -45,11 +40,6 @@ type subPaneProjection struct {
 	// A local thought renderer is a filtered projection of a canonical agent
 	// conversation; generic embedded sync must not replace it with all messages.
 	localThinking bool
-}
-
-func (p *subPaneProjection) invalidateCompactTools() {
-	p.compactToolLines, p.compactAlternates = nil, nil
-	p.compactCacheWidth = 0 // valid compact widths are at least ten columns
 }
 
 // subPaneProjectionRegistry owns the per-pane projections and the
@@ -105,7 +95,6 @@ func (reg *subPaneProjectionRegistry) SetTheme(th *theme.Theme) {
 	for _, p := range reg.projections {
 		if p != nil && p.renderer != nil {
 			p.renderer.SetTheme(th)
-			p.invalidateCompactTools()
 		}
 	}
 }
@@ -182,7 +171,6 @@ func (reg *subPaneProjectionRegistry) SetProjectRoot(root string) {
 	}
 	for _, p := range reg.projections {
 		p.renderer.SetProjectRoot(root)
-		p.invalidateCompactTools()
 	}
 }
 
@@ -193,7 +181,6 @@ func (reg *subPaneProjectionRegistry) InvalidateWidthProfile() {
 	for _, projection := range reg.projections {
 		if projection != nil && projection.renderer != nil {
 			projection.renderer.InvalidateWidthProfile()
-			projection.invalidateCompactTools()
 		}
 	}
 }
@@ -284,7 +271,6 @@ func (reg *subPaneProjectionRegistry) InvalidateAllMessages(paneID string) {
 	}
 	if p, ok := reg.projections[paneID]; ok {
 		p.renderer.InvalidateAllMessages()
-		p.invalidateCompactTools()
 	}
 }
 
@@ -303,13 +289,14 @@ func (reg *subPaneProjectionRegistry) SyncFromWorkspace(paneID string, conversat
 	if p.source == conversation && p.renderer.SourceVersion() == conversation.Version() && p.renderer.SourceGeneration() == conversation.SourceGeneration() {
 		return
 	}
+	clear(p.compactToolLines)
+	p.compactToolLines = p.compactToolLines[:0]
 	if p.source != nil && (p.source != conversation || p.renderer.SourceGeneration() != conversation.SourceGeneration()) {
 		// The ID or revision can be reused by a replacement source. A fresh
 		// model fences captured gestures/anchors to the old source's lifetime.
 		p.scroll = ui.NewScrollModel()
 		p.scroll.SetAutoScroll(true)
 		p.renderer.BindPaneScroll(p.scroll)
-		p.invalidateCompactTools()
 	}
 	if p.source != conversation || !syncConversationChanges(p.renderer, conversation) {
 		messages, version := chatMessagesFromConversation(conversation)
@@ -549,29 +536,14 @@ func (reg *subPaneProjectionRegistry) Render(paneID string, sp *workspace.SubPan
 func (reg *subPaneProjectionRegistry) renderAgentCompact(paneID string, sp *workspace.SubPane, view workspace.SubPaneView, width, maxH, spinFrame int, expanded bool) []chatprojection.SubPaneLine {
 	p := reg.Get(paneID, sp.Type)
 
-	msgs := p.renderer.Messages()
-	msgVersion := p.renderer.Version()
-	phase := ui.BlinkOn(spinFrame)
-	if p.compactMsgVersion != msgVersion || p.compactMsgCount != len(msgs) || p.compactCacheWidth != width {
-		p.compactToolLines, p.compactAlternates = p.renderer.BuildSubPaneToolVariants(width, spinFrame)
-		p.compactPhase = phase
-		p.compactMsgVersion = msgVersion
-		p.compactMsgCount = len(msgs)
-		p.compactCacheWidth = width
-	} else if p.compactPhase != phase {
-		for i, other := range p.compactAlternates {
-			p.compactToolLines[i], p.compactAlternates[i] = other, p.compactToolLines[i]
-		}
-		p.compactPhase = phase
-	}
-	allToolLines := p.compactToolLines
+	rows := p.renderer.CompactRows(width)
 
 	visibleH := maxH - 1
 	if visibleH < 1 {
 		visibleH = 1
 	}
 
-	contentH := len(allToolLines)
+	contentH := rows.Height()
 	p.scroll.SetContent(contentH)
 	p.scroll.SetViewport(visibleH)
 	if p.scroll.AutoScroll() {
@@ -580,18 +552,15 @@ func (reg *subPaneProjectionRegistry) renderAgentCompact(paneID string, sp *work
 		p.scroll.Clamp()
 	}
 
-	var toolLines []chatprojection.SubPaneLine
-	if len(allToolLines) == 0 {
+	clear(p.compactToolLines)
+	toolLines := p.compactToolLines[:0]
+	if contentH == 0 {
 		thinking := p.renderer.ActiveThinkingLineCount(width) > 0
 		toolLines = append(toolLines, chatprojection.BuildCompactWorkingLine(thinking, width))
 	} else {
-		start := p.scroll.Offset()
-		end := start + visibleH
-		if end > len(allToolLines) {
-			end = len(allToolLines)
-		}
-		toolLines = allToolLines[start:end]
+		toolLines = rows.AppendVisible(toolLines, p.scroll.Offset(), visibleH, spinFrame)
 	}
+	p.compactToolLines = toolLines
 
 	headerLine := chatprojection.BuildSubPaneHeaderLine(view.Header, width, spinFrame)
 	headerLine.PaneInfo = chatprojection.PaneLineInfo{PaneID: paneID, LineIdx: -1}

@@ -1,10 +1,12 @@
 package chatprojection
 
 import (
+	"sort"
 	"strings"
 
 	"crude/tui/cell"
 	"crude/tui/rendering"
+	"crude/tui/tools"
 	"crude/tui/ui"
 	"crude/types/conversation"
 	"crude/workspace"
@@ -169,48 +171,231 @@ func (r *Renderer) BuildSubPaneToolLines(messages []*conversation.ChatMessage, w
 			continue
 		}
 		active = active || toolRowFrameSensitive(*msg)
-		lines = r.appendSubPaneToolLines(lines, msg, width, frame)
+		lines, _ = r.appendSubPaneToolLines(lines, msg, width, frame, r.disclosureState(msg))
 	}
 	return lines, active
 }
 
-// BuildSubPaneToolVariants projects the compact pane at one animation phase.
-// Only the cells of active rows can differ at the opposite phase. The shared
-// activity glyph reserves the same columns for both shapes, so row positions
-// are unchanged. Settled rows have a single representation.
-func (r *Renderer) BuildSubPaneToolVariants(width, frame int) ([]SubPaneLine, map[int]SubPaneLine) {
-	var lines, animated []SubPaneLine
-	var alternate map[int]SubPaneLine
-	for _, msg := range r.Messages() {
-		if msg.Role != conversation.RoleTool || msg.ToolName == "" {
-			continue
-		}
-		start := len(lines)
-		lines = r.appendSubPaneToolLines(lines, msg, width, frame)
-		if !toolRowFrameSensitive(*msg) {
-			continue
-		}
-		animated = r.appendSubPaneToolLines(animated[:0], msg, width, frame+ui.ActivityBlinkPhaseMillis)
-		for i, line := range animated {
-			if line.Text == lines[start+i].Text {
-				continue
-			}
-			if alternate == nil {
-				alternate = make(map[int]SubPaneLine)
-			}
-			alternate[start+i] = line
-		}
-	}
-	return lines, alternate
+// CompactToolRows retains the measured compact tool blocks of one renderer.
+// Sync invalidates by message ID, even if several updates precede the paint.
+// A completed or hidden pane does not prepare new rows until it is opened.
+type CompactToolRows struct {
+	width, height int
+	byID          map[string]*compactToolBlock
+	ordered       []*compactToolBlock
+	dirty         []*compactToolBlock
+	pendingSyntax map[*compactToolBlock]bool
+	// Prefix offsets before layoutFrom are still valid.
+	layoutFrom int
 }
 
-func (r *Renderer) appendSubPaneToolLines(lines []SubPaneLine, msg *conversation.ChatMessage, width, frame int) []SubPaneLine {
-	body := renderProjectToolMessageLines(*msg, nil, width-toolBodyGutterWidth, width, width, frame, 12,
-		msg.ToolPreviewPhase, r.disclosureState(msg), r.projectPaths)
-	for _, line := range body.native {
-		lines = append(lines, NativeLine(padPaintLine(line, width)))
+type compactToolBlock struct {
+	id           string
+	index, start int
+	lines        []SubPaneLine
+	alternate    map[int]SubPaneLine
+	disclosure   DisclosureState
+	planSource   bool // this row can affect another plan row's default disclosure
+	dirty        bool
+}
+
+func compactTool(msg *conversation.ChatMessage) bool {
+	return msg != nil && msg.Role == conversation.RoleTool && msg.ToolName != ""
+}
+
+func (c *CompactToolRows) appendBlock(msg *conversation.ChatMessage, block *compactToolBlock) {
+	if block == nil {
+		block = &compactToolBlock{id: msg.InternalID}
+		c.invalidate(block)
 	}
-	return lines
+	block.index = len(c.ordered)
+	c.ordered = append(c.ordered, block)
+	c.byID[msg.InternalID] = block
+}
+
+func (c *CompactToolRows) invalidate(block *compactToolBlock) {
+	if block != nil && !block.dirty {
+		block.dirty = true
+		c.dirty = append(c.dirty, block)
+	}
+}
+
+// Reuse surviving identities on removals, reorder, or a change of role.
+// Drop removed rows now, rather than waiting for another render.
+func (c *CompactToolRows) reorder(messages []*conversation.ChatMessage) {
+	previous := c.byID
+	c.byID = make(map[string]*compactToolBlock, len(previous))
+	clear(c.ordered)
+	c.ordered = c.ordered[:0]
+	for _, msg := range messages {
+		if compactTool(msg) {
+			c.appendBlock(msg, previous[msg.InternalID])
+		}
+	}
+	kept := c.dirty[:0]
+	for _, block := range c.dirty {
+		if c.byID[block.id] == block {
+			kept = append(kept, block)
+		}
+	}
+	clear(c.dirty[len(kept):])
+	c.dirty = kept
+	for block := range c.pendingSyntax {
+		if c.byID[block.id] != block {
+			delete(c.pendingSyntax, block)
+		}
+	}
+	c.layoutFrom = 0
+}
+
+func (r *Renderer) syncCompactTools(result SyncResult) {
+	c := r.compact
+	if c == nil {
+		return
+	}
+	reorder := result.StructureChanged && !result.PureAppend
+	if result.StructureChanged && result.PureAppend {
+		for _, msg := range r.Messages()[result.PreviousLen:] {
+			if compactTool(msg) {
+				c.appendBlock(msg, nil)
+			}
+		}
+	}
+	checkPlans := reorder
+	for _, id := range result.ChangedIDs {
+		msg, block := r.MessageByID(id), c.byID[id]
+		if compactTool(msg) != (block != nil) {
+			reorder = true
+		}
+		if block != nil {
+			c.invalidate(block)
+			checkPlans = checkPlans || block.planSource
+		}
+		if compactTool(msg) && (tools.IsPlanTool(msg.ToolName) || msg.ToolName == "multi_tool_use.parallel") {
+			checkPlans = true
+		}
+	}
+	if reorder {
+		c.reorder(r.Messages())
+	}
+	// A newer (possibly batched) plan can supersede an unchanged plan row.
+	// Ordinary tool updates and streamed text never visit unrelated blocks.
+	if checkPlans {
+		for id, block := range c.byID {
+			if !block.dirty && block.planSource {
+				if msg := r.MessageByID(id); tools.IsPlanTool(msg.ToolName) && block.disclosure != r.disclosureState(msg) {
+					c.invalidate(block)
+				}
+			}
+		}
+	}
+}
+
+// CompactRows returns measured rows at this width for a compact child viewport.
+func (r *Renderer) CompactRows(width int) *CompactToolRows {
+	c := r.compact
+	if c == nil || c.width != width {
+		c = &CompactToolRows{width: width}
+		c.reorder(r.Messages())
+		r.compact = c
+	}
+	if len(c.pendingSyntax) != 0 && !DiffSyntaxBusy() {
+		for block := range c.pendingSyntax {
+			c.invalidate(block)
+		}
+	}
+	for _, block := range c.dirty {
+		msg := r.MessageByID(block.id)
+		block.disclosure = r.disclosureState(msg)
+		block.planSource = tools.IsPlanTool(msg.ToolName) || msg.ToolName == "multi_tool_use.parallel"
+		previousHeight := len(block.lines)
+		var pending bool
+		block.lines, pending = r.appendSubPaneToolLines(nil, msg, width, 0, block.disclosure)
+		if pending {
+			if c.pendingSyntax == nil {
+				c.pendingSyntax = make(map[*compactToolBlock]bool)
+			}
+			c.pendingSyntax[block] = true
+		} else {
+			delete(c.pendingSyntax, block)
+		}
+		block.alternate = nil
+		if toolRowFrameSensitive(*msg) {
+			animated, _ := r.appendSubPaneToolLines(nil, msg, width, ui.ActivityBlinkPhaseMillis, block.disclosure)
+			for i, other := range animated {
+				if other.Text != block.lines[i].Text {
+					if block.alternate == nil {
+						block.alternate = make(map[int]SubPaneLine)
+					}
+					block.alternate[i] = other
+				}
+			}
+		}
+		if len(block.lines) != previousHeight {
+			c.layoutFrom = min(c.layoutFrom, block.index)
+		}
+		block.dirty = false
+	}
+	clear(c.dirty)
+	c.dirty = c.dirty[:0]
+	if c.layoutFrom < len(c.ordered) || len(c.ordered) == 0 {
+		c.height = 0
+		if c.layoutFrom > 0 {
+			prev := c.ordered[c.layoutFrom-1]
+			c.height = prev.start + len(prev.lines)
+		}
+		for _, block := range c.ordered[c.layoutFrom:] {
+			block.start = c.height
+			c.height += len(block.lines)
+		}
+		c.layoutFrom = len(c.ordered)
+	}
+	return c
+}
+
+// Height returns the scroll extent in compact tool rows.
+func (c *CompactToolRows) Height() int { return c.height }
+
+// AppendVisible appends only the requested range, selecting alternate ink
+// for visible animated rows without modifying previously returned frames.
+func (c *CompactToolRows) AppendVisible(dst []SubPaneLine, start, height, frame int) []SubPaneLine {
+	start = max(0, start)
+	if height <= 0 || start >= c.height {
+		return dst
+	}
+	index := sort.Search(len(c.ordered), func(i int) bool {
+		block := c.ordered[i]
+		return block.start+len(block.lines) > start
+	})
+	end := start + min(height, c.height-start)
+	on := ui.BlinkOn(frame)
+	for _, block := range c.ordered[index:] {
+		if start >= end {
+			break
+		}
+		for i := start - block.start; i < len(block.lines) && start < end; i++ {
+			line := block.lines[i]
+			if !on && block.alternate != nil {
+				if other, ok := block.alternate[i]; ok {
+					line = other
+				}
+			}
+			dst = append(dst, line)
+			start++
+		}
+	}
+	return dst
+}
+
+func (r *Renderer) appendSubPaneToolLines(lines []SubPaneLine, msg *conversation.ChatMessage, width, frame int, disclosure DisclosureState) ([]SubPaneLine, bool) {
+	body := renderProjectToolMessageLines(*msg, nil, width-toolBodyGutterWidth, width, width, frame, 12,
+		msg.ToolPreviewPhase, disclosure, r.projectPaths)
+	for _, line := range body.native {
+		row := NativeLine(padPaintLine(line, width))
+		row.FrameSensitive = body.syntaxPending
+		lines = append(lines, row)
+	}
+	return lines, body.syntaxPending
 }
 
 // BuildCompactWorkingLine builds the placeholder when a compact pane has no tools yet.

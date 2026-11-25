@@ -161,6 +161,8 @@ run_bench '^Benchmark(ProjectInsightsCached10kDiagnostics|UsageSummaryCached1000
 run_bench 'Benchmark(IdleTick|IdlePresentedFrame|AnimatedPresentedFrame|TickHiddenNotices|TabRederive|PointerMotionCoalesced|AgentSwitchWarm|SidebarResizePresentedFrame_500Msgs|SidebarResizeMutation_500Msgs|DenseChatSingleRowChange_500Msgs|DenseChatWidthCommit_500HeavyMsgs)' ./tui/viewmodel
 run_bench '^BenchmarkMainPane$' ./tui/viewmodel
 run_bench '^BenchmarkDenseChildPane(Sync|Paint)$' ./tui/viewmodel
+# Reset the live call outside each timed settlement, at a fixed history size.
+BENCHTIME=10x run_bench '^BenchmarkDenseChildPaneUpdate$' ./tui/viewmodel
 
 if [[ $fail -ne 0 ]]; then
   echo "== BENCH GATE FAILED =="

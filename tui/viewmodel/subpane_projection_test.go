@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -193,12 +194,15 @@ func scrollMax(s *ui.ScrollModel) int {
 	return s.MaxOffset()
 }
 
-// TestSubPaneProjectionToolLineCacheInvalidation verifies that a version
-// bump invalidates the compact tool-line cache.
+// TestSubPaneProjectionToolLineCacheInvalidation verifies the painted result
+// of appending tools to a warm compact pane.
 func TestSubPaneProjectionToolLineCacheInvalidation(t *testing.T) {
 	app := newFullTestApp(t)
 	sp := app.ws.PaneMgr().Ensure("cache-1", workspace.PaneAgent, "agent")
 	app.subPaneProjections.Get("cache-1", workspace.PaneAgent)
+	sp.Messages.AppendMessage(conversation.Message{Role: conversation.RoleAssistant, Content: "Starting"})
+	app.syncPaneMessages("cache-1", false)
+	app.subPaneProjections.Render("cache-1", sp, 30, 5, 0, true)
 	sp.Messages.AppendMessage(conversation.Message{
 		Role:             conversation.RoleTool,
 		ToolName:         "read_file",
@@ -208,13 +212,9 @@ func TestSubPaneProjectionToolLineCacheInvalidation(t *testing.T) {
 		Time:             time.Now(),
 	})
 	app.syncPaneMessages("cache-1", false)
-	// First render populates the cache.
-	app.subPaneProjections.Render("cache-1", sp, 30, 5, 0, true)
-	proj := app.subPaneProjections.Existing("cache-1")
-	cachedVersion := proj.compactMsgVersion
-	cachedCount := proj.compactMsgCount
-	if cachedCount != 1 {
-		t.Fatalf("expected cached count 1, got %d", cachedCount)
+	first := app.subPaneProjections.Render("cache-1", sp, 30, 5, 0, true)
+	if len(first) != 2 || !subPanePlainContains(first[1:], "Read first.go") {
+		t.Error("first tool did not replace the working row")
 	}
 	// Append another tool message; sync bumps the MessageList version.
 	sp.Messages.AppendMessage(conversation.Message{
@@ -226,12 +226,12 @@ func TestSubPaneProjectionToolLineCacheInvalidation(t *testing.T) {
 		Time:             time.Now(),
 	})
 	app.syncPaneMessages("cache-1", false)
-	app.subPaneProjections.Render("cache-1", sp, 30, 5, 0, true)
-	if proj.compactMsgVersion == cachedVersion {
-		t.Fatal("compact cache version did not bump after sync")
+	next := app.subPaneProjections.Render("cache-1", sp, 30, 5, 0, true)
+	if !subPanePlainContains(next[1:], "second.go") {
+		t.Error("appended tool did not appear in the compact pane")
 	}
-	if proj.compactMsgCount != 2 {
-		t.Fatalf("expected cached count 2 after sync, got %d", proj.compactMsgCount)
+	if len(next) != 3 || next[1].Native != first[1].Native {
+		t.Error("expected both tools in order with the original first row")
 	}
 }
 
@@ -440,7 +440,7 @@ func TestSubPaneEmbeddingOwnersRetainIndependentPresentation(t *testing.T) {
 	if left.ScrollModel(sp.ID) == right.ScrollModel(sp.ID) || left.Existing(sp.ID).renderer == canonical.renderer {
 		t.Fatal("embedding projection shares canonical or other owner's presentation")
 	}
-	if leftScroll.Viewport() != 2 || leftScroll.Offset() != 0 || left.Existing(sp.ID).compactCacheWidth != 30 {
+	if leftScroll.Viewport() != 2 || leftScroll.Offset() != 0 || left.Render(sp.ID, sp, 30, 3, 0, true)[1].Native != before[1].Native {
 		t.Fatal("other owner overwrote left geometry, offset or cache")
 	}
 	if !subPanePlainContains(before, "Read a.go") || subPanePlainContains(before, "Read h.go") {
@@ -448,6 +448,12 @@ func TestSubPaneEmbeddingOwnersRetainIndependentPresentation(t *testing.T) {
 	}
 	if !subPanePlainContains(right.Render(sp.ID, sp, 70, 6, 0, true), "Read h.go") {
 		t.Fatal("right did not retain independent bottom window")
+	}
+	fresh := newSubPaneProjectionRegistry(app.Theme).ForOwner("fresh")
+	fresh.Get(sp.ID, sp.Type).scroll.SetAutoScroll(false)
+	resized := left.Render(sp.ID, sp, 42, 3, 0, true)
+	if want := fresh.Render(sp.ID, sp, 42, 3, 0, true); !reflect.DeepEqual(resized[1:], want[1:]) {
+		t.Fatal("resized child viewport does not paint the fresh rows at width 42")
 	}
 	version := left.Existing(sp.ID).renderer.Version()
 	left.Render(sp.ID, sp, 30, 3, 0, true)
