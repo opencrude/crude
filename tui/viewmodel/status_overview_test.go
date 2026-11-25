@@ -2,37 +2,24 @@ package viewmodel
 
 import (
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/internal/providersim"
 	"crude/tui/screens/statusoverview"
 	"crude/tui/screens/termdock"
 	"crude/types/statuscenter"
 )
 
 func TestConnectedCacheHeaderAndUsageDistinguishMissFromNoReport(t *testing.T) {
-	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		call := calls.Add(1)
-		var usage string
-		switch call {
-		case 1:
-			usage = `{"prompt_tokens":4096,"completion_tokens":1,"prompt_tokens_details":{"cached_tokens":4000,"cache_write_tokens":50}}`
-		case 2:
-			usage = `{"prompt_tokens":1024,"completion_tokens":1,"prompt_tokens_details":{"cached_tokens":0}}`
-		default:
-			usage = `{"prompt_tokens":1024,"completion_tokens":1,"completion_tokens_details":{"reasoning_tokens":0}}`
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Cache check %d\"},\"finish_reason\":\"stop\"}]}\n\ndata: {\"choices\":[],\"usage\":%s}\n\ndata: [DONE]\n\n", call, usage)
-	}))
-	defer server.Close()
-	runtime := remoteJourneyRuntime(t, server.URL)
+	server := simulatedChat(t,
+		providersim.Text("Cache check 1").WithUsage(providersim.Usage{Input: 4096, Output: 1, Cached: 4000, CacheWrite: 50}),
+		providersim.Text("Cache check 2").WithUsage(providersim.Usage{Input: 1024, Output: 1}),
+		providersim.Text("Cache check 3").WithUsage(providersim.Usage{Input: 1024, Output: 1, OmitCacheRead: true}),
+	)
+	runtime := remoteJourneyRuntime(t, server.BaseURL(providersim.Chat))
 	root := t.TempDir()
 	shell := newRemoteJourneyShell(t, runtime, root)
 	id := remoteJourneyCreate(t, shell)

@@ -3,16 +3,12 @@ package workspace
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -21,25 +17,18 @@ import (
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
 	"crude/agent/tools"
+	"crude/internal/providersim"
 	"crude/types/command"
 	"crude/types/setting"
 )
 
 func TestWorkspacePeerMessageWakesExactIdleAgentWithoutPolling(t *testing.T) {
-	peerRequest := make(chan []provider.ChatMessage, 4)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request struct {
-			Messages []provider.ChatMessage `json:"messages"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Errorf("decode provider request: %v", err)
-			return
-		}
-		peerRequest <- request.Messages
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"peer request handled\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	defer server.Close()
+	peerRequest := make(chan providersim.Conversation, 4)
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
+		peerRequest <- request.Conversation
+		return providersim.Text("peer request handled")
+	})
 
 	home, project := t.TempDir(), t.TempDir()
 	t.Setenv("HOME", home)
@@ -47,7 +36,7 @@ func TestWorkspacePeerMessageWakesExactIdleAgentWithoutPolling(t *testing.T) {
 	workspace := NewWorkspace(project, "model", "user", setting.Settings{}, &testLogger{})
 	defer workspace.Close()
 	workspace.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}})
-	cfg := historyE2EConfig(server.URL)
+	cfg := historyE2EConfig(server.BaseURL(providersim.Chat))
 
 	first, err := workspace.CreateSession(cfg, home)
 	if err != nil {
@@ -85,17 +74,17 @@ func TestWorkspacePeerMessageWakesExactIdleAgentWithoutPolling(t *testing.T) {
 	waitHistoryAgentDone(t, secondSender, secondRoot.ID)
 
 	select {
-	case messages := <-peerRequest:
+	case dialog := <-peerRequest:
 		found := false
-		for _, message := range messages {
-			if strings.Contains(message.ContentString(), `origin="peer"`) &&
-				strings.Contains(message.ContentString(), published.Event.ID) &&
-				strings.Contains(message.ContentString(), "Review the workspace parser.") {
+		for _, text := range simConversationTexts(dialog) {
+			if strings.Contains(text, `origin="peer"`) &&
+				strings.Contains(text, published.Event.ID) &&
+				strings.Contains(text, "Review the workspace parser.") {
 				found = true
 			}
 		}
 		if !found {
-			t.Fatalf("provider request did not contain attributed peer event: %+v", messages)
+			t.Fatalf("provider request did not contain attributed peer event: %+v", dialog)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("provider did not receive the automatic peer turn")
@@ -123,50 +112,34 @@ func TestWorkspacePeerMessageWakesExactIdleAgentWithoutPolling(t *testing.T) {
 func TestWorkspaceHumanSteeringTargetsExactActiveRun(t *testing.T) {
 	const memoryModel = "steering-memory-fixture"
 	var requests atomic.Int32
-	firstStarted := make(chan struct{}, 1)
-	releaseFirst := make(chan struct{})
-	secondRequest := make(chan []provider.ChatMessage, 1)
+	firstGate := providersim.NewGate()
+	defer firstGate.Release()
+	secondRequest := make(chan providersim.Conversation, 1)
 	memoryRequest := make(chan struct{}, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request struct {
-			Model    string                 `json:"model"`
-			Messages []provider.ChatMessage `json:"messages"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Errorf("decode provider request: %v", err)
-			return
-		}
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
 		if request.Model == memoryModel {
 			select {
 			case memoryRequest <- struct{}{}:
 			default:
 			}
-			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"{\\\"memories\\\":[]}\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-			return
+			return providersim.Text(`{"memories":[]}`)
 		}
 		if request.Model != "history-model" {
 			t.Errorf("unexpected provider request for model %q", request.Model)
-			http.Error(w, "unexpected model", http.StatusBadRequest)
-			return
+			return providersim.Turn{}
 		}
 		if requests.Add(1) == 1 {
-			firstStarted <- struct{}{}
-			<-releaseFirst
-			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"initial response\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-			return
+			return providersim.Text("initial response").WithGate(firstGate)
 		}
 		select {
-		case secondRequest <- request.Messages:
+		case secondRequest <- request.Conversation:
 		default:
 			// An unexpected extra root request must be reported by the
 			// assertion below, not block its provider handler indefinitely.
 		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"steering applied\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	defer server.Close()
+		return providersim.Text("steering applied")
+	})
 
 	home, project := t.TempDir(), t.TempDir()
 	t.Setenv("HOME", home)
@@ -174,7 +147,7 @@ func TestWorkspaceHumanSteeringTargetsExactActiveRun(t *testing.T) {
 	workspace := NewWorkspace(project, "model", "user", setting.Settings{}, &testLogger{})
 	defer workspace.Close()
 	workspace.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}})
-	cfg := historyE2EConfig(server.URL)
+	cfg := historyE2EConfig(server.BaseURL(providersim.Chat))
 	// Force real background extraction to overlap the assertions. Memory
 	// normally inherits the main model, so counting every provider request
 	// as an agent turn made this test fail when maintenance ran.
@@ -194,10 +167,10 @@ func TestWorkspaceHumanSteeringTargetsExactActiveRun(t *testing.T) {
 	if !frontend.backend.SubmitInput(root.ID, provider.PlainInput("begin work")) {
 		t.Fatal("initial turn was not admitted")
 	}
-	select {
-	case <-firstStarted:
-	case <-time.After(2 * time.Second):
-		t.Fatal("initial provider request did not start")
+	firstWait, cancelFirstWait := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancelFirstWait()
+	if err := firstGate.Wait(firstWait); err != nil {
+		t.Fatal("initial provider request did not start", err)
 	}
 
 	steering := provider.InputWithRefs("prioritize the parser edge case", nil)
@@ -212,7 +185,7 @@ func TestWorkspaceHumanSteeringTargetsExactActiveRun(t *testing.T) {
 		t.Fatalf("human steering journal = %+v, %v", page, err)
 	}
 	steeringEvent := page.Events[0]
-	close(releaseFirst)
+	firstGate.Release()
 	waitHistoryAgentDone(t, sender, root.ID)
 	select {
 	case <-memoryRequest:
@@ -220,15 +193,14 @@ func TestWorkspaceHumanSteeringTargetsExactActiveRun(t *testing.T) {
 		t.Fatal("background memory extraction did not reach its provider")
 	}
 
-	var requestMessages []provider.ChatMessage
+	var dialog providersim.Conversation
 	select {
-	case requestMessages = <-secondRequest:
+	case dialog = <-secondRequest:
 	case <-time.After(2 * time.Second):
 		t.Fatal("human steering did not trigger a safe-boundary continuation")
 	}
 	found := false
-	for _, message := range requestMessages {
-		content := message.ContentString()
+	for _, content := range simConversationTexts(dialog) {
 		if strings.Contains(content, `origin="human"`) &&
 			strings.Contains(content, `kind="human_steering"`) &&
 			strings.Contains(content, steeringEvent.ID) &&
@@ -238,14 +210,12 @@ func TestWorkspaceHumanSteeringTargetsExactActiveRun(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("second request lacked attributed human steering: %+v", requestMessages)
+		t.Fatalf("second request lacked attributed human steering: %+v", dialog)
 	}
 	for _, expected := range []string{"begin work", "initial response", "prioritize the parser edge case"} {
 		count := 0
-		for _, message := range requestMessages {
-			if message.Role != "system" {
-				count += strings.Count(message.ContentString(), expected)
-			}
+		for _, message := range dialog.Messages {
+			count += strings.Count(simMessageText(message), expected)
 		}
 		if count != 1 {
 			t.Fatalf("next provider request contains %q %d times, want once", expected, count)
@@ -305,59 +275,48 @@ func TestWorkspaceAgentsCollaborateToRepairAndVerifyProject(t *testing.T) {
 	}
 	const verify = "go test -count=1 ./..."
 	const verifyTimeout = 20 * time.Second // stay below synchronous command promotion
-	checkResult := func(messages []provider.ChatMessage, callID string) {
+	checkResult := func(messages []providersim.Message, callID string) {
 		for _, msg := range messages {
-			if msg.Role != "tool" || msg.ToolCallID != callID {
+			if msg.Role != "tool" {
 				continue
 			}
-			result, ok := tools.ParseCommandResult("execute_command", msg.ContentString())
-			fields := strings.Fields(result.Output)
-			if !ok || result.Command != verify || result.OutputDescriptor.Status != command.Completed || result.ExitCode == nil || *result.ExitCode != 0 ||
-				len(fields) < 2 || fields[0] != "ok" || fields[1] != "collaborationproof" {
-				t.Errorf("%s did not return a passing project test: %s", callID, msg.ContentString())
+			for _, part := range msg.Parts {
+				if part.Kind != providersim.PartToolResult || part.CallID != callID {
+					continue
+				}
+				result, ok := tools.ParseCommandResult("execute_command", part.Text)
+				fields := strings.Fields(result.Output)
+				if !ok || result.Command != verify || result.OutputDescriptor.Status != command.Completed || result.ExitCode == nil || *result.ExitCode != 0 ||
+					len(fields) < 2 || fields[0] != "ok" || fields[1] != "collaborationproof" {
+					t.Errorf("%s did not return a passing project test: %s", callID, part.Text)
+				}
+				return
 			}
-			return
 		}
 		t.Errorf("provider did not receive the verification result for %s", callID)
 	}
 
 	var coordinatorID, implementerID atomic.Value
 	var coordinatorRequests, implementerRequests atomic.Int32
-	reportPublished := make(chan struct{})
-	var reportOnce sync.Once
-	writeTool := func(writer http.ResponseWriter, id, name string, arguments map[string]any) {
+	reportPublished := providersim.NewGate()
+	defer reportPublished.Release()
+	toolTurn := func(id, name string, arguments map[string]any) providersim.Turn {
 		encoded, _ := json.Marshal(arguments)
-		writer.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprintf(writer, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":%q,\"type\":\"function\",\"function\":{\"name\":%q,\"arguments\":%q}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", id, name, string(encoded))
+		return providersim.CallTools(providersim.ToolCall{ID: id, Name: name, Arguments: string(encoded)})
 	}
-	runVerification := func(writer http.ResponseWriter, id string) {
-		writeTool(writer, id, "execute_command", map[string]any{
+	runVerification := func(id string) providersim.Turn {
+		return toolTurn(id, "execute_command", map[string]any{
 			"command": verify, "cwd": project, "timeout_seconds": int(verifyTimeout / time.Second),
 		})
 	}
-	writeText := func(writer http.ResponseWriter, text string) {
-		writer.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprintf(writer, "data: {\"choices\":[{\"delta\":{\"content\":%q},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n", text)
-	}
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		var body struct {
-			Messages []provider.ChatMessage `json:"messages"`
-		}
-		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
-			t.Errorf("decode provider request: %v", err)
-			return
-		}
-		var transcript strings.Builder
-		for _, message := range body.Messages {
-			transcript.WriteString(message.ContentString())
-			transcript.WriteByte('\n')
-		}
-		text := transcript.String()
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
+		text := strings.Join(simConversationTexts(request.Conversation), "\n")
 		switch {
 		case strings.Contains(text, "Coordinate the Sum repair through workspace collaboration."):
 			switch coordinatorRequests.Add(1) {
 			case 1:
-				writeTool(writer, "send-work", "agent_send", map[string]any{
+				return toolTurn("send-work", "agent_send", map[string]any{
 					"recipient_ids":    []string{implementerID.Load().(string)},
 					"kind":             "request",
 					"request_id":       "repair-sum",
@@ -365,12 +324,7 @@ func TestWorkspaceAgentsCollaborateToRepairAndVerifyProject(t *testing.T) {
 					"body":             "Implement Sum in sum.go so the existing test passes. Publish a final report when verified.",
 				})
 			case 2:
-				select {
-				case <-reportPublished:
-				case <-request.Context().Done():
-					return
-				}
-				writeTool(writer, "safe-boundary", "get_plan", map[string]any{})
+				return toolTurn("safe-boundary", "get_plan", map[string]any{}).WithGate(reportPublished)
 			case 3:
 				if !strings.Contains(text, `kind="report_published"`) ||
 					!strings.Contains(text, "Sum implementation complete") {
@@ -379,44 +333,43 @@ func TestWorkspaceAgentsCollaborateToRepairAndVerifyProject(t *testing.T) {
 				reference := regexp.MustCompile(`<reference kind="report" id="([^"]+)" revision="([0-9]+)"/>`).FindStringSubmatch(text)
 				if len(reference) != 3 {
 					t.Errorf("automatic report has no exact readable artifact reference")
-					writeText(writer, "missing report reference")
-					return
+					return providersim.Text("missing report reference")
 				}
 				revision, err := strconv.Atoi(reference[2])
 				if err != nil {
 					t.Error(err)
-					return
+					return providersim.Turn{}
 				}
-				writeTool(writer, "read-peer-evidence", "artifact_read", map[string]any{
+				return toolTurn("read-peer-evidence", "artifact_read", map[string]any{
 					"artifact_id": reference[1], "revision": revision,
 				})
 			case 4:
 				if !strings.Contains(text, "Implemented the accumulator in sum.go.") {
 					t.Errorf("coordinator did not read the complete peer report before verification")
 				}
-				runVerification(writer, "verify-project")
+				return runVerification("verify-project")
 			default:
-				checkResult(body.Messages, "verify-project")
-				writeText(writer, "The peer repair is verified by the project test.")
+				checkResult(request.Messages, "verify-project")
+				return providersim.Text("The peer repair is verified by the project test.")
 			}
 		case strings.Contains(text, "Implement Sum in sum.go so the existing test passes."):
 			switch implementerRequests.Add(1) {
 			case 1:
-				writeTool(writer, "accept-sum", "agent_respond", map[string]any{
+				return toolTurn("accept-sum", "agent_respond", map[string]any{
 					"recipient_id": coordinatorID.Load().(string), "request_id": "repair-sum",
 					"request_revision": 1, "disposition": "accepted", "body": "Implementing the exact requested repair.",
 				})
 			case 2:
-				writeTool(writer, "edit-sum", "edit_file", map[string]any{
+				return toolTurn("edit-sum", "edit_file", map[string]any{
 					"path":       filepath.Join(project, "sum.go"),
 					"old_string": "\treturn 0",
 					"new_string": "\ttotal := 0\n\tfor _, value := range values {\n\t\ttotal += value\n\t}\n\treturn total",
 				})
 			case 3:
-				runVerification(writer, "check-sum")
+				return runVerification("check-sum")
 			case 4:
-				checkResult(body.Messages, "check-sum")
-				writeTool(writer, "report-sum", "publish_report", map[string]any{
+				checkResult(request.Messages, "check-sum")
+				return toolTurn("report-sum", "publish_report", map[string]any{
 					"recipient_ids": []string{coordinatorID.Load().(string)},
 					"kind":          "final",
 					"request_id":    "repair-sum",
@@ -425,20 +378,19 @@ func TestWorkspaceAgentsCollaborateToRepairAndVerifyProject(t *testing.T) {
 					"references":    []map[string]any{{"kind": "file", "id": "sum.go"}},
 				})
 			default:
-				reportOnce.Do(func() { close(reportPublished) })
-				writeText(writer, "Implementation and report publication completed.")
+				reportPublished.Release()
+				return providersim.Text("Implementation and report publication completed.")
 			}
 		default:
 			t.Errorf("unrecognized agent request:\n%s", text)
-			writeText(writer, "unrecognized")
+			return providersim.Text("unrecognized")
 		}
-	}))
-	defer server.Close()
+	})
 
 	owner := NewWorkspace(project, "history-model", "tester", setting.Settings{}, &testLogger{})
 	defer owner.Close()
 	owner.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}})
-	cfg := historyE2EConfig(server.URL)
+	cfg := historyE2EConfig(server.BaseURL(providersim.Chat))
 
 	coordinatorSession, err := owner.CreateSession(cfg, home)
 	if err != nil {

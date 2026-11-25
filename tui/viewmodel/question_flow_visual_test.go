@@ -2,10 +2,6 @@ package viewmodel
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -14,6 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"crude/internal/providersim"
 	"crude/tui/screens/question"
 )
 
@@ -26,27 +23,16 @@ func TestQuestionFlowVisualAcceptance(t *testing.T) {
 		t.Skip("requires the dedicated sequential tuishot terminal")
 	}
 	var continuations atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var input struct {
-			Messages []struct {
-				Role    string `json:"role"`
-				Content any    `json:"content"`
-			} `json:"messages"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-			t.Error(err)
-			return
-		}
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
 		answered, extreme := false, false
-		for _, message := range input.Messages {
+		for _, message := range request.Messages {
 			answered = answered || message.Role == "tool"
-			extreme = extreme || message.Role == "user" && strings.Contains(fmt.Sprint(message.Content), "extreme-length")
+			extreme = extreme || message.Role == "user" && strings.Contains(simulatedText(message.Parts), "extreme-length")
 		}
-		w.Header().Set("Content-Type", "text/event-stream")
 		if answered {
 			continuations.Add(1)
-			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"REVIEWED ANSWERS RECEIVED. The request continued only after explicit Submit.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-			return
+			return simulatedAnswer("REVIEWED ANSWERS RECEIVED. The request continued only after explicit Submit.")
 		}
 		items := []question.Item{
 			{Header: "Release", Question: "Which release should we prepare?", Options: []string{"Stable", "Preview"}},
@@ -56,12 +42,9 @@ func TestQuestionFlowVisualAcceptance(t *testing.T) {
 		if extreme {
 			items = []question.Item{{Header: "Long reading", Question: "QUESTION_BEGIN\n" + strings.Repeat("This is complete question content, not an ellipsis or hidden overflow.\n", 600) + "QUESTION_END", Options: []string{"OPTION_BEGIN " + strings.Repeat("a long option with spaces and a full readable ending ", 150) + "OPTION_END", "Short answer"}}}
 		}
-		args, _ := json.Marshal(map[string]any{"questions": items})
-		payload, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"tool_calls": []any{map[string]any{"index": 0, "id": "native-question", "type": "function", "function": map[string]any{"name": "question", "arguments": string(args)}}}}, "finish_reason": "tool_calls"}}})
-		_, _ = fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", payload)
-	}))
-	defer server.Close()
-	runtime := remoteJourneyRuntime(t, server.URL)
+		return simulatedTool("native-question", "question", map[string]any{"questions": items})
+	})
+	runtime := remoteJourneyRuntime(t, server.BaseURL(providersim.Chat))
 	shell := newRemoteJourneyShell(t, runtime, t.TempDir())
 	id := remoteJourneyCreate(t, shell)
 	shell.app.Input.SetInput("Private composer draft stays intact")

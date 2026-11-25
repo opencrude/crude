@@ -1,10 +1,7 @@
 package viewmodel
 
 import (
-	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -14,20 +11,14 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/agent/session"
+	"crude/internal/providersim"
 	"crude/tui/screens/statusoverview"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"
 )
 
-func errandToolReply(w http.ResponseWriter, name string, arguments any, round int) {
-	args, _ := json.Marshal(arguments)
-	payload, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{
-		"delta": map[string]any{"tool_calls": []any{map[string]any{
-			"index": 0, "id": fmt.Sprintf("errand-call-%d", round), "type": "function",
-			"function": map[string]any{"name": name, "arguments": string(args)},
-		}}}, "finish_reason": "tool_calls",
-	}}})
-	fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", payload)
+func errandToolReply(name string, arguments any, round int) providersim.Turn {
+	return simulatedTool(fmt.Sprintf("errand-call-%d", round), name, arguments)
 }
 
 // Click the actually painted header link, not a direct restore helper.
@@ -55,46 +46,35 @@ func TestErrandOpensAsAgentTabAndRunsTools(t *testing.T) {
 			commandPath := filepath.Join(root, "fixture-language-server")
 			var calls atomic.Int32
 			var sawContract atomic.Bool
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				var input struct {
-					Messages []struct {
-						Role    string
-						Content string
-					}
-				}
-				if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-					t.Error(err)
-					return
-				}
+			server := providersim.New(t)
+			server.Respond(func(r providersim.Request) providersim.Turn {
 				round := int(calls.Add(1))
-				w.Header().Set("Content-Type", "text/event-stream")
+				if strings.Contains(simulatedText(r.System), "<workspace_agent>") {
+					sawContract.Store(true)
+				}
 				lastTool := ""
-				for _, message := range input.Messages {
-					if message.Role == "system" && strings.Contains(message.Content, "<workspace_agent>") {
-						sawContract.Store(true)
-					}
+				for _, message := range r.Messages {
 					if message.Role == "tool" {
-						lastTool = message.Content
+						lastTool = simulatedText(message.Parts)
 					}
 				}
 				switch round {
 				case 1:
-					errandToolReply(w, "execute_command", map[string]any{"command": "echo ERRAND_COMMAND_WORKS"}, round)
+					return errandToolReply("execute_command", map[string]any{"command": "echo ERRAND_COMMAND_WORKS"}, round)
 				case 2:
 					if !strings.Contains(lastTool, "ERRAND_COMMAND_WORKS") {
 						t.Errorf("Errand's command did not run: %s", lastTool)
 					}
-					errandToolReply(w, "crude_control", map[string]any{"command": "settings.set",
+					return errandToolReply("crude_control", map[string]any{"command": "settings.set",
 						"arguments": map[string]any{"scope": "workspace", "path": "lsp.languages.errand-fixture.command", "value": commandPath}}, round)
 				default:
 					if !strings.Contains(lastTool, `"state":"committed"`) {
 						t.Errorf("Errand cannot configure the tool it set up: %s", lastTool)
 					}
-					fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ERRAND_OK\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+					return simulatedAnswer("ERRAND_OK")
 				}
-			}))
-			t.Cleanup(server.Close)
-			runtime := remoteJourneyRuntimeConfig(t, server.URL, func(cfg *session.Config) {
+			})
+			runtime := remoteJourneyRuntimeConfig(t, server.BaseURL(providersim.Chat), func(cfg *session.Config) {
 				profile := cfg.Agents.Profiles["default"]
 				role := session.DefaultAgentsConfig().Profiles["default"].Categories[session.CategoryErrand]
 				role.AccountID, role.Model, role.ModelSupportsTools = "test", "test-model", true
@@ -155,14 +135,13 @@ func TestErrandOpensAsAgentTabAndRunsTools(t *testing.T) {
 // Errand's question is a modal prompt even when its own tab is open, and the
 // user's draft and tab stay as they were.
 func TestErrandQuestionIsAModalPrompt(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		errandToolReply(w, "question", map[string]any{"questions": []map[string]any{{
+	server := providersim.New(t)
+	server.Respond(func(providersim.Request) providersim.Turn {
+		return errandToolReply("question", map[string]any{"questions": []map[string]any{{
 			"header": "Choice", "question": "Choose a fixture answer", "options": []string{"Yes", "No"},
 		}}}, 1)
-	}))
-	t.Cleanup(server.Close)
-	shell := newRemoteJourneyShell(t, remoteJourneyRuntime(t, server.URL), t.TempDir())
+	})
+	shell := newRemoteJourneyShell(t, remoteJourneyRuntime(t, server.BaseURL(providersim.Chat)), t.TempDir())
 	app := shell.app
 	main := remoteJourneyCreate(t, shell)
 	app.Input.SetInput("MAIN DRAFT STAYS")
@@ -190,14 +169,13 @@ func TestErrandQuestionIsAModalPrompt(t *testing.T) {
 // Errand works in the background, so its question must not open under the
 // user's keys while the user types; it opens at the next tick after a pause.
 func TestErrandQuestionWaitsWhileTheUserTypes(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		errandToolReply(w, "question", map[string]any{"questions": []map[string]any{{
+	server := providersim.New(t)
+	server.Respond(func(providersim.Request) providersim.Turn {
+		return errandToolReply("question", map[string]any{"questions": []map[string]any{{
 			"header": "Fix", "question": "Fix the configuration?", "options": []string{"Fix it", "Not now"},
 		}}}, 1)
-	}))
-	t.Cleanup(server.Close)
-	shell := newRemoteJourneyShell(t, remoteJourneyRuntime(t, server.URL), t.TempDir())
+	})
+	shell := newRemoteJourneyShell(t, remoteJourneyRuntime(t, server.BaseURL(providersim.Chat)), t.TempDir())
 	app := shell.app
 	remoteJourneyCreate(t, shell)
 	runAppCommand(t, app, app.taskWorkspaceErrand("Crude found a problem in this workspace: clangd failed. Investigate it.", "Investigate"))

@@ -3,14 +3,13 @@ package viewmodel
 import (
 	"context"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"crude/internal/providersim"
 	"crude/tui/rendering"
 	"crude/types/statuscenter"
 	"github.com/charmbracelet/x/ansi"
@@ -40,12 +39,10 @@ const persianReview = `اما برای ادعای برتری نسبت به هم�
 
 func tableVisualShell(t *testing.T) (remoteJourneyShell, string) {
 	t.Helper()
-	responder := &planReviewServer{replies: []string{persianReview}}
-	srv := httptest.NewServer(http.HandlerFunc(responder.handler))
-	t.Cleanup(srv.Close)
+	srv := simulatedChat(t, simulatedAnswer(persianReview))
 	root := t.TempDir()
 	path := writePaneFile(t, root, "notes.md", "# Reviewer notes\nA real local target.\n")
-	shell := newRemoteJourneyShell(t, remoteJourneyRuntime(t, srv.URL), root)
+	shell := newRemoteJourneyShell(t, remoteJourneyRuntime(t, srv.BaseURL(providersim.Chat)), root)
 	id := remoteJourneyCreate(t, shell)
 	shell.app.Tree.Visible = false
 	runAppCommand(t, shell.app, shell.app.submitInput(id, "Show the review.", nil))

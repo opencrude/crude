@@ -1,15 +1,12 @@
 package workspace
 
 import (
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"path/filepath"
-	"sync/atomic"
 	"testing"
 
 	"crude/agent/collaboration"
 	"crude/agent/provider"
+	"crude/internal/providersim"
 	"crude/types/setting"
 )
 
@@ -17,16 +14,13 @@ func TestWorkspaceSwitchLauncherStartsAndResumesSessions(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
-	var providerCalls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		providerCalls.Add(1)
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Saved workspace conversation.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	defer server.Close()
+	server := providersim.New(t)
+	server.Respond(func(providersim.Request) providersim.Turn {
+		return providersim.Text("Saved workspace conversation.")
+	})
 
 	rootA, rootB := t.TempDir(), t.TempDir()
-	cfg := historyE2EConfig(server.URL)
+	cfg := historyE2EConfig(server.BaseURL(providersim.Chat))
 	ws := NewWorkspace(rootA, "history-model", "tester", setting.Settings{}, &testLogger{})
 	t.Cleanup(ws.Close)
 	ws.SetBackendConfig(cfg, home)
@@ -41,7 +35,7 @@ func TestWorkspaceSwitchLauncherStartsAndResumesSessions(t *testing.T) {
 	var lastOpened *Session
 	start := func(root string, resume bool) {
 		t.Helper()
-		callsBeforeStartup := providerCalls.Load()
+		callsBeforeStartup := len(server.Requests())
 		var result *NewSessionResult
 		if resume {
 			result = ws.OpenAgentSession(sessionIDs[root])
@@ -80,7 +74,7 @@ func TestWorkspaceSwitchLauncherStartsAndResumesSessions(t *testing.T) {
 		if err := frontend.DB.Ping(); err != nil {
 			t.Fatalf("opened session database is not usable: %v", err)
 		}
-		if providerCalls.Load() != callsBeforeStartup {
+		if len(server.Requests()) != callsBeforeStartup {
 			t.Fatal("passive startup called the provider")
 		}
 		prompt := "Keep this conversation in " + root
@@ -125,7 +119,7 @@ func TestWorkspaceSwitchLauncherStartsAndResumesSessions(t *testing.T) {
 			t.Fatal("previous workspace's session remained in the live session index")
 		}
 	}
-	if calls := providerCalls.Load(); calls != 2 {
+	if calls := len(server.Requests()); calls != 2 {
 		t.Fatalf("provider calls = %d, want only the two explicitly submitted turns", calls)
 	}
 }

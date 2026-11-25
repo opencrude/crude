@@ -1,13 +1,8 @@
 package workspace
 
 import (
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -16,54 +11,28 @@ import (
 	"crude/agent/provider"
 	"crude/agent/session"
 	"crude/insight/predictioncontext"
+	"crude/internal/providersim"
 	"crude/types/insight"
 	"crude/types/setting"
 	"crude/workspace/document"
 	"crude/workspace/fileio"
 )
 
-// suggestionServer answers every chat request with the rewrite that answer
-// returns for the request's user message.
-type suggestionServer struct {
-	mu     sync.Mutex
-	inputs []string
-	calls  atomic.Int32
-	answer func(input string) string
-}
-
-func (s *suggestionServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	s.calls.Add(1)
-	raw, _ := io.ReadAll(r.Body)
-	var body struct {
-		Messages []struct {
-			Role    string `json:"role"`
-			Content any    `json:"content"`
-		} `json:"messages"`
-	}
-	_ = json.Unmarshal(raw, &body)
+func suggestionInput(request providersim.Request) string {
 	input := ""
-	for _, m := range body.Messages {
-		if m.Role == "user" {
-			if text, ok := m.Content.(string); ok {
-				input = text
-			} else if parts, ok := m.Content.([]any); ok {
-				for _, part := range parts {
-					if p, ok := part.(map[string]any); ok {
-						if text, ok := p["text"].(string); ok {
-							input += text
-						}
-					}
-				}
+	for _, message := range request.Messages {
+		if message.Role != "user" {
+			continue
+		}
+		var text strings.Builder
+		for _, part := range message.Parts {
+			if part.Kind == providersim.PartText {
+				text.WriteString(part.Text)
 			}
 		}
+		input = text.String()
 	}
-	s.mu.Lock()
-	s.inputs = append(s.inputs, input)
-	s.mu.Unlock()
-	content, _ := json.Marshal(s.answer(input))
-	w.Header().Set("Content-Type", "text/event-stream")
-	fmt.Fprintf(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":%s}}]}\n\n", content)
-	fmt.Fprint(w, "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":40,\"completion_tokens\":8}}\n\ndata: [DONE]\n\n")
+	return input
 }
 
 // rewriteOf returns the editable region of input with fn applied, framed as
@@ -80,7 +49,7 @@ type suggestionFixture struct {
 	docs    *DocumentService
 	owner   document.Owner
 	id      string
-	server  *suggestionServer
+	server  *providersim.Server
 	policy  predictionRuntimePolicy
 	seq     uint64
 }
@@ -98,11 +67,12 @@ func newSuggestionFixture(t *testing.T, text string, answer func(string) string)
 			t.Error(err)
 		}
 	})
-	fake := &suggestionServer{answer: answer}
-	server := httptest.NewServer(fake)
-	t.Cleanup(server.Close)
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
+		return providersim.Text(answer(suggestionInput(request))).WithUsage(providersim.Usage{Input: 40, Output: 8})
+	})
 	account := provider.Account{ID: "suggest", ProviderID: "openai", APIKey: "fixture-only",
-		Connection: provider.Template{Name: "Local fixture", ProviderURL: server.URL, APIStandard: "openai", AuthType: provider.AuthBearer}}
+		Connection: provider.Template{Name: "Local fixture", ProviderURL: server.BaseURL(providersim.Chat), APIStandard: "openai", AuthType: provider.AuthBearer}}
 	accounts := map[string]provider.Account{account.ID: account}
 	cfg := &session.Config{Accounts: accounts, AccountManager: provider.NewAccountManager(accounts, nil),
 		Agents: session.AgentsConfig{ActiveProfile: "p", Profiles: map[string]session.ProfileConfig{
@@ -119,7 +89,7 @@ func newSuggestionFixture(t *testing.T, text string, answer func(string) string)
 	policy := predictionRuntimePolicy{settings: setting.WorkspacePrediction{Mode: setting.PredictionType, HourlyTokenLimit: 100000},
 		rootIdentity: root, grant: "grant", consented: completer.ConnectionIdentity, completer: completer}
 	service.Configure(policy)
-	return &suggestionFixture{service: service, docs: docs, owner: owner, id: snapshot.ID, server: fake, policy: policy}
+	return &suggestionFixture{service: service, docs: docs, owner: owner, id: snapshot.ID, server: server, policy: policy}
 }
 
 func (f *suggestionFixture) request(t *testing.T, caret int) (insight.EditorPredictionResult, error) {
@@ -165,8 +135,8 @@ func TestSuggestionInsertsMultipleLinesAndReusesTheAnswer(t *testing.T) {
 		t.Fatalf("stages = %+v", first.Stages)
 	}
 	again, err := f.request(t, caret)
-	if err != nil || !again.CacheHit || again.Text != want || f.server.calls.Load() != 1 {
-		t.Fatalf("cache: %+v %v calls=%d", again, err, f.server.calls.Load())
+	if err != nil || !again.CacheHit || again.Text != want || len(f.server.Requests()) != 1 {
+		t.Fatalf("cache: %+v %v calls=%d", again, err, len(f.server.Requests()))
 	}
 	status := f.service.Snapshot()
 	if status.ChargedTokens != 48 || status.Requests != 2 || status.Shown != 2 || status.MeasuredLatencyMS <= 0 {
@@ -192,8 +162,10 @@ func TestSuggestionJumpsToTheNextUseAfterARename(t *testing.T) {
 	if first.Kind != insight.PredictionEdit || first.Start != logUse || first.End != logUse+len("count") || first.Text != "total" {
 		t.Fatalf("first = %+v", first)
 	}
-	if !strings.Contains(f.server.inputs[0], "-count\n+total") || !strings.Contains(f.server.inputs[0], "by the programmer") {
-		t.Fatalf("recent edit was not in the request:\n%s", f.server.inputs[0])
+	request, _ := f.server.Last()
+	input := suggestionInput(request)
+	if !strings.Contains(input, "-count\n+total") || !strings.Contains(input, "by the programmer") {
+		t.Fatalf("recent edit was not in the request:\n%s", input)
 	}
 	f.edit(t, first.Start, first.End, first.Text)
 	next, err := f.request(t, first.Start+len(first.Text))
@@ -202,8 +174,8 @@ func TestSuggestionJumpsToTheNextUseAfterARename(t *testing.T) {
 	}
 	after := "total := load()\nlog(total)\nsave(count)\n"
 	saveUse := strings.LastIndex(after, "count")
-	if !next.CacheHit || next.Start != saveUse || next.Text != "total" || f.server.calls.Load() != 1 {
-		t.Fatalf("chained = %+v calls=%d", next, f.server.calls.Load())
+	if !next.CacheHit || next.Start != saveUse || next.Text != "total" || len(f.server.Requests()) != 1 {
+		t.Fatalf("chained = %+v calls=%d", next, len(f.server.Requests()))
 	}
 }
 
@@ -261,8 +233,8 @@ func TestSuggestionRefusesOffCappedAndSensitiveWithoutEgress(t *testing.T) {
 	if _, err := f.request(t, 1); err == nil || !strings.Contains(err.Error(), "connection changed") {
 		t.Fatalf("changed connection: %v", err)
 	}
-	if f.server.calls.Load() != 0 {
-		t.Fatalf("refused requests reached the model: %d", f.server.calls.Load())
+	if len(f.server.Requests()) != 0 {
+		t.Fatalf("refused requests reached the model: %d", len(f.server.Requests()))
 	}
 	if !predictionPathAllowed(f.docs.root, f.docs.root+"/src/a.go") {
 		t.Fatal("ordinary source refused")

@@ -1,14 +1,13 @@
 package core
 
 import (
+	"context"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
-	"sync"
 	"testing"
 	"time"
 
 	"crude/core/coreprotocol"
+	"crude/internal/providersim"
 	"crude/types/statuscenter"
 	"crude/workspace"
 )
@@ -18,25 +17,16 @@ import (
 // must stop on the first press and the agent must end idle, never left in a
 // stopping boundary that no terminal acknowledgement will ever clear.
 func TestRepeatedStopEndsIdleNotStopping(t *testing.T) {
-	started, release := make(chan struct{}), make(chan struct{})
-	var startedOnce, releaseOnce sync.Once
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"held turn\"}}]}\n\n")
-		w.(http.Flusher).Flush()
-		startedOnce.Do(func() { close(started) })
-		select {
-		case <-request.Context().Done():
-		case <-release:
-		}
-	}))
-	t.Cleanup(server.Close)
+	gate := providersim.NewGate()
+	server := providersim.New(t)
+	// Chat flushes an assistant-role event, then the first text delta.
+	server.Script(providersim.Text("held turn").WithGateAfter(2, gate))
 	r, root := featureRuntime(t, func(ws *workspace.Workspace) {
-		app, cfg := inputResetConfig(server.URL)
+		app, cfg := inputResetConfig(server.BaseURL(providersim.Chat))
 		ws.SetAppDefaults(app)
 		ws.SetBackendConfig(cfg, t.TempDir())
 	})
-	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+	t.Cleanup(gate.Release)
 	wire := newResourceWire(t, r, "stop-author")
 	var attached coreprotocol.AttachResult
 	wire.call(t, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &attached)
@@ -45,10 +35,10 @@ func TestRepeatedStopEndsIdleNotStopping(t *testing.T) {
 	wire.call(t, ws, coreprotocol.NewSession, coreprotocol.InvocationSessionRequest{}, &created)
 	var admitted coreprotocol.InputResult
 	featureCall(t, wire, ws, "turn", coreprotocol.SubmitInput, coreprotocol.InputRequest{AgentID: created.OrchID, Text: "Hold this turn", DraftRevision: 1}, &admitted)
-	select {
-	case <-started:
-	case <-time.After(5 * time.Second):
-		t.Fatal("turn never reached the provider")
+	providerWait, cancelProviderWait := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancelProviderWait()
+	if err := gate.Wait(providerWait); err != nil {
+		t.Fatal("turn never reached the provider", err)
 	}
 	agent := func() workspace.AgentSnapshot {
 		t.Helper()

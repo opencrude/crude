@@ -1,10 +1,7 @@
 package viewmodel
 
 import (
-	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"runtime"
 	"strings"
@@ -16,6 +13,7 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/session"
+	"crude/internal/providersim"
 	"crude/tui/rendering"
 	"crude/tui/screens/backgroundjobs"
 	"crude/tui/ui"
@@ -30,25 +28,16 @@ func TestBackgroundJobMouseTerminationKeepsOtherJobsAndSessionAlive(t *testing.T
 		helper = fmt.Sprintf(`set "CRUDE_JOB_UI_HELPER=1"&&"%s" -test.run=^TestBackgroundJobCommandHelperProcess$`, os.Args[0])
 	}
 	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.Method == http.MethodGet {
-			_, _ = fmt.Fprint(writer, `{"data":[{"id":"test-model"}]}`)
-			return
-		}
-		writer.Header().Set("Content-Type", "text/event-stream")
+	server := providersim.New(t, providersim.WithModels(providersim.Chat, "test-model"))
+	server.Respond(func(providersim.Request) providersim.Turn {
 		if requests.Add(1) == 1 {
-			var calls []map[string]any
-			for index, handle := range []string{"selected-job", "neighbor-job"} {
-				arguments, _ := json.Marshal(map[string]any{"command": helper, "handle": handle})
-				calls = append(calls, map[string]any{"index": index, "id": handle, "type": "function", "function": map[string]any{"name": "async_execute_command", "arguments": string(arguments)}})
-			}
-			chunk, _ := json.Marshal(map[string]any{"choices": []map[string]any{{"delta": map[string]any{"tool_calls": calls}, "finish_reason": "tool_calls"}}})
-			_, _ = fmt.Fprintf(writer, "data: %s\n\ndata: [DONE]\n\n", chunk)
-			return
+			return simulatedCalls(
+				simulatedCall("selected-job", "async_execute_command", map[string]string{"command": helper, "handle": "selected-job"}),
+				simulatedCall("neighbor-job", "async_execute_command", map[string]string{"command": helper, "handle": "neighbor-job"}),
+			)
 		}
-		_, _ = fmt.Fprint(writer, "data: {\"choices\":[{\"delta\":{\"content\":\"Session remains usable\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	defer server.Close()
+		return simulatedAnswer("Session remains usable")
+	})
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
@@ -59,7 +48,7 @@ func TestBackgroundJobMouseTerminationKeepsOtherJobsAndSessionAlive(t *testing.T
 	config := testAccountConfig()
 	account := config.Accounts["test"]
 	template := account.Connection
-	template.ProviderURL = server.URL
+	template.ProviderURL = server.BaseURL(providersim.Chat)
 	account.Connection = template
 	config.Accounts["test"] = account
 	profile := config.Agents.Profiles[config.Agents.ActiveProfile]

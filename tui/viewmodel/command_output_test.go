@@ -2,11 +2,8 @@ package viewmodel
 
 import (
 	"bufio"
-	"encoding/json"
 	"fmt"
 	"net"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"runtime"
 	"strings"
@@ -18,6 +15,7 @@ import (
 
 	"crude/agent/session"
 	"crude/core/shellport"
+	"crude/internal/providersim"
 	"crude/internal/terminalvt"
 	"crude/tui/rendering"
 	"crude/tui/screens/backgroundjobs"
@@ -103,22 +101,14 @@ func commandOutputJourney(t *testing.T) (remoteJourneyShell, net.Conn, string) {
 		}
 	}()
 	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet {
-			_, _ = fmt.Fprint(w, `{"data":[{"id":"test-model"}]}`)
-			return
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
+	server := providersim.New(t, providersim.WithModels(providersim.Chat, "test-model"))
+	server.Respond(func(providersim.Request) providersim.Turn {
 		if requests.Add(1) == 1 {
-			args, _ := json.Marshal(map[string]any{"command": fmt.Sprintf("%q -test.run=^TestCommandOutputHelper$ -test.timeout=90s", os.Args[0]), "handle": "build"})
-			chunk, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"tool_calls": []any{map[string]any{"index": 0, "id": "build-call", "type": "function", "function": map[string]any{"name": "async_execute_command", "arguments": string(args)}}}}, "finish_reason": "tool_calls"}}})
-			_, _ = fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", chunk)
-			return
+			return simulatedTool("build-call", "async_execute_command", map[string]string{"command": fmt.Sprintf("%q -test.run=^TestCommandOutputHelper$ -test.timeout=90s", os.Args[0]), "handle": "build"})
 		}
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"The build is running.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	t.Cleanup(server.Close)
-	rt := remoteJourneyRuntimeConfig(t, server.URL, func(config *session.Config) {
+		return simulatedAnswer("The build is running.")
+	})
+	rt := remoteJourneyRuntimeConfig(t, server.BaseURL(providersim.Chat), func(config *session.Config) {
 		if runtime.GOOS == "windows" {
 			config.Agents.Shell = "cmd"
 		}

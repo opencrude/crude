@@ -2,14 +2,8 @@ package core
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,6 +11,7 @@ import (
 	"crude/agent/session"
 	"crude/agent/worktree"
 	"crude/core/coreprotocol"
+	"crude/internal/providersim"
 	"crude/types/control"
 	"crude/workspace"
 )
@@ -24,31 +19,20 @@ import (
 func TestControlInputCapturesSelectedExecutionForFreshSend(t *testing.T) {
 	fixture := controlExecutionFixture(t)
 	ws := fixture.ws
-	var calls atomic.Int32
-	wire := make(chan string, 2)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body struct {
-			Messages []provider.ChatMessage `json:"messages"`
+	server := providersim.New(t)
+	requests := make(chan providersim.Request, 2)
+	server.Respond(func(request providersim.Request) providersim.Turn {
+		requests <- request
+		if request.Index == 1 {
+			return providersim.CallTools(providersim.ToolCall{ID: "selected-read", Name: "read_file", Arguments: `{"path":"disk.txt"}`})
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Error(err)
-			return
-		}
-		raw, _ := json.Marshal(body)
-		wire <- string(raw)
-		w.Header().Set("Content-Type", "text/event-stream")
-		if calls.Add(1) == 1 {
-			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"selected-read\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"disk.txt\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n")
-		} else {
-			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Finished selected read.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-		}
-	}))
-	t.Cleanup(server.Close)
+		return providersim.Text("Finished selected read.")
+	})
 	agents := session.DefaultAgentsConfig()
 	profile := agents.Profiles["default"]
 	profile.Categories["default"] = session.CategoryConfig{AccountID: "test", Model: "selection-control-model", ModelSupportsTools: true}
 	agents.Profiles["default"] = profile
-	cfg := &session.Config{Agents: agents, Accounts: map[string]provider.Account{"test": {ID: "test", ProviderID: "openai", APIKey: "test", Connection: provider.Template{Name: "test", ProviderURL: server.URL, APIStandard: "openai", AuthType: provider.AuthProtocol}}}}
+	cfg := &session.Config{Agents: agents, Accounts: map[string]provider.Account{"test": {ID: "test", ProviderID: "openai", APIKey: "test", Connection: provider.Template{Name: "test", ProviderURL: server.BaseURL(providersim.Chat), APIStandard: "openai", AuthType: provider.AuthProtocol}}}}
 	ws.SetBackendConfig(cfg, t.TempDir())
 	runtime, err := New(func(string) (*workspace.Workspace, error) { return ws, nil }, filepath.Join(t.TempDir(), "receipts.db"))
 	if err != nil {
@@ -115,9 +99,9 @@ func TestControlInputCapturesSelectedExecutionForFreshSend(t *testing.T) {
 	}
 	for i := 0; i < 2; i++ {
 		select {
-		case got := <-wire:
-			if !strings.Contains(got, wireText(execution.Root)) || i == 1 && !strings.Contains(got, "selected-only evidence") {
-				t.Fatalf("control input ignored selected checkout, request %d: %s", i, got)
+		case got := <-requests:
+			if !simConversationContains(got.Conversation, execution.Root) || i == 1 && !simConversationContains(got.Conversation, "selected-only evidence") {
+				t.Fatalf("control input ignored selected checkout, request %d: %+v", i, got.Conversation)
 			}
 		case <-ctx.Done():
 			t.Fatal("selected tool loop did not complete", ctx.Err())

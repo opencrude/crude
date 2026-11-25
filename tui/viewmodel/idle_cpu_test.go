@@ -2,8 +2,6 @@ package viewmodel
 
 import (
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
 
+	"crude/internal/providersim"
 	"crude/tui/ui"
 	"crude/types/conversation"
 	"crude/types/recovery"
@@ -18,12 +17,8 @@ import (
 )
 
 func TestConnectedCompletedTurnIdleKeepsTranscriptPaintRetained(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"SETTLED VISIBLE ANSWER\"}}]}\n\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	t.Cleanup(server.Close)
-	runtime := remoteJourneyRuntime(t, server.URL, func(w *workspace.Workspace) {
+	server := simulatedChat(t, simulatedAnswer("SETTLED VISIBLE ANSWER"))
+	runtime := remoteJourneyRuntime(t, server.BaseURL(providersim.Chat), func(w *workspace.Workspace) {
 		restrictFixture(t, w)
 	})
 	shell := newRemoteJourneyShell(t, runtime, t.TempDir())

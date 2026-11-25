@@ -3,9 +3,6 @@ package viewmodel
 import (
 	"crude/core/wiretest"
 	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -13,6 +10,7 @@ import (
 	"crude/agent/provider"
 	"crude/core/coreprotocol"
 	"crude/core/shellport"
+	"crude/internal/providersim"
 	"crude/types/control"
 
 	tea "charm.land/bubbletea/v2"
@@ -78,20 +76,14 @@ func TestProductComposerExactOwnDraftStaging(t *testing.T) {
 
 func TestConnectedExternalComposerSendReachesProviderWithOriginalProvenance(t *testing.T) {
 	var calls atomic.Int32
-	requests := make(chan provider.ChatRequest, 4)
-	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var in provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-			t.Error(err)
-			return
-		}
-		requests <- in
+	requests := make(chan providersim.Request, 4)
+	endpoint := providersim.New(t)
+	endpoint.Respond(func(r providersim.Request) providersim.Turn {
+		requests <- r
 		calls.Add(1)
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Control input received.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	defer endpoint.Close()
-	runtime := remoteJourneyRuntime(t, endpoint.URL)
+		return simulatedAnswer("Control input received.")
+	})
+	runtime := remoteJourneyRuntime(t, endpoint.BaseURL(providersim.Chat))
 	root := t.TempDir()
 	one := newRemoteJourneyShell(t, runtime, root)
 	id := remoteJourneyCreate(t, one)
@@ -158,8 +150,8 @@ func TestConnectedExternalComposerSendReachesProviderWithOriginalProvenance(t *t
 	request := <-requests
 	text, source := false, false
 	for _, message := range request.Messages {
-		text = text || strings.Contains(message.ContentString(), "externally submitted captured draft")
-		source = source || strings.Contains(message.ContentString(), "original-composer-send") && strings.Contains(message.ContentString(), "composer-external") && strings.Contains(message.ContentString(), "control_input")
+		text = text || strings.Contains(simulatedText(message.Parts), "externally submitted captured draft")
+		source = source || strings.Contains(simulatedText(message.Parts), "original-composer-send") && strings.Contains(simulatedText(message.Parts), "composer-external") && strings.Contains(simulatedText(message.Parts), "control_input")
 	}
 	if !text || !source {
 		t.Fatal("real provider request lost control provenance", request.Messages)

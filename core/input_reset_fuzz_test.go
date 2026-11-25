@@ -2,12 +2,10 @@ package core
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"reflect"
-	"sync"
 	"testing"
 	"time"
 
@@ -16,6 +14,7 @@ import (
 	"crude/agent/session"
 	"crude/agent/sessiondb"
 	"crude/core/coreprotocol"
+	"crude/internal/providersim"
 	"crude/types/setting"
 	"crude/workspace"
 )
@@ -65,29 +64,20 @@ func FuzzCoreInputAdmissionReceipts(f *testing.F) {
 	f.Add([]byte{7, 0, 7, 1, 2, 0, 6, 1})
 	f.Add([]byte{})
 	f.Fuzz(func(t *testing.T, actions []byte) {
-		started, release := make(chan struct{}), make(chan struct{})
-		var startedOnce, releaseOnce sync.Once
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"held turn\"}}]}\n\n")
-			w.(http.Flusher).Flush()
-			startedOnce.Do(func() { close(started) })
-			select {
-			case <-request.Context().Done():
-			case <-release:
-			}
-		}))
-		t.Cleanup(server.Close)
+		gate := providersim.NewGate()
+		server := providersim.New(t)
+		// Chat flushes an assistant-role event, then the first text delta.
+		server.Script(providersim.Text("held turn").WithGateAfter(2, gate))
 		var store *collaboration.Store
 		r, root := featureRuntime(t, func(ws *workspace.Workspace) {
-			app, cfg := inputResetConfig(server.URL)
+			app, cfg := inputResetConfig(server.BaseURL(providersim.Chat))
 			ws.SetAppDefaults(app)
 			ws.SetBackendConfig(cfg, t.TempDir())
 			store = ws.Collaboration
 		})
 		// Cleanup ordering: wires close, SSE releases, Runtime.Close joins all
 		// owned backend work, and only then does the HTTP fixture close.
-		t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+		t.Cleanup(gate.Release)
 		peers := [2]*resourceWire{newResourceWire(t, r, "input-author"), newResourceWire(t, r, "input-peer")}
 		var attached coreprotocol.AttachResult
 		peers[0].call(t, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &attached)
@@ -101,10 +91,10 @@ func FuzzCoreInputAdmissionReceipts(f *testing.F) {
 		if admitted.Status != workspace.InputAdmissionAccepted || admitted.Error != "" || admitted.Receipt.SessionID != created.SessionID || admitted.Receipt.AgentID != created.OrchID || admitted.Receipt.InputID != "client-input-author-first" || admitted.Receipt.EventID != "" || admitted.Receipt.RunID != "" || admitted.Receipt.DraftRevision != 1 || admitted.Receipt.OwnerEpoch == 0 || admitted.Receipt.TurnGeneration == 0 || admitted.Receipt.ContextRevision == 0 || admitted.Receipt.AcceptedAt.IsZero() {
 			t.Fatalf("fresh input lost exact admission: %+v", admitted)
 		}
-		select {
-		case <-started:
-		case <-time.After(5 * time.Second):
-			t.Fatal("first input never reached loopback provider")
+		providerWait, cancelProviderWait := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancelProviderWait()
+		if err := gate.Wait(providerWait); err != nil {
+			t.Fatal("first input never reached loopback provider", err)
 		}
 		participant, err := store.Agent(t.Context(), created.OrchID)
 		if err != nil || participant.CurrentRunID == "" || participant.RuntimeEpoch != admitted.Receipt.OwnerEpoch {

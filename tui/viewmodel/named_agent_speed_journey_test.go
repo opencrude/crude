@@ -2,9 +2,6 @@ package viewmodel
 
 import (
 	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -12,6 +9,7 @@ import (
 
 	"crude/agent/session"
 	"crude/core/coreprotocol"
+	"crude/internal/providersim"
 	"crude/tui/ui"
 	"crude/types/control"
 	"crude/types/setting"
@@ -26,18 +24,19 @@ func TestConnectedNamedAgentSpeedJourney(t *testing.T) {
 		Tier  string `json:"service_tier"`
 	}
 	requests := make(chan request, 4)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body request
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Error(err)
-			return
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
+		var body struct {
+			ServiceTier string `json:"service_tier"`
 		}
-		requests <- body
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"done\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	defer server.Close()
-	runtime := remoteJourneyRuntimeConfig(t, server.URL, func(cfg *session.Config) {
+		if err := json.Unmarshal(r.Raw, &body); err != nil {
+			t.Error(err)
+			return providersim.Turn{}
+		}
+		requests <- request{Model: r.Model, Tier: body.ServiceTier}
+		return simulatedAnswer("done")
+	})
+	runtime := remoteJourneyRuntimeConfig(t, server.BaseURL(providersim.Chat), func(cfg *session.Config) {
 		profile := cfg.Agents.Profiles["default"]
 		profile.Categories[session.CategoryResearcher] = session.CategoryConfig{AccountID: "test", Model: "role-model", ServiceTier: "standard"}
 		cfg.Agents.Profiles["default"] = profile

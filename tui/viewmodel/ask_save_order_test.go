@@ -1,9 +1,6 @@
 package viewmodel
 
 import (
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/agent/sessiondb"
+	"crude/internal/providersim"
 	"crude/tui/editor"
 	"crude/types/statuscenter"
 )
@@ -36,13 +34,12 @@ type askOrderJourney struct {
 func newAskOrderJourney(t *testing.T) *askOrderJourney {
 	t.Helper()
 	j := &askOrderJourney{}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := providersim.New(t)
+	server.Respond(func(providersim.Request) providersim.Turn {
 		j.calls.Add(1)
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Answer retained.\"}}]}\n\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	t.Cleanup(server.Close)
-	runtime := remoteJourneyRuntime(t, server.URL)
+		return simulatedAnswer("Answer retained.")
+	})
+	runtime := remoteJourneyRuntime(t, server.BaseURL(providersim.Chat))
 	root := t.TempDir()
 	j.path = filepath.Join(root, askOrderFile)
 	if err := os.WriteFile(j.path, []byte(askOrderOriginal), 0o600); err != nil {

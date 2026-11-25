@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"reflect"
 	"strings"
@@ -13,23 +11,23 @@ import (
 	"testing"
 	"time"
 
-	"crude/agent/provider"
 	"crude/core/coreprotocol"
 	"crude/core/shellport"
 	"crude/core/wiretest"
 	"crude/internal/metrics"
+	"crude/internal/providersim"
 	"crude/tui/screens/perfdash"
 	"crude/types/control"
 	"crude/types/inspect"
 )
 
-func diagnosticModelResult(t *testing.T, request provider.ChatRequest, id string) control.Result {
+func diagnosticModelResult(t *testing.T, request providersim.Request, id string) control.Result {
 	t.Helper()
 	for _, message := range request.Messages {
-		if message.Role == "tool" && message.ToolCallID == id {
+		if message.Role == "tool" && simulatedToolResult(message).CallID == id {
 			var result control.Result
-			if err := json.Unmarshal([]byte(message.ContentString()), &result); err != nil {
-				t.Fatalf("tool %s not readable JSON: %q (%v)", id, message.ContentString(), err)
+			if err := json.Unmarshal([]byte(simulatedText(message.Parts)), &result); err != nil {
+				t.Fatalf("tool %s not readable JSON: %q (%v)", id, simulatedText(message.Parts), err)
 			}
 			return result
 		}
@@ -124,14 +122,10 @@ func TestDiagnosticNativeRootDiscoveryPagingRunFenceAndExternalReadScope(t *test
 		metrics.NewCounter(metrics.Meta{Name: fmt.Sprintf("%s.%02d", filter, i), Group: "diagnostic journey", Title: "Observed fixture work"}).Inc()
 	}
 	var calls atomic.Int32
-	requests := make(chan provider.ChatRequest, 20)
+	requests := make(chan providersim.Request, 20)
 	var oldCore, oldShell inspect.Request // accessed by the serial provider handler
-	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-			return
-		}
+	endpoint := providersim.New(t)
+	endpoint.Respond(func(request providersim.Request) providersim.Turn {
 		requests <- request
 		step := int(calls.Add(1))
 		name := "crude_control"
@@ -149,9 +143,9 @@ func TestDiagnosticNativeRootDiscoveryPagingRunFenceAndExternalReadScope(t *test
 		case 5, 7:
 			var prior inspect.Page
 			for _, message := range request.Messages {
-				if message.Role == "tool" && message.ToolCallID == fmt.Sprintf("diagnostic-%d", step-1) {
+				if message.Role == "tool" && simulatedToolResult(message).CallID == fmt.Sprintf("diagnostic-%d", step-1) {
 					var result control.Result
-					if err := json.Unmarshal([]byte(message.ContentString()), &result); err != nil {
+					if err := json.Unmarshal([]byte(simulatedText(message.Parts)), &result); err != nil {
 						t.Error(err)
 					} else if err := json.Unmarshal(result.Output, &prior); err != nil {
 						t.Error(err)
@@ -181,17 +175,11 @@ func TestDiagnosticNativeRootDiscoveryPagingRunFenceAndExternalReadScope(t *test
 		case 12:
 			params = map[string]any{"command": "performance.core", "arguments": series}
 		default:
-			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Diagnostic observations complete.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-			return
+			return simulatedAnswer("Diagnostic observations complete.")
 		}
-		raw, _ := json.Marshal(params)
-		wire, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"tool_calls": []any{map[string]any{"index": 0, "id": fmt.Sprintf("diagnostic-%d", step), "type": "function", "function": map[string]any{"name": name, "arguments": string(raw)}}}}, "finish_reason": "tool_calls"}}})
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", wire)
-	}))
-	defer endpoint.Close()
-	runtime := remoteJourneyRuntime(t, endpoint.URL)
+		return simulatedTool(fmt.Sprintf("diagnostic-%d", step), name, params)
+	})
+	runtime := remoteJourneyRuntime(t, endpoint.BaseURL(providersim.Chat))
 	root := t.TempDir()
 	one := newRemoteJourneyShell(t, runtime, root)
 	id := remoteJourneyCreate(t, one)
@@ -223,22 +211,22 @@ func TestDiagnosticNativeRootDiscoveryPagingRunFenceAndExternalReadScope(t *test
 		remoteJourneyUntil(t, shells, func() bool { return calls.Load() >= want && !one.app.ws.AgentActivity(id).Active })
 	}
 	submit("Inspect core and submitting shell without opening Performance.", 9)
-	firstTurn := make([]provider.ChatRequest, 9)
+	firstTurn := make([]providersim.Request, 9)
 	for i := range firstTurn {
 		firstTurn[i] = <-requests
 	}
 	advertised := map[string]bool{}
 	for _, tool := range firstTurn[0].Tools {
-		advertised[tool.Function.Name] = true
+		advertised[tool.Name] = true
 	}
 	if !advertised["crude_commands"] || !advertised["crude_control"] {
 		t.Fatal("native root did not advertise actual semantic control tools")
 	}
 	found := map[string]bool{}
 	for _, message := range firstTurn[1].Messages {
-		if message.Role == "tool" && message.ToolCallID == "diagnostic-1" {
+		if message.Role == "tool" && simulatedToolResult(message).CallID == "diagnostic-1" {
 			var commands []control.Descriptor
-			if err := json.Unmarshal([]byte(message.ContentString()), &commands); err != nil {
+			if err := json.Unmarshal([]byte(simulatedText(message.Parts)), &commands); err != nil {
 				t.Fatal(err)
 			}
 			for _, d := range commands {
@@ -294,7 +282,7 @@ func TestDiagnosticNativeRootDiscoveryPagingRunFenceAndExternalReadScope(t *test
 		t.Fatal("native observation lost original shell connection", connection)
 	}
 	submit("Try continuing the previous run's pages, then collect fresh evidence.", 13)
-	secondTurn := make([]provider.ChatRequest, 4)
+	secondTurn := make([]providersim.Request, 4)
 	for i := range secondTurn {
 		secondTurn[i] = <-requests
 	}

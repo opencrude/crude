@@ -1,9 +1,6 @@
 package viewmodel
 
 import (
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"testing"
 
@@ -12,6 +9,7 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/session"
+	"crude/internal/providersim"
 	"crude/types/setting"
 	"crude/types/statuscenter"
 )
@@ -23,12 +21,11 @@ func TestFastModeVisualAcceptance(t *testing.T) {
 	if os.Getenv("CRUDE_VISUAL_FAST") != "1" {
 		t.Skip("dedicated terminal capture")
 	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"I’ll review the current implementation and keep the result focused and clear.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	t.Cleanup(server.Close)
-	runtime := remoteJourneyRuntimeConfig(t, server.URL, func(cfg *session.Config) {
+	server := providersim.New(t)
+	server.Respond(func(providersim.Request) providersim.Turn {
+		return simulatedAnswer("I’ll review the current implementation and keep the result focused and clear.")
+	})
+	runtime := remoteJourneyRuntimeConfig(t, server.BaseURL(providersim.Chat), func(cfg *session.Config) {
 		profile := cfg.Agents.Profiles["default"]
 		main := profile.Categories[session.CategoryDefault]
 		main.Model = "gpt-6.1-terra"

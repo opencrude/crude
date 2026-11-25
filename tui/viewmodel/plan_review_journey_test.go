@@ -1,82 +1,39 @@
 package viewmodel
 
 import (
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"strings"
-	"sync"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/internal/providersim"
 	"crude/tui/screens/decision"
 	"crude/tui/ui"
 	"crude/types/conversation"
 )
 
-// planReviewServer answers each model request with the next scripted reply
-// and keeps the user messages of every request.
-type planReviewServer struct {
-	mu       sync.Mutex
-	replies  []string
-	requests []string
-}
-
-func (s *planReviewServer) handler(w http.ResponseWriter, r *http.Request) {
-	body, _ := io.ReadAll(r.Body)
-	var request struct {
-		Messages []struct {
-			Role    string `json:"role"`
-			Content any    `json:"content"`
-		} `json:"messages"`
-	}
-	_ = json.Unmarshal(body, &request)
-	// Every user message of the request: runtime context also travels as
-	// user messages, before and after the one the user wrote.
-	var users []string
-	for _, message := range request.Messages {
-		if message.Role == "user" {
-			users = append(users, fmt.Sprint(message.Content))
-		}
-	}
-	last := strings.Join(users, "\n")
-	s.mu.Lock()
-	s.requests = append(s.requests, last)
-	reply := "Done."
-	if len(s.replies) > 0 {
-		reply, s.replies = s.replies[0], s.replies[1:]
-	}
-	s.mu.Unlock()
-	content, _ := json.Marshal(reply)
-	w.Header().Set("Content-Type", "text/event-stream")
-	_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":%s},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n", content)
-}
-
-func (s *planReviewServer) request(i int) (string, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if i >= len(s.requests) {
+// planReviewRequest reads the user messages of each request from the journal.
+// Runtime context travels as user messages before and after the one the user wrote.
+func planReviewRequest(sim *providersim.Server, i int) (string, bool) {
+	requests := sim.Requests()
+	if i >= len(requests) {
 		return "", false
 	}
-	return s.requests[i], true
+	return simulatedUserText(requests[i], "\n"), true
 }
 
 // The whole review: a Plan mode turn proposes a plan, Review opens it as a
 // file beside the chat, the user edits it and comments on its text, sends
 // the comments, the agent revises, and the user implements the revision.
 func TestPlanReviewConnectedJourney(t *testing.T) {
-	server := &planReviewServer{replies: []string{
-		"Explored.\n<proposed_plan>\n# Add addition\n\n## Steps\n- Implement and test addition\n- Update the README\n</proposed_plan>",
-		"Revised.\n<proposed_plan>\n# Add addition\n\n## Steps\n- Implement addition with overflow checks\n- Add table tests\n</proposed_plan>",
-		"Implemented.",
-	}}
-	httpServer := httptest.NewServer(http.HandlerFunc(server.handler))
-	t.Cleanup(httpServer.Close)
-	runtime := remoteJourneyRuntime(t, httpServer.URL)
+	server := simulatedChat(t,
+		simulatedAnswer("Explored.\n<proposed_plan>\n# Add addition\n\n## Steps\n- Implement and test addition\n- Update the README\n</proposed_plan>"),
+		simulatedAnswer("Revised.\n<proposed_plan>\n# Add addition\n\n## Steps\n- Implement addition with overflow checks\n- Add table tests\n</proposed_plan>"),
+		simulatedAnswer("Implemented."),
+	)
+	server.Respond(func(providersim.Request) providersim.Turn { return simulatedAnswer("Done.") })
+	runtime := remoteJourneyRuntime(t, server.BaseURL(providersim.Chat))
 	shell := newRemoteJourneyShell(t, runtime, t.TempDir())
 	app := shell.app
 	id := remoteJourneyCreate(t, shell)
@@ -170,8 +127,8 @@ func TestPlanReviewConnectedJourney(t *testing.T) {
 		t.Fatal("the review bar did not handle Send comments")
 	}
 	runAppCommand(t, app, send)
-	until(func() bool { _, ok := server.request(1); return ok })
-	feedback, _ := server.request(1)
+	until(func() bool { _, ok := planReviewRequest(server, 1); return ok })
+	feedback, _ := planReviewRequest(server, 1)
 	for _, want := range []string{"<plan_review revision=\"1\">", "<quoted_text>Implement and test addition</quoted_text>",
 		"<note>Handle integer overflow.</note>", "<my_edits>", "+- Add a changelog entry", "<comment lines=\"4\"", "<plan>\n# Add addition\n\n## Steps\n"} {
 		if !strings.Contains(feedback, want) {
@@ -204,8 +161,8 @@ func TestPlanReviewConnectedJourney(t *testing.T) {
 	})
 	projection = app.activeSessionProjection()
 	runAppCommand(t, app, app.resolveSessionDecision(decision.ResultMsg{Target: projection.decision, Purpose: "implement_plan", Confirmed: true}))
-	until(func() bool { _, ok := server.request(2); return ok && !app.ws.PlanModeForAgent(id) })
-	if implement, _ := server.request(2); !strings.Contains(implement, "Implement the plan") {
+	until(func() bool { _, ok := planReviewRequest(server, 2); return ok && !app.ws.PlanModeForAgent(id) })
+	if implement, _ := planReviewRequest(server, 2); !strings.Contains(implement, "Implement the plan") {
 		t.Fatalf("implementation request = %q", implement)
 	}
 	until(func() bool {
@@ -249,13 +206,12 @@ func TestPlanDecisionAsksToSendPendingComments(t *testing.T) {
 // input closes the source review. The new session opens in its own tab and
 // the source stays in Plan mode.
 func TestPlanNewSessionConnectedJourney(t *testing.T) {
-	server := &planReviewServer{replies: []string{
-		"Explored.\n<proposed_plan>\n# Add addition\n\n## Steps\n- Implement and test addition\n</proposed_plan>",
-		"Implemented in a fresh context.",
-	}}
-	httpServer := httptest.NewServer(http.HandlerFunc(server.handler))
-	t.Cleanup(httpServer.Close)
-	runtime := remoteJourneyRuntime(t, httpServer.URL)
+	server := simulatedChat(t,
+		simulatedAnswer("Explored.\n<proposed_plan>\n# Add addition\n\n## Steps\n- Implement and test addition\n</proposed_plan>"),
+		simulatedAnswer("Implemented in a fresh context."),
+	)
+	server.Respond(func(providersim.Request) providersim.Turn { return simulatedAnswer("Done.") })
+	runtime := remoteJourneyRuntime(t, server.BaseURL(providersim.Chat))
 	shell := newRemoteJourneyShell(t, runtime, t.TempDir())
 	app := shell.app
 	id := remoteJourneyCreate(t, shell)
@@ -277,8 +233,8 @@ func TestPlanNewSessionConnectedJourney(t *testing.T) {
 	runAppCommand(t, app, app.resolveSessionDecision(decision.ResultMsg{Target: projection.decision, Purpose: "implement_plan", Confirmed: true, Choice: planChoiceNewSession}))
 	until(func() bool { active := app.AgentView.ActiveID(); return active != "" && active != id })
 	destination := app.AgentView.ActiveID()
-	until(func() bool { _, ok := server.request(1); return ok })
-	if fresh, _ := server.request(1); !strings.Contains(fresh, "Implement the plan in a fresh context") ||
+	until(func() bool { _, ok := planReviewRequest(server, 1); return ok })
+	if fresh, _ := planReviewRequest(server, 1); !strings.Contains(fresh, "Implement the plan in a fresh context") ||
 		!strings.Contains(fresh, "- Implement and test addition") || strings.Contains(fresh, "Propose a plan to add addition") {
 		t.Fatalf("destination's first request = %q", fresh)
 	}
@@ -297,7 +253,7 @@ func TestPlanNewSessionConnectedJourney(t *testing.T) {
 		app.paintShellFrame()
 		return strings.Contains(frameText(app), "Implemented in a fresh context.")
 	})
-	if _, again := server.request(2); again {
+	if _, again := planReviewRequest(server, 2); again {
 		t.Fatal("the plan was sent more than once")
 	}
 	if _, source := app.sessionProjectionForAgent(id); source != nil && source.decision != nil && source.decisionAgentID == id {

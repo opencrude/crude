@@ -1,15 +1,13 @@
 package workspace
 
 import (
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"crude/agent/provider"
 	"crude/agent/session"
+	"crude/internal/providersim"
 	"crude/types/setting"
 )
 
@@ -86,26 +84,22 @@ func TestTwoConcurrentSessionsUseIndependentAccounts(t *testing.T) {
 	setTestHome(t)
 	home, root := t.TempDir(), t.TempDir()
 	arrived := make(chan string, 2)
-	release := make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		arrived <- r.Header.Get("Authorization")
-		select {
-		case <-release:
-		case <-r.Context().Done():
-			return
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"done\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":1}}\n\ndata: [DONE]\n\n")
-	}))
-	defer server.Close()
-	defer close(release)
+	gate := providersim.NewGate()
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
+		arrived <- request.Header.Get("Authorization")
+		return providersim.Text("done").WithUsage(providersim.Usage{Input: 10, Output: 1}).WithGate(gate)
+	})
+	defer gate.Release()
 	accounts := map[string]provider.Account{
 		"personal": {ID: "personal", ProviderID: "openai", Label: "Personal", APIKey: "personal-key", Connection: provider.DefaultTemplates()["openai"]},
 		"work":     {ID: "work", ProviderID: "openai", Label: "Work", APIKey: "work-key", Connection: provider.DefaultTemplates()["openai"]},
 	}
-	cfg := historyE2EConfig(server.URL)
+	// The built-in OpenAI account uses Responses, not Chat Completions.
+	baseURL := server.BaseURL(providersim.Responses)
+	cfg := historyE2EConfig(baseURL)
 	for id, account := range accounts {
-		account.Connection.ProviderURL = server.URL
+		account.Connection.ProviderURL = baseURL
 		accounts[id] = account
 	}
 	cfg.Accounts = accounts

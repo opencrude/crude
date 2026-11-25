@@ -41,9 +41,9 @@ func TestSuggestionFollowWithoutAChainNeverCallsTheModel(t *testing.T) {
 			return strings.Replace(region, "value =", "value = 23", 1)
 		})
 	})
-	before := f.server.calls.Load()
+	before := len(f.server.Requests())
 	got := requestSuggestionFollow(t, f, len("value ="))
-	if calls := f.server.calls.Load(); !got.Empty() || got.Text != "" || calls != before {
+	if calls := len(f.server.Requests()); !got.Empty() || got.Text != "" || calls != before {
 		t.Fatalf("follow with no chain = %+v, model calls %d -> %d", got, before, calls)
 	}
 }
@@ -60,8 +60,8 @@ func TestSuggestionFollowNamesItsSourcesAndReleaseDiscardsRemainingHunks(t *test
 	first, err := f.request(t, len("total"))
 	logStart := strings.Index(edited, "log(count)") + len("log(")
 	if err != nil || first.Kind != insight.PredictionEdit || first.Start != logStart || first.End != logStart+len("count") ||
-		first.Text != "total" || first.CacheHit || f.server.calls.Load() != 1 {
-		t.Fatalf("first edit = %+v, err=%v, model calls=%d", first, err, f.server.calls.Load())
+		first.Text != "total" || first.CacheHit || len(f.server.Requests()) != 1 {
+		t.Fatalf("first edit = %+v, err=%v, model calls=%d", first, err, len(f.server.Requests()))
 	}
 	if !slices.Contains(first.Sources, insight.PredictionSourceEdits) {
 		t.Errorf("first answer sources = %v; missing %q", first.Sources, insight.PredictionSourceEdits)
@@ -70,8 +70,8 @@ func TestSuggestionFollowNamesItsSourcesAndReleaseDiscardsRemainingHunks(t *test
 	next := requestSuggestionFollow(t, f, first.Start+len(first.Text))
 	saveStart := strings.Index(edited, "save(count)") + len("save(")
 	if next.Kind != insight.PredictionEdit || next.Start != saveStart || next.End != saveStart+len("count") ||
-		next.Text != "total" || !next.CacheHit || f.server.calls.Load() != 1 {
-		t.Fatalf("second edit = %+v, model calls=%d", next, f.server.calls.Load())
+		next.Text != "total" || !next.CacheHit || len(f.server.Requests()) != 1 {
+		t.Fatalf("second edit = %+v, model calls=%d", next, len(f.server.Requests()))
 	}
 	if !slices.Equal(next.Sources, []string{insight.PredictionSourceChain}) {
 		t.Errorf("follow-up sources = %v, want [%s]", next.Sources, insight.PredictionSourceChain)
@@ -81,8 +81,8 @@ func TestSuggestionFollowNamesItsSourcesAndReleaseDiscardsRemainingHunks(t *test
 	// still stay absent after the view releases its previous answer.
 	f.edit(t, next.Start, next.End, next.Text)
 	got := requestSuggestionFollow(t, f, next.Start+len(next.Text))
-	if !got.Empty() || got.Text != "" || f.server.calls.Load() != 1 {
-		t.Fatalf("released view offered a follow-up: %+v, model calls=%d", got, f.server.calls.Load())
+	if !got.Empty() || got.Text != "" || len(f.server.Requests()) != 1 {
+		t.Fatalf("released view offered a follow-up: %+v, model calls=%d", got, len(f.server.Requests()))
 	}
 }
 
@@ -179,8 +179,8 @@ func TestSuggestionRequestHidesAChangeOnRecentlyEditedPeerOrDiskLines(t *testing
 			}
 			at := strings.Index(initial, "count")
 			got, err := f.request(t, at)
-			if err != nil || f.server.calls.Load() != 1 {
-				t.Fatalf("model answer = %+v, err=%v, model calls=%d", got, err, f.server.calls.Load())
+			if err != nil || len(f.server.Requests()) != 1 {
+				t.Fatalf("model answer = %+v, err=%v, model calls=%d", got, err, len(f.server.Requests()))
 			}
 			if tc.hidden {
 				if !got.Empty() || got.Text != "" {
@@ -202,8 +202,8 @@ func TestSuggestionStagesAreReportedToTheCoreMetrics(t *testing.T) {
 	query := metrics.Query{Seconds: metrics.HistorySeconds, Points: 1}
 	before := metrics.Take(query)
 	got, err := f.request(t, len("value ="))
-	if err != nil || got.Kind != insight.PredictionInsert || got.Text != " 23" || got.CacheHit || f.server.calls.Load() != 1 {
-		t.Fatalf("model insertion = %+v, err=%v, model calls=%d", got, err, f.server.calls.Load())
+	if err != nil || got.Kind != insight.PredictionInsert || got.Text != " 23" || got.CacheHit || len(f.server.Requests()) != 1 {
+		t.Fatalf("model insertion = %+v, err=%v, model calls=%d", got, err, len(f.server.Requests()))
 	}
 	s := got.Stages
 	// A short stage may round down to zero. The model includes time
@@ -278,8 +278,8 @@ func TestSuggestionFIMOnlyReportsSourcesSentToTheModel(t *testing.T) {
 	caret := len("score = (")
 	got, err := f.request(t, caret)
 	if err != nil || got.Kind != insight.PredictionInsert || got.Start != caret || got.End != caret || got.Text != "23" ||
-		fimCalls.Load() != 1 || f.server.calls.Load() != 0 {
-		t.Fatalf("FIM suggestion=%+v err=%v (calls=%d FIM, %d Chat)", got, err, fimCalls.Load(), f.server.calls.Load())
+		fimCalls.Load() != 1 || len(f.server.Requests()) != 0 {
+		t.Fatalf("FIM suggestion=%+v err=%v (calls=%d FIM, %d Chat)", got, err, fimCalls.Load(), len(f.server.Requests()))
 	}
 	if got.Sources != nil {
 		t.Fatalf("FIM claims context sources it did not send: %v", got.Sources)

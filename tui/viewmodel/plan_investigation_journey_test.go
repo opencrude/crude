@@ -3,20 +3,17 @@ package viewmodel
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"crude/internal/providersim"
 	"crude/types/conversation"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -28,47 +25,28 @@ type investigationJourneyCall struct {
 	args map[string]any
 }
 
-func investigationJourneyProvider(t *testing.T, calls []investigationJourneyCall, proposal string) (*httptest.Server, *atomic.Int32) {
+func investigationJourneyProvider(t *testing.T, calls []investigationJourneyCall, proposal string) *providersim.Server {
 	t.Helper()
-	var n atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var input struct {
-			Tools    []struct{ Function struct{ Name string } }
-			Messages []struct {
-				Role    string
-				Content any
-			}
-		}
-		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-			t.Error(err)
-			return
-		}
-		index := int(n.Add(1)) - 1
-		delta := map[string]any{}
-		finish := "stop"
+	sim := providersim.New(t)
+	sim.Respond(func(r providersim.Request) providersim.Turn {
+		index := r.Index - 1
 		if index < len(calls) {
 			c := calls[index]
 			found := false
-			for _, tool := range input.Tools {
-				found = found || tool.Function.Name == c.name
+			for _, tool := range r.Tools {
+				found = found || tool.Name == c.name
 			}
 			if !found {
 				t.Errorf("step %d: %s not in offered tools", index, c.name)
 			}
-			args, _ := json.Marshal(c.args)
-			delta["tool_calls"] = []any{map[string]any{"index": 0, "id": fmt.Sprintf("probe-%d", index), "type": "function", "function": map[string]string{"name": c.name, "arguments": string(args)}}}
-			finish = "tool_calls"
-		} else if index == len(calls) {
-			delta["content"] = "<proposed_plan>\n" + proposal + "\n</proposed_plan>"
-		} else {
-			delta["content"] = "Done."
+			return simulatedTool(fmt.Sprintf("probe-%d", index), c.name, c.args)
 		}
-		frame, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"delta": delta, "finish_reason": finish}}})
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", frame)
-	}))
-	t.Cleanup(srv.Close)
-	return srv, &n
+		if index == len(calls) {
+			return simulatedAnswer("<proposed_plan>\n" + proposal + "\n</proposed_plan>")
+		}
+		return simulatedAnswer("Done.")
+	})
+	return sim
 }
 
 const (
@@ -114,8 +92,8 @@ func newInvestigationFixture(t *testing.T) investigationFixture {
 		t.Fatal(err)
 	}
 	t.Setenv("GOCACHE", strings.TrimSpace(string(cache)))
-	model, _ := investigationJourneyProvider(t, []investigationJourneyCall{{"open_plan_investigation", map[string]any{}}, {"write_file", map[string]any{"path": investigationTestPath, "content": investigationCheck}}, {"execute_command", map[string]any{"command": testCmd}}, {"write_file", map[string]any{"path": "value.go", "content": strings.Replace(investigationOriginal, "return 3", "return 5", 1)}}, {"execute_command", map[string]any{"command": testCmd}}}, proposal)
-	shell := newRemoteJourneyShell(t, remoteJourneyRuntime(t, model.URL), root)
+	model := investigationJourneyProvider(t, []investigationJourneyCall{{"open_plan_investigation", map[string]any{}}, {"write_file", map[string]any{"path": investigationTestPath, "content": investigationCheck}}, {"execute_command", map[string]any{"command": testCmd}}, {"write_file", map[string]any{"path": "value.go", "content": strings.Replace(investigationOriginal, "return 3", "return 5", 1)}}, {"execute_command", map[string]any{"command": testCmd}}}, proposal)
+	shell := newRemoteJourneyShell(t, remoteJourneyRuntime(t, model.BaseURL(providersim.Chat)), root)
 	f := investigationFixture{root: root, shell: shell, app: shell.app, shells: []remoteJourneyShell{shell}}
 	f.id = remoteJourneyCreate(t, shell)
 	if !f.app.ws.SetYoloForAgent(f.id, true) {

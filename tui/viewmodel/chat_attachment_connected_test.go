@@ -2,12 +2,9 @@ package viewmodel
 
 import (
 	"bytes"
-	"fmt"
 	"image"
 	"image/color"
 	"image/png"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"strconv"
 	"strings"
@@ -22,6 +19,7 @@ import (
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
 	"crude/core/coreclient"
+	"crude/internal/providersim"
 	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/ui"
 	"crude/types/setting"
@@ -33,14 +31,13 @@ import (
 // hydration rather than seeding the new attachment fields in a UI fixture.
 func TestConnectedPostedAttachmentsSurviveViewerReattach(t *testing.T) {
 	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := providersim.New(t)
+	server.Respond(func(providersim.Request) providersim.Turn {
 		calls.Add(1)
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"connected attachments accepted\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	defer server.Close()
+		return simulatedAnswer("connected attachments accepted")
+	})
 	provider.SetModelCap("test-model", true, true)
-	runtime := remoteJourneyRuntime(t, server.URL, func(ws *workspace.Workspace) {
+	runtime := remoteJourneyRuntime(t, server.BaseURL(providersim.Chat), func(ws *workspace.Workspace) {
 		app := ws.AppDefaults()
 		app.UI.AttachmentOpen = setting.AttachmentOpenCrude
 		ws.SetAppDefaults(app)

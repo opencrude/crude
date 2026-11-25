@@ -2,8 +2,6 @@ package viewmodel
 
 import (
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +11,7 @@ import (
 	"crude/core"
 	"crude/core/coreprotocol"
 	"crude/core/shellport"
+	"crude/internal/providersim"
 	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/ui"
 	"crude/types/control"
@@ -24,20 +23,12 @@ import (
 
 func settingsJourneyRuntime(t *testing.T) *core.Runtime {
 	t.Helper()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || !strings.HasSuffix(r.URL.Path, "/models") {
-			http.Error(w, "unexpected settings request", http.StatusNotFound)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"test-model","object":"model"}]}`))
-	}))
-	t.Cleanup(server.Close)
+	server := providersim.New(t, providersim.WithModels(providersim.Chat, "test-model"))
 	path := filepath.Join(t.TempDir(), "application.json")
 	runtime, err := core.New(func(root string) (*workspace.Workspace, error) {
 		ws := workspace.NewWorkspace(root, "test-model", "tester", setting.Settings{}, nil)
 		ws.SetAppDefaults(setting.App{
-			Accounts:     map[string]provider.Account{"test": {ID: "test", ProviderID: "openai", APIKey: "test", Connection: provider.Template{Name: "test", ProviderURL: server.URL, APIStandard: "openai", AuthType: provider.AuthProtocol}}},
+			Accounts:     map[string]provider.Account{"test": {ID: "test", ProviderID: "openai", APIKey: "test", Connection: provider.Template{Name: "test", ProviderURL: server.BaseURL(providersim.Chat), APIStandard: "openai", AuthType: provider.AuthProtocol}}},
 			Agents:       setting.Agents{Categories: map[string]setting.Category{"default": {AccountID: "test", Model: "test-model"}, "crafter": {AccountID: "test", Model: "test-model"}}},
 			LocalHistory: setting.LocalHistory{Enabled: "off"},
 			Memory:       setting.Memory{AutoRecall: "off", AutoExtract: "off", Consolidation: "off"},

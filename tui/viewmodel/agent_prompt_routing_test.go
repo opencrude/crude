@@ -1,10 +1,7 @@
 package viewmodel
 
 import (
-	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -14,6 +11,7 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/turnloop"
+	"crude/internal/providersim"
 	"crude/tui/screens/confirmation"
 	"crude/tui/ui"
 	"crude/types/conversation"
@@ -52,38 +50,18 @@ func newBackendPromptFamilyApp(t *testing.T) (*App, string, string, map[string]c
 		profile.MultiAgent = &enabled
 		cfg.Agents.Profiles[cfg.Agents.ActiveProfile] = profile
 		var requests atomic.Int32
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			var request struct {
-				Stream bool `json:"stream"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = fmt.Fprint(w, `{"data":[]}`)
-				return
-			}
-			first := requests.Add(1) == 1
-			if request.Stream {
-				w.Header().Set("Content-Type", "text/event-stream")
-				if first {
-					_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"tool_calls\":[{\"index\":0,\"id\":\"fixture\",\"type\":\"function\",\"function\":{\"name\":\"agent_start\",\"arguments\":\"{\\\"description\\\":\\\"fixture\\\",\\\"category\\\":\\\"invalid-fixture\\\"}\"}}]}}]}\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n")
-				} else {
-					_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Ready\"}}]}\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-				}
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			if first {
+		server := providersim.New(t)
+		server.Respond(func(request providersim.Request) providersim.Turn {
+			if requests.Add(1) == 1 {
 				// Invalid launch arguments initialize the real delegation owner
 				// through tool dispatch, but start no child or external request.
-				_, _ = fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"fixture","type":"function","function":{"name":"agent_start","arguments":"{\"description\":\"fixture\",\"category\":\"invalid-fixture\"}"}}]},"finish_reason":"tool_calls"}]}`)
-				return
+				return simulatedTool("fixture", "agent_start", map[string]string{"description": "fixture", "category": "invalid-fixture"})
 			}
-			_, _ = fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"Ready"},"finish_reason":"stop"}]}`)
-		}))
-		t.Cleanup(server.Close)
+			return simulatedAnswer("Ready")
+		})
 		account := cfg.Accounts["test"]
 		template := account.Connection
-		template.ProviderURL = server.URL
+		template.ProviderURL = server.BaseURL(providersim.Chat)
 		account.Connection = template
 		cfg.Accounts["test"] = account
 		sess, err := wsOf(app).CreateSession(cfg, t.TempDir())

@@ -1,10 +1,7 @@
 package viewmodel
 
 import (
-	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -14,7 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/agent/provider"
+	"crude/internal/providersim"
 	"crude/types/statuscenter"
 	"crude/workspace"
 )
@@ -29,52 +26,39 @@ func TestRemoteAppJourneyCompactionQueuesFromBothShells(t *testing.T) {
 	var normal, extraction atomic.Int32
 	var mu sync.Mutex
 	var prompts []string
-	release := make(chan struct{})
-	var releaseOnce sync.Once
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-			return
-		}
+	gate := providersim.NewGate()
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
 		text := "INITIAL TURN COMPLETED"
-		if request.ToolChoice == "none" {
+		if string(request.ToolChoice) == `"none"` {
 			extraction.Add(1)
-			select {
-			case <-release:
-			case <-r.Context().Done():
-				return
-			}
-			text = "<<<intent>>>\nPreserve the accepted request.\n<<<work>>>\nEvidence retained.\n<<<state>>>\nClean.\n<<<continuation>>>\nContinue with the next human input."
+			return simulatedAnswer("<<<intent>>>\nPreserve the accepted request.\n<<<work>>>\nEvidence retained.\n<<<state>>>\nClean.\n<<<continuation>>>\nContinue with the next human input.").WithGate(gate)
 		} else {
 			normal.Add(1)
 			for i := len(request.Messages) - 1; i >= 0; i-- {
 				message := request.Messages[i]
-				if message.Role == "user" && !strings.Contains(message.ContentString(), "<") {
+				if message.Role == "user" && !strings.Contains(simulatedText(message.Parts), "<") {
 					mu.Lock()
-					prompts = append(prompts, message.ContentString())
+					prompts = append(prompts, simulatedText(message.Parts))
 					mu.Unlock()
-					if strings.HasPrefix(message.ContentString(), "queued prompt") {
-						text = "ANSWER TO " + message.ContentString()
+					if strings.HasPrefix(simulatedText(message.Parts), "queued prompt") {
+						text = "ANSWER TO " + simulatedText(message.Parts)
 					}
 					break
 				}
 			}
 		}
-		encoded, _ := json.Marshal(text)
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":%s},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n", encoded)
-	}))
-	t.Cleanup(server.Close)
-	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
-	runtime := remoteJourneyRuntime(t, server.URL)
+		return simulatedAnswer(text)
+	})
+	t.Cleanup(gate.Release)
+	runtime := remoteJourneyRuntime(t, server.BaseURL(providersim.Chat))
 	root := t.TempDir()
 	one := newRemoteJourneyShell(t, runtime, root)
 	id := remoteJourneyCreate(t, one)
 	two := newRemoteJourneyShell(t, runtime, root)
 	// Release provider work before Runtime.Close joins admitted core jobs, even
 	// when an assertion fails while extraction is deliberately held open.
-	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+	t.Cleanup(gate.Release)
 	shells := []remoteJourneyShell{one, two}
 	remoteJourneyUntil(t, shells, func() bool { return two.app.AgentView.ActiveID() == id })
 	send := func(shell remoteJourneyShell, text string) {
@@ -122,7 +106,7 @@ func TestRemoteAppJourneyCompactionQueuesFromBothShells(t *testing.T) {
 	}
 	one.app.Input.SetInput("new private draft one")
 	two.app.Input.SetInput("new private draft two")
-	releaseOnce.Do(func() { close(release) })
+	gate.Release()
 	select {
 	case result := <-compactDone:
 		_, cmd := one.app.Update(result)
@@ -177,36 +161,24 @@ func TestRemoteAppJourneyStopCompactionPreservesQueuedPromptAndResumeIsPassive(t
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	var normal, extraction atomic.Int32
-	release := make(chan struct{})
-	var releaseOnce sync.Once
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-			return
-		}
+	gate := providersim.NewGate()
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
 		text := "TURN COMPLETED"
-		if request.ToolChoice == "none" {
+		if string(request.ToolChoice) == `"none"` {
 			extraction.Add(1)
-			select {
-			case <-release:
-			case <-r.Context().Done():
-				return
-			}
-			text = "Complete retained source."
+			return simulatedAnswer("Complete retained source.").WithGate(gate)
 		} else {
 			normal.Add(1)
 		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":%q},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n", text)
-	}))
-	t.Cleanup(server.Close)
-	runtime := remoteJourneyRuntime(t, server.URL)
+		return simulatedAnswer(text)
+	})
+	runtime := remoteJourneyRuntime(t, server.BaseURL(providersim.Chat))
 	root := t.TempDir()
 	one := newRemoteJourneyShell(t, runtime, root)
 	id := remoteJourneyCreate(t, one)
 	two := newRemoteJourneyShell(t, runtime, root)
-	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+	t.Cleanup(gate.Release)
 	shells := []remoteJourneyShell{one, two}
 	remoteJourneyUntil(t, shells, func() bool { return two.app.AgentView.ActiveID() == id })
 	one.app.Input.SetInput("Keep complete context.\n" + strings.Repeat("evidence\n", 7_000))
@@ -249,7 +221,7 @@ func TestRemoteAppJourneyStopCompactionPreservesQueuedPromptAndResumeIsPassive(t
 	if err := runtime.Close(); err != nil {
 		t.Fatal(err)
 	}
-	runtime = remoteJourneyRuntime(t, server.URL)
+	runtime = remoteJourneyRuntime(t, server.BaseURL(providersim.Chat))
 	resumed := newRemoteJourneyShell(t, runtime, root)
 	runAppCommand(t, resumed.app, resumed.app.launcherResumeSession(sessionID, nil))
 	remoteJourneyUntil(t, []remoteJourneyShell{resumed}, func() bool { return resumed.app.AgentView.ActiveID() != "" })
@@ -277,36 +249,24 @@ func TestRemoteAppJourneyCompactDuringActiveTurnIsAccepted(t *testing.T) {
 	t.Setenv("USERPROFILE", home)
 	var normal, extraction atomic.Int32
 	held := make(chan struct{}, 4)
-	release := make(chan struct{})
-	var releaseOnce sync.Once
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-			return
-		}
+	gate := providersim.NewGate()
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
 		text := "TURN FINISHED"
-		if request.ToolChoice == "none" {
+		if string(request.ToolChoice) == `"none"` {
 			extraction.Add(1)
 			text = "<<<intent>>>\nKeep the request.\n<<<work>>>\nEvidence retained.\n<<<state>>>\nClean.\n<<<continuation>>>\nNone."
 		} else {
 			normal.Add(1)
 			held <- struct{}{}
-			select {
-			case <-release:
-			case <-r.Context().Done():
-				return
-			}
+			return simulatedAnswer(text).WithGate(gate)
 		}
-		encoded, _ := json.Marshal(text)
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":%s},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n", encoded)
-	}))
-	t.Cleanup(server.Close)
-	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
-	runtime := remoteJourneyRuntime(t, server.URL)
+		return simulatedAnswer(text)
+	})
+	t.Cleanup(gate.Release)
+	runtime := remoteJourneyRuntime(t, server.BaseURL(providersim.Chat))
 	shell := newRemoteJourneyShell(t, runtime, t.TempDir())
-	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+	t.Cleanup(gate.Release)
 	id := remoteJourneyCreate(t, shell)
 	shells := []remoteJourneyShell{shell}
 	shell.app.Input.SetInput("Keep the complete evidence.\n" + strings.Repeat("source evidence\n", 4_000))
@@ -334,7 +294,7 @@ func TestRemoteAppJourneyCompactDuringActiveTurnIsAccepted(t *testing.T) {
 	if extraction.Load() != 0 {
 		t.Fatal("compaction overlapped the model request in flight")
 	}
-	releaseOnce.Do(func() { close(release) })
+	gate.Release()
 	remoteJourneyUntil(t, shells, func() bool {
 		return extraction.Load() == 1 && shell.app.ws.AgentActivity(id).Status.Phase == statuscenter.AgentCompactionResult &&
 			strings.Contains(ansi.Strip(shell.app.View().RenderContent()), "Compacted context")

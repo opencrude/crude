@@ -9,8 +9,6 @@ import (
 	"html"
 	"image"
 	"image/png"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,6 +21,7 @@ import (
 	"crude/core/coreclient"
 	"crude/core/coreprotocol"
 	"crude/core/shellport/remote"
+	"crude/internal/providersim"
 	captypes "crude/types/capability"
 	cmdtypes "crude/types/command"
 	"crude/types/control"
@@ -71,9 +70,9 @@ func TestCapabilityHostJourneySDKHelper(t *testing.T) {
 
 // journeyActivation reads the activation result the way the model receives
 // it: the settled job's outcome carries the activation result as its output.
-func journeyActivation(messages []provider.ChatMessage, id string) (captypes.ActivationResult, bool) {
-	for _, message := range messages {
-		text := html.UnescapeString(message.Content.String())
+func journeyActivation(dialog providersim.Conversation, id string) (captypes.ActivationResult, bool) {
+	for _, message := range dialog.Messages {
+		text := html.UnescapeString(simMessageText(message))
 		start := strings.Index(text, "{")
 		if start < 0 {
 			continue
@@ -105,38 +104,28 @@ func TestCapabilityHostFramedTwoShellModelJourney(t *testing.T) {
 	connection := captypes.ConnectionConfig{ID: "shell-picture", Name: "Shell picture", Host: "shell", Directory: directory, Transport: "stdio", Command: executable, Args: []string{"-test.run=^TestCapabilityHostJourneySDKHelper$"}, SecretRefs: map[string]string{"CRUDE_HOST_JOURNEY_HELPER": "env:CRUDE_HOST_JOURNEY_HELPER"}, Scope: captypes.ScopeWorkspace}
 	settings := captypes.Normalize(captypes.Settings{Connections: map[string]captypes.ConnectionConfig{connection.ID: connection}})
 	var requests atomic.Int32
-	finalRequest := make(chan string, 1)
-	release := make(chan struct{})
-	defer close(release)
-	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body struct {
-			Messages []provider.ChatMessage `json:"messages"`
-			Tools    []struct {
-				Function struct {
-					Name string `json:"name"`
-				} `json:"function"`
-			} `json:"tools"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Error(err)
-			return
-		}
+	finalRequest := make(chan providersim.Request, 1)
+	gate := providersim.NewGate()
+	defer gate.Release()
+	endpoint := providersim.New(t)
+	endpoint.Respond(func(request providersim.Request) providersim.Turn {
 		step := requests.Add(1)
-		w.Header().Set("Content-Type", "text/event-stream")
 		// The model acts on what its history shows. Launching the shell server
 		// is a background job, so the activation result arrives as that job's
 		// outcome, and the model waits for it as an agent would.
 		called := map[string]bool{}
-		for _, message := range body.Messages {
-			for _, call := range message.ToolCalls {
-				called[call.Function.Name] = true
+		for _, message := range request.Messages {
+			for _, part := range message.Parts {
+				if part.Kind == providersim.PartToolCall {
+					called[part.Call.Name] = true
+				}
 			}
 		}
-		_, observed := journeyActivation(body.Messages, connection.ID)
+		_, observed := journeyActivation(request.Conversation, connection.ID)
 		var dynamic string
-		for _, tool := range body.Tools {
-			if strings.HasPrefix(tool.Function.Name, "mcp_") && strings.Contains(tool.Function.Name, "picture") {
-				dynamic = tool.Function.Name
+		for _, tool := range request.Tools {
+			if strings.HasPrefix(tool.Name, "mcp_") && strings.Contains(tool.Name, "picture") {
+				dynamic = tool.Name
 			}
 		}
 		name := "capability_activate"
@@ -145,34 +134,27 @@ func TestCapabilityHostFramedTwoShellModelJourney(t *testing.T) {
 		case !called["capability_activate"]:
 		case !observed:
 			if step > 6 {
-				t.Errorf("activation outcome never reached the model: %+v", body.Messages)
-				return
+				t.Errorf("activation outcome never reached the model: %+v", request.Messages)
+				return providersim.Turn{}
 			}
 			name, args = "wait", map[string]any{"seconds": 20}
 		case dynamic != "" && !called[dynamic]:
 			name, args = dynamic, map[string]any{}
 		case dynamic == "":
-			t.Errorf("dynamic SDK tool not offered: %+v", body.Tools)
-			return
+			t.Errorf("dynamic SDK tool not offered: %+v", request.Tools)
+			return providersim.Turn{}
 		default:
-			raw, _ := json.Marshal(body)
-			finalRequest <- string(raw)
-			select {
-			case <-release:
-			case <-r.Context().Done():
-			}
-			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Inspected.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-			return
+			finalRequest <- request
+			return providersim.Text("Inspected.").WithGate(gate)
 		}
 		raw, _ := json.Marshal(args)
-		_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":%q,\"type\":\"function\",\"function\":{\"name\":%q,\"arguments\":%q}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", fmt.Sprintf("host-%d", step), name, string(raw))
-	}))
-	defer endpoint.Close()
+		return providersim.CallTools(providersim.ToolCall{ID: fmt.Sprintf("host-%d", step), Name: name, Arguments: string(raw)})
+	})
 	agents := session.DefaultAgentsConfig()
 	profile := agents.Profiles[agents.ActiveProfile]
 	profile.Categories["default"] = session.CategoryConfig{AccountID: "test", Model: "host-media", ModelSupportsTools: true, ModelModalities: []string{provider.ModalityImage}}
 	agents.Profiles[agents.ActiveProfile] = profile
-	cfg := &session.Config{Agents: agents, Capabilities: settings, Accounts: map[string]provider.Account{"test": {ID: "test", ProviderID: "openai", APIKey: "test", Connection: provider.Template{Name: "test", ProviderURL: endpoint.URL, APIStandard: "openai", AuthType: provider.AuthProtocol}}}}
+	cfg := &session.Config{Agents: agents, Capabilities: settings, Accounts: map[string]provider.Account{"test": {ID: "test", ProviderID: "openai", APIKey: "test", Connection: provider.Template{Name: "test", ProviderURL: endpoint.BaseURL(providersim.Chat), APIStandard: "openai", AuthType: provider.AuthProtocol}}}}
 	var ws *workspace.Workspace
 	runtime, err := New(func(root string) (*workspace.Workspace, error) {
 		ws = workspace.NewWorkspace(root, "", "test", setting.Settings{Capabilities: settings}, coreTestLogger{})
@@ -220,9 +202,16 @@ func TestCapabilityHostFramedTwoShellModelJourney(t *testing.T) {
 		t.Fatal(err)
 	}
 	select {
-	case body := <-finalRequest:
-		if !strings.Contains(body, "data:image/png;base64,"+base64.StdEncoding.EncodeToString(shellJourneyImage())) || !strings.Contains(body, "EXACT_SHELL_LOCAL_EVIDENCE") {
-			t.Fatal("next actual model request lost shell image or evidence", body)
+	case request := <-finalRequest:
+		wantImage := "data:image/png;base64," + base64.StdEncoding.EncodeToString(shellJourneyImage())
+		foundImage := false
+		for _, message := range request.Messages {
+			for _, part := range message.Parts {
+				foundImage = foundImage || part.Kind == providersim.PartImage && part.ImageURL == wantImage
+			}
+		}
+		if !foundImage || !simConversationContains(request.Conversation, "EXACT_SHELL_LOCAL_EVIDENCE") {
+			t.Fatal("next actual model request lost shell image or evidence", request.Messages)
 		}
 	case <-ctx.Done():
 		t.Fatal("model journey did not reach image evidence", ctx.Err())

@@ -1,9 +1,6 @@
 package viewmodel
 
 import (
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -12,6 +9,7 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/session"
+	"crude/internal/providersim"
 	"crude/types/recovery"
 	"crude/types/statuscenter"
 )
@@ -21,38 +19,28 @@ func TestRemoteQuotaFailureIsVisibleAfterRecoveryAndOnFirstRequest(t *testing.T)
 	const reason = "Provider quota or billing limit reached"
 	const nextPrompt = "Try the next request."
 	var requests atomic.Int32
-	providerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			return
-		}
+	providerServer := providersim.New(t)
+	providerServer.Respond(func(providersim.Request) providersim.Turn {
 		switch requests.Add(1) {
 		case 1:
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = fmt.Fprint(w, `{"error":{"message":"Temporary outage"}}`)
+			return providersim.HTTPError(providersim.Overload).WithFaultMessage("Temporary outage")
 		case 2:
-			w.Header().Set("Content-Type", "text/event-stream")
-			text := strings.Repeat("Accepted work after recovery.\n\n", 20)
-			_, _ = fmt.Fprintf(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":%q}\n\n", text)
-			_, _ = fmt.Fprint(w, "data: "+`{"type":"response.completed","response":{"id":"before-limit","status":"completed","store":false,"output":[{"type":"function_call","call_id":"read-plan","name":"get_plan","arguments":"{}","status":"completed"}]}}`+"\n\n")
+			return simulatedAnswer(strings.Repeat("Accepted work after recovery.\n\n", 20)).WithTools(providersim.ToolCall{ID: "read-plan", Name: "get_plan", Arguments: `{}`})
 		case 3, 4:
-			w.Header().Set("Content-Type", "application/json")
-			w.Header().Set("Retry-After", "86400")
-			w.WriteHeader(http.StatusTooManyRequests)
-			_, _ = fmt.Fprint(w, `{"error":{"type":"rate_limit_error","message":"This request would exceed your account's rate limit. Please try again later."}}`)
+			return providersim.HTTPError(providersim.RateLimit).WithRetryHint(providersim.RetryAfterSeconds(86400)).
+				WithFaultMessage("This request would exceed your account's rate limit. Please try again later.")
 		default:
 			t.Error("a settled quota verdict was retried")
-			w.WriteHeader(http.StatusBadRequest)
+			return providersim.HTTPError(providersim.Auth)
 		}
-	}))
-	t.Cleanup(providerServer.Close)
+	})
 	configure := func(cfg *session.Config) {
 		account := cfg.Accounts["test"]
 		account.Connection.APIStandard = "openai-responses"
 		account.Connection.Dialer = &provider.DialSettings{MaxAttempts: 1}
 		cfg.Accounts["test"] = account
 	}
-	runtime := remoteJourneyRuntimeConfig(t, providerServer.URL, configure)
+	runtime := remoteJourneyRuntimeConfig(t, providerServer.BaseURL(providersim.Responses), configure)
 	root := t.TempDir()
 	shell := newRemoteJourneyShell(t, runtime, root)
 	id := remoteJourneyCreate(t, shell)
@@ -127,7 +115,7 @@ func TestRemoteQuotaFailureIsVisibleAfterRecoveryAndOnFirstRequest(t *testing.T)
 	if err := runtime.Close(); err != nil {
 		t.Fatal(err)
 	}
-	resumed := newRemoteJourneyShell(t, remoteJourneyRuntimeConfig(t, providerServer.URL, configure), root)
+	resumed := newRemoteJourneyShell(t, remoteJourneyRuntimeConfig(t, providerServer.BaseURL(providersim.Responses), configure), root)
 	runAppCommand(t, resumed.app, resumed.app.launcherResumeSession(sessionID, nil))
 	remoteJourneyUntil(t, []remoteJourneyShell{resumed}, func() bool { return resumed.app.AgentView.ActiveID() != "" })
 	cold := failures(resumed.app, resumed.app.AgentView.ActiveID(), 2)

@@ -2,9 +2,9 @@ package viewmodel
 
 import (
 	"crude/agent/turnloop"
+	"crude/internal/providersim"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -175,34 +175,25 @@ func TestRecoveryRealComposerRetryClickAndAutomaticContinuation(t *testing.T) {
 	for _, failure := range []int{http.StatusUnauthorized, http.StatusServiceUnavailable, http.StatusRequestTimeout, http.StatusOK} {
 		t.Run(http.StatusText(failure), func(t *testing.T) {
 			var requests atomic.Int32
-			finish := make(chan struct{})
-			defer close(finish)
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if requests.Add(1) == 1 {
-					if failure == http.StatusOK {
-						w.Header().Set("Content-Type", "text/event-stream")
-						_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Accepted original fragment\"}}]}\n\ndata: {\"error\":{\"type\":\"invalid_request_error\",\"message\":\"stream error: stream disconnected before completion: stream closed before response.completed\"}}\n\n")
-						return
-					}
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(failure)
-					if failure == http.StatusRequestTimeout {
-						_, _ = fmt.Fprint(w, `{"error":{"type":"invalid_request_error","message":"stream error: stream disconnected before completion: stream closed before response.completed"}}`)
-					} else {
-						_, _ = fmt.Fprint(w, `{"error":{"message":"provider unavailable for this attempt"}}`)
-					}
-					return
+			gate := providersim.NewGate()
+			defer gate.Release()
+			server := providersim.New(t)
+			server.Respond(func(providersim.Request) providersim.Turn {
+				if requests.Add(1) != 1 {
+					return simulatedAnswer("Accepted resumed response").WithGateAfter(chatFirstTextEvents, gate)
 				}
-				w.Header().Set("Content-Type", "text/event-stream")
-				_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Accepted resumed response\"}}]}\n\n")
-				w.(http.Flusher).Flush()
-				select {
-				case <-finish:
-					_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-				case <-r.Context().Done():
+				const interrupted = "stream error: stream disconnected before completion: stream closed before response.completed"
+				switch failure {
+				case http.StatusOK:
+					return simulatedAnswer("Accepted original fragment").WithStreamError(chatFirstTextEvents, providersim.InvalidRequest).WithFaultMessage(interrupted)
+				case http.StatusRequestTimeout:
+					return providersim.HTTPError(providersim.RequestTimeout).WithFaultMessage(interrupted)
+				case http.StatusUnauthorized:
+					return providersim.HTTPError(providersim.Auth).WithFaultMessage("provider unavailable for this attempt")
+				default:
+					return providersim.HTTPError(providersim.Overload).WithFaultMessage("provider unavailable for this attempt")
 				}
-			}))
-			defer server.Close()
+			})
 			app := newFullTestApp(t)
 			wsOf(app).Logger = stubLogger{}
 			wsOf(app).RootPath, wsOf(app).WorkspaceDir = t.TempDir(), t.TempDir()
@@ -212,7 +203,7 @@ func TestRecoveryRealComposerRetryClickAndAutomaticContinuation(t *testing.T) {
 			cfg := testAccountConfig()
 			account := cfg.Accounts["test"]
 			template := account.Connection
-			template.ProviderURL, template.Dialer = server.URL, &provider.DialSettings{MaxAttempts: 1}
+			template.ProviderURL, template.Dialer = server.BaseURL(providersim.Chat), &provider.DialSettings{MaxAttempts: 1}
 			account.Connection = template
 			cfg.Accounts["test"] = account
 			cfg.Agents.Enabled = false
@@ -327,7 +318,7 @@ func TestRecoveryRealComposerRetryClickAndAutomaticContinuation(t *testing.T) {
 			if app.canRetryAgentRecovery(orch.ID) || app.Input.Value() != draft || app.Input.CursorFlat() != 7 || requests.Load() != 2 {
 				t.Fatalf("retry duplicated work or consumed draft: retry=%v draft=%q requests=%d", app.canRetryAgentRecovery(orch.ID), app.Input.Value(), requests.Load())
 			}
-			finish <- struct{}{}
+			gate.Release()
 			waitFor("done")
 			_, _ = app.Update(TickMsg(time.Now()))
 			app.paintShellFrame()

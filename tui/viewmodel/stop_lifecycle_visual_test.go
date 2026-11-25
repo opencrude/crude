@@ -1,10 +1,7 @@
 package viewmodel
 
 import (
-	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -15,6 +12,7 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/session"
+	"crude/internal/providersim"
 	"crude/types/statuscenter"
 )
 
@@ -27,52 +25,37 @@ func TestStopLifecycleVisualAcceptance(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	var normal, extraction atomic.Int32
 	var holdExtraction atomic.Bool
-	release := make(chan struct{}, 8)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-			return
-		}
-		latest := ""
-		for i := len(request.Messages) - 1; i >= 0; i-- {
-			text := request.Messages[i].ContentString()
-			if request.Messages[i].Role == "user" && (strings.HasPrefix(text, "Hold ") || strings.HasPrefix(text, "Follow ") || strings.Contains(text, `kind="human_steering"`)) {
-				latest = text
-				break
-			}
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		text := "Fresh turn completed. Accepted work remains intact."
-		if request.ToolChoice == "none" {
+	var held atomic.Pointer[providersim.Gate]
+	held.Store(providersim.NewGate())
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
+		if string(request.ToolChoice) == `"none"` {
 			extraction.Add(1)
+			answer := simulatedAnswer("<<<intent>>>\nPreserve all accepted work.\n<<<work>>>\nStopped turns and corrections retained.\n<<<state>>>\nSafe checkpoint.\n<<<continuation>>>\nFollow the new input without replay.")
 			if holdExtraction.Load() {
-				select {
-				case <-release:
-				case <-r.Context().Done():
-					return
-				}
+				answer = answer.WithGate(held.Load())
 			}
-			text = "<<<intent>>>\nPreserve all accepted work.\n<<<work>>>\nStopped turns and corrections retained.\n<<<state>>>\nSafe checkpoint.\n<<<continuation>>>\nFollow the new input without replay."
-		} else {
-			normal.Add(1)
-			if strings.HasPrefix(latest, "Hold ") {
-				_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Accepted output before Stop.\"}}]}\n\n")
-				w.(http.Flusher).Flush()
-				select {
-				case <-release:
-				case <-r.Context().Done():
-					return
-				}
-				text = " Model response finished."
-			} else if strings.Contains(latest, `kind="human_steering"`) {
-				text = "Your steering reached the model exactly once."
+			return answer
+		}
+		normal.Add(1)
+		for i := len(request.Messages) - 1; i >= 0; i-- {
+			message := request.Messages[i]
+			if message.Role != "user" {
+				continue
+			}
+			text := simulatedText(message.Parts)
+			switch {
+			case strings.HasPrefix(text, "Hold "):
+				return providersim.Turn{}.WithTextDeltas("Accepted output before Stop.", " Model response finished.").WithoutUsage().WithGateAfter(chatFirstTextEvents, held.Load())
+			case strings.Contains(text, `kind="human_steering"`):
+				return simulatedAnswer("Your steering reached the model exactly once.")
+			case strings.HasPrefix(text, "Follow "):
+				return simulatedAnswer("Fresh turn completed. Accepted work remains intact.")
 			}
 		}
-		_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":%q},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n", text)
-	}))
-	t.Cleanup(server.Close)
-	runtime := remoteJourneyRuntimeConfig(t, server.URL, func(cfg *session.Config) {
+		return simulatedAnswer("Fresh turn completed. Accepted work remains intact.")
+	})
+	runtime := remoteJourneyRuntimeConfig(t, server.BaseURL(providersim.Chat), func(cfg *session.Config) {
 		profile := cfg.Agents.Profiles["default"]
 		category := profile.Categories[session.CategoryDefault]
 		percentage := 65
@@ -89,7 +72,7 @@ func TestStopLifecycleVisualAcceptance(t *testing.T) {
 		Text: "Review the original evidence.\n" + strings.Repeat("accepted source evidence\n", 4_000), DisplayText: "Review the saved source evidence and preserve all completed work.",
 	}, shell.app.Input.DraftRevision()))
 	remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool { return shell.app.ws.AgentActivity(id).Status.Phase == statuscenter.AgentCompleted })
-	model := &stopLifecycleVisualModel{App: shell.app, t: t, id: id, normal: &normal, extraction: &extraction, holdExtraction: &holdExtraction, release: release}
+	model := &stopLifecycleVisualModel{App: shell.app, t: t, id: id, normal: &normal, extraction: &extraction, holdExtraction: &holdExtraction, release: func() { held.Swap(providersim.NewGate()).Release() }}
 	program := tea.NewProgram(model, tea.WithWidthMethod(ansi.GraphemeWidth))
 	shell.app.SetProgram(program)
 	if _, err := program.Run(); err != nil {
@@ -103,7 +86,7 @@ type stopLifecycleVisualModel struct {
 	id                 string
 	normal, extraction *atomic.Int32
 	holdExtraction     *atomic.Bool
-	release            chan struct{}
+	release            func()
 }
 
 func (m *stopLifecycleVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -114,7 +97,7 @@ func (m *stopLifecycleVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case tea.KeyF6:
 			m.holdExtraction.Store(false)
-			m.release <- struct{}{}
+			m.release()
 			return m, nil
 		case tea.KeyF9:
 			state := m.ws.AgentMgr().Get(m.id).State

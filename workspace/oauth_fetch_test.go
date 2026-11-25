@@ -1,17 +1,15 @@
 package workspace
 
 import (
-	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 
 	"crude/agent/provider"
 	"crude/agent/session"
+	"crude/internal/providersim"
 )
 
 // TestHandleFetchModelsAttachesOAuth verifies that fetching models for the
@@ -19,20 +17,9 @@ import (
 // codex headers) instead of sending an unauthenticated request that fails with
 // "requires an API key".
 func TestHandleFetchModelsAttachesOAuth(t *testing.T) {
-	var gotAuth, gotAccountID, gotOriginator, gotQuery string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotAuth = r.Header.Get("Authorization")
-		gotAccountID = r.Header.Get("chatgpt-account-id")
-		gotOriginator = r.Header.Get("originator")
-		gotQuery = r.URL.RawQuery
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"models": []map[string]any{
-				{"slug": "gpt-5.6", "display_name": "GPT-5.6", "context_window": 1000000},
-			},
-		})
-	}))
-	defer srv.Close()
+	srv := providersim.New(t, providersim.WithModelCatalog(providersim.Codex,
+		providersim.Model{ID: "gpt-5.6", DisplayName: "GPT-5.6", ContextWindow: 1000000},
+	))
 
 	ws := &Workspace{
 		sessionCfg: &session.Config{
@@ -47,24 +34,29 @@ func TestHandleFetchModelsAttachesOAuth(t *testing.T) {
 		},
 	}
 
-	entries, err := ws.HandleFetchModels("chatgpt", "personal", srv.URL, "codex")
+	entries, err := ws.HandleFetchModels("chatgpt", "personal", srv.BaseURL(providersim.Codex), "codex")
 	if err != nil {
 		t.Fatalf("HandleFetchModels: %v", err)
 	}
 	if len(entries) != 1 || entries[0].ID != "gpt-5.6" {
 		t.Fatalf("entries = %+v", entries)
 	}
-	if gotAuth != "Bearer AT-oauth" {
+	request, observed := srv.Last()
+	if !observed || request.Method != http.MethodGet || request.Path != "/backend-api/codex/models" {
+		t.Fatalf("expected GET /backend-api/codex/models, got %s %s", request.Method, request.Path)
+	}
+	if gotAuth := request.Header.Get("Authorization"); gotAuth != "Bearer AT-oauth" {
 		t.Errorf("Authorization = %q, want 'Bearer AT-oauth' (OAuth not attached)", gotAuth)
 	}
-	if gotAccountID != "acct_123" {
+	if gotAccountID := request.Header.Get("chatgpt-account-id"); gotAccountID != "acct_123" {
 		t.Errorf("chatgpt-account-id = %q, want acct_123", gotAccountID)
 	}
-	if gotOriginator != "crude" {
+	if gotOriginator := request.Header.Get("originator"); gotOriginator != "crude" {
 		t.Errorf("originator = %q, want crude", gotOriginator)
 	}
 	// The codex backend requires client_version on the /models request; without
 	// it the real backend returns HTTP 400.
+	_, gotQuery, _ := strings.Cut(request.Target, "?")
 	if !strings.Contains(gotQuery, "client_version=") {
 		t.Errorf("query = %q, want client_version parameter (backend returns 400 without it)", gotQuery)
 	}
@@ -90,17 +82,11 @@ func TestCodexModelsEndpointHasClientVersion(t *testing.T) {
 // collapsing every model to a single value. This pins the reported bug where
 // every model showed 272k.
 func TestHandleFetchModelsPreservesPerModelContext(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"models": []map[string]any{
-				{"slug": "gpt-5.6-codex", "display_name": "GPT-5.6 Codex", "context_window": 1000000},
-				{"slug": "gpt-5-codex", "display_name": "GPT-5 Codex", "context_window": 400000},
-				{"slug": "gpt-5.4-codex", "display_name": "GPT-5.4 Codex", "context_window": 272000},
-			},
-		})
-	}))
-	defer srv.Close()
+	srv := providersim.New(t, providersim.WithModelCatalog(providersim.Codex,
+		providersim.Model{ID: "gpt-5.6-codex", DisplayName: "GPT-5.6 Codex", ContextWindow: 1000000},
+		providersim.Model{ID: "gpt-5-codex", DisplayName: "GPT-5 Codex", ContextWindow: 400000},
+		providersim.Model{ID: "gpt-5.4-codex", DisplayName: "GPT-5.4 Codex", ContextWindow: 272000},
+	))
 
 	ws := &Workspace{
 		sessionCfg: &session.Config{
@@ -112,7 +98,7 @@ func TestHandleFetchModelsPreservesPerModelContext(t *testing.T) {
 		},
 	}
 
-	entries, err := ws.HandleFetchModels("chatgpt", "personal", srv.URL+"/codex", "codex")
+	entries, err := ws.HandleFetchModels("chatgpt", "personal", srv.BaseURL(providersim.Codex), "codex")
 	if err != nil {
 		t.Fatalf("HandleFetchModels: %v", err)
 	}
@@ -134,24 +120,11 @@ func TestHandleFetchModelsPreservesPerModelContext(t *testing.T) {
 // Exercise the workspace entry point concurrently: model access belongs to an
 // account, not the provider or whichever session happens to be active.
 func TestAccountModelDiscoveryIsolation(t *testing.T) {
-	var requests atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests.Add(1)
-		var model string
-		switch r.Header.Get("Authorization") {
-		case "Bearer personal-key":
-			model = "personal-model"
-		case "Bearer work-key":
-			model = "work-model"
-		default:
-			t.Errorf("unexpected credential on request")
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{{"id": model}}})
-	}))
-	defer srv.Close()
+	srv := providersim.New(t,
+		providersim.WithCredentialModels(providersim.Chat, "personal-key", providersim.Model{ID: "personal-model"}),
+		providersim.WithCredentialModels(providersim.Chat, "work-key", providersim.Model{ID: "work-model"}),
+	)
+	baseURL := srv.BaseURL(providersim.Chat)
 	accounts := map[string]provider.Account{
 		"personal": {ID: "personal", ProviderID: "openai", Label: "Personal", APIKey: "personal-key", Connection: provider.DefaultTemplates()["openai"]},
 		"work":     {ID: "work", ProviderID: "openai", Label: "Work", APIKey: "work-key", Connection: provider.DefaultTemplates()["openai"]},
@@ -162,7 +135,7 @@ func TestAccountModelDiscoveryIsolation(t *testing.T) {
 	var group sync.WaitGroup
 	for _, id := range []string{"personal", "work"} {
 		group.Go(func() {
-			models, err := ws.HandleFetchModels("openai", id, srv.URL, "openai")
+			models, err := ws.HandleFetchModels("openai", id, baseURL, "openai")
 			if err != nil {
 				t.Errorf("%s: %v", id, err)
 				return
@@ -173,30 +146,34 @@ func TestAccountModelDiscoveryIsolation(t *testing.T) {
 		})
 	}
 	group.Wait()
-	before := requests.Load()
+	before := srv.Requests()
+	for _, request := range before {
+		switch request.Header.Get("Authorization") {
+		case "Bearer personal-key", "Bearer work-key":
+		default:
+			t.Errorf("unexpected credential on request")
+		}
+	}
 	for _, selection := range [][2]string{{"openai", "missing"}, {"anthropic", "personal"}, {"openai", ""}} {
-		if _, err := ws.HandleFetchModels(selection[0], selection[1], srv.URL, "openai"); err == nil {
+		if _, err := ws.HandleFetchModels(selection[0], selection[1], baseURL, "openai"); err == nil {
 			t.Errorf("invalid connection %v silently accepted", selection)
 		}
 	}
-	if requests.Load() != before {
+	if len(srv.Requests()) != len(before) {
 		t.Fatal("invalid account selection reached the network")
 	}
 }
 
 func TestDraftAccountCanFetchBeforeSaveWithoutChangingLiveCredentials(t *testing.T) {
-	var got string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got = r.Header.Get("Authorization")
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":[{"id":"draft-model"}]}`))
-	}))
-	defer server.Close()
+	server := providersim.New(t, providersim.WithModels(providersim.Chat, "draft-model"))
+	baseURL := server.BaseURL(providersim.Chat)
 	accounts := map[string]provider.Account{"work": {ID: "work", ProviderID: "openai", Label: "Work", APIKey: "saved", Connection: provider.DefaultTemplates()["openai"]}}
 	ws := &Workspace{sessionCfg: &session.Config{Accounts: accounts, AccountManager: provider.NewAccountManager(accounts, nil)}}
 	draft := accounts["work"]
 	draft.APIKey = "draft"
-	models, err := ws.PrepareDraftAccountModels(draft, server.URL, "openai")()
+	models, err := ws.PrepareDraftAccountModels(draft, baseURL, "openai")()
+	request, _ := server.Last()
+	got := request.Header.Get("Authorization")
 	if err != nil || len(models) != 1 || got != "Bearer draft" {
 		t.Fatalf("draft discovery: models=%v err=%v auth=%q", models, err, got)
 	}
@@ -204,7 +181,7 @@ func TestDraftAccountCanFetchBeforeSaveWithoutChangingLiveCredentials(t *testing
 		t.Fatal("model discovery changed live credentials")
 	}
 	draft.ID = "new-account"
-	if _, err := ws.PrepareDraftAccountModels(draft, server.URL, "openai")(); err != nil {
+	if _, err := ws.PrepareDraftAccountModels(draft, baseURL, "openai")(); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := ws.AllAccounts()["new-account"]; ok {

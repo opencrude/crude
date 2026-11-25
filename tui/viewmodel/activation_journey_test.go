@@ -21,6 +21,7 @@ import (
 	"crude/agent/provider"
 	"crude/agent/session"
 	agenttools "crude/agent/tools"
+	"crude/internal/providersim"
 	"crude/tui/rendering"
 	captypes "crude/types/capability"
 	"crude/types/command"
@@ -66,34 +67,25 @@ func TestConnectedActivationJobControls(t *testing.T) {
 	t.Cleanup(endpoint.Close)
 	t.Cleanup(releasePeer)
 	var requests atomic.Int32
-	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet {
-			_, _ = fmt.Fprint(w, `{"data":[{"id":"test-model"}]}`)
-			return
+	sim := providersim.New(t, providersim.WithModels(providersim.Chat, "test-model"))
+	sim.Respond(func(providersim.Request) providersim.Turn {
+		switch requests.Add(1) {
+		case 1:
+			return simulatedTool("shell-fixture", "async_execute_command", map[string]string{"command": "go test ./...", "handle": "tests"})
+		case 2:
+			return simulatedTool("activate-fixture", "capability_activate", map[string]string{"id": "fixture"})
+		case 3:
+			return simulatedTool("activate-broken", "capability_activate", map[string]string{"id": "broken"})
+		default:
+			return simulatedAnswer("I can continue while the server starts.")
 		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		step := requests.Add(1)
-		if step == 1 {
-			_, _ = fmt.Fprint(w, "data: "+`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"shell-fixture","type":"function","function":{"name":"async_execute_command","arguments":"{\"command\":\"go test ./...\",\"handle\":\"tests\"}"}}]},"finish_reason":"tool_calls"}]}`+"\n\ndata: [DONE]\n\n")
-			return
-		}
-		if step == 2 {
-			_, _ = fmt.Fprint(w, "data: "+`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"activate-fixture","type":"function","function":{"name":"capability_activate","arguments":"{\"id\":\"fixture\"}"}}]},"finish_reason":"tool_calls"}]}`+"\n\ndata: [DONE]\n\n")
-			return
-		}
-		if step == 3 {
-			_, _ = fmt.Fprint(w, "data: "+`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"activate-broken","type":"function","function":{"name":"capability_activate","arguments":"{\"id\":\"broken\"}"}}]},"finish_reason":"tool_calls"}]}`+"\n\ndata: [DONE]\n\n")
-			return
-		}
-		_, _ = fmt.Fprint(w, "data: "+`{"choices":[{"delta":{"content":"I can continue while the server starts."},"finish_reason":"stop"}]}`+"\n\ndata: [DONE]\n\n")
-	}))
-	t.Cleanup(provider.Close)
+	})
 	settings := captypes.Normalize(captypes.Settings{Connections: map[string]captypes.ConnectionConfig{
 		"fixture": {ID: "fixture", Name: "Fixture server", Transport: "http", URL: endpoint.URL, TimeoutSeconds: 120},
 		"broken": {ID: "broken", Name: "Windows computer use", Transport: "stdio", Command: os.Args[0], LaunchApproved: true,
 			Args: []string{"-test.run=^TestBrokenActivationHelper$"}, Environment: map[string]string{"CRUDE_BROKEN_ACTIVATION_HELPER": "1"}},
 	}})
-	rt := remoteJourneyRuntimeConfig(t, provider.URL, func(cfg *session.Config) { cfg.Capabilities = settings }, func(ws *workspace.Workspace) {
+	rt := remoteJourneyRuntimeConfig(t, sim.BaseURL(providersim.Chat), func(cfg *session.Config) { cfg.Capabilities = settings }, func(ws *workspace.Workspace) {
 		defaults := ws.AppDefaults()
 		defaults.Capabilities = settings
 		ws.SetAppDefaults(defaults)

@@ -1,13 +1,8 @@
 package core
 
 import (
-	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -15,6 +10,7 @@ import (
 	"crude/agent/provider"
 	"crude/agent/session"
 	"crude/core/coreprotocol"
+	"crude/internal/providersim"
 	"crude/types/conversation"
 	"crude/types/setting"
 	"crude/workspace"
@@ -25,36 +21,23 @@ func TestCoreCompactionReceiptsFenceReplayAndShutdownCancelsExtraction(t *testin
 	setCoreTestHome(t, home)
 	t.Setenv("USERPROFILE", home)
 	entered := make(chan struct{}, 8)
-	release := make(chan struct{})
-	shutdownRelease := make(chan struct{})
+	release := providersim.NewGate()
+	shutdownRelease := providersim.NewGate()
 	var extractions atomic.Int32
-	var once sync.Once
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var in provider.ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-			t.Error(err)
-			return
+	server := providersim.New(t)
+	server.Respond(func(request providersim.Request) providersim.Turn {
+		if string(request.ToolChoice) != `"none"` {
+			return providersim.Text("completed")
 		}
-		text := "completed"
-		if in.ToolChoice == "none" {
-			releaseRequest := release
-			// The first compaction is one combined extraction; any later one
-			// is held for the shutdown check.
-			if extractions.Add(1) > 1 {
-				releaseRequest = shutdownRelease
-			}
-			entered <- struct{}{}
-			select {
-			case <-releaseRequest:
-			case <-r.Context().Done():
-				return
-			}
-			text = "<<<intent>>>\nRetain the exact human request.\n<<<work>>>\nAccepted evidence.\n<<<state>>>\nCurrent runtime owners.\n<<<continuation>>>\nNone"
+		// The first compaction is one combined extraction; any later one
+		// is held for the shutdown check.
+		gate := release
+		if extractions.Add(1) > 1 {
+			gate = shutdownRelease
 		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":%q},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n", text)
-	}))
-	t.Cleanup(server.Close)
+		entered <- struct{}{}
+		return providersim.Text("<<<intent>>>\nRetain the exact human request.\n<<<work>>>\nAccepted evidence.\n<<<state>>>\nCurrent runtime owners.\n<<<continuation>>>\nNone").WithGate(gate)
+	})
 	runtime, err := New(func(root string) (*workspace.Workspace, error) {
 		w := workspace.NewWorkspace(root, "model", "tester", setting.Settings{}, coreTestLogger{})
 		w.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}, Memory: setting.Memory{AutoRecall: "off", AutoExtract: "off", Consolidation: "off"}})
@@ -62,7 +45,7 @@ func TestCoreCompactionReceiptsFenceReplayAndShutdownCancelsExtraction(t *testin
 		cfg := &session.Config{Agents: session.AgentsConfig{ActiveProfile: "default", Profiles: map[string]session.ProfileConfig{"default": {MultiAgent: &off, Categories: map[string]session.CategoryConfig{
 			session.CategoryDefault: {AccountID: "test", Model: "model", ModelContextWindow: 200_000, ModelSupportsTools: true},
 			session.CategoryErrand:  {AccountID: "test", Model: "model", ModelContextWindow: 200_000, ModelMaxOutput: 2_048},
-		}}}}, Accounts: map[string]provider.Account{"test": {ID: "test", ProviderID: "openai", APIKey: "test", Connection: provider.Template{Name: "Test", ProviderURL: server.URL, APIStandard: "openai", AuthType: provider.AuthProtocol}}}}
+		}}}}, Accounts: map[string]provider.Account{"test": {ID: "test", ProviderID: "openai", APIKey: "test", Connection: provider.Template{Name: "Test", ProviderURL: server.BaseURL(providersim.Chat), APIStandard: "openai", AuthType: provider.AuthProtocol}}}}
 		w.SetBackendConfig(cfg, home)
 		return w, nil
 	}, filepath.Join(t.TempDir(), "receipts.db"))
@@ -70,8 +53,8 @@ func TestCoreCompactionReceiptsFenceReplayAndShutdownCancelsExtraction(t *testin
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = runtime.Close() })
-	t.Cleanup(func() { once.Do(func() { close(release) }) })
-	t.Cleanup(func() { close(shutdownRelease) })
+	t.Cleanup(release.Release)
+	t.Cleanup(shutdownRelease.Release)
 	c, err := runtime.Connect("compaction-client")
 	if err != nil {
 		t.Fatal(err)
@@ -115,7 +98,7 @@ func TestCoreCompactionReceiptsFenceReplayAndShutdownCancelsExtraction(t *testin
 	if response := c.Call(t.Context(), coreprotocol.Request{ID: "stale-stop", Owner: c.Owner, WorkspaceID: attached.WorkspaceID, Method: coreprotocol.CancelAgent, Payload: badStop}); response.Error == nil || response.Error.Code != "stale_operation" {
 		t.Fatalf("stale compaction Stop was accepted: %+v", response)
 	}
-	once.Do(func() { close(release) })
+	release.Release()
 	var first coreprotocol.Response
 	select {
 	case first = <-done:

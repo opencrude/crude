@@ -3,19 +3,17 @@ package viewmodel
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 
 	"crude/agent/provider"
 	"crude/agent/session"
 	"crude/core"
 	"crude/core/coreprotocol"
+	"crude/internal/providersim"
 	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/ui"
 	"crude/types/setting"
@@ -73,18 +71,16 @@ func (o *onboardingJourneyOwner) preferences(edits []setting.Edit) (setting.App,
 }
 
 func TestOnboardingConnectedAccountModelSaveAndExplicitSession(t *testing.T) {
-	var gets, posts atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			posts.Add(1)
-			http.Error(w, "inference is not part of setup", http.StatusBadRequest)
-			return
+	server := providersim.New(t, providersim.WithModels(providersim.Chat, "startup-model"))
+	requests := func(method string) int {
+		count := 0
+		for _, request := range server.Requests() {
+			if request.Method == method {
+				count++
+			}
 		}
-		gets.Add(1)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"data":[{"id":"startup-model","object":"model","owned_by":"local"}]}`)
-	}))
-	t.Cleanup(server.Close)
+		return count
+	}
 	owner := &onboardingJourneyOwner{settings: setting.App{
 		Accounts:     map[string]provider.Account{},
 		Onboarding:   setting.Onboarding{IntroductionCompleted: true},
@@ -128,7 +124,7 @@ func TestOnboardingConnectedAccountModelSaveAndExplicitSession(t *testing.T) {
 	model := body.Model()
 	category := model.SelectedCategory()
 	model.SetValueForTest(category, "account-label", "Local setup test")
-	model.SetValueForTest(category, "account-endpoint", server.URL)
+	model.SetValueForTest(category, "account-endpoint", server.BaseURL(providersim.Chat))
 	model.SetValueForTest(category, "api-key", "local-test-not-a-real-credential")
 	submit := body.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.commit"})
 	if submit.Cmd == nil {
@@ -136,7 +132,7 @@ func TestOnboardingConnectedAccountModelSaveAndExplicitSession(t *testing.T) {
 	}
 	_, command := app.Update(submit.Cmd())
 	runAppCommand(t, app, command)
-	if !strings.Contains(body.PaneTitle(), "Main Agent") || gets.Load() == 0 {
+	if !strings.Contains(body.PaneTitle(), "Main Agent") || requests(http.MethodGet) == 0 {
 		t.Fatal("account commit did not open Main Agent and fetch the account's models")
 	}
 	committed, _ := owner.ReadStartupSettings(t.Context())
@@ -174,14 +170,14 @@ func TestOnboardingConnectedAccountModelSaveAndExplicitSession(t *testing.T) {
 		}
 	}
 	committed, _ = owner.ReadStartupSettings(t.Context())
-	if committed.Agents.Categories["default"].Model != "startup-model" || app.ws.AgentMgr().Count() != 0 || posts.Load() != 0 {
+	if committed.Agents.Categories["default"].Model != "startup-model" || app.ws.AgentMgr().Count() != 0 || requests(http.MethodPost) != 0 {
 		t.Fatal("model Save did not commit cleanly or setup started AI work")
 	}
 	if current := app.settingsSurface(app.overlayHost.Window(ui.OverlayWorkspaceSettings)); current == nil || len(current.Model().Edits()) != 0 {
 		t.Fatal("Save closed Settings or left the saved model dirty")
 	}
 	remoteJourneyCreate(t, shell)
-	if posts.Load() != 0 {
+	if requests(http.MethodPost) != 0 {
 		t.Fatal("explicit session creation sent a provider prompt")
 	}
 }

@@ -3,12 +3,9 @@ package viewmodel
 import (
 	"bytes"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"image"
 	"image/png"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -17,6 +14,7 @@ import (
 
 	"crude/agent/provider"
 	"crude/internal/clipboard"
+	"crude/internal/providersim"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -64,24 +62,18 @@ func connectedClipboardJourney(t *testing.T, size int, native bool, gesture tea.
 	}
 	requests := make(chan []byte, 1)
 	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := providersim.New(t)
+	server.Respond(func(r providersim.Request) providersim.Turn {
 		calls.Add(1)
-		var request json.RawMessage
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-			return
-		}
 		select {
-		case requests <- request:
+		case requests <- r.Raw:
 		default:
 			t.Error("clipboard input issued a duplicate provider request")
 		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"clipboard accepted\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	defer server.Close()
+		return simulatedAnswer("clipboard accepted")
+	})
 	provider.SetModelCap("test-model", true, true)
-	runtime := remoteJourneyRuntime(t, server.URL)
+	runtime := remoteJourneyRuntime(t, server.BaseURL(providersim.Chat))
 	shell := newRemoteJourneyShell(t, runtime, t.TempDir())
 	remoteJourneyCreate(t, shell)
 	app := shell.app

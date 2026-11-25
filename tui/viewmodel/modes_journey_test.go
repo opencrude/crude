@@ -2,15 +2,13 @@ package viewmodel
 
 import (
 	"context"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/internal/providersim"
 	"crude/tui/ui"
 	"crude/types/conversation"
 	"crude/workspace"
@@ -76,13 +74,12 @@ func TestModeCommandsShowPlanAndInspectableGoal(t *testing.T) {
 // making the retained session eligible starts the scheduled turn without a UI.
 func TestLoopConnectedShellsAndDetachedCore(t *testing.T) {
 	requests := make(chan struct{}, 4)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := providersim.New(t)
+	server.Respond(func(providersim.Request) providersim.Turn {
 		requests <- struct{}{}
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Loop checked\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	t.Cleanup(server.Close)
-	runtime := remoteJourneyRuntime(t, server.URL)
+		return simulatedAnswer("Loop checked")
+	})
+	runtime := remoteJourneyRuntime(t, server.BaseURL(providersim.Chat))
 	root := t.TempDir()
 	one := newRemoteJourneyShell(t, runtime, root)
 	id := remoteJourneyCreate(t, one)
@@ -183,12 +180,8 @@ func TestLoopIntervalValidation(t *testing.T) {
 }
 
 func TestPlanProposalOfferConnectedJourney(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"<proposed_plan>\\n# Add\\n- Implement and test addition\\n</proposed_plan>\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	t.Cleanup(server.Close)
-	runtime := remoteJourneyRuntime(t, server.URL)
+	server := simulatedChat(t, simulatedAnswer("<proposed_plan>\n# Add\n- Implement and test addition\n</proposed_plan>"))
+	runtime := remoteJourneyRuntime(t, server.BaseURL(providersim.Chat))
 	shell := newRemoteJourneyShell(t, runtime, t.TempDir())
 	id := remoteJourneyCreate(t, shell)
 	shell.app.Input.SetInput("/plan Propose a plan to add addition.")
