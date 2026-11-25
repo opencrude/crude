@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -197,10 +198,8 @@ func TestAutomaticNativeCheckpointRecoversRejectedArtifactBeforeOutput(t *testin
 		}
 		s := string(raw)
 		var body struct {
-			Instructions string
-			Input        json.RawMessage
-			Model        string
-			Stream       bool
+			Model  string
+			Stream bool
 		}
 		_ = json.Unmarshal(raw, &body)
 		if body.Model != "fixture-native" {
@@ -211,12 +210,11 @@ func TestAutomaticNativeCheckpointRecoversRejectedArtifactBeforeOutput(t *testin
 			if strings.Contains(s, "old assistant evidence") {
 				paid.Add(1)
 			} else {
-				parts := strings.Fields(body.Instructions)
-				if len(parts) < 5 {
+				observedTicket = probeTicket(s)
+				if observedTicket == "" {
 					t.Error("missing probe code")
 					return
 				}
-				observedTicket = parts[4]
 				token = "secret-probe"
 			}
 			fmt.Fprintf(w, `{"object":"response.compaction","output":[{"type":"compaction","encrypted_content":%q}]}`, token)
@@ -278,8 +276,7 @@ func TestAutoUncertainNativeCheckpointUsesErrandAndContinues(t *testing.T) {
 		raw, _ := io.ReadAll(r.Body)
 		s := string(raw)
 		var body struct {
-			Instructions string
-			Stream       bool
+			Stream bool
 		}
 		_ = json.Unmarshal(raw, &body)
 		if strings.HasSuffix(r.URL.Path, "/compact") {
@@ -288,8 +285,8 @@ func TestAutoUncertainNativeCheckpointUsesErrandAndContinues(t *testing.T) {
 				http.Error(w, `{"error":{"message":"upstream timed out"}}`, http.StatusBadGateway)
 				return
 			}
-			if parts := strings.Fields(body.Instructions); len(parts) > 4 {
-				ticket.Store(parts[4])
+			if code := probeTicket(s); code != "" {
+				ticket.Store(code)
 			}
 			fmt.Fprint(w, `{"object":"response.compaction","output":[{"type":"compaction","encrypted_content":"probe-token"}]}`)
 			return
@@ -423,4 +420,14 @@ func TestServingModelWritesCheckpointOnWiresWithoutNativeCompaction(t *testing.T
 			}
 		})
 	}
+}
+
+var probeTicketPattern = regexp.MustCompile(`ticket code (\S+) exactly`)
+
+// probeTicket reads the synthetic challenge wherever the wire carries it.
+func probeTicket(body string) string {
+	if match := probeTicketPattern.FindStringSubmatch(body); match != nil {
+		return match[1]
+	}
+	return ""
 }

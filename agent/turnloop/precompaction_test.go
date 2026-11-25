@@ -713,7 +713,8 @@ func TestRequiredCheckpointFailureNeverSendsPartlyRewrittenHistory(t *testing.T)
 			t.Error(err)
 			return
 		}
-		if len(req.Tools) == 0 {
+		// Checkpoint requests forbid tool use; the serving model still declares them.
+		if req.ToolChoice == "none" {
 			http.Error(w, `{"error":{"type":"authentication_error","message":"invalid credentials"}}`, http.StatusUnauthorized)
 			return
 		}

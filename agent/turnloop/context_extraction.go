@@ -15,18 +15,21 @@ import (
 const compactionReductionDepth = 8
 
 type compactionExtractor struct {
-	agent              *Agent
-	ctx                context.Context
-	emit               func(AgentEvent)
-	requestID          string
-	trigger            string
-	role               string
-	stage              rootprompt.CompactionStage
-	stageIndex         int
-	beforeTokens       int
-	targetWindow       int
-	common             provider.ChatMessage
-	system             provider.ChatMessage
+	agent        *Agent
+	ctx          context.Context
+	emit         func(AgentEvent)
+	requestID    string
+	trigger      string
+	role         string
+	stage        rootprompt.CompactionStage
+	stageIndex   int
+	beforeTokens int
+	targetWindow int
+	common       provider.ChatMessage
+	system       provider.ChatMessage
+	// tools are the conversation's tools, declared (but forbidden) only when
+	// the writer is the serving model, so they keep its cached prefix.
+	tools              []provider.ToolDef
 	inputBudget        int
 	capacityBudget     int
 	outputBudget       int
@@ -44,11 +47,8 @@ func (extractor *compactionExtractor) request(source []provider.ChatMessage, dir
 	if depth > compactionReductionDepth {
 		return "", errors.New("compaction extraction did not converge within its reduction budget")
 	}
-	instruction := provider.NewTextMessage("user", rootprompt.CompactionStageInstruction(extractor.role, extractor.stage, extractor.outputBudget, directive))
-	instruction.Origin, instruction.Visibility = provider.OriginCompactionRequest, provider.VisibilityContextOnly
-	messages := append([]provider.ChatMessage{extractor.system}, source...)
-	messages = append(messages, extractor.common, instruction)
-	input := estimateCanonicalRequest(provider.FilterReplayMessages(messages, extractor.agent.Provider), extractor.agent.extractionTools, extractor.agent.Model)
+	messages := extractor.messages(source, directive)
+	input := extractor.estimate(messages)
 	window := extractor.agent.Provider.ContextWindow(extractor.agent.Model)
 	// Each recursive source reduction gains its own response allowance; only a
 	// provider-confirmed output ceiling stays fixed across those requests.
@@ -64,15 +64,16 @@ func (extractor *compactionExtractor) request(source []provider.ChatMessage, dir
 		}
 		extractor.responseBudget = min(extractor.responseBudget, available)
 	}
-	if input > extractor.inputBudget {
+	if input > extractor.admissible() {
 		return extractor.partition(source, directive, depth)
 	}
 	var lastErr error
 	for attempt := 0; attempt <= compactionStageRecoveries; attempt++ {
-		if input > extractor.inputBudget {
+		// A failed attempt can still report a higher provider count.
+		if input > extractor.admissible() {
 			return extractor.partition(source, directive, depth)
 		}
-		completion, err := extractor.agent.completeStreamWithOptions(extractor.ctx, messages, extractor.agent.extractionTools, nil, nil, nil, nil, nil, nil, nil,
+		completion, err := extractor.agent.completeStreamWithOptions(extractor.ctx, messages, extractor.tools, nil, nil, nil, nil, nil, nil, nil,
 			completionRequestOptions{toolChoice: "none", maxOutputTokens: extractor.responseBudget, maxAttempts: 1, compaction: true})
 		// Preparation, subsequent reduction and fallback share one operation,
 		// but each billable request needs its own durable usage row.
@@ -86,9 +87,6 @@ func (extractor *compactionExtractor) request(source []provider.ChatMessage, dir
 			err = validateExtraction(completion)
 		}
 		if err == nil {
-			if extractor.usageRatio > 1 && extractor.capacityBudget > 0 {
-				extractor.inputBudget = min(extractor.inputBudget, int(float64(extractor.capacityBudget)/extractor.usageRatio))
-			}
 			text := strings.TrimSpace(completion.Content)
 			if provider.EstimateTokens(text, extractor.agent.Model) > extractor.outputBudget {
 				if depth >= compactionReductionDepth {
@@ -114,7 +112,7 @@ func (extractor *compactionExtractor) request(source []provider.ChatMessage, dir
 			continue
 		}
 		if provider.IsContextWindowExceeded(err) {
-			previous := extractor.inputBudget
+			previous := extractor.admissible()
 			extractor.inputBudget = min(previous*2/3, input*2/3)
 			if extractor.inputBudget <= 0 || extractor.inputBudget >= previous {
 				return "", err
@@ -126,7 +124,7 @@ func (extractor *compactionExtractor) request(source []provider.ChatMessage, dir
 			// Provider completion tokens include reasoning. Never repeat an
 			// unchanged request after its full response allowance was exhausted.
 			// The next request gets more response room by carrying less source.
-			previous := extractor.inputBudget
+			previous := extractor.admissible()
 			extractor.inputBudget = min(previous, max(1, input/2))
 			if extractor.inputBudget < previous && depth < compactionReductionDepth {
 				extractor.progress("Reducing source after truncated extraction", 0, 0, attempt+1, err)
@@ -171,14 +169,43 @@ func validateExtraction(completion completionResult) error {
 	return validateCompactionStageText(completion.Content)
 }
 
+// messages is the exact request for one extraction: the system prompt, the
+// source, the shared context and the stage instruction.
+func (extractor *compactionExtractor) messages(source []provider.ChatMessage, directive string) []provider.ChatMessage {
+	instruction := provider.NewTextMessage("user", rootprompt.CompactionStageInstruction(extractor.role, extractor.stage, extractor.outputBudget, directive))
+	instruction.Origin, instruction.Visibility = provider.OriginCompactionRequest, provider.VisibilityContextOnly
+	messages := make([]provider.ChatMessage, 0, len(source)+3)
+	messages = append(messages, extractor.system)
+	messages = append(messages, source...)
+	return append(messages, extractor.common, instruction)
+}
+
+// admissible is the largest estimated input one request may carry: the
+// adapted budget, and the capacity scaled by how far the provider's counts
+// exceeded Crude's estimates. Sending and partitioning both use it, so a
+// partition always makes the progress its trigger requires.
+func (extractor *compactionExtractor) admissible() int {
+	if extractor.usageRatio > 1 && extractor.capacityBudget > 0 {
+		return min(extractor.inputBudget, int(float64(extractor.capacityBudget)/extractor.usageRatio))
+	}
+	return extractor.inputBudget
+}
+
+// estimate is the input of a request as sent, declared tools included.
+func (extractor *compactionExtractor) estimate(messages []provider.ChatMessage) int {
+	return estimateCanonicalRequest(provider.FilterReplayMessages(messages, extractor.agent.Provider), extractor.tools, extractor.agent.Model)
+}
+
 func (extractor *compactionExtractor) partition(source []provider.ChatMessage, directive string, depth int) (string, error) {
 	if depth >= compactionReductionDepth {
 		return "", errors.New("compaction extraction exceeded its bounded reduction depth")
 	}
-	fixed := provider.EstimateMessageTokens(extractor.system, extractor.agent.Model) + provider.EstimateMessageTokens(extractor.common, extractor.agent.Model)
-	budget := extractor.inputBudget - fixed - 512
+	// Every chunk request carries the same envelope as this one. The widest
+	// chunk label bounds the instruction before the chunk count is known.
+	envelope := extractor.estimate(extractor.messages(nil, rootprompt.CompactionChunkDirective(math.MaxInt32, math.MaxInt32, directive)))
+	budget := extractor.admissible() - envelope
 	if budget < 256 {
-		return "", errors.New("compaction model has no room for source after system instructions and extraction reserves")
+		return "", errors.New("compaction model has no room for source after the system prompt, tools and extraction instructions")
 	}
 	chunks, err := splitExtractionSource(source, budget, extractor.agent.Model)
 	if err != nil {

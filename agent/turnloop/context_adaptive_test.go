@@ -399,8 +399,8 @@ func TestExtractorLearnsFromReportedUsage(t *testing.T) {
 	if _, err := extractor.request(source, "full state", 0); err != nil {
 		t.Fatal(err)
 	}
-	if extractor.inputBudget > 27_500 || calls.Load() != 1 {
-		t.Fatalf("provider usage not calibrated: budget=%d calls=%d", extractor.inputBudget, calls.Load())
+	if extractor.admissible() > 27_500 || calls.Load() != 1 {
+		t.Fatalf("provider usage not calibrated: budget=%d calls=%d", extractor.admissible(), calls.Load())
 	}
 }
 
