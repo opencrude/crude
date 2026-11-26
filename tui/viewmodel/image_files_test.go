@@ -348,6 +348,11 @@ func TestImageFileConnectedExternalAndDeniedProjectLink(t *testing.T) {
 		{"backslash", func(path string) string { return strings.ReplaceAll(path, "/", "\\") }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.name == "backslash" && filepath.Separator == '/' {
+				// A POSIX core keeps a backslash as part of a file name
+				// (CanonicalClientPath); only a Windows path uses it to separate.
+				t.Skip("a POSIX path has no backslash separator")
+			}
 			root := t.TempDir()
 			external := writeImageFixture(t, t.TempDir(), "external.png")
 			link := filepath.Join(root, "linked.png")
