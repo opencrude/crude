@@ -456,7 +456,8 @@ func (m *App) syncEditorTabPresentation() {
 
 // retitleEditorWindowTab re-keys every view of a retargeted document. The tab
 // key is the editor path, so leaving it stale would show the old filename,
-// break close/hit lookups, and hide the tab's unsaved state.
+// break close/hit lookups, and hide the tab's unsaved state. It is the one
+// place a tab gets a new name, so the views then follow the new file type.
 func (m *App) retitleEditorWindowTab(oldPath, newPath string, ed *editor.Editor) {
 	if m.Win == nil || ed == nil || oldPath == newPath {
 		return
@@ -473,4 +474,5 @@ func (m *App) retitleEditorWindowTab(oldPath, newPath string, ed *editor.Editor)
 	if m.EditorState.ActiveView == oldPath {
 		m.EditorState.ActiveView = newPath
 	}
+	m.followFileType(newPath, ed)
 }
