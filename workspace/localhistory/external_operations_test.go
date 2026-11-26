@@ -10,7 +10,10 @@ import (
 
 func TestExternalOperationMatrixRestoresWriteDeleteMoveAndCopy(t *testing.T) {
 	store, _ := newTestStore(t)
-	external := t.TempDir()
+	external, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	files := map[string]string{
 		"overwrite": "old overwrite",
 		"delete":    "old delete",

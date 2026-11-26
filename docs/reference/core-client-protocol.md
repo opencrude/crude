@@ -33,6 +33,9 @@ If a read discovers that the session ended, `startup.inspect`, `.browse` and
 original cancellation still applies. Never replay a save or folder creation.
 The application owns profile metadata and saves through the existing settings owner.
 `tui/startup/` owns the detached introduction and project-selection screen.
+The startup chooser retains the single introduction-save reply until handoff,
+even if the picker closes before the UI receives it. An already received
+reply takes precedence over an expired wait.
 The current project layout, settings, and services remain unchanged.
 
 `workspace/folderkind` identifies the native home, personal and volume-root

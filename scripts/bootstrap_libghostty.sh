@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Download/check the pinned Ghostty revision and install libghostty-vt plus the
 # pinned xterm-ghostty terminfo into third_party/libghostty-vt. Requires Zig 0.16.x
-# (see third_party/libghostty-vt/GHOSTTY_PIN) and tic from ncurses-bin.
+# (see third_party/libghostty-vt/GHOSTTY_PIN). Linux also needs tic.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -18,6 +18,7 @@ TIDB="${PREFIX}/share/terminfo"
 # internal/terminalvt/ghostty_terminfo.go), so a copy is materialized next to the packages
 # that reference it. The files are pinned build artifacts and are committed.
 EMBED="${ROOT}/internal/terminalvt/terminfo"
+HOST_OS="$(uname -s)"
 
 need_zig() {
   if command -v zig >/dev/null 2>&1; then
@@ -34,18 +35,23 @@ need_zig() {
     export PATH="${HOME}/tools/zig-0.16.0:$PATH"
   else
     echo "error: zig ${ZIG_VERSION} not on PATH. Install to ~/tools/zig-0.16.0" >&2
-    echo "  curl -fL https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz | tar -xJ -C ~/tools" >&2
-    echo "  mv ~/tools/zig-x86_64-linux-${ZIG_VERSION} ~/tools/zig-0.16.0" >&2
+    echo "  Download for your OS and CPU from https://ziglang.org/download/" >&2
     exit 1
   fi
-  # Zig's clang does not add Debian multiarch include dirs the way gcc does.
-  # linux-libc-dev installs asm/errno.h under /usr/include/$(gcc -print-multiarch).
-  local multiarch
-  multiarch="$(gcc -print-multiarch 2>/dev/null || echo x86_64-linux-gnu)"
-  export CPATH="/usr/include/${multiarch}${CPATH:+:$CPATH}"
-  export C_INCLUDE_PATH="${CPATH}"
-  export CPLUS_INCLUDE_PATH="${CPATH}"
-  export SSL_CERT_FILE="${SSL_CERT_FILE:-/etc/ssl/certs/ca-certificates.crt}"
+  case "${HOST_OS}" in
+    Linux)
+      # Zig's clang does not add Debian multiarch include dirs the way gcc does.
+      local multiarch
+      multiarch="$(gcc -print-multiarch 2>/dev/null || echo x86_64-linux-gnu)"
+      export CPATH="/usr/include/${multiarch}${CPATH:+:$CPATH}"
+      export C_INCLUDE_PATH="${CPATH}"
+      export CPLUS_INCLUDE_PATH="${CPATH}"
+      export SSL_CERT_FILE="${SSL_CERT_FILE:-/etc/ssl/certs/ca-certificates.crt}"
+      ;;
+    Darwin)
+      export SSL_CERT_FILE="${SSL_CERT_FILE:-/etc/ssl/cert.pem}"
+      ;;
+  esac
 }
 
 lib_ok() {
@@ -58,7 +64,8 @@ lib_ok() {
 terminfo_ok() {
   [ -f "${TIDB}/x/${TERM_NAME}" ] &&
     [ -f "${EMBED}/x/${TERM_NAME}" ] &&
-    [ -f "${EMBED}/${TERM_NAME}.terminfo" ]
+    [ -f "${EMBED}/${TERM_NAME}.terminfo" ] &&
+    { [ "${HOST_OS}" != Darwin ] || [ -f "${TIDB}/78/${TERM_NAME}" ]; }
 }
 
 ensure_src() {
@@ -90,7 +97,12 @@ if ! lib_ok; then
   echo "building libghostty-vt into ${PREFIX}"
   (
     cd "${SRC}"
-    zig build -Demit-lib-vt -Doptimize=ReleaseFast -Dcpu=baseline --prefix "${PREFIX}"
+    args=(-Demit-lib-vt -Doptimize=ReleaseFast -Dcpu=baseline --prefix "${PREFIX}")
+    if [ "${HOST_OS}" = Darwin ]; then
+      # Crude links a native archive, not a multi-platform Apple framework.
+      args+=(-Demit-xcframework=false)
+    fi
+    zig build "${args[@]}"
   )
 
   if [ ! -f "${PREFIX}/lib/libghostty-vt.a" ]; then
@@ -104,6 +116,17 @@ if ! lib_ok; then
 fi
 
 if ! terminfo_ok; then
+  if [ "${HOST_OS}" = Darwin ]; then
+    # Use the same pinned database that Crude embeds and gives every PTY.
+    # A source build must not rewrite it with a different version of tic.
+    for bucket in x 78; do
+      mkdir -p "${TIDB}/${bucket}"
+      install -m 0644 "${EMBED}/x/${TERM_NAME}" "${TIDB}/${bucket}/${TERM_NAME}"
+    done
+    install -m 0644 "${EMBED}/${TERM_NAME}.terminfo" "${TIDB}/${TERM_NAME}.terminfo"
+    TERMINFO="${TIDB}" /usr/bin/infocmp -x "${TERM_NAME}" >/dev/null
+    exit 0
+  fi
   command -v tic >/dev/null 2>&1 || {
     echo "error: tic (ncurses-bin) is required to compile the pinned terminfo" >&2
     exit 1

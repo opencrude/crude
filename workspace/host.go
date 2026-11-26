@@ -10,6 +10,7 @@ import (
 
 	"crude/internal/buildinfo"
 	"crude/internal/terminalvt"
+	"crude/workspace/fileio"
 )
 
 // HostKind identifies the outer terminal emulator Crude is running in.
@@ -145,17 +146,26 @@ func TerminfoDir() string {
 		return ""
 	}
 	dir := filepath.Join(home, buildinfo.DataDir(), "terminfo")
-	entry := filepath.Join(dir, "x", terminalvt.GhosttyTermName)
-	if existing, err := os.ReadFile(entry); err == nil && bytes.Equal(existing, terminalvt.GhosttyTerminfoEntry) {
-		return dir
-	}
-	if err := os.MkdirAll(filepath.Dir(entry), 0o755); err != nil {
+	if !ensureTerminfoEntry(filepath.Join(dir, "x", terminalvt.GhosttyTermName)) {
 		return ""
 	}
-	if err := os.WriteFile(entry, terminalvt.GhosttyTerminfoEntry, 0o644); err != nil {
+	// Apple ncurses uses the hex value of the leading byte. Programs linked
+	// against other ncurses builds can still need the letter directory.
+	if runtime.GOOS == "darwin" && !ensureTerminfoEntry(filepath.Join(dir, "78", terminalvt.GhosttyTermName)) {
 		return ""
 	}
 	return dir
+}
+
+func ensureTerminfoEntry(entry string) bool {
+	if existing, err := os.ReadFile(entry); err == nil && bytes.Equal(existing, terminalvt.GhosttyTerminfoEntry) {
+		return true
+	}
+	if err := os.MkdirAll(filepath.Dir(entry), 0o755); err != nil {
+		return false
+	}
+	err := fileio.WriteAtomicChecked(entry, terminalvt.GhosttyTerminfoEntry, 0o644, nil)
+	return err == nil || fileio.WriteCommitted(err)
 }
 
 func environmentKey(key string) string {

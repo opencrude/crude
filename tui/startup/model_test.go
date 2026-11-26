@@ -639,6 +639,25 @@ func TestEarlyIntroductionSaveIssueIsNotDuplicatedAtClose(t *testing.T) {
 	}
 }
 
+func TestSavedIntroductionDoesNotTimeOutAtLaterSelection(t *testing.T) {
+	m := fixture(t, &fakeStartup{save: func(context.Context, []setting.Edit) (setting.Onboarding, error) {
+		return setting.Onboarding{IntroductionCompleted: true}, nil
+	}}, true)
+	saveParent, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+	m.saveParent = saveParent
+	_, cmd := m.Update(key(tea.KeyEnter))
+	batch := cmd().(tea.BatchMsg)
+	drive(t, m, batch[0])
+	// The worker got a reply, but the chooser exits before Tea delivers it.
+	_ = batch[1]()
+	<-saveParent.Done()
+	send(t, m, ctrl('o'))
+	if got := m.finish(); got.Root != fixturePath("/home/demo") || len(got.Issues) != 0 {
+		t.Fatalf("successful save became a timeout at handoff: %+v", got)
+	}
+}
+
 func TestSnapshotIssuesRemainVisibleAndSurviveSelection(t *testing.T) {
 	for _, size := range [][2]int{{160, 40}, {80, 24}} {
 		t.Run(fmt.Sprint(size), func(t *testing.T) {

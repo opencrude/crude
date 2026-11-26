@@ -72,6 +72,19 @@ go run .
 
 Run `make build` to produce a standalone binary.
 
+### macOS
+
+Install the Xcode Command Line Tools (`xcode-select --install`), then run:
+
+```bash
+make libghostty
+make build
+./crude
+```
+
+This builds Crude and its embedded terminal library natively. It does not need
+the Ghostty app, full Xcode, or a Metal device.
+
 ### Windows
 
 ```powershell

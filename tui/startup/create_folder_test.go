@@ -16,7 +16,10 @@ import (
 )
 
 func TestStartupCreateFolderThenExplicitlyOpen(t *testing.T) {
-	parent := t.TempDir()
+	parent, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	f := &fakeStartup{
 		create: projectpath.CreateFolder,
 		browse: func(ctx context.Context, req coreprotocol.StartupBrowseRequest) (coreprotocol.StartupBrowseResult, error) {

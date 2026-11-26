@@ -108,6 +108,40 @@ type createFolderResult struct {
 type savedMsg struct{ err error }
 type tickMsg struct{}
 
+// introductionSave owns the one accepted save and retains its reply even if
+// Tea exits before it can deliver the command's message.
+type introductionSave struct {
+	start  sync.Once
+	ctx    context.Context
+	cancel context.CancelFunc
+	send   func() savedMsg
+	done   chan struct{}
+	reply  savedMsg
+}
+
+func (s *introductionSave) await() savedMsg {
+	s.start.Do(func() {
+		go func() {
+			defer s.cancel()
+			s.reply = s.send()
+			close(s.done)
+		}()
+	})
+	select {
+	case <-s.done:
+		return s.reply
+	case <-s.ctx.Done():
+		// The reply and the deadline may both be ready when the chooser
+		// closes. An observed reply takes precedence over a timeout.
+		select {
+		case <-s.done:
+			return s.reply
+		default:
+			return savedMsg{err: errSaveUnanswered}
+		}
+	}
+}
+
 // Model is a standalone Tea model, exposed for native host and visual tests.
 // Close must be called after a program using NewModel exits.
 type Model struct {
@@ -115,8 +149,7 @@ type Model struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	saveParent    context.Context
-	saveCmd       tea.Cmd
-	saveCtx       context.Context
+	save          *introductionSave
 	owner         commandOwner
 	requestCancel context.CancelFunc
 	gen           uint64
@@ -213,24 +246,9 @@ func (m *Model) Close() {
 	// must not cancel it merely because no Tea worker started it yet.
 	// The wait is bounded by the save's own request deadline, so a service that
 	// ignores cancellation cannot hold the handoff past it.
-	if m.saveCmd != nil {
-		done := make(chan tea.Msg, 1)
-		cmd := m.saveCmd
-		m.saveCmd = nil
-		go func() { done <- cmd() }()
-		// Wait on the deadline, not ctx.Done: a finished save also cancels its
-		// context, and that must not be mistaken for an unanswered save.
-		deadline, _ := m.saveCtx.Deadline()
-		timer := time.NewTimer(time.Until(deadline))
-		defer timer.Stop()
-		select {
-		case msg := <-done:
-			if v, ok := msg.(savedMsg); ok {
-				m.saved(v)
-			}
-		case <-timer.C:
-			m.saved(savedMsg{err: errSaveUnanswered})
-		}
+	if m.save != nil {
+		m.saved(m.save.await())
+		m.save = nil
 	}
 	m.closed = true
 }
@@ -486,17 +504,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "startup.go":
 			cmd := m.openPicker()
 			ctx, cancel := context.WithTimeout(m.saveParent, requestTimeout)
-			m.saveCtx = ctx
-			var once sync.Once
-			var saveErr error
-			m.saveCmd = func() tea.Msg {
-				once.Do(func() {
-					defer cancel()
-					_, saveErr = m.service.Save(ctx, []setting.Edit{{Path: []string{"onboarding", "introduction_completed"}, After: json.RawMessage("true")}})
-				})
-				return savedMsg{saveErr}
+			save := &introductionSave{ctx: ctx, cancel: cancel, done: make(chan struct{})}
+			save.send = func() savedMsg {
+				_, err := m.service.Save(ctx, []setting.Edit{{Path: []string{"onboarding", "introduction_completed"}, After: json.RawMessage("true")}})
+				return savedMsg{err}
 			}
-			return m, tea.Batch(cmd, m.saveCmd)
+			m.save = save
+			return m, tea.Batch(cmd, func() tea.Msg { return save.await() })
 		case "startup.open":
 			return m, m.openPicker()
 		case "startup.quit":

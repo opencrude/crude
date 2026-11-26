@@ -4,6 +4,7 @@ package workspace
 
 import (
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -107,12 +108,16 @@ func TestTerminalManagerCloseAllReapsChildren(t *testing.T) {
 // the entry. Previously Crude advertised TERM=xterm-ghostty with no resolvable
 // database, so tput failed and child rc scripts broke.
 func TestPTYChildResolvesPinnedTerminfo(t *testing.T) {
+	if runtime.GOOS == "darwin" {
+		// Test Apple's ncurses, even when Homebrew's tools appear first.
+		t.Setenv("PATH", "/usr/bin:/bin")
+	}
 	for _, tool := range []string{"sh", "infocmp", "tput"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			t.Skipf("%s not available; ncurses tools required", tool)
 		}
 	}
-	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CRUDE_HOME", t.TempDir())
 	t.Setenv("CRUDE_TERMINFO_DIR", "")
 
 	io, err := startTerminalIO("sh", []string{"-c",
@@ -121,6 +126,10 @@ func TestPTYChildResolvesPinnedTerminfo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start PTY: %v", err)
 	}
+	t.Cleanup(func() {
+		_ = io.Close()
+		_, _ = io.Wait()
+	})
 
 	deadline := time.Now().Add(10 * time.Second)
 	var out []byte
