@@ -32,23 +32,13 @@
 
 ## Installation
 
-### Linux x86-64
+| System | Command |
+|---|---|
+| Linux x86-64 (glibc 2.35+) | `curl -fsSL https://opencrude.github.io/linux.sh \| sh` |
+| Windows x64 (PowerShell 5.1+) | `irm https://opencrude.github.io/windows.ps1 \| iex` |
+| macOS | No release yet. [Build from source](#build-from-source). |
 
-Requires glibc 2.35 or later.
-
-```bash
-curl -fsSL https://opencrude.github.io/linux.sh | sh
-```
-
-### Windows x64
-
-Requires PowerShell 5.1 or later.
-
-```powershell
-irm https://opencrude.github.io/windows.ps1 | iex
-```
-
-Run the same command again to update. See the [installation guide](https://opencrude.github.io/#install) for the optional GUI window and manual installation, or [download the latest release](https://github.com/opencrude/crude/releases/latest). There is no macOS release yet.
+Run the same command again to update. See the [installation guide](https://opencrude.github.io/#install) for the optional GUI window and manual installation, or [download the latest release](https://github.com/opencrude/crude/releases/latest).
 
 ## Quick start
 
