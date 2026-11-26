@@ -40,6 +40,24 @@ Rules that keep the page self-contained and honest:
   and `irm https://opencrude.github.io/windows.ps1 | iex` in every copy of the
   page, the README and the agent prompt.
 
+## Scrolling and keys
+
+Every visual state of the story is a function of the scroll position. Each
+chapter must finish before the screen fades out above the palette; the gap
+above `.more` keeps the last chapter's final step on screen.
+
+- Down, Up, Page Down, Page Up, Space and Shift+Space move to the next or
+  previous settled state: the welcome screen, its caption, each step of each
+  chapter, then the palette. `crude.js` derives these stops from the same data
+  that drives the scenes (`STEPS`, the `.r` reveal offsets, the typed text and
+  the core chapter's window timing), so editing a scene moves its stops too.
+  Below the palette the keys scroll normally.
+- `1`–`4` follow the header links, `/` opens the palette, `c` copies the install
+  command while it is on screen. In the palette, Up and Down choose a feature
+  and Esc clears the filter; a second Esc leaves the field.
+- The install rows take no focus after they fade out, so Tab never lands on
+  something the reader cannot see.
+
 ## Install commands
 
 The page shows one piped command per system:

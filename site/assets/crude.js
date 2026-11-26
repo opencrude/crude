@@ -62,13 +62,17 @@
   const ORDER = ["chat", "agents", "memory", "lsp", "core", "review", "errand"];
   const STEPS = { memory: [0.62], lsp: [0.14, 0.4, 0.62, 0.8], review: [0.3, 0.5, 0.8], errand: [0.45, 0.72] };
   const RAIL = { chat: 0, agents: 1, memory: 4, lsp: 0, core: 0, review: 0, errand: 1 };
+  const CORE_OFF = [0.34, 0.46, 0.6, 0.7]; // the window closes, stays closed, then opens again
+  const CAPTION = 0.54;                    // crude.css shows .boot-caption fully for --boot .44–.64
+  const REVEAL = 1 / 14;                   // crude.css: an .r element appears over this much progress
+  const hero = $(".hero");
   const rail = $$(".ws-rail .ri");
   const typed = $$(".typed").map((el) => ({
     el, scene: el.closest(".scene").dataset.scene, text: el.dataset.text,
     from: +el.dataset.from, to: +el.dataset.to, clear: +el.dataset.clear, comp: el.closest(".composer"), n: -1,
   }));
 
-  let vw = 0, vh = 0, mobile = false, land = false, heroR, chapR, bootTop = 0, bootLen = 1, chapGeo = [], moreTop = 0, moreEnd = 0;
+  let vw = 0, vh = 0, mobile = false, land = false, heroR, chapR, bootTop = 0, bootLen = 1, chapGeo = [], moreTop = 0, moreEnd = 0, stops = [];
   let bannerBase = null, raf = 0, lastScene = "", lastBp = -1, lastNav = null;
   const navLinks = $$('.nav-links a[href^="#"]');
 
@@ -107,8 +111,40 @@
     banner.style.transform = "none";
     const hero = banner.offsetParent;
     bannerBase = { x: hero.offsetLeft + banner.offsetLeft, y: hero.offsetTop + banner.offsetTop, w: banner.offsetWidth, h: banner.offsetHeight };
+    stops = settledStops();
     lastBp = -1; lastScene = "";
     frame();
+  }
+
+  // The scroll positions where nothing is moving: the welcome screen, its caption, each settled state of each
+  // chapter, then the palette. They come from the same data that drives frame(), so a scene edit moves them too.
+  function settledStops() {
+    const out = [0, Math.round(bootTop + CAPTION * bootLen)];
+    const fadeAt = moreTop - vh * 0.95; // frame(): the screen starts to fade here
+    for (const c of chapGeo) {
+      const name = c.scene;
+      const busy = $$(".r", scenes[name]).map((el) => {
+        const a = parseFloat(el.style.getPropertyValue("--a")) || 0;
+        return [a, a + REVEAL];
+      });
+      const points = (STEPS[name] || []).slice();
+      for (const t of typed) if (t.scene === name) { busy.push([t.from, t.to]); points.push(t.clear); }
+      if (name === "core") busy.push([CORE_OFF[0], CORE_OFF[1]], [CORE_OFF[2], CORE_OFF[3]]);
+      const hi = Math.min(1, (fadeAt + vh * 0.5 - c.top) / c.h) - 0.005;
+      for (const cp of settledPoints(busy, points, 0, hi)) out.push(Math.round(c.top + cp * c.h - vh * 0.5));
+    }
+    out.push(targetY("#more"));
+    return out.filter((y, i, a) => i === 0 || y > a[i - 1] + 8);
+  }
+  // One point inside each interval of progress where no range is animating and no discrete step changes.
+  function settledPoints(busy, points, lo, hi) {
+    const cuts = busy.concat(points.map((p) => [p, p])).filter(([a, b]) => b > lo && a < hi).sort((p, q) => p[0] - q[0]);
+    const out = [];
+    let at = lo;
+    const keep = (end) => { if (end - at >= 0.015) out.push(at + Math.min((end - at) / 2, 0.05)); };
+    for (const [a, b] of cuts) { keep(a); at = Math.max(at, b); }
+    keep(hi);
+    return out;
   }
 
   function setRect(r) {
@@ -125,6 +161,7 @@
     boot.style.setProperty("--boot", bp.toFixed(4));
     screen.style.setProperty("--boot", bp.toFixed(4));
     boot.classList.toggle("is-gone", bp > 0.16);
+    hero.inert = bp > 0.16; // a faded install row takes no focus
 
     // banner flies into the header wordmark
     if (bannerBase) {
@@ -152,18 +189,16 @@
     screen.style.transform = f > 0 ? `translateY(${-Math.round(f * 40)}px)` : "";
     screen.style.visibility = f >= 1 ? "hidden" : "visible";
 
-    // chapters → scenes
-    let scene = "chat", active = null;
+    // chapters → scenes: the screen shows the last chapter the reader reached, also while it fades out
+    let scene = "chat";
+    const mid = y + vh * 0.5;
     for (const c of chapGeo) {
-      const cp = clamp((y + vh * 0.5 - c.top) / c.h);
-      scenes[c.scene].style.setProperty("--cp", cp.toFixed(4));
-      const on = f <= 0 && y + vh * 0.5 >= c.top && y + vh * 0.5 < c.top + c.h;
-      c.el.classList.toggle("is-active", on);
-      c.el.classList.toggle("is-past", f > 0 || y + vh * 0.5 >= c.top + c.h);
-      if (on) { scene = c.scene; active = c; }
-      else if (y + vh * 0.5 >= c.top + c.h) scene = c.scene; // past it: keep its final state
+      scenes[c.scene].style.setProperty("--cp", clamp((mid - c.top) / c.h).toFixed(4));
+      const past = mid >= c.top + c.h;
+      c.el.classList.toggle("is-active", f <= 0 && mid >= c.top && !past);
+      c.el.classList.toggle("is-past", f > 0 || past);
+      if (mid >= c.top) scene = c.scene;
     }
-    if (!active && y + vh * 0.5 < (chapGeo[0] ? chapGeo[0].top : Infinity)) scene = "chat";
     const chatCp = clamp((bp - 0.3) / 0.4);
     scenes.chat.style.setProperty("--cp", chatCp.toFixed(4));
 
@@ -195,9 +230,10 @@
     const ccp = parseFloat(scenes.core.style.getPropertyValue("--cp")) || 0;
     let off = 0;
     if (scene === "core") {
-      if (ccp >= 0.34 && ccp < 0.46) off = (ccp - 0.34) / 0.12;
-      else if (ccp >= 0.46 && ccp < 0.6) off = 1;
-      else if (ccp >= 0.6 && ccp < 0.7) off = 1 - (ccp - 0.6) / 0.1;
+      const [close, closed, open, opened] = CORE_OFF;
+      if (ccp >= close && ccp < closed) off = (ccp - close) / (closed - close);
+      else if (ccp >= closed && ccp < open) off = 1;
+      else if (ccp >= open && ccp < opened) off = 1 - (ccp - open) / (opened - open);
     }
     screen.style.setProperty("--off", off.toFixed(4));
 
@@ -500,29 +536,59 @@
         it.h3.innerHTML = html;
       }
       empty.hidden = shown > 0;
-      select(0);
-      if (!words.length) items.forEach((it) => it.li.classList.remove("is-sel"));
+      if (words.length) select(0);
+      else { sel = -1; items.forEach((it) => it.li.classList.remove("is-sel")); }
     }
     input.addEventListener("input", filter);
     input.addEventListener("keydown", (e) => {
       if (e.key === "ArrowDown") { e.preventDefault(); select(sel + 1); }
-      else if (e.key === "ArrowUp") { e.preventDefault(); select(sel - 1); }
-      else if (e.key === "Escape") { input.value = ""; filter(); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); select(sel < 0 ? -1 : sel - 1); }
+      else if (e.key === "Escape") { if (input.value) { input.value = ""; filter(); } else input.blur(); } // then the keys scroll the page again
       else if (e.key === "Enter") { e.preventDefault(); window.open("https://github.com/opencrude/crude/blob/master/docs/README.md", "_blank", "noopener"); }
     });
   }
 
-  /* ───────────── Keys: c copies the install command, / opens the palette ───────────── */
+  /* ───────────── Keys: c copies the install command, / opens the palette, 1–4 follow the header,
+     and the scroll keys move from one settled state of the story to the next ───────────── */
+  const NEXT = { ArrowDown: 1, PageDown: 1, " ": 1, ArrowUp: -1, PageUp: -1 };
+  let keyTarget = null; // { y, t }: where the last key sent the page, while it is still moving there
+  function keyBase() {
+    if (keyTarget && performance.now() - keyTarget.t < 900 && Math.abs(window.scrollY - keyTarget.y) > 2) return keyTarget.y;
+    return window.scrollY;
+  }
+  function step(dir) {
+    const y = keyBase(), last = stops[stops.length - 1];
+    // Below the story the palette and the questions are ordinary content: the browser scrolls them.
+    if (dir > 0 ? y >= last - 8 : y > last + 8) return false;
+    const to = dir > 0 ? stops.find((s) => s > y + 8) : stops.filter((s) => s < y - 8).pop();
+    if (to === undefined) return false;
+    keyTarget = { y: to, t: performance.now() };
+    window.scrollTo({ top: to, behavior: reduce ? "auto" : "smooth" });
+    return true;
+  }
+  const typing = (el) => el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
+  const pressable = (el) => el && /^(BUTTON|SUMMARY)$/.test(el.tagName); // Space presses them
+  const scrollsItself = (el) => el && el !== document.body && el !== document.documentElement &&
+    el.scrollHeight > el.clientHeight && /(auto|scroll)/.test(getComputedStyle(el).overflowY);
   addEventListener("keydown", (e) => {
-    if (e.ctrlKey || e.metaKey || e.altKey) return;
-    const tag = (document.activeElement && document.activeElement.tagName) || "";
-    if (tag === "INPUT" || tag === "TEXTAREA") return;
-    if (e.key === "/") { e.preventDefault(); const i = $("[data-filter]"); i.scrollIntoView({ block: "center", behavior: reduce ? "auto" : "smooth" }); setTimeout(() => i.focus({ preventScroll: true }), reduce ? 0 : 450); }
+    if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
+    const el = document.activeElement;
+    if (typing(el)) return;
+    if (e.key in NEXT) {
+      if (scrollsItself(el) || (e.key === " " && pressable(el))) return;
+      if (step(e.key === " " && e.shiftKey ? -1 : NEXT[e.key])) e.preventDefault();
+    } else if (e.key === "/") { e.preventDefault(); const i = $("[data-filter]"); i.scrollIntoView({ block: "center", behavior: reduce ? "auto" : "smooth" }); setTimeout(() => i.focus({ preventScroll: true }), reduce ? 0 : 450); }
     else if ((e.key === "c" || e.key === "C") && lastBp < 0.16) {
       const b = $(`#install .ins-row[data-os="${detected}"] [data-copy]`);
       if (b) copyCommand(b);
+    } else if (!e.shiftKey && /^[1-9]$/.test(e.key)) {
+      const a = $$(".nav-links a").find((l) => { const k = $(".k", l); return k && k.textContent.trim() === e.key; });
+      if (a) { e.preventDefault(); a.click(); }
     }
   });
+  // A wheel, a drag or a link takes over from a key that is still scrolling.
+  addEventListener("wheel", () => { keyTarget = null; }, { passive: true });
+  addEventListener("touchstart", () => { keyTarget = null; }, { passive: true });
 
   /* ───────────── In-page links ───────────── */
   function targetY(hash) {
@@ -536,6 +602,7 @@
   function go(hash, smooth) {
     const y = targetY(hash);
     if (y === null) return false;
+    keyTarget = null;
     window.scrollTo({ top: y, behavior: smooth && !reduce ? "smooth" : "auto" });
     history.replaceState(null, "", hash === "#install" ? location.pathname : hash);
     return true;
