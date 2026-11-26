@@ -211,6 +211,7 @@ documents to read before changing each area.
 
 ### Issues (dated user reports)
 
+- [Wayland clipboard](issues/2026-11-26-wayland-clipboard.md) — why Ctrl+V pasted an older clipboard entry on KDE Wayland, and how Crude now reads only the session's own clipboard.
 - [Errand compaction limits](issues/2026-11-26-errand-compaction-limits.md) — why Errand compaction failed with "Request Entity Too Large" on every run, and how it now plans within, adapts to and remembers route limits.
 - [Composer chips, slash parity, workspace entry and Errand setup](issues/2026-11-25-composer-entry-and-errand-setup.md) — fixes and acceptance evidence for composer editing, workspace entry, file-to-folder promotion and first AI setup.
 - [Windows emoji input](issues/2026-11-25-windows-emoji-input.md) — why a correct draft could show a second emoji or caret, and how native console text reaches the focused editor.

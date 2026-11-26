@@ -162,6 +162,16 @@ selectors. See the [Windows emoji regression](../issues/2026-11-25-windows-emoji
   the host terminal with OSC 52 and can paste that explicit copy within the same
   shell. An external text paste over SSH still uses the host terminal's paste
   shortcut. An empty but readable clipboard never replays an older copy.
+- **One clipboard per desktop session** (`internal/clipboard`). Crude reads
+  the clipboard of the display server it runs in: Wayland through
+  wl-clipboard, X11 through xclip or xsel, macOS through pbpaste, Termux
+  through termux-api, Windows through the Win32 clipboard. A Wayland session
+  never reads XWayland's clipboard, because a compositor can leave an older
+  entry there: on KDE Plasma, xclip pasted an earlier copy. The tool's
+  "nothing copied" answer is final; Crude never asks another clipboard.
+  Writes may also go through XWayland, which the compositor forwards. When
+  the session's tool is missing, Ctrl+V names the package to install, and
+  the terminal's paste shortcut still works.
 - Composer Ctrl+V checks for actual image bytes before it attaches an image.
   Some X11 clipboard owners send plain text in response to an image request;
   in that case the composer reads the text format. An empty bracketed paste

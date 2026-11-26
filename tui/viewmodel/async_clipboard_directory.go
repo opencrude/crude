@@ -54,9 +54,12 @@ type clipboardAsyncRequestMsg struct {
 }
 
 type clipboardAsyncResultMsg struct {
-	request      clipboardAsyncRequestMsg
-	content      string
-	readable     bool
+	request  clipboardAsyncRequestMsg
+	content  string
+	readable bool
+	// missingTool names the package that would let Crude read the desktop
+	// clipboard, when the read failed because it is not installed.
+	missingTool  string
 	image        bool
 	imageMIME    string
 	imageBytes   int
@@ -67,6 +70,8 @@ type clipboardAsyncResultMsg struct {
 type clipboardAsyncBackend struct {
 	read      func(clipboard.Format) []byte
 	writeText func(string) error
+	// missingTool reports the package to install after a failed read.
+	missingTool func() string
 }
 
 type clipboardAsyncJob struct {
@@ -155,6 +160,12 @@ func asyncIOStateFor(m *App) *appAsyncIOState {
 					return errors.New("desktop clipboard is not local")
 				}
 				return clipboard.WriteText(text)
+			},
+			missingTool: func() string {
+				if rendering.RemoteTerminalSession() {
+					return ""
+				}
+				return clipboard.MissingTool()
 			},
 		},
 		latestDirectory:     make(map[*filepickerscreen.Screen]uint64),
@@ -321,6 +332,9 @@ func readClipboardText(backend clipboardAsyncBackend, result *clipboardAsyncResu
 	data := backend.read(clipboard.FmtText)
 	if data == nil {
 		result.operationErr = errClipboardRead
+		if backend.missingTool != nil {
+			result.missingTool = backend.missingTool()
+		}
 		return
 	}
 	result.content, result.readable = string(data), true
@@ -361,7 +375,7 @@ func (m *App) deliverClipboardResult(result clipboardAsyncResultMsg) tea.Cmd {
 		return nil
 	}
 	if result.operationErr == errClipboardRead {
-		result.operationErr = errors.New(ui.ClipboardReadUnavailable())
+		result.operationErr = errors.New(ui.ClipboardReadUnavailable(result.missingTool))
 	}
 	switch request.operation {
 	case clipboardAsyncWriteText:
