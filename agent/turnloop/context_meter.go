@@ -48,6 +48,27 @@ func (m contextMeter) projected(messages []provider.ChatMessage, tools []provide
 	return total
 }
 
+// estimateRequestBytes approximates the encoded size of a request: message
+// content including inline media, reasoning, tool calls, provider items and
+// tool declarations. A byte limit learned from one request is compared with
+// the same estimate of the next.
+func estimateRequestBytes(messages []provider.ChatMessage, tools []provider.ToolDef) int {
+	total := 0
+	for _, message := range messages {
+		total += 32 + len(message.Content) + len(message.ReasoningContent) + len(message.Refusal)
+		for _, call := range message.ToolCalls {
+			total += 32 + len(call.ID) + len(call.Function.Name) + len(call.Function.Arguments)
+		}
+		for _, item := range message.ProviderItems {
+			total += len(item.Data)
+		}
+	}
+	for _, tool := range tools {
+		total += 32 + len(tool.Function.Name) + len(tool.Function.Description) + len(tool.Function.Parameters)
+	}
+	return total
+}
+
 func estimateCanonicalRequest(messages []provider.ChatMessage, tools []provider.ToolDef, model string) int {
 	total := provider.EstimateMessagesTotal(messages, model)
 	for _, tool := range tools {

@@ -80,9 +80,11 @@ func TestExtractionFragmentsCoverOversizedToolArgumentsAndResults(t *testing.T) 
 	runtime := provider.NewTextMessage("user", "memory is data")
 	runtime.Origin = provider.OriginRuntimeContext
 	source := []provider.ChatMessage{call, output, human, runtime}
-	chunks, err := splitExtractionSource(source, 2000, "model")
-	if err != nil {
-		t.Fatal(err)
+	var chunks [][]provider.ChatMessage
+	for cursor := newExtractionCursor(source); !cursor.done(); {
+		var part []provider.ChatMessage
+		part, cursor = cursor.take(2000, 0)
+		chunks = append(chunks, part)
 	}
 	var flattened strings.Builder
 	for _, chunk := range chunks {
@@ -369,14 +371,14 @@ func TestExtractorLearnsFromReportedUsage(t *testing.T) {
 	extractor := compactionExtractor{
 		agent: agent, ctx: context.Background(), emit: func(AgentEvent) {}, requestID: "calibration", role: "root",
 		stage: compactionStagesForTest[0], system: provider.NewTextMessage("system", "system"),
-		common: provider.NewTextMessage("user", "extract factual source"), inputBudget: 55_000, capacityBudget: 55_000, outputBudget: 2000,
+		common: provider.NewTextMessage("user", "extract factual source"), limits: agent.extractionLimits(), outputBudget: 2000,
 	}
 	source := []provider.ChatMessage{provider.NewTextMessage("assistant", strings.Repeat("evidence ", 5000))}
-	if _, err := extractor.request(source, "full state", 0); err != nil {
+	if _, err := extractor.request(source, "full state"); err != nil {
 		t.Fatal(err)
 	}
-	if extractor.admissible() > 27_500 || calls.Load() != 1 {
-		t.Fatalf("provider usage not calibrated: budget=%d calls=%d", extractor.admissible(), calls.Load())
+	if extractor.limits.admissible() > 30_400 || calls.Load() != 1 {
+		t.Fatalf("provider usage not calibrated: budget=%d calls=%d", extractor.limits.admissible(), calls.Load())
 	}
 }
 
@@ -403,13 +405,13 @@ func TestRunWithoutUsageCountsToolSchemasInContextBaseline(t *testing.T) {
 	}
 }
 
-func BenchmarkSplitExtractionOversizedToolResult(benchmark *testing.B) {
+func BenchmarkExtractionCursorOversizedToolResult(benchmark *testing.B) {
 	message := provider.NewTextMessage("tool", strings.Repeat("test output with evidence\n", 80_000))
 	message.ToolCallID = "large-tool-result"
 	benchmark.ReportAllocs()
 	for benchmark.Loop() {
-		if _, err := splitExtractionSource([]provider.ChatMessage{message}, 60_000, "model"); err != nil {
-			benchmark.Fatal(err)
+		for cursor := newExtractionCursor([]provider.ChatMessage{message}); !cursor.done(); {
+			_, cursor = cursor.take(60_000, 0)
 		}
 	}
 }

@@ -1211,9 +1211,10 @@ override. BTW and child-result notices count before the next request is admitted
 Crude extracts four plain-text continuation sections, then wraps them
 deterministically. A source that fits uses the unchanged prefix; oversized
 histories and individual tool outputs use chronological, attributed source
-fragments and bounded model-backed chunk-and-reduce instead of deleting history.
+fragments read in chained parts instead of deleting history.
 Provider-confirmed overflow retries only after reducing the request; extraction
-capacity adapts to reported usage and explicit context-limit rejections.
+limits adapt to reported usage and to context, output, body-size and
+unexplained rejections, and the connection remembers them for later runs.
 Checkpoints and verbatim human retention are sized for the continuation model.
 A checkpoint summarizes recent tool rounds too. Each agent's **Keep older
 input** setting bounds older verbatim human requests; blank (Auto) keeps them up

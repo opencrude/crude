@@ -3,11 +3,13 @@
 package providersim
 
 import (
+	"bytes"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -80,6 +82,17 @@ func WithCacheProfile(wire Wire, model string, profile CacheProfile) Option {
 	}
 }
 
+// WithProxyBodyLimit puts a reverse proxy with a request body limit in front
+// of every wire, as nginx's client_max_body_size does (1 MiB by default): a
+// larger request gets 413 with the proxy's HTML page and never reaches the
+// model. https://nginx.org/en/docs/http/ngx_http_core_module.html#client_max_body_size
+func WithProxyBodyLimit(limit int64) Option {
+	return func(s *Server) { s.bodyLimit = limit }
+}
+
+// proxyLimitPage is the body nginx sends with its 413.
+const proxyLimitPage = "<html>\r\n<head><title>413 Request Entity Too Large</title></head>\r\n<body>\r\n<center><h1>413 Request Entity Too Large</h1></center>\r\n<hr><center>nginx</center>\r\n</body>\r\n</html>\r\n"
+
 // WithModels sets the model IDs returned by the wire's model inventory.
 func WithModels(wire Wire, ids ...string) Option {
 	rows := make([]Model, len(ids))
@@ -107,6 +120,9 @@ type Server struct {
 	prefixes  map[prefixKey]*prefixNode
 	turns     []Turn
 	responder func(Request) Turn
+
+	bodyLimit       int64
+	proxyRejections atomic.Int32
 }
 
 // New starts an HTTP simulator and registers its cleanup with t.
@@ -141,7 +157,11 @@ func newServer(t testing.TB, report func(string, ...any), opts []Option) *Server
 			mux.Handle(route.mount, http.StripPrefix(route.mount, handler))
 		}
 	}
-	s.http = httptest.NewServer(mux)
+	var front http.Handler = mux
+	if s.bodyLimit > 0 {
+		front = s.proxy(mux)
+	}
+	s.http = httptest.NewServer(front)
 	t.Cleanup(func() {
 		close(s.done)
 		s.http.CloseClientConnections()
@@ -149,6 +169,30 @@ func newServer(t testing.TB, report func(string, ...any), opts []Option) *Server
 	})
 	return s
 }
+
+// proxy reads the whole body before it answers, so the client always
+// receives the 413 instead of a reset connection.
+func (s *Server) proxy(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if int64(len(body)) > s.bodyLimit {
+			s.proxyRejections.Add(1)
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			_, _ = io.WriteString(w, proxyLimitPage)
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		next.ServeHTTP(w, r)
+	})
+}
+
+// ProxyRejections counts requests the WithProxyBodyLimit proxy refused.
+func (s *Server) ProxyRejections() int { return int(s.proxyRejections.Load()) }
 
 // BaseURL returns the account base URL for wire. It returns an empty string
 // for an unknown Wire value.

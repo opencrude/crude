@@ -192,39 +192,67 @@ provider/tool/child replay. One-off alignment tools do not ship in the product.
    safety reserves). Extraction plans each request independently against the
    selected writer's capacity; a small extraction model uses smaller
    source chunks instead of forcing early compaction of a larger main model.
-3. Persist the exact source before any extraction. A fitting source preserves message order; extraction on a different model, endpoint, or no-tools envelope need not share a cache entry. Oversized sources use
-   chronological fragments;
-   individual large messages and tool arguments/results are split on Unicode
-   code-point boundaries without deleting their text. Every fragment includes
-   source role, origin, and tool-result identity as data, not instructions.
+3. Persist the exact source before any extraction. A source that fits the
+   writer's known limits goes in one request and preserves message order;
+   extraction on a different model, endpoint, or no-tools envelope need not
+   share a cache entry. A longer source is read in chronological parts like a
+   ledger: each part's request carries the running checkpoint of every earlier
+   part and returns it updated with that part, so the result is one checkpoint
+   of the whole source, not a merge of separate summaries. Individual large
+   messages and tool arguments/results are split on Unicode code-point
+   boundaries without deleting their text. Every piece names its source
+   message, character range, role, origin and tool-result identity as data,
+   not instructions; inline media is described, not sent again. When a limit
+   narrows, the same part is planned again from the same running checkpoint;
+   finished parts are never read twice. A running checkpoint that leaves no
+   room for the next part is shortened first.
 4. Extract all four sections (intent, work, state, continuation) in one
    combined request that reads the source once. A section the model omits, a
    truncated response, an output cap the provider over-advertises, or a
    rejected request shape falls back to extracting the missing sections one at
-   a time on the same compaction model; that fallback is learned per
-   connection and model (`combinedCompactionWorks`). Each section extraction
-   runs over all source chunks, then merges its fragments. The selected model's configured reasoning remains active
-   on every extraction request. The response allowance follows its model output
-   capability and each request's available context, including hidden reasoning;
-   it is independent of checkpoint text length. On truncation, the extractor
-   reduces and reprocesses the complete source in smaller regions so the next
-   request has more response room. It never repeats an identical truncated
-   request or installs partial text. Recursive reduction is bounded and must
-   shrink its input.
-   A typed invalid-request rejection naming the exact sent `max_tokens`,
-   `max_completion_tokens`, or `max_output_tokens` and an allowed upper bound
-   instead tunes the output allowance immediately without changing the source,
-   reasoning, or completed stages. That bound applies to all following stages.
-   The app-owned `model-catalog.db` durably stores the lowest confirmed ceiling
-   under the Errand agent profile, exact provider endpoint/protocol, account,
-   and model. New sessions, workspaces, and process restarts start below the
-   previously rejected value; other agent profiles or connections do not share
-   it. Learned limits expire after seven days so a changed provider cap can
-   be probed again. This is separate from the user-configured output ceiling,
-   which remains an upper bound.
-5. Tighten extraction estimates when reported usage exceeds the estimate. A
-   canonical context-limit rejection cuts the input budget to at most two-thirds
-   of the rejected size and replans; it never retries that impossible input.
+   a time on the same compaction model; that fallback is learned for the
+   connection and model for a day. A limit the adaptation could not meet is
+   not evidence against the combined request. The selected model's configured
+   reasoning remains active on every extraction request. The response
+   allowance follows its model output capability and each request's available
+   context, including hidden reasoning; it is independent of checkpoint text
+   length. On truncation, the extractor carries less source per request so the
+   next one has more response room. It never repeats an identical truncated
+   request or installs partial text.
+5. **Limits.** One extraction-limits owner decides what a request on the
+   writer's connection may carry: the advertised context window, the
+   configured and catalog output ceilings, and the limits learned for the
+   connection. A provider or route often accepts less than it advertises, so
+   the evidence in a rejection narrows them, and every later request and stage
+   of the compaction plans within them:
+
+   | Evidence | Adaptation |
+   |---|---|
+   | Context rejection with a stated window ("maximum context length is N", "N tokens > M maximum", Gemini's input token count, TGI, LM Studio, Cerebras) | Window = the stated maximum, converted into Crude's estimate with the provider's own count of the rejected request |
+   | Context rejection without a number (llama.cpp, Ollama, DeepSeek wording) | Input limit = two-thirds of the rejected request |
+   | Output parameter rejection (`max_tokens`, `max_completion_tokens`, `max_output_tokens`, `maxOutputTokens`, `max_new_tokens`, `num_predict`) naming the sent value | Output ceiling = the stated bound less one (a range can be exclusive), or half the sent value |
+   | HTTP 413 from a provider or a proxy, `request_too_large`, a stated payload size | Body limit = nine tenths of a stated byte limit, or two-thirds of the rejected request's size |
+   | HTTP 429 "Request too large ... tokens per min" | A per-request token limit, handled as a stated window; waiting never helps |
+   | 400 or 422 without a parameter, credential, permission, model, policy or quota code | Halve the input and the output allowance until a request is accepted; when even a request below 4,096 estimated tokens is refused, restore the limits and stop with the provider's refusal |
+   | The same large request timed out twice (408, 504, 524, deadline, interrupted stream) | Halve the input |
+
+   Rate limits and overloads are retried with the provider's advice, not
+   shrunk. A compaction makes at most 16 adaptations; each makes the next
+   request strictly smaller, so extraction converges or stops with the
+   provider's evidence.
+
+   The app-owned `model-catalog.db` keeps the learned window, input, output,
+   body and sectioned limits under the Errand agent profile, the exact provider
+   endpoint and protocol, account, and model. New sessions, workspaces and
+   process restarts start within them, so the next compaction does not repeat
+   the failure; other profiles and connections do not share them. A limit the
+   provider stated or proved lasts seven days; a limit Crude inferred lasts one
+   day and is saved only after the smaller request succeeds. An unexpired limit
+   is never raised by a weaker observation; an expired one is rediscovered.
+   Forgetting an account's compaction checks, or removing or reconnecting the
+   account, deletes them. This is separate from the user-configured output
+   ceiling, which remains an upper bound. Tighten estimates when reported usage
+   exceeds the estimate.
 6. Size the final XML checkpoint against the actual continuation model's
    remaining context after its system prompt and tool schemas. There is no
    independent 16K checkpoint ceiling or fixed per-stage quota. A complete
@@ -439,10 +467,10 @@ Responses delta uploads and inline-image replay recovery are specified in
 - **Survival.** Background failures back off exponentially and never block.
   The capacity margin is the largest step growth since the last checkpoint,
   so one large paste cannot keep the agent near capacity. At capacity, after
-  the compaction model's adaptive handling (chunking, staged sections,
-  learned output ceilings, retries) has failed because the connection is
-  unavailable (credentials, missing model, outage), the agent's own
-  model can write that checkpoint. It need not have a separate endpoint.
+  the compaction model's adaptive handling (chained parts, staged sections,
+  learned limits, retries) has failed because the connection is
+  unavailable (credentials, missing model, outage) or cannot fit even a small
+  part within its limits, the agent's own model can write that checkpoint. It need not have a separate endpoint.
   Provider only never switches to Errand. If no complete checkpoint fits, keep
   the original history for recovery. Do not send a partial rewrite.
 - **Visibility.** Preparation is reported as `context_precompaction`
@@ -629,8 +657,8 @@ particular request paths; they are not a total billing guarantee.
   work, state, continuation) from one immutable source without tool calls.
   Start with one request. Use one per section if needed. Fitting sources preserve message order but are not guaranteed cache hits; oversized
   histories or individual tool inputs/results use complete chronological,
-  origin-attributed text fragments and bounded model-backed chunk-and-reduce,
-  never oldest-history deletion. Each fragment repeats its source role/origin
+  origin-attributed text fragments read in chained parts within the writer's
+  [limits](#layered-policy), never oldest-history deletion. Each fragment repeats its source role/origin
   and tool-result identity instead of sending orphan protocol calls.
   The retained boundary records the actual model and real chunk progress.
   Context windows are connection-scoped when explicitly configured; ordinary

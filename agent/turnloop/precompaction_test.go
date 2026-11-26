@@ -217,7 +217,8 @@ func precompactionAgent(t *testing.T, url, model string) *Agent {
 	p.Model = model
 	provider.SetModelContext(model, 100_000)
 	a := newTestAgent(t, p, p.Model)
-	combinedCompactionFailures.Delete(combinedCompactionKey(p, model))
+	// A profile without learned limits: one request extracts every section.
+	a.CompactionAgentProfile = "combined"
 	a.Yolo = true
 	a.ContextCompactionPercent = 60
 	a.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
@@ -621,7 +622,8 @@ func TestAutomaticCompactionWorksForEveryPriceTierAndMissingData(t *testing.T) {
 			compaction.Model = model + "-errand"
 			provider.SetModelContext(compaction.Model, 100_000)
 			provider.SetModelPrice(compaction.Model, price(test.errand.input))
-			combinedCompactionFailures.Delete(combinedCompactionKey(compaction, compaction.Model))
+			// A profile without learned limits: one request extracts every section.
+			a.CompactionAgentProfile = "combined"
 			a.CompactionProvider = compaction
 			window := a.Provider.ContextWindow(a.Model)
 			hardLimit := window - a.outputTokenLimit(window, 0) - contextSafetyReserve(window)
@@ -848,15 +850,16 @@ func TestRejectedCombinedExtractionFallsBackToStagedSections(t *testing.T) {
 	p.Model = "over-advertised-model"
 	provider.SetModelContext(p.Model, 200_000)
 	a := NewAgent(p, p.Model, nil)
-	combinedCompactionFailures.Delete(combinedCompactionKey(p, p.Model))
 	result, err := a.Compact(t.Context(), compactionTestHistory(provider.NewTextMessage("user", "keep going")), "system", nil)
 	if err != nil {
 		t.Fatalf("shape rejection aborted compaction: %v", err)
 	}
-	if combined.Load() != 1 || staged.Load() != int32(len(compactionStagesForTest)) || len(result.Messages) == 0 {
+	// The unexplained rejection earns smaller attempts before Crude extracts
+	// one section at a time with the limits it had.
+	if combined.Load() < 2 || staged.Load() != int32(len(compactionStagesForTest)) || len(result.Messages) == 0 {
 		t.Fatalf("combined=%d staged=%d messages=%d", combined.Load(), staged.Load(), len(result.Messages))
 	}
-	if combinedCompactionWorks(p, p.Model) {
+	if !provider.LearnedRequestLimits("", p, p.Model).Sectioned {
 		t.Fatal("the connection was not learned as needing staged extraction")
 	}
 }

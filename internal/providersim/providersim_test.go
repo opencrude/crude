@@ -32,3 +32,27 @@ func TestWireRoutesShareOneServer(t *testing.T) {
 // mountURL is where a wire is mounted; tests append the real API path, such
 // as /v1/messages, to it. Accounts use BaseURL, which includes the API root.
 func mountURL(s *Server, wire Wire) string { return s.http.URL + wireRoutes[wire].mount }
+
+func TestProxyBodyLimitRefusesLargeBodiesBeforeTheModel(t *testing.T) {
+	s := New(t, WithProxyBodyLimit(1024))
+	s.Script(Text("small request served"))
+	post := func(size int) (*http.Response, string) {
+		t.Helper()
+		body := `{"model":"m","messages":[{"role":"user","content":"` + strings.Repeat("x", size) + `"}]}`
+		res, err := http.Post(s.BaseURL(Chat)+"/chat/completions", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res, string(readResponse(t, res))
+	}
+	res, page := post(4096)
+	if res.StatusCode != http.StatusRequestEntityTooLarge || !strings.Contains(page, "413 Request Entity Too Large") || s.ProxyRejections() != 1 {
+		t.Fatalf("large body = %d %q rejections=%d", res.StatusCode, page, s.ProxyRejections())
+	}
+	if len(s.Requests()) != 0 {
+		t.Fatal("a refused body reached the model")
+	}
+	if res, reply := post(16); res.StatusCode != http.StatusOK || !strings.Contains(reply, "small request served") || len(s.Requests()) != 1 {
+		t.Fatalf("small body = %d %q", res.StatusCode, reply)
+	}
+}

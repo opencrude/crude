@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"reflect"
@@ -121,7 +122,7 @@ func (m *AccountManager) replaceLocked(accounts map[string]Account) {
 	}
 	for id, old := range m.accounts {
 		if next[id] != old {
-			if err := currentSupport().clearAccount(id, true); err != nil {
+			if err := errors.Join(currentSupport().clearAccount(id, true), activeLearnedLimits().forget(id)); err != nil {
 				slog.Warn("Could not forget account compaction checks", "error", err)
 			}
 		}

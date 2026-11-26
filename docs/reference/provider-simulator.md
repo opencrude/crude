@@ -135,6 +135,10 @@ req := sim.Requests()                       // the journal
   `Retry-After`, `retry-after-ms` or `RetryInfo`; context overflow; overload;
   auth), an error event inside a 200 stream after N events, a cut stream, and
   a gate that holds events until the test releases them. No sleeps in tests.
+- `WithProxyBodyLimit(bytes)` puts a reverse proxy in front of every wire, as
+  nginx's `client_max_body_size` does: a larger request gets 413 with the
+  proxy's HTML page and never reaches the model or the journal.
+  `ProxyRejections()` counts those requests.
 - `Request` is the journal entry: raw bytes and headers, the wire, and a
   neutral decode written from the spec (system, messages with typed parts,
   tools, tool choice, output limit, stream, store, previous response, cache

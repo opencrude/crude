@@ -1918,10 +1918,11 @@ Earlier Markdown overages recorded below are historical and now resolved.
 
 ## Oversized Context Extraction (2026-09-29)
 
-`BenchmarkSplitExtractionOversizedToolResult` splits a 2 MB text tool result into
-complete attributed fragments with a 60K-token request budget. Three runs on
+`BenchmarkExtractionCursorOversizedToolResult` reads a 2 MB text tool result as
+complete attributed parts of a 60K-token request budget. Three runs on
 Linux/i7-10750H measured 7.26-7.85 ms, 6.37 MB and 134 allocations per complete
-split. Work runs on the compaction owner, never the UI thread, and is proportional
+split with the earlier chunk splitter; the chained-part cursor measured
+7.58-8.07 ms, 6.35 MB and 210 allocations on 2026-11-26. Work runs on the compaction owner, never the UI thread, and is proportional
 to source size rather than allocating a maximum-context buffer per item.
 The benchmark excludes provider latency and does not assert summary quality.
 See [adaptive context handling](adaptive-context.md) for capacity, transactional
