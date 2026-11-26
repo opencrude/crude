@@ -1,19 +1,16 @@
 package viewmodel
 
 import (
-	"fmt"
-
 	tea "charm.land/bubbletea/v2"
 )
 
 // handleCancel runs the composer's Esc ladder. Esc frees the text area before
 // it cancels anything: an active selection is dropped first, then a visible
 // command list closes, then the draft is cleared, and only then does Esc
-// cancel the selected agent's turn, or else
-// every other agent's live work. Cancelling the turn therefore always needs
-// the draft out of the way, which is what the user sees as "Esc clears the
-// text area". Esc with nothing to stop is a no-op: it reports nothing and
-// never re-enters a stopping boundary.
+// cancel the turn of the selected agent, the one whose tab or pane has focus.
+// Agents in other tabs and panes keep running: each is stopped from its own
+// pane or with Stop current run. Esc with nothing to stop is a no-op: it
+// reports nothing and never re-enters a stopping boundary.
 func (m *App) handleCancel() tea.Cmd {
 	if m.Input.HasInputSelection() {
 		m.Input.ClearInputSelection()
@@ -26,25 +23,8 @@ func (m *App) handleCancel() tea.Cmd {
 		m.Input.ClearDraft()
 		return nil
 	}
-	if m.AgentView.VisibleCount() == 0 && m.EditorState.ActiveView == "" {
-		return nil
-	}
-	if n := m.AgentView.ActiveNode(); n != nil && m.cancelAgentTurn(n.ID) {
-		return nil
-	}
-	// Other agents lose only live work; their parked recoveries need an
-	// explicit Stop on that agent.
-	stopped := 0
-	for _, node := range m.ws.AgentMgr().AllNodes() {
-		if node != nil && node.State.HasCancellableWork() && m.cancelAgentTurn(node.ID) {
-			stopped++
-		}
-	}
-	switch {
-	case stopped == 1:
-		m.Feedback.NotifyInfo("Stopping 1 running agent...")
-	case stopped > 1:
-		m.Feedback.NotifyInfo(fmt.Sprintf("Stopping %d running agents...", stopped))
+	if n := m.AgentView.ActiveNode(); n != nil {
+		m.cancelAgentTurn(n.ID)
 	}
 	return nil
 }
