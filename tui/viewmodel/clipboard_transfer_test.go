@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 
 	"crude/internal/clipboard"
 	"crude/tui/editor"
+	"crude/tui/ui"
 	"crude/workspace"
 )
 
@@ -122,5 +124,22 @@ func TestClipboardKeepsInterleavedCopiesAndPastes(t *testing.T) {
 	}
 	if got := target.Value(); got != "alphabeta" {
 		t.Fatalf("pasted %q; want each clipboard value in gesture order", got)
+	}
+}
+
+// A Wayland desktop without wl-clipboard cannot be read safely: XWayland's
+// copy can hold an older entry. Ctrl+V names the package to install instead.
+func TestPasteNamesTheMissingClipboardTool(t *testing.T) {
+	for _, operation := range []clipboardAsyncOperation{clipboardAsyncPasteInputText, clipboardAsyncPasteInputImageFirst, clipboardAsyncPasteNative} {
+		result := executeClipboardAsyncRequest(clipboardAsyncBackend{
+			read:        func(clipboard.Format) []byte { return nil },
+			missingTool: func() string { return "wl-clipboard" },
+		}, clipboardAsyncRequestMsg{operation: operation})
+		if !errors.Is(result.operationErr, errClipboardRead) || result.missingTool != "wl-clipboard" {
+			t.Fatalf("operation %d: err=%v tool=%q", operation, result.operationErr, result.missingTool)
+		}
+	}
+	if got := ui.ClipboardReadUnavailable("wl-clipboard"); !strings.HasPrefix(got, "Install wl-clipboard to paste with Ctrl+V, or paste with your terminal's ") {
+		t.Fatalf("message = %q", got)
 	}
 }

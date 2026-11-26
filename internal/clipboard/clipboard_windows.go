@@ -191,3 +191,6 @@ func write(t Format, buf []byte) (bool, error) {
 	logIf(func(lg *logger.Logger) { lg.Debug("CLIPBOARD", "win_write_ok", "bytes", len(buf)) })
 	return true, nil
 }
+
+// MissingTool returns "": Windows reads its clipboard without a helper tool.
+func MissingTool() string { return "" }

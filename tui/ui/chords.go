@@ -329,8 +329,12 @@ func TerminalPasteLabel() string {
 }
 
 // ClipboardReadUnavailable is the one message for a Ctrl+V whose system
-// clipboard read returned nothing.
-func ClipboardReadUnavailable() string {
+// clipboard read returned nothing. tool names the package that would let
+// Crude read this desktop's clipboard, when one is missing.
+func ClipboardReadUnavailable(tool string) string {
+	if tool != "" {
+		return "Install " + tool + " to paste with Ctrl+V, or paste with your terminal's " + TerminalPasteLabel()
+	}
 	return "Clipboard is empty or unreadable here; paste with your terminal's " + TerminalPasteLabel()
 }
 
