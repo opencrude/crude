@@ -16,6 +16,7 @@ Language servers consume decoded source; they do not own file encodings.
 
 | Date | Decision | From |
 |---|---|---|
+| 2026-11-26 | A tab adapts to its file type when Save or a rename gives it a new name, with every feature a fresh open has (Markdown views, colors, language servers, problems). Nobody closes and reopens the tab. Opening one file directly (`crude PATH`) must keep working. Recorded in [editor](../reference/editor.md#dirty-state-gutter-and-save-authority). | User |
 | 2026-11-25 | `crude PATH` with a file opens its parent folder as the workspace, opens the file, collapses the folder tree and starts no language server. Crude tells the user what it did. Verified in [the workspace entry record](../issues/2026-11-25-composer-entry-and-errand-setup.md#4-open-one-file-directly). | User |
 | 2026-11-24 | Show the whole selected file in Find, Replace and Go to File. Start at the result and open the double-clicked source line. Open editable pasted text in a normal editor tab. | User |
 | 2026-11-16 | Improve Find in Files performance; the current search feels slow. | User |

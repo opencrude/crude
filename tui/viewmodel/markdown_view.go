@@ -35,8 +35,10 @@ func markdownLinks(file string) rendering.MarkdownLinks {
 }
 
 // markdownScreen creates the Markdown screen of an editor tab for a
-// Markdown file, or returns nil.
-func (p *mainPaneLayout) markdownScreen(tab *window.Tab) *markdownview.Screen {
+// Markdown file, or returns nil. writing marks text the user is writing: a
+// tab that just became a Markdown file. It and a file that does not exist
+// yet keep the source on screen, so a Preview setting shows side by side.
+func (p *mainPaneLayout) markdownScreen(tab *window.Tab, writing bool) *markdownview.Screen {
 	m := p.app
 	file := m.editorPathFromTabTitle(tab.Title)
 	if !isMarkdownFile(file) {
@@ -46,10 +48,17 @@ func (p *mainPaneLayout) markdownScreen(tab *window.Tab) *markdownview.Screen {
 	if m.ws != nil {
 		mode = markdownview.ModeFromSetting(m.ws.LoadAppSettings().Editor)
 	}
-	// A proposed plan opens to be reviewed: its comments and review bar
-	// belong to the source. The strip still shows its preview.
-	if planFilePath(file) {
+	if ed := m.editorForTab(tab.ID); ed != nil && !ed.FileExists() {
+		writing = true
+	}
+	switch {
+	case planFilePath(file):
+		// A proposed plan opens to be reviewed: its comments and review bar
+		// belong to the source. The strip still shows its preview.
 		mode = markdownview.Source
+	case writing && mode == markdownview.Preview:
+		// The preview alone ignores typing; keys would be lost.
+		mode = markdownview.Split
 	}
 	bus := m.eventBus
 	screen := markdownview.New(m.Theme, ui.ComponentID(fmt.Sprintf("main-panes/markdown-%d", tab.ID)), mode, func(msg tea.Msg) {
@@ -59,6 +68,45 @@ func (p *mainPaneLayout) markdownScreen(tab *window.Tab) *markdownview.Screen {
 	})
 	screen.Preview().SetClipboardCopy(m.clipboardCopyCommand)
 	return screen
+}
+
+// followFileType keeps the views of a file's tabs in step with its file type
+// after it gets a new name: its first Save or a rename. The tabs show what a
+// fresh open would show, without closing them. A rename between two Markdown
+// names keeps the view the user chose. Called after the tabs are re-keyed.
+func (m *App) followFileType(path string, ed *editor.Editor) {
+	if m.ws == nil {
+		return
+	}
+	if lsp := m.ws.LSPMgr(); lsp != nil {
+		// Problems found under the old name do not describe this file.
+		facts, _ := lsp.FileDiagnostics(path)
+		ed.SetDiagnosticsVisible(lsp.ShowDiagnosticsInEditor())
+		ed.SetDiagnostics(facts)
+	}
+	p := m.mainPanes
+	if p == nil {
+		return
+	}
+	markdown, changed := isMarkdownFile(path), false
+	for _, view := range m.documentViews(path) {
+		tab, v := m.Win.TabByID(view.Tab), p.views[view.Tab]
+		if tab == nil || v == nil || v.editor == nil {
+			continue // a view made later reads the new name itself
+		}
+		switch {
+		case markdown && v.markdown == nil:
+			v.markdown = p.markdownScreen(tab, true)
+			changed = true
+		case !markdown && v.markdown != nil:
+			v.markdown.Close()
+			v.markdown = nil
+			changed = true
+		}
+	}
+	if changed {
+		m.markdownModeChanged()
+	}
 }
 
 func (m *App) closeMarkdownViews() {

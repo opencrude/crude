@@ -127,7 +127,7 @@ publishes the website.
 
 ```bash
 gh workflow run pages.yml -R opencrude/opencrude.github.io        # master
-gh workflow run pages.yml -R opencrude/opencrude.github.io -f ref=<sha>
+gh workflow run pages.yml -R opencrude/opencrude.github.io -f ref=<full 40-character sha>
 gh run watch -R opencrude/opencrude.github.io
 ```
 

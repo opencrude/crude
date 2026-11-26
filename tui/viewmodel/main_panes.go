@@ -138,7 +138,7 @@ func (p *mainPaneLayout) view(tab *window.Tab) *mainPaneView {
 			v.editor = shelleditor.NewWithID(p.app.Theme, ui.NewID(base, "editor"))
 		}
 		v.editor.Bind(p.app.editorForTab(tab.ID))
-		v.markdown = p.markdownScreen(tab)
+		v.markdown = p.markdownScreen(tab, false)
 	}
 	p.views[tab.ID] = v
 	return v

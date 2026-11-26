@@ -1082,7 +1082,9 @@ Save actions write only that workspace override.
 
 **Markdown files** (`editor.markdown_view`: `preview`, `split` or `source`)
 chooses how a Markdown file opens; absent means Preview. Each tab can switch
-with its viewer toolbar or Alt+V. See [Markdown files](editor.md#markdown-files).
+with its viewer toolbar or Alt+V. A file you are still writing (it does not
+exist yet, or Save or a rename just made it Markdown) opens Side by side
+instead of Preview, so typing reaches the text. See [Markdown files](editor.md#markdown-files).
 
 **New file encoding** (`editor.new_file_encoding`) is an application/workspace
 preference for newly created unnamed files. Its UTF-8 default, explicit UTF-8

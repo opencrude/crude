@@ -24,3 +24,7 @@ func (e *Editor) RetargetDocumentPath(path string) error {
 	})
 	return nil
 }
+
+// FileExists reports whether the document's file is on disk. A file opened
+// before it exists and an unnamed buffer have none until their first Save.
+func (e *Editor) FileExists() bool { return e.buffer != nil && e.buffer.diskExists }

@@ -330,6 +330,13 @@ leaves. Hover over an icon for its name. The
 Preview is the default. The toolbar, Alt+V (next view) and the palette's Markdown
 Preview, Markdown Side by Side and Markdown Source commands change one tab.
 
+- Text that is still being written stays on screen. A Markdown file that does
+  not exist yet (`crude new.md`) and a tab that just became Markdown (its first
+  Save, or a rename from another type) open Side by side when the setting is
+  Preview, because the preview alone ignores typing. A rename between two
+  Markdown names keeps the tab's view; a rename to another type closes the
+  Markdown views and the editor takes the whole tab.
+
 - The editor stays the only owner of the text, save, undo, recovery and
   language features. The preview renders the editor's buffer, unsaved edits
   included, with the chat's Markdown renderer (`tui/rendering`, Glamour over
@@ -706,6 +713,14 @@ refresh after success without dropping the query/replacement draft.
   comparison tab only on request; closing it returns to the same name, folder and
   encoding. Targets that cannot meet that review's safety
   bounds are refused without changing the draft or file.
+- A tab follows its file's name. When the first Save or a rename gives an open
+  document a new name, every view of it changes at once, as a fresh open would
+  show it: syntax colors, editing rules (comments, brackets, indentation, folds),
+  EditorConfig, language servers, problems and the Markdown views. The core
+  opens the language view for the new name (none in a single-file window); the
+  shell re-reads the problems for the new name and adds or removes the Markdown
+  views in `retitleEditorWindowTab`, the one place a tab is re-keyed. Unsaved
+  text, undo, caret and the tab stay. Nobody needs to close and reopen the tab.
 - Empty-rail double click creates one unnamed file in that pane. New Unnamed File
   in the palette and the empty-pane menu reach the same owner. The tab rail's `+`
   still creates a session; ordinary tab clicks and drags keep their semantics.
