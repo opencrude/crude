@@ -214,6 +214,7 @@ documents to read before changing each area.
 - [Tab follows its file type](issues/2026-11-26-tab-follows-file-type.md) — why a saved or renamed file kept its old viewer until the tab was reopened, and how every view now follows the new name.
 - [Wayland clipboard](issues/2026-11-26-wayland-clipboard.md) — why Ctrl+V pasted an older clipboard entry on KDE Wayland, and how Crude now reads only the session's own clipboard.
 - [Errand compaction limits](issues/2026-11-26-errand-compaction-limits.md) — why Errand compaction failed with "Request Entity Too Large" on every run, and how it now plans within, adapts to and remembers route limits.
+- [Unified diff counts hid ++ and -- lines](issues/2026-11-26-unidiff-double-plus-counts.md) — why a tool write or edit whose changed lines began with `++` or `--` reported zero added or removed lines and a suppressed diff, and how the counts now come from the structured edits.
 - [Composer chips, slash parity, workspace entry and Errand setup](issues/2026-11-25-composer-entry-and-errand-setup.md) — fixes and acceptance evidence for composer editing, workspace entry, file-to-folder promotion and first AI setup.
 - [Windows emoji input](issues/2026-11-25-windows-emoji-input.md) — why a correct draft could show a second emoji or caret, and how native console text reaches the focused editor.
 
