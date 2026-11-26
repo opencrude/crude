@@ -327,7 +327,9 @@ func (c *supportCache) publishObservations() {
 }
 
 // ForgetCompactionSupport removes evidence and fences late probe completions. It never changes chat history.
-func ForgetCompactionSupport(account string) error { return currentSupport().forget(account) }
+func ForgetCompactionSupport(account string) error {
+	return errors.Join(currentSupport().forget(account), activeLearnedLimits().forget(account))
+}
 
 func (c *supportCache) cancelFlights(account string) {
 	c.mu.Lock()

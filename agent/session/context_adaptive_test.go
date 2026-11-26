@@ -301,8 +301,8 @@ func TestSessionAdaptiveCompactionLaterChunkFailurePreservesDurableSource(t *tes
 					}
 				}
 				if call >= 3 {
-					if !strings.Contains(body.Messages[len(body.Messages)-1].ContentString(), "source chunk 3/") {
-						t.Errorf("failure did not occur on the later source chunk: call=%d", call)
+					if call == 3 && !strings.Contains(body.Messages[len(body.Messages)-1].ContentString(), "This is part 3") {
+						t.Errorf("failure did not occur on the third part of the history: call=%d", call)
 					}
 					if failure == "permanent_401" {
 						return providersim.HTTPError(providersim.Auth).WithFaultMessage("invalid Errand credentials")
@@ -324,7 +324,9 @@ func TestSessionAdaptiveCompactionLaterChunkFailurePreservesDurableSource(t *tes
 			}
 			expectedCalls, expectedRetries := int32(3), 0
 			if failure == "empty_after_retries" {
-				expectedCalls, expectedRetries = 6, 3
+				// Empty combined replies fall back to one section at a time,
+				// whose first part fails the same way after its retries.
+				expectedCalls, expectedRetries = 10, 3
 			}
 			if probe.calls.Load() != expectedCalls {
 				t.Fatalf("retry bound changed: calls=%d want=%d", probe.calls.Load(), expectedCalls)

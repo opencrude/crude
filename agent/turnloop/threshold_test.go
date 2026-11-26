@@ -211,7 +211,8 @@ func TestThresholdManualNeedsACheckpoint(t *testing.T) {
 				old = thresholdHistory(20000)
 			}
 			a.Provider.SetProtocolSettings(&provider.ProtocolSettings{Compaction: provider.CompactionProviderOnly})
-			combinedCompactionFailures.Delete(combinedCompactionKey(a.Provider, a.Model))
+			// A profile without learned limits: one request extracts every section.
+			a.CompactionAgentProfile = "combined"
 			if mode == "miss" {
 				a.SeedContextUsage(70000, 0, len(old)+1)
 			}

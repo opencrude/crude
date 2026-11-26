@@ -145,7 +145,7 @@ func (p *compactionPlanner) buyCost(a *Agent, source, post int) float64 {
 		if a.CompactionProvider != nil {
 			connection, model = a.CompactionProvider, a.CompactionProvider.Model
 		}
-		if !combinedCompactionWorks(connection, model) {
+		if provider.LearnedRequestLimits(a.CompactionAgentProfile, connection, model).Sectioned {
 			reads = len(rootprompt.CompactionStages())
 		}
 		extraction = float64(reads) * compaction.CalculateCost(source, 0, 0)
@@ -587,7 +587,8 @@ func compactionModelUnavailable(err error) bool {
 		return false
 	}
 	var native *nativeCheckpointError
-	if errors.As(err, &native) {
+	var local extractionFailure
+	if errors.As(err, &native) || errors.As(err, &local) {
 		return false
 	}
 	if provider.RejectedAccount(err) != nil {

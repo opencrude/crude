@@ -119,7 +119,7 @@ func TestCatalogPersistsAllSourcesAndLoadsOfflineWithProvenance(t *testing.T) {
 	}
 }
 
-func TestAgentOutputLimitPersistsAndIsolatesConnectionAndProfile(t *testing.T) {
+func TestLearnedRequestLimitsPersistIsolateExpireAndForget(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "model-catalog.db")
 	catalog, err := OpenModelCatalog(path, nil)
 	if err != nil {
@@ -130,23 +130,26 @@ func TestAgentOutputLimitPersistsAndIsolatesConnectionAndProfile(t *testing.T) {
 	connection := FromPreset("commandcode", "key", "https://provider.example/v1")
 	connection.AccountID = "account-1"
 	const profile, model = "default/errand", "cmd/deepseek/deepseek-v4-flash"
-	if err := RecordOutputLimit(profile, connection, model, 393216); err != nil {
-		t.Fatal(err)
+	for _, record := range []struct {
+		kind  LearnedLimit
+		value int
+	}{{LearnedOutput, 393216}, {LearnedOutput, 500000}, {LearnedWindow, 120000}, {LearnedInput, 90000}, {LearnedBytes, 700000}, {LearnedSectioned, 1}} {
+		if err := RecordRequestLimit(profile, connection, model, record.kind, record.value, StatedLimitLifetime); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := RecordOutputLimit(profile, connection, model, 500000); err != nil {
-		t.Fatal(err)
-	}
+	want := LearnedLimits{Window: 120000, Input: 90000, Output: 393216, Bytes: 700000, Sectioned: true}
 	for _, changed := range []struct {
 		name, profile, model string
 		mutate               func(*Provider)
-		want                 int
+		want                 LearnedLimits
 	}{
-		{"same identity", profile, model, nil, 393216},
-		{"other agent profile", "another/errand", model, nil, 0},
-		{"other model", profile, "cmd/example/other-model", nil, 0},
-		{"other account", profile, model, func(p *Provider) { p.AccountID = "account-2" }, 0},
-		{"other endpoint", profile, model, func(p *Provider) { p.BaseURL = "https://other.example/v1" }, 0},
-		{"other protocol", profile, model, func(p *Provider) { _ = p.SetProtocolID("anthropic") }, 0},
+		{"same identity", profile, model, nil, want},
+		{"other agent profile", "another/errand", model, nil, LearnedLimits{}},
+		{"other model", profile, "cmd/example/other-model", nil, LearnedLimits{}},
+		{"other account", profile, model, func(p *Provider) { p.AccountID = "account-2" }, LearnedLimits{}},
+		{"other endpoint", profile, model, func(p *Provider) { p.BaseURL = "https://other.example/v1" }, LearnedLimits{}},
+		{"other protocol", profile, model, func(p *Provider) { _ = p.SetProtocolID("anthropic") }, LearnedLimits{}},
 	} {
 		t.Run(changed.name, func(t *testing.T) {
 			variant := FromPreset("commandcode", "key", connection.BaseURL)
@@ -154,41 +157,50 @@ func TestAgentOutputLimitPersistsAndIsolatesConnectionAndProfile(t *testing.T) {
 			if changed.mutate != nil {
 				changed.mutate(variant)
 			}
-			limit, err := LearnedOutputLimit(changed.profile, variant, changed.model)
-			if err != nil || limit != changed.want {
-				t.Fatalf("learned ceiling=%d err=%v want=%d", limit, err, changed.want)
+			if got := LearnedRequestLimits(changed.profile, variant, changed.model); got != changed.want {
+				t.Fatalf("learned limits=%+v want=%+v", got, changed.want)
 			}
 		})
 	}
-	if err := catalog.Close(); err != nil {
+	reopen := func() {
+		t.Helper()
+		if err := catalog.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if catalog, err = OpenModelCatalog(path, nil); err != nil {
+			t.Fatal(err)
+		}
+		UseModelCatalog(catalog)
+	}
+	reopen()
+	if got := LearnedRequestLimits(profile, connection, model); got != want {
+		t.Fatalf("learned limits did not survive app restart: %+v", got)
+	}
+	if err := RecordRequestLimit(profile, connection, model, LearnedOutput, 32768, StatedLimitLifetime); err != nil {
 		t.Fatal(err)
 	}
-	catalog, err = OpenModelCatalog(path, nil)
-	if err != nil {
+	if got := LearnedRequestLimits(profile, connection, model); got.Output != 32768 {
+		t.Fatalf("stronger provider evidence did not tighten output: %+v", got)
+	}
+	if _, err := catalog.db.Exec(`UPDATE learned_request_limits SET expires=? WHERE kind=?`, time.Now().Add(-time.Hour).Unix(), string(LearnedOutput)); err != nil {
 		t.Fatal(err)
 	}
-	UseModelCatalog(catalog)
-	if limit, err := LearnedOutputLimit(profile, connection, model); err != nil || limit != 393216 {
-		t.Fatalf("learned limit did not survive app restart: %d %v", limit, err)
+	reopen()
+	if got := LearnedRequestLimits(profile, connection, model); got.Output != 0 || got.Window != 120000 {
+		t.Fatalf("an expired ceiling must be rediscovered while others stay: %+v", got)
 	}
-	if err := RecordOutputLimit(profile, connection, model, 32768); err != nil {
+	if err := RecordRequestLimit(profile, connection, model, LearnedOutput, 393216, InferredLimitLifetime); err != nil {
 		t.Fatal(err)
 	}
-	if limit, err := LearnedOutputLimit(profile, connection, model); err != nil || limit != 32768 {
-		t.Fatalf("stronger provider evidence did not tighten output: %d %v", limit, err)
+	if got := LearnedRequestLimits(profile, connection, model); got.Output != 393216 {
+		t.Fatalf("fresh evidence did not replace the expired limit: %+v", got)
 	}
-	if _, err := catalog.db.Exec(`UPDATE agent_output_limits SET updated_at=? WHERE agent_profile=? AND provider_scope=? AND account_id=? AND model_id=?`,
-		time.Now().Add(-learnedOutputLimitLifetime-time.Hour).Unix(), profile, connection.ReplayScope(), connection.AccountID, model); err != nil {
+	if err := ForgetCompactionSupport(connection.AccountID); err != nil {
 		t.Fatal(err)
 	}
-	if limit, err := LearnedOutputLimit(profile, connection, model); err != nil || limit != 0 {
-		t.Fatalf("stale ceiling should be re-probed: %d %v", limit, err)
-	}
-	if err := RecordOutputLimit(profile, connection, model, 393216); err != nil {
-		t.Fatal(err)
-	}
-	if limit, err := LearnedOutputLimit(profile, connection, model); err != nil || limit != 393216 {
-		t.Fatalf("fresh provider evidence did not replace stale limit: %d %v", limit, err)
+	reopen()
+	if got := LearnedRequestLimits(profile, connection, model); got != (LearnedLimits{}) {
+		t.Fatalf("forgetting the account kept learned limits: %+v", got)
 	}
 }
 

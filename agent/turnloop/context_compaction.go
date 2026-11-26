@@ -202,11 +202,11 @@ func attribute(attrs []xml.Attr, name string) string {
 
 func validateCompactionStageText(text string) error {
 	if strings.TrimSpace(text) == "" {
-		return errors.New("model returned an empty extraction")
+		return extractionFailure("model returned an empty extraction")
 	}
 	for _, r := range text {
 		if r < 0x20 && r != '\n' && r != '\r' && r != '\t' {
-			return fmt.Errorf("model returned invalid control character U+%04X", r)
+			return extractionFailure(fmt.Sprintf("model returned invalid control character U+%04X", r))
 		}
 	}
 	return nil
@@ -432,70 +432,65 @@ func (a *Agent) compactSource(ctx context.Context, msgs, source []provider.ChatM
 	if serving && a.Provider.Protocol().Info().ToolChoiceNone {
 		extractionTools = tools
 	}
-	extractionWindow := a.Provider.ContextWindow(a.Model)
-	learnedLimit, err := provider.LearnedOutputLimit(a.CompactionAgentProfile, a.Provider, a.Model)
-	if err != nil {
-		return compactOutcome{}, fmt.Errorf("load learned extraction output limit: %w", err)
+	limits := a.extractionLimits()
+	manifestWindow := limits.window
+	if manifestWindow <= 0 {
+		manifestWindow = limits.input
 	}
-	manifestBudget := min(2048, max(128, extractionWindow/32))
+	manifestBudget := min(2048, max(128, manifestWindow/32))
 	common := provider.NewTextMessage("user", rootprompt.CompactionCommon(role, compactionHumanManifest(msgs[1:], role, targetModel, manifestBudget), continuity.ContentString()))
 	common.Origin = provider.OriginCompactionRequest
 	common.Visibility = provider.VisibilityContextOnly
-	inputBudget := extractionWindow - contextSafetyReserve(extractionWindow) - 1
-	if extractionWindow <= 0 {
-		inputBudget = 128_000
-	}
 
 	emit(AgentEvent{Type: "context_compaction_started", Data: a.compactionEventData(requestID, trigger, role, 0, 0, beforeTokens, 0, ctxWindow)})
 
 	stages := rootprompt.CompactionStages()
 	sections := make(map[string]string, len(stages))
 	var aggregate provider.TokenUsage
-	usageRatio := float64(1)
-	if combinedCompactionWorks(a.Provider, a.Model) {
+	extractor := func(stage rootprompt.CompactionStage, index, outputBudget int) *compactionExtractor {
+		return &compactionExtractor{
+			agent: a, ctx: ctx, emit: emit, requestID: requestID, trigger: trigger, role: role,
+			stage: stage, stageIndex: index, beforeTokens: beforeTokens, targetWindow: ctxWindow,
+			system: msgs[0], common: common, tools: extractionTools, limits: limits, outputBudget: outputBudget,
+		}
+	}
+	if !limits.sectioned {
 		// One request reads the source once and writes every section; any
 		// section it misses is extracted on its own below.
 		combined := rootprompt.CombinedCompactionStage()
 		data := a.compactionEventData(requestID, trigger, role, 1, 0, beforeTokens, 0, ctxWindow)
 		data["stage_name"], data["stage_label"] = combined.Name, combined.Label
 		emit(AgentEvent{Type: "context_compaction_stage", Data: data})
-		extractor := compactionExtractor{
-			agent: a, ctx: ctx, emit: emit, requestID: requestID, trigger: trigger, role: role,
-			stage: combined, stageIndex: 0, beforeTokens: beforeTokens, targetWindow: ctxWindow,
-			system: msgs[0], common: common, tools: extractionTools, inputBudget: inputBudget, outputBudget: checkpointBudget - 1,
-			learnedOutputLimit: learnedLimit, usageRatio: usageRatio,
-			capacityBudget: extractionWindow - contextSafetyReserve(extractionWindow) - 1,
-		}
-		text, combinedErr := extractor.request(source, rootprompt.InitialCompactionDirective(), 0)
-		aggregate = aggregate.Add(extractor.usage)
-		inputBudget, usageRatio = extractor.inputBudget, extractor.usageRatio
-		if extractor.learnedOutputLimit > 0 {
-			learnedLimit = extractor.learnedOutputLimit
-		}
+		x := extractor(combined, 0, checkpointBudget-1)
+		text, combinedErr := x.request(source, rootprompt.InitialCompactionDirective())
+		aggregate = aggregate.Add(x.usage)
 		if ctx.Err() != nil {
 			return compactOutcome{Usage: aggregate, ContextWindow: ctxWindow, RequestID: requestID, Trigger: trigger, Role: role,
 				AccountID: a.Provider.AccountID, ProviderID: a.Provider.ID, ModelID: a.Model}, ctx.Err()
 		}
-		if combinedErr == nil {
+		_, tooLarge := provider.RequestTooLarge(combinedErr, 0)
+		switch {
+		case combinedErr == nil:
 			parsed, missing := rootprompt.ParseCombinedCompaction(text)
 			for name, body := range parsed {
 				sections[name] = body
 			}
 			if len(missing) > 0 {
-				recordCombinedCompactionFailure(a.Provider, a.Model)
+				limits.recordSectioned()
 			}
-		} else if !compactionModelUnavailable(combinedErr) {
-			// Truncation, an over-advertised output cap or a rejected request
-			// shape: extract one section at a time, chunked as needed.
-			recordCombinedCompactionFailure(a.Provider, a.Model)
-		} else {
+		case compactionModelUnavailable(combinedErr):
 			// An unavailable connection would fail every section the same way.
 			return compactOutcome{
 					Usage: aggregate, ContextWindow: ctxWindow, RequestID: requestID, Trigger: trigger, Role: role,
-					StageName: combined.Label, StageIndex: 1, RetryAttempt: extractor.retryAttempt,
+					StageName: combined.Label, StageIndex: 1, RetryAttempt: x.retryAttempt,
 					AccountID: a.Provider.AccountID, ProviderID: a.Provider.ID, ModelID: a.Model,
 				},
 				fmt.Errorf("%s: %w", combined.Name, combinedErr)
+		case !tooLarge && !provider.TimedOut(combinedErr):
+			// An over-advertised output cap or a rejected request shape:
+			// extract one section at a time, in parts as needed. A limit the
+			// adaptation could not meet is not evidence against one request.
+			limits.recordSectioned()
 		}
 	}
 	for index, stage := range stages {
@@ -517,24 +512,13 @@ func (a *Agent) compactSource(ctx context.Context, msgs, source []provider.ChatM
 		data["stage_label"] = stage.Label
 		emit(AgentEvent{Type: "context_compaction_stage", Data: data})
 
-		extractor := compactionExtractor{
-			agent: a, ctx: ctx, emit: emit, requestID: requestID, trigger: trigger, role: role,
-			stage: stage, stageIndex: index, beforeTokens: beforeTokens, targetWindow: ctxWindow,
-			system: msgs[0], common: common, tools: extractionTools, inputBudget: inputBudget, outputBudget: remaining,
-			learnedOutputLimit: learnedLimit, usageRatio: usageRatio,
-			capacityBudget: extractionWindow - contextSafetyReserve(extractionWindow) - 1,
-		}
-		stageText, stageErr := extractor.request(source, rootprompt.InitialCompactionDirective(), 0)
-		aggregate = aggregate.Add(extractor.usage)
-		inputBudget = extractor.inputBudget
-		usageRatio = extractor.usageRatio
-		if extractor.learnedOutputLimit > 0 {
-			learnedLimit = extractor.learnedOutputLimit
-		}
+		x := extractor(stage, index, remaining)
+		stageText, stageErr := x.request(source, rootprompt.InitialCompactionDirective())
+		aggregate = aggregate.Add(x.usage)
 		if stageErr != nil {
 			return compactOutcome{
 					Usage: aggregate, ContextWindow: ctxWindow, RequestID: requestID, Trigger: trigger, Role: role,
-					StageName: stage.Label, StageIndex: index + 1, Completed: index, RetryAttempt: extractor.retryAttempt,
+					StageName: stage.Label, StageIndex: index + 1, Completed: index, RetryAttempt: x.retryAttempt,
 					AccountID: a.Provider.AccountID, ProviderID: a.Provider.ID, ModelID: a.Model,
 				},
 				fmt.Errorf("%s stage: %w", stage.Name, stageErr)
@@ -1063,23 +1047,11 @@ func (a *Agent) CompactWithRequestID(
 	}, nil
 }
 
-// Combined extraction is learned per connection and model: a model that
-// truncates or drops sections from one combined response is extracted one
-// section at a time afterwards.
-var combinedCompactionFailures sync.Map
-
+// combinedCompactionKey identifies a connection and model for the background
+// checkpoint slot: a prepared checkpoint is adopted only on the same route.
 func combinedCompactionKey(connection *provider.Provider, model string) string {
 	if connection == nil {
 		return model
 	}
 	return connection.ReplayScope() + "\x00" + connection.AccountID + "\x00" + model
-}
-
-func combinedCompactionWorks(connection *provider.Provider, model string) bool {
-	_, failed := combinedCompactionFailures.Load(combinedCompactionKey(connection, model))
-	return !failed
-}
-
-func recordCombinedCompactionFailure(connection *provider.Provider, model string) {
-	combinedCompactionFailures.Store(combinedCompactionKey(connection, model), struct{}{})
 }

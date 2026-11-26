@@ -880,12 +880,13 @@ steps:
 				}
 				atCapacity := overflowPressure || activeTokens >= hardLimit
 				sameWriter := provider.SameConnection(a.CompactionProvider, a.Provider)
-				if compactErr != nil && ctx.Err() == nil && atCapacity && compactionModelUnavailable(compactErr) &&
+				var local extractionFailure
+				if compactErr != nil && ctx.Err() == nil && atCapacity && (compactionModelUnavailable(compactErr) || errors.As(compactErr, &local)) &&
 					a.Provider.CompactionMethod() != provider.CompactionProviderOnly && a.CompactionProvider != nil &&
 					(!sameWriter || a.CompactionProvider.Model != a.Model && provider.RejectedAccount(compactErr) == nil) {
 					// Last resort: the next request cannot be sent and the
-					// configured compaction connection is unavailable (input
-					// limits are already adapted by the extractor). The
+					// configured compaction connection is unavailable or could
+					// not write a checkpoint within its adapted limits. The
 					// agent's own connection writes this one checkpoint.
 					l.Warn("COMPACT", "compaction_model_fallback", "error", compactErr.Error())
 					outcome, compactErr = a.compactorFor(true, ctxWindow, checkpointTarget).compactSource(ctx, msgs, source, allTools, requestID, activeTokens, trigger, emit)

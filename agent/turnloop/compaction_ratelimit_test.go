@@ -35,7 +35,8 @@ func TestAutoCompactionRateLimitPermanentVerdict(t *testing.T) {
 					}
 					extractor.SetContextWindow(200_000)
 					a := newTestAgent(t, extractor, extractor.Model)
-					combinedCompactionFailures.Delete(combinedCompactionKey(extractor, extractor.Model))
+					// A profile without learned limits: one request extracts every section.
+					a.CompactionAgentProfile = "combined"
 					a.NativeCompactionProvider, a.CompactionTargetModel, a.CompactionTargetWindow = main, main.Model, 200_000
 					a.FilteredTools = FilterTools(tools.AgentTools, []string{"read_file"}, nil, "", false)
 					kind := providersim.Quota
@@ -116,7 +117,8 @@ func TestRequiredCompactionRateLimit(t *testing.T) {
 				a.ContextCompactionPercent = 85
 				if writer == "serving" {
 					// newTestAgent normally scripts one reply per section.
-					combinedCompactionFailures.Delete(combinedCompactionKey(p, p.Model))
+					// A profile without learned limits: one request extracts every section.
+					a.CompactionAgentProfile = "combined"
 				} else {
 					a.CompactionProvider = &provider.Provider{ID: "custom", AccountID: t.Name() + "-errand", Model: "errand", StandardName: "openai", BaseURL: sim.BaseURL(providersim.Chat)}
 					a.CompactionProvider.SetContextWindow(200_000)

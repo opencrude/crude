@@ -215,10 +215,10 @@ func TestCompactionRefinesOnlyOversizedSuccessfulCheckpointText(t *testing.T) {
 	extractor := compactionExtractor{
 		agent: agent, ctx: context.Background(), emit: func(AgentEvent) {},
 		stage: compactionStagesForTest[0], role: "root", system: provider.NewTextMessage("system", "system"),
-		common:      provider.NewTextMessage("user", "preserve exact evidence"),
-		inputBudget: 30_000, capacityBudget: 30_000, outputBudget: 200, responseBudget: 2000,
+		common: provider.NewTextMessage("user", "preserve exact evidence"),
+		limits: agent.extractionLimits(), outputBudget: 200,
 	}
-	text, err := extractor.request([]provider.ChatMessage{provider.NewTextMessage("user", "preserve task")}, "extract", 0)
+	text, err := extractor.request([]provider.ChatMessage{provider.NewTextMessage("user", "preserve task")}, "extract")
 	if err != nil || calls != 2 || !strings.Contains(text, "all constraints and evidence") {
 		t.Fatalf("refinement result=%q calls=%d error=%v", text, calls, err)
 	}
@@ -332,6 +332,10 @@ func TestCompactionLearnsProviderOutputCeilingAcrossSessions(t *testing.T) {
 		a := newTestAgent(t, connection, connection.Model)
 		a.MaxOutputTokens = 600_000
 		a.CompactionAgentProfile = "default/errand"
+		// These replies answer one section per request.
+		if err := provider.RecordRequestLimit(a.CompactionAgentProfile, connection, connection.Model, provider.LearnedSectioned, 1, provider.InferredLimitLifetime); err != nil {
+			t.Fatal(err)
+		}
 		return a
 	}
 	first := makeAgent()
@@ -343,8 +347,9 @@ func TestCompactionLearnsProviderOutputCeilingAcrossSessions(t *testing.T) {
 	if len(outputs) != 5 || outputs[0] <= 393216 {
 		t.Fatalf("expected one over-limit request and four bounded stage requests; output caps=%v", outputs)
 	}
+	// A stated range can be exclusive, so the ceiling is one below it.
 	for _, cap := range outputs[1:] {
-		if cap != 393216 {
+		if cap != 393215 {
 			t.Fatalf("output ceiling not learned after first rejection: %v", outputs)
 		}
 	}
@@ -365,7 +370,7 @@ func TestCompactionLearnsProviderOutputCeilingAcrossSessions(t *testing.T) {
 		t.Fatalf("new agent session retried the known-invalid output cap: %v", outputs)
 	}
 	for _, cap := range outputs {
-		if cap != 393216 {
+		if cap != 393215 {
 			t.Fatalf("reopened catalog did not bound extraction: %v", outputs)
 		}
 	}
