@@ -561,7 +561,11 @@ func TestHardlinkRestoreRejectsIgnoredAliasOutsideSelection(t *testing.T) {
 
 func TestExternalRestoreRejectsReplacedParentWithMatchingFile(t *testing.T) {
 	store, _ := newTestStore(t)
-	externalRoot := filepath.Join(t.TempDir(), "external")
+	parent, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	externalRoot := filepath.Join(parent, "external")
 	if err := os.Mkdir(externalRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}

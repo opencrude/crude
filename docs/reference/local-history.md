@@ -87,7 +87,9 @@ and mandatory safety checks still apply. See [workspace entry defaults](settings
   mtime, change key and file identity are unchanged, whose object still exists,
   and whose observation is older than the timestamp granule (a same-granule
   write is invisible to metadata, so such files are re-read). Paths the walk did
-  not visit leave the cache. Restore planning never uses it and reads every file.
+  not visit leave the cache. Linux and macOS use the inode change time to
+  detect same-size writes that restore the original mtime. Restore planning
+  never uses the cache and reads every file.
 - A scan walks directories in order and gives the per-file metadata calls (type,
   ignore rule, identity, cached object) to at most eight workers, as Git's
   preloaded index does; content reads, cache updates and hardlink detection stay

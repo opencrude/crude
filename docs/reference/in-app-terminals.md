@@ -14,7 +14,9 @@ Crude uses Go 1.27.4 and retains its local cgo adapter. The toolchain upgrade
 does not change the pinned native library or adopt `go.mitchellh.com/libghostty`.
 
 Bootstrap: `scripts/bootstrap_libghostty.sh` (Zig 0.16.x under `~/tools`,
-`tic` from ncurses-bin).
+`tic` from ncurses-bin on Linux). On macOS the script builds the native
+archive without an XCFramework and reuses the pinned terminfo. Xcode Command
+Line Tools suffice; the VT library does not render through Metal.
 
 ## Terminfo runtime contract
 
@@ -24,7 +26,8 @@ compiled with `tic -x`, committed under `internal/terminalvt/terminfo/`, and emb
 `internal/terminalvt/ghostty_terminfo.go`. At PTY start:
 
 1. `workspace.TerminfoDir()` materializes the compiled entry at
-   `~/.crude/terminfo/x/xterm-ghostty` (`CRUDE_TERMINFO_DIR` overrides).
+   `~/.crude/terminfo/x/xterm-ghostty`. On macOS it also writes
+   `78/xterm-ghostty` for Apple's ncurses. `CRUDE_TERMINFO_DIR` overrides both.
 2. `PTYEnviron` sets `TERMINFO` to that directory.
 
 Guarded by `TestTerminfoDirMaterializesPinnedEntry` and

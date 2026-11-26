@@ -35,8 +35,8 @@ func snapshotEntry(t *testing.T, store *Store, rel string) Entry {
 }
 
 // The stat cache must never hide a content change: a rewrite that changes
-// metadata, a same-size rewrite in the racy window and (on Linux) a rewrite
-// that restores the old modification time are all observed.
+// metadata, a same-size rewrite in the racy window, and a rewrite that
+// restores the old modification time on Linux or macOS are all observed.
 func TestStatCacheObservesEveryContentChange(t *testing.T) {
 	store, workspace := newTestStore(t)
 	agedFile(t, workspace, "a.txt", "alpha", time.Hour)
@@ -59,7 +59,7 @@ func TestStatCacheObservesEveryContentChange(t *testing.T) {
 		t.Fatal("rewrite inside the racy window was missed")
 	}
 
-	if runtime.GOOS == "linux" {
+	if runtime.GOOS == "linux" || runtime.GOOS == "darwin" {
 		agedFile(t, workspace, "b.txt", "one", time.Hour)
 		before := snapshotEntry(t, store, "b.txt")
 		info, err := os.Stat(filepath.Join(workspace, "b.txt"))

@@ -34,12 +34,18 @@ func TestMain(m *testing.M) {
 }
 
 // coreTestHome isolates every core path (socket, config, sessions, logs). Unix
-// socket paths are length-limited, so Unix homes live directly under /tmp.
+// socket paths are length-limited, so Unix homes use the real /tmp directory.
 func coreTestHome(t *testing.T) string {
 	t.Helper()
 	parent := "/tmp"
 	if runtime.GOOS == "windows" {
 		parent = ""
+	} else {
+		var err error
+		parent, err = filepath.EvalSymlinks(parent)
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	home, err := os.MkdirTemp(parent, "crc")
 	if err != nil {

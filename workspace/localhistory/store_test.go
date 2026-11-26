@@ -444,10 +444,14 @@ func TestCaseOnlyRenameRestoreUsesStagedMoveOrdering(t *testing.T) {
 	if got := string(readTestFile(t, workspace, "Name.txt")); got != "same" {
 		t.Fatalf("restored=%q", got)
 	}
-	if runtime.GOOS != "windows" {
-		if _, err := os.Stat(filepath.Join(workspace, "name.txt")); !os.IsNotExist(err) {
-			t.Fatalf("lowercase alias survived: %v", err)
-		}
+	// Stat can resolve either spelling on a case-insensitive volume. Check
+	// the directory entry to prove the restore changed the actual spelling.
+	entries, err := os.ReadDir(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "Name.txt" {
+		t.Fatalf("unexpected entries after case-only restore: %v", entries)
 	}
 }
 
