@@ -104,3 +104,32 @@ func decodeShortcutPress(t *testing.T, decoder *uv.EventDecoder, sequence string
 	}
 	return tea.KeyPressMsg(key)
 }
+
+// With several agents side by side, Esc stops only the agent whose pane has
+// focus. Pressing Esc again while that agent stops, or on an idle agent, never
+// stops an agent in another pane.
+func TestEscStopsOnlyTheFocusedAgent(t *testing.T) {
+	app := setupChatInputApp(t, 120, 30, false)
+	app.AddOrchestrator("second")
+	app.AddOrchestrator("idle")
+	focused, other, idle := app.ws.AgentMgr().Get("agent"), app.ws.AgentMgr().Get("second"), app.ws.AgentMgr().Get("idle")
+	focused.State.Running, other.State.Running = true, true
+	app.switchToAgentView("agent")
+	for range 3 {
+		_, _ = app.dispatchKeyPress(tea.KeyPressMsg{Code: tea.KeyEsc})
+	}
+	if !focused.State.Cancelling {
+		t.Fatal("Esc did not stop the focused agent")
+	}
+	if other.State.Cancelling {
+		t.Fatal("Esc stopped the agent in another pane")
+	}
+	app.switchToAgentView("idle")
+	_, _ = app.dispatchKeyPress(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if other.State.Cancelling || idle.State.Cancelling {
+		t.Fatal("Esc on an idle agent stopped another agent")
+	}
+	if notices := cancelNotices(app); len(notices) != 0 {
+		t.Fatalf("Esc reported %q", notices)
+	}
+}
