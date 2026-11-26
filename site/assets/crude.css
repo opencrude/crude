@@ -475,6 +475,8 @@ code { font-family: var(--mono); }
 
 /* ───────────── Palette (real content) ───────────── */
 .more { position: relative; z-index: 20; max-width: 1040px; margin: 0 auto; padding: 22vh 24px 12vh; }
+/* crude.js fades the screen out from 95vh above the palette. This gap lets the last chapter end before that. */
+.js .more { margin-top: 45vh; }
 .more-head { margin-bottom: 40px; }
 .more-head .ch-body { max-width: 52ch; }
 .palette { position: relative; border: 1px solid var(--popup-border); border-radius: 10px; background: var(--popup); box-shadow: 0 50px 120px -30px rgba(0,0,0,.8), 0 0 0 1px rgba(255,255,255,.02); font-family: var(--mono); font-size: 13.5px; }
