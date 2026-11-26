@@ -7,7 +7,7 @@ Normal Go builds and tests need neither Python nor network access.
 """
 
 # SDK imports resolve in the generator venv from scripts/providersim_requirements.txt.
-# pyright: reportMissingImports=false
+# pyright: reportMissingImports=false, reportMissingModuleSource=false
 
 from __future__ import annotations
 
