@@ -3,6 +3,7 @@ package coreclient
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"crude/agent/provider"
@@ -221,4 +222,35 @@ func mustDetach[T any](t *testing.T, value T) T {
 		t.Fatal(err)
 	}
 	return out
+}
+
+// validateChanges reports the agent whose parent is missing, not the
+// agent the outer loop happened to start from. The previous message used
+// the outer-loop `parent` and `id`, so for a chain A -> B -> C with C
+// removed it said "missing parent B for A" even though B was present and
+// the actually-missing node was C (the parent of B).
+func TestWorkspaceViewMissingParentNamesTheOrphanedAgent(t *testing.T) {
+	v := newProjection(t, projectionFixture())
+	// Build a chain A -> B -> C with C absent, so B's parent is the
+	// missing node C. Drop the fixture's existing agents to isolate the
+	// structural check.
+	v.agents = map[string]workspace.AgentSnapshot{
+		"A": {ID: "A", ParentID: "B"},
+		"B": {ID: "B", ParentID: "C"},
+	}
+	err := v.validateChanges(coreprotocol.AgentChangesResult{})
+	if err == nil {
+		t.Fatal("missing-parent chain accepted")
+	}
+	if !errors.Is(err, ErrResync) {
+		t.Fatalf("expected ErrResync, got %v", err)
+	}
+	// The orphan is B (its parent C is absent); A is present and is not
+	// named. The previous message named B as the parent and A as the id.
+	if !strings.Contains(err.Error(), "B") {
+		t.Fatalf("error does not name the orphaned agent B: %v", err)
+	}
+	if strings.Contains(err.Error(), "missing parent B for A") {
+		t.Fatalf("error still uses the old wrong message: %v", err)
+	}
 }
