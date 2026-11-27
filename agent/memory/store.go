@@ -213,7 +213,7 @@ func (st *Store) initialize() error {
 		return fmt.Errorf("memory: base schema: %w", err)
 	}
 	if _, err := tx.Exec(`SELECT ` + recordSelectColumns + `, norm FROM workspace_memories LIMIT 0`); err != nil {
-		return fmt.Errorf("memory: current schema required; align local data manually: %w", err)
+		return fmt.Errorf("memory: cannot open the saved memory tables; check the data update in core.log: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("memory: commit initialization: %w", err)

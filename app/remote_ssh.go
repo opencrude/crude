@@ -25,18 +25,7 @@ import (
 // that does not answer, such as a loopback-only listener on a distinct host,
 // does not add another handshake to the launch path.
 func remoteSSHDialer(_ string, options corewire.SSHOptions) remote.Dialer {
-	ssh := func(ctx context.Context) (corewire.Conn, error) {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		// Handshake cancellation closes the mux and joins SSH. The handshake
-		// context must not own the established process after Dial returns.
-		conn, err := corewire.DialSSHBuild(context.Background(), options, buildinfo.DataDirName, buildinfo.ProtocolBuild)
-		if err != nil {
-			return nil, err
-		}
-		return corewire.NewMux(conn, corewire.CarrierSSH, true), nil
-	}
+	ssh := sshCarrier(options)
 	return func(ctx context.Context, clientID string) (*coreclient.Client, error) {
 		client, err := coreclient.Dial(ctx, ssh, clientID)
 		if err != nil {
@@ -60,6 +49,22 @@ func remoteSSHDialer(_ string, options corewire.SSHOptions) remote.Dialer {
 			return direct, sshUpgradeDialer(direct, ssh), nil
 		})
 		return client, nil
+	}
+}
+
+// sshCarrier starts the remote core's stdio relay through system SSH.
+func sshCarrier(options corewire.SSHOptions) coreclient.Dialer {
+	return func(ctx context.Context) (corewire.Conn, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		// Handshake cancellation closes the mux and joins SSH. The handshake
+		// context must not own the established process after Dial returns.
+		conn, err := corewire.DialSSHBuild(context.Background(), options, buildinfo.DataDirName, buildinfo.ProtocolBuild)
+		if err != nil {
+			return nil, err
+		}
+		return corewire.NewMux(conn, corewire.CarrierSSH, true), nil
 	}
 }
 

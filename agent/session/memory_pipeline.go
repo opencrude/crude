@@ -30,8 +30,6 @@ const (
 	consolidateLockTTL       = 10 * time.Minute
 	consolidateMinActive     = 8
 	consolidateMinInterval   = 6 * time.Hour
-	memoryActiveCap          = 200
-	memoryDecayUnused        = 45 * 24 * time.Hour
 	maintenanceSweepSessions = 3
 )
 
@@ -656,16 +654,9 @@ func (s *Session) runMemoryMaintenance(parent context.Context) {
 	} else if len(groups) > 0 {
 		s.logger.Info("MEMORY", "dedupe_suggested", "groups", len(groups))
 	}
-	if n, err := store.DecayArchive(ctx, memoryDecayUnused); err != nil {
-		s.logger.Warn("MEMORY", "decay_failed", "error", err.Error())
-	} else if n > 0 {
-		s.logger.Info("MEMORY", "decay_done", "archived", n)
-	}
-	if n, err := store.EnforceCap(ctx, memoryActiveCap); err != nil {
-		s.logger.Warn("MEMORY", "cap_failed", "error", err.Error())
-	} else if n > 0 {
-		s.logger.Info("MEMORY", "cap_done", "archived", n)
-	}
+	// Knowledge is never archived for its age or for the size of the store.
+	// Recall ranks recency and relevance; only an explicit forget, merge or
+	// supersession retires a record.
 
 	// LLM pass: rate-limited, threshold-gated, conservative.
 	if !s.shouldRunLLMConsolidation(ctx, store) {

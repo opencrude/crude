@@ -79,6 +79,7 @@ type Screen struct {
 	messageRefs     map[string]MessageRef
 	requestID       string
 	safetyAvailable bool
+	receipts        *receiptView
 }
 
 func New(th *theme.Theme) *Screen {
@@ -120,6 +121,14 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext)
 	ui.FillRect(buf, ox, oy, r, cell.BlankCell(bg))
 	title := "Timeline"
 	hint := "Enter preview · Esc close"
+	if s.receipts != nil {
+		title = "Agent file changes"
+		hint = "Enter to view a change · Esc to close"
+		if s.receipts.detail {
+			title = s.receipts.path
+			hint = "Esc to return to the changes"
+		}
+	}
 	if s.lastRestore != nil {
 		hint = "Enter or U preview undo · Esc close"
 	}
@@ -198,6 +207,9 @@ func truncate(text string, width int) string { return rendering.TruncateVisual(t
 func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	if evt.Kind == ui.EventCustom {
 		switch msg := evt.Custom.(type) {
+		case ReceiptMsg:
+			s.setReceipts(msg)
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
 		case TimelineMsg:
 			s.setTimeline(msg)
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
@@ -243,6 +255,13 @@ func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 		}
 		switch evt.Key.Code {
 		case tea.KeyEsc:
+			if s.receipts != nil && s.receipts.detail {
+				s.receipts.detail = false
+				s.list.SetItems(s.receipts.items)
+				s.list.SelectIndex(s.receipts.index)
+				s.status = s.receipts.coverage
+				return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
+			}
 			if s.plan != nil {
 				s.plan = nil
 				s.rebuildTimeline()
@@ -502,6 +521,11 @@ func (s *Screen) activate() ui.EventResult {
 		item, ok := s.list.Selected()
 		if !ok {
 			return ui.EventResult{Handled: true}
+		}
+		if q, ok := item.Payload.(localhistory.AgentReceiptQuery); ok && s.receipts != nil {
+			s.receipts.index = s.list.SelectedIndex()
+			s.loading = true
+			return ui.EventResult{Handled: true, Action: &ui.Action{ID: ActionReceipts, Payload: q}, Invalidate: ui.InvalidatePaint}
 		}
 		if item.ID == "undo-restore" && s.lastRestore != nil {
 			return ui.EventResult{Handled: true, Action: &ui.Action{ID: ActionPreview, Payload: PreviewRequest{SnapshotID: s.lastRestore.SafetySnapshotID}}}

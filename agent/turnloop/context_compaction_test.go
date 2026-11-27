@@ -334,7 +334,7 @@ func TestCompactRetriesOnlyFailedStage(t *testing.T) {
 		t.Fatalf("requests = %d, want one failed-stage replay", calls.Load())
 	}
 	if !hasEvent(events, "context_compaction_retrying") {
-		t.Fatalf("events lack stage retry: %+v", events)
+		t.Fatal("overload did not report its retry")
 	}
 }
 

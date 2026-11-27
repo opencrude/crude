@@ -36,12 +36,18 @@ func TestErrorAndYoloNoticesShareReadableBoundedRows(t *testing.T) {
 							t.Fatal("expanded error overflowed terminal")
 						}
 						for _, span := range row.Spans {
-							if span.Role != ui.ColorError && span.Role != ui.ColorMuted {
-								t.Fatalf("error left shared ink: %+v", span)
+							// Only the sign, heading and edge carry the severity color;
+							// the diagnostic stays readable in the ordinary ink.
+							mark := strings.TrimSpace(span.Text)
+							heading := mark != "" && strings.HasPrefix("Turn failed", strings.TrimSuffix(mark, "…"))
+							if span.Role == ui.ColorError && mark != "✕" && mark != "▎" && !heading {
+								t.Fatalf("error tinted its diagnostic: %+v", span)
 							}
 						}
 					}
-					compact := func(text string) string { return strings.Join(strings.Fields(strings.ReplaceAll(text, "│", "")), "") }
+					compact := func(text string) string {
+						return strings.Join(strings.Fields(strings.NewReplacer("│", "", "▎", "").Replace(text)), "")
+					}
 					if !strings.Contains(compact(strings.Join(rows.lines, "")), compact(test.message.Content)) {
 						t.Fatalf("expanded error lost evidence: %+v", rows.lines)
 					}

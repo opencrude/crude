@@ -92,7 +92,7 @@ func (p *Provider) CompleteFIMOnce(ctx context.Context, req FIMOnceRequest) (res
 	if err != nil {
 		return result, err
 	}
-	resp, err := c.do(ctx, http.MethodPost, joinPath(c.base, req.EndpointPath), body)
+	resp, err := c.modelPost(ctx, joinPath(c.base, req.EndpointPath), body)
 	if err != nil {
 		return result, err
 	}

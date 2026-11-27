@@ -521,7 +521,7 @@ func TestCheckpointNearAnExplicitThresholdDefersTheNextAttempt(t *testing.T) {
 	a.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
 		return tools.ToolResult{Content: strings.Repeat("evidence ", 150)}, nil
 	}
-	if err := provider.RecordConcurrencyRefused(a.Provider, a.Model); err != nil {
+	if err := provider.RecordRequestLimit("", a.Provider, a.Model, provider.LearnedConcurrency, 1, time.Hour); err != nil {
 		t.Fatal(err)
 	}
 	system := strings.Repeat("policy ", 1_000)
@@ -551,7 +551,7 @@ func TestDeferredCompactionSurvivesTheEndOfARun(t *testing.T) {
 	a.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
 		return tools.ToolResult{Content: strings.Repeat("evidence ", 150)}, nil
 	}
-	if err := provider.RecordConcurrencyRefused(a.Provider, a.Model); err != nil {
+	if err := provider.RecordRequestLimit("", a.Provider, a.Model, provider.LearnedConcurrency, 1, time.Hour); err != nil {
 		t.Fatal(err)
 	}
 	slot := NewPrecompactionSlot(t.Context(), nil)
@@ -660,7 +660,7 @@ func TestConnectionThatRefusedConcurrencyCompactsSynchronously(t *testing.T) {
 	server := &precompactionServer{rounds: 14}
 	endpoint := server.start(t)
 	a := precompactionAgent(t, endpoint.BaseURL(providersim.Chat), "serial-connection-model")
-	if err := provider.RecordConcurrencyRefused(a.Provider, a.Model); err != nil {
+	if err := provider.RecordRequestLimit("", a.Provider, a.Model, provider.LearnedConcurrency, 1, time.Hour); err != nil {
 		t.Fatal(err)
 	}
 	var trigger any
@@ -842,6 +842,10 @@ func TestRejectedCombinedExtractionFallsBackToStagedSections(t *testing.T) {
 		if strings.Contains(instruction, "All four continuation sections") {
 			combined.Add(1)
 			return providersim.HTTPError(providersim.InvalidRequest).WithFaultMessage("requested output is larger than this deployment serves")
+		}
+		if strings.Contains(instruction, "Notes on this part") {
+			// Smaller attempts read the history in parts first.
+			return providersim.Text("- part facts")
 		}
 		staged.Add(1)
 		return providersim.Text("- section facts")

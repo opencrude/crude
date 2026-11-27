@@ -107,6 +107,16 @@ func RunCore(opts CoreOptions) error {
 		lg.Warn("PERFORMANCE", "history_write_failed", "error", err.Error())
 	})()
 	lg.Info("CORE", "listening", "pid", os.Getpid(), "server", opts.Server, "grace", opts.Grace.String())
+	endpoint := core.NewHandoffListener(listener)
+	defer func() { _ = endpoint.Close() }()
+	updated, err := updateCoreData(ctx, dataDir, owner.Generation, opts.Grace, endpoint, lg)
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			lg.Info("CORE", "stopped_during_data_update")
+			return nil
+		}
+		return err
+	}
 
 	// Application state is resolved by the core, never by an attaching shell.
 	prepared := PrepareStartup(CLIFlags{})
@@ -157,6 +167,7 @@ func RunCore(opts CoreOptions) error {
 	if err := runtime.SetPromptHistory(prompts, prompthistory.DefaultPath()); err != nil {
 		lg.Warn("CORE", "history_install_failed", "error", err.Error())
 	}
+	runtime.RetainDataUpdate(updated)
 	runtime.SetLifetimePolicy(opts.Server, opts.Grace, cancel)
 	runtime.SetBuildID(BuildID())
 	runtime.SetOwnerGeneration(owner.Generation)
@@ -245,7 +256,7 @@ func RunCore(opts CoreOptions) error {
 		}()
 	}
 
-	serveErr := core.Serve(ctx, runtime, listener)
+	serveErr := core.Serve(ctx, runtime, endpoint)
 	cancel()
 	background.Wait()
 	_ = remoteHost.Close()
@@ -260,6 +271,37 @@ func RunCore(opts CoreOptions) error {
 		return errors.Join(serveErr, closeErr)
 	}
 	return closeErr
+}
+
+// updateCoreData brings every saved database to the formats of this build
+// before the core opens any of them. While an update runs, shells that connect
+// see its progress; while the core only checks its data, they wait in the
+// endpoint's queue. The endpoint stays the same for the sessions that follow.
+func updateCoreData(ctx context.Context, dataDir, owner string, grace time.Duration, endpoint *core.HandoffListener, lg *coreLogger) (coreprotocol.DataUpdate, error) {
+	server := core.NewDataUpdateServer(owner)
+	serving, stopServing := context.WithCancel(ctx)
+	served := make(chan error, 1)
+	var serve sync.Once
+	show := func() { serve.Do(func() { go func() { served <- server.Serve(serving, endpoint) }() }) }
+	updating, stopUpdating := context.WithCancel(ctx)
+	go func() {
+		select {
+		case <-server.Stopped():
+			stopUpdating()
+		case <-updating.Done():
+		}
+	}()
+	theme := ""
+	if fc, err := loadFileConfigFrom(ConfigPath()); err == nil && fc.Theme != nil {
+		theme = fc.Theme.Preset
+	}
+	runner := &dataUpdateRunner{dataDir: dataDir, stores: dataStores(), server: server, theme: theme, grace: grace, freeSpace: diskFreeSpace, show: show,
+		log: func(level, msg string, pairs ...any) { lg.write(level, "UPDATE", msg, pairs...) }}
+	updated, err := runner.run(updating)
+	stopUpdating()
+	stopServing()
+	serve.Do(func() { served <- nil })
+	return updated, errors.Join(err, <-served)
 }
 
 // superviseIdleCore stops a non-server core only after zero clients and zero
@@ -316,7 +358,36 @@ func listenCore(ctx context.Context, dataDir string) (net.Listener, error) {
 
 // ConnectCore dials this user's core, starting a detached one when none is
 // listening. Concurrent callers converge on the single owner of the endpoint.
+// While the core updates saved data, ConnectCore waits for the update.
 func ConnectCore(ctx context.Context, home, clientID string) (*coreclient.Client, error) {
+	return afterDataUpdate(ctx, home, clientID, func() (*coreclient.Client, error) {
+		return connectCore(ctx, home, clientID)
+	})
+}
+
+// afterDataUpdate connects again each time the core refused the session to
+// update saved data, after that update ended. It is for a caller that cannot
+// show the update; the shell shows it instead (followDataUpdate).
+func afterDataUpdate(ctx context.Context, home, clientID string, connect func() (*coreclient.Client, error)) (*coreclient.Client, error) {
+	for {
+		client, err := connect()
+		if !coreclient.IsCoreUpdating(err) {
+			return client, err
+		}
+		if err := coreclient.AwaitDataUpdate(ctx, localCarrier(DataDir(home)), clientID); err != nil {
+			return nil, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+}
+
+// connectCore is ConnectCore without the wait: a core that updates saved data
+// refuses the session with coreprotocol.FaultCoreUpdating.
+func connectCore(ctx context.Context, home, clientID string) (*coreclient.Client, error) {
 	dataDir := DataDir(home)
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return nil, err
@@ -483,7 +554,10 @@ func (stdioRelay) Close() error                { return errors.Join(os.Stdin.Clo
 // CoreStatus queries the running core without starting one.
 func CoreStatus(ctx context.Context, home string) (coreprotocol.CoreStatus, error) {
 	var status coreprotocol.CoreStatus
-	client, err := dialCore(ctx, DataDir(home), core.NewClientID())
+	clientID := core.NewClientID()
+	client, err := afterDataUpdate(ctx, home, clientID, func() (*coreclient.Client, error) {
+		return dialCore(ctx, DataDir(home), clientID)
+	})
 	if err != nil {
 		return status, fmt.Errorf("core status unavailable: %w", err)
 	}

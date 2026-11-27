@@ -109,10 +109,14 @@ func TestControlExecutionBootstrap(t *testing.T) {
 				t.Fatalf("fixture is not oversized: %d %v", len(encoded), err)
 			}
 			reviewed := call("execution.review", execution.ID, map[string]any{"id": execution.ID})
-			var token worktree.PlanDelta
-			decode(reviewed, &token)
-			if len(reviewed.Output) > 1024 || bytes.Contains(reviewed.Output, []byte(`"data"`)) || token.ContextID != execution.ID || token.Owner != execution.Owner || token.Digest != full.Digest || token.SourceDigest != full.SourceDigest || token.Digest == "" || token.SourceDigest == "" || len(token.Changes) != 0 {
+			var review executionReview
+			decode(reviewed, &review)
+			token := review.Plan
+			if len(reviewed.Output) > 2048 || bytes.Contains(reviewed.Output, []byte(`"data"`)) || token.ContextID != execution.ID || token.Owner != execution.Owner || token.Digest != full.Digest || token.SourceDigest != full.SourceDigest || token.Digest == "" || token.SourceDigest == "" || len(token.Changes) != 0 {
 				t.Fatal("review did not return the exact compact token")
+			}
+			if len(review.Changes) != 1 || review.Changes[0].Path != "disk.txt" || review.Changes[0].Change != "modified" || review.Changes[0].After.Size != len(large) || review.Summary != (executionReviewSummary{Changes: 1, Modified: 1, Bytes: int64(len(large))}) {
+				t.Fatalf("review did not describe the change: %+v", review)
 			}
 			t.Logf("full review=%d bytes; compact review=%d bytes", len(encoded), len(reviewed.Output))
 			apply := func(plan worktree.PlanDelta) control.Result {

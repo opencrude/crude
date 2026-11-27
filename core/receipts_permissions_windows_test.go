@@ -43,6 +43,8 @@ func TestReceiptWindowsAccessControl(t *testing.T) {
 		private     bool
 	}{
 		{"user-only", "", true},
+		{"owner-rights", "(A;;FR;;;OW)", true},
+		{"owner-rights-and-everyone", "(A;;FR;;;OW)(A;;FR;;;WD)", false},
 		{"system-and-administrators", "(A;;FA;;;SY)(A;;FA;;;BA)", true},
 		{"everyone-readable", "(A;;FR;;;WD)", false},
 		{"authenticated-users-writable", "(A;;FW;;;AU)", false},

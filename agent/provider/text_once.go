@@ -100,7 +100,7 @@ func (p *Provider) CompleteTextOnce(ctx context.Context, r TextOnceRequest) (res
 	if err != nil {
 		return result, err
 	}
-	resp, err := c.do(ctx, http.MethodPost, c.chatURL(request), body)
+	resp, err := c.modelPost(ctx, c.chatURL(request), body)
 	if err != nil {
 		return result, err
 	}

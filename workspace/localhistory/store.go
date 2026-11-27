@@ -135,13 +135,9 @@ func Open(storeRoot, workspaceRoot string) (*Store, error) {
 			return nil, fmt.Errorf("localhistory: create store: %w", err)
 		}
 	}
-	instanceLock := flock.New(filepath.Join(root, "instance.lock"))
-	locked, err := instanceLock.TryLock()
+	instanceLock, err := acquireInstanceLock(root)
 	if err != nil {
-		return nil, fmt.Errorf("localhistory: acquire instance lock: %w", err)
-	}
-	if !locked {
-		return nil, errors.New("localhistory: workspace history is already open in another process")
+		return nil, err
 	}
 	db, err := sql.Open("sqlite", filepath.Join(root, "history.db"))
 	if err != nil {
@@ -677,4 +673,26 @@ func writeAtomic(path string, mode os.FileMode, write func(io.Writer) error) err
 func sha256Hex(data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
+}
+
+func acquireInstanceLock(root string) (*flock.Flock, error) {
+	instanceLock := flock.New(filepath.Join(root, "instance.lock"))
+	locked, err := instanceLock.TryLock()
+	if err != nil {
+		return nil, fmt.Errorf("localhistory: acquire instance lock: %w", err)
+	}
+	if !locked {
+		return nil, errors.New("localhistory: workspace history is already open in another process")
+	}
+	return instanceLock, nil
+}
+
+// LockDataUpdate holds the same instance lock as an open history store.
+// A schema change and manifest verification must exclude capture and pruning.
+func LockDataUpdate(path string) (func() error, error) {
+	l, err := acquireInstanceLock(filepath.Dir(path))
+	if err != nil {
+		return nil, err
+	}
+	return l.Unlock, nil
 }

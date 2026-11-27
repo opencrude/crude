@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -245,7 +246,10 @@ func TestSessionCompactionLearnsOutputLimitAcrossNewSessions(t *testing.T) {
 	t.Cleanup(func() { _ = catalog.Close() })
 	var outputs []int
 	server := providersim.New(t)
+	var observations sync.Mutex
 	server.Respond(func(request providersim.Request) providersim.Turn {
+		observations.Lock()
+		defer observations.Unlock()
 		output, err := request.OutputLimit.Int64()
 		if err != nil {
 			t.Errorf("invalid output limit: %v", err)
@@ -291,6 +295,7 @@ func TestSessionAdaptiveCompactionLaterChunkFailurePreservesDurableSource(t *tes
 			probe := &adaptiveCompactionProbe{capacity: 64_000, model: "adaptive-errand-model"}
 			var session *Session
 			var original []byte
+			var failedPartCalls atomic.Int32
 			server := providersim.New(t)
 			server.Respond(func(request providersim.Request) providersim.Turn {
 				body, call := probe.readRequest(t, request)
@@ -300,10 +305,16 @@ func TestSessionAdaptiveCompactionLaterChunkFailurePreservesDurableSource(t *tes
 						t.Errorf("exact source was not durable before extraction: found=%v generation=%d reason=%q err=%v", found, source.Generation, source.Reason, err)
 					}
 				}
-				if call >= 3 {
-					if call == 3 && !strings.Contains(body.Messages[len(body.Messages)-1].ContentString(), "This is part 3") {
-						t.Errorf("failure did not occur on the third part of the history: call=%d", call)
+				// The last source range is identifiable regardless of which
+				// request finishes first. Refuse that same range on each retry.
+				failPart := false
+				for _, msg := range body.Messages {
+					if strings.Contains(msg.ContentString(), "adaptive-source-end") {
+						failPart = true
 					}
+				}
+				if failPart {
+					failedPartCalls.Add(1)
 					if failure == "permanent_401" {
 						return providersim.HTTPError(providersim.Auth).WithFaultMessage("invalid Errand credentials")
 					}
@@ -322,14 +333,12 @@ func TestSessionAdaptiveCompactionLaterChunkFailurePreservesDurableSource(t *tes
 			if result.Error == "" || result.Cancelled || result.OperationID != prepared.OperationID || session.compactionActive(session.sessionID) {
 				t.Fatalf("failed extraction did not terminate correctly: %+v", result)
 			}
-			expectedCalls, expectedRetries := int32(3), 0
+			expectedCalls, expectedRetries := int32(1), 0
 			if failure == "empty_after_retries" {
-				// Empty combined replies fall back to one section at a time,
-				// whose first part fails the same way after its retries.
-				expectedCalls, expectedRetries = 10, 3
+				expectedCalls, expectedRetries = 4, 3
 			}
-			if probe.calls.Load() != expectedCalls {
-				t.Fatalf("retry bound changed: calls=%d want=%d", probe.calls.Load(), expectedCalls)
+			if got := failedPartCalls.Load(); got != expectedCalls {
+				t.Fatalf("failed source range sent %d times, want %d", got, expectedCalls)
 			}
 			if session.contextGeneration != 7 || !bytes.Equal(adaptiveMessageBytes(t, session.activeContext), original) || !bytes.Equal(adaptiveMessageBytes(t, session.msgs), original) {
 				t.Fatal("later-chunk failure replaced or mutated the old active context or archive")

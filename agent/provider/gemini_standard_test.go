@@ -528,7 +528,7 @@ func TestGoogleErrorEnvelopeClassification(t *testing.T) {
 	// Retry-After.
 	daily = readStatusError(&http.Response{StatusCode: 429, Header: http.Header{"Content-Type": {"text/event-stream"}, "Retry-After": {"46570"}},
 		Body: io.NopCloser(strings.NewReader("{\"error\":{\"message\":\"Rate limit exceeded for model gemini-3.6-flash (limit: 20 requests per day on Free Tier).\",\"code\":\"too_many_requests\"}}\n\n"))}, 1<<20)
-	if daily.Retryable() || ErrorSummary(daily) != "Provider quota or billing limit reached" {
+	if !daily.Retryable() || RejectedAccount(daily) != nil || ErrorSummary(daily) != "Provider rate limit reached" {
 		t.Fatalf("interactions daily quota: retryable=%v summary=%q", daily.Retryable(), ErrorSummary(daily))
 	}
 	throttled := readStatusError(&http.Response{StatusCode: 429, Header: http.Header{"Retry-After": {"30"}}, Body: io.NopCloser(strings.NewReader(`{"error":{"message":"slow down","code":"too_many_requests"}}`))}, 1<<20)

@@ -24,6 +24,7 @@ type HistoryRestoreReceipts interface {
 
 // LocalHistoryStore reads immutable project snapshots and plans restores.
 type LocalHistoryStore interface {
+	AgentReceipts(context.Context, localhistory.AgentReceiptQuery) (localhistory.RunChangePage, error)
 	FileHistory(path string, limit int) ([]localhistory.SnapshotRecord, error)
 	PlanRestore(ctx context.Context, targetSnapshotID string, opts localhistory.SnapshotOptions) (localhistory.RestorePlan, error)
 	PlanRestorePaths(ctx context.Context, targetSnapshotID string, opts localhistory.SnapshotOptions, paths []string) (localhistory.RestorePlan, error)

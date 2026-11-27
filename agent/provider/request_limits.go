@@ -129,8 +129,11 @@ func RequestTooLarge(err error, sent int) (RequestRejection, bool) {
 		if !strings.Contains(text, "request too large") {
 			return RequestRejection{}, false
 		}
-		maximum, counted := statedContext(text)
-		return RequestRejection{Limit: RejectedContext, Maximum: maximum, Counted: counted}, true
+		// Requested is a total reservation, not a measured prompt count.
+		// Treat the stated maximum as the request window; never use the
+		// total to calibrate our input estimator.
+		maximum, _ := statedContext(text)
+		return RequestRejection{Limit: RejectedContext, Maximum: maximum}, true
 	default:
 		return RequestRejection{}, false
 	}
@@ -275,6 +278,9 @@ const (
 	// LearnedSectioned records that one request for all checkpoint sections
 	// failed, so each section is extracted on its own.
 	LearnedSectioned LearnedLimit = "sectioned"
+	// LearnedConcurrency is how many requests the connection serves at once.
+	// It is a property of the connection, so it is kept without a profile.
+	LearnedConcurrency LearnedLimit = "concurrency"
 )
 
 const (
@@ -307,6 +313,7 @@ type learnedLimitValue struct {
 type learnedLimitStore struct {
 	mu      sync.Mutex
 	entries map[learnedLimitKey]learnedLimitValue
+	gates   map[learnedLimitKey]*concurrencyGate
 	db      *sql.DB
 }
 
@@ -376,28 +383,44 @@ func RecordRequestLimit(agentProfile string, connection *Provider, model string,
 	if connection == nil || model == "" || value <= 0 || lifetime <= 0 {
 		return nil
 	}
-	store := activeLearnedLimits()
-	now := time.Now()
 	key := learnedLimitKey{profile: agentProfile, scope: connection.ReplayScope(), account: connection.AccountID, model: model, kind: kind}
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	if current, ok := store.entries[key]; ok && now.Before(current.expires) && current.value <= value {
+	if kind == LearnedConcurrency {
+		key = capacityKey(connection)
+	}
+	return activeLearnedLimits().record(key, value, lifetime)
+}
+
+func (s *learnedLimitStore) get(key learnedLimitKey) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entry := s.entries[key]
+	if time.Now().Before(entry.expires) {
+		return entry.value
+	}
+	return 0
+}
+
+func (s *learnedLimitStore) record(key learnedLimitKey, value int, lifetime time.Duration) error {
+	now := time.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if current, ok := s.entries[key]; ok && now.Before(current.expires) && current.value <= value {
 		return nil
 	}
 	entry := learnedLimitValue{value: value, expires: now.Add(lifetime)}
-	if store.entries == nil {
-		store.entries = make(map[learnedLimitKey]learnedLimitValue)
+	if s.entries == nil {
+		s.entries = make(map[learnedLimitKey]learnedLimitValue)
 	}
-	store.entries[key] = entry
-	if store.db == nil {
+	s.entries[key] = entry
+	if s.db == nil {
 		return nil
 	}
-	if _, err := store.db.Exec(`INSERT INTO learned_request_limits(agent_profile,provider_scope,account_id,model_id,kind,value,expires)
+	if _, err := s.db.Exec(`INSERT INTO learned_request_limits(agent_profile,provider_scope,account_id,model_id,kind,value,expires)
  VALUES(?,?,?,?,?,?,?) ON CONFLICT(agent_profile,provider_scope,account_id,model_id,kind) DO UPDATE SET value=excluded.value, expires=excluded.expires`,
-		key.profile, key.scope, key.account, key.model, string(kind), value, entry.expires.Unix()); err != nil {
+		key.profile, key.scope, key.account, key.model, string(key.kind), value, entry.expires.Unix()); err != nil {
 		return err
 	}
-	_, err := store.db.Exec(`DELETE FROM learned_request_limits WHERE expires<=?`, now.Unix())
+	_, err := s.db.Exec(`DELETE FROM learned_request_limits WHERE expires<=?`, now.Unix())
 	return err
 }
 

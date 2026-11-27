@@ -63,7 +63,7 @@ func (s *Session) loadExecutionSelection() error {
 	}
 	var selection ExecutionSelection
 	if err := strictControlJSON(raw, &selection); err != nil || selection.Revision == 0 {
-		return errors.New("invalid saved execution selection; align current local data manually")
+		return errors.New("cannot read the saved checkout selection; check the session backup")
 	}
 	s.executionSelection, s.executionRevision = selection.ID, selection.Revision
 	return nil

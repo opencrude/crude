@@ -44,10 +44,11 @@ import (
 // A Client is cheap to build per turn; it holds no conversation state beyond
 // a stable session ID for protocols that require one.
 type Client struct {
-	proto Protocol
-	base  *url.URL
-	hc    *http.Client
-	dial  DialConfig
+	capacity learnedLimitKey
+	proto    Protocol
+	base     *url.URL
+	hc       *http.Client
+	dial     DialConfig
 
 	// headerSource resolves the full request header set for an attempt,
 	// including credential refresh.
@@ -298,7 +299,7 @@ func (c *Client) Complete(ctx context.Context, req *ChatRequest) (*ChatResponse,
 	var lastErr error
 	reencodes := 0
 	for attempt := 1; attempt <= c.dial.MaxAttempts; attempt++ {
-		resp, err := c.do(ctx, http.MethodPost, c.chatURL(req), body)
+		resp, err := c.modelPost(ctx, c.chatURL(req), body)
 		if err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return nil, ctxErr
@@ -513,6 +514,14 @@ func (s *ChatStream) Next() (StreamUpdate, error) {
 			if strings.EqualFold(strings.TrimSpace(s.resp.Header.Get("x-should-retry")), "false") {
 				err = &streamRetryVetoError{cause: err}
 			}
+			// In-band refusals use the same account capacity as HTTP errors.
+			// Never mark a stream for replay once it delivered model output.
+			if body, ok := s.resp.Body.(*modelResponseBody); ok && !s.yielded && s.ctx.Err() == nil {
+				var api *APIError
+				if errors.As(err, &api) {
+					api.capacityAdjusted = body.slot.refused(err)
+				}
+			}
 			s.closeResp()
 			if !s.yielded && s.ctx.Err() == nil {
 				full, body, recovered, recoveryErr := s.client.rebaseContinuation(s.request, err)
@@ -621,7 +630,7 @@ func (s *ChatStream) establish() error {
 		if err := s.ctx.Err(); err != nil {
 			return err
 		}
-		resp, err := c.do(s.ctx, http.MethodPost, c.chatURL(s.request), s.body)
+		resp, err := c.modelPost(s.ctx, c.chatURL(s.request), s.body)
 		if err != nil {
 			if ctxErr := s.ctx.Err(); ctxErr != nil {
 				return ctxErr
@@ -1058,14 +1067,15 @@ func (e *ExhaustedError) Unwrap() error { return e.Cause }
 
 // StatusError is a non-2xx HTTP response with its parsed message.
 type StatusError struct {
-	Param      string
-	APIType    string
-	APICode    string
-	StatusCode int
-	Message    string
-	RequestID  string
-	Code       string
-	RetryHint  string
+	capacityAdjusted bool
+	Param            string
+	APIType          string
+	APICode          string
+	StatusCode       int
+	Message          string
+	RequestID        string
+	Code             string
+	RetryHint        string
 	// RetryAfter is a bounded server-advised cooldown, retained when a request
 	// attempt budget is exhausted so the supervising task can pace recovery.
 	RetryAfter time.Duration
@@ -1133,19 +1143,14 @@ func readStatusError(resp *http.Response, maxBody int64) *StatusError {
 	if google.RetryDelay > retryAfter {
 		retryAfter = retry.Clamp(google.RetryDelay)
 	}
-	// A server that asks for a wait longer than quotaWindow is reporting a
-	// quota window (a daily request limit), not momentary throttling: no
-	// automatic retry within the cooldown ceiling can succeed.
+	// A retry deadline is timing evidence, not a billing verdict.
 	advised, hasAdvice := retry.AdvisedDelay(resp, now)
 	advised = max(advised, google.RetryDelay)
 	var recheckAt time.Time
 	if hasAdvice || google.RetryDelay > 0 {
 		recheckAt = now.Add(advised)
 	}
-	if resp.StatusCode == http.StatusTooManyRequests && advised > quotaWindow && !strings.Contains(code, "insufficient_quota") {
-		code = strings.TrimSpace(code + " insufficient_quota")
-	}
-	return &StatusError{
+	status := &StatusError{
 		Param:      api.Param,
 		APIType:    api.Type,
 		APICode:    api.Code,
@@ -1157,10 +1162,11 @@ func readStatusError(resp *http.Response, maxBody int64) *StatusError {
 		RetryAfter: retryAfter,
 		recheckAt:  recheckAt,
 	}
+	if body, ok := resp.Body.(*modelResponseBody); ok {
+		status.capacityAdjusted = body.slot.refused(status)
+	}
+	return status
 }
-
-// quotaWindow is the server-advised wait beyond which a 429 is a quota limit.
-const quotaWindow = time.Hour
 
 // sseErrorPayload returns the data of the first SSE event in body, or body
 // unchanged when it is not SSE-framed.

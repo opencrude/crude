@@ -1,6 +1,7 @@
 package sessiondb
 
 import (
+	"context"
 	"crude/internal/fileuri"
 	"database/sql"
 	"fmt"
@@ -274,6 +275,7 @@ CREATE TABLE IF NOT EXISTS context_compactions (
     started_at       INTEGER NOT NULL,
     updated_at       INTEGER NOT NULL,
     ended_at         INTEGER,
+    writer           TEXT NOT NULL DEFAULT '',
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 );
 
@@ -470,63 +472,32 @@ func Open(dbPath string) (*sql.DB, error) {
 	return db, nil
 }
 
+// Migrate prepares a session database for use. A new database gets the
+// current tables and format version in one transaction. An existing database
+// must already have the current format version: the data update brings older
+// databases to it before the core opens any session, and a database from a
+// newer Crude is refused unchanged.
 func Migrate(db *sql.DB) error {
-	// Recovery lists used to belong to their incident (agent_recovery_tail).
-	// Their rows hold the messages of unfinished runs, so an outdated database
-	// is refused rather than opened without them.
-	var hasSessions, hasMessageIdentities, hasIncidentLists bool
-	if err := db.QueryRow(`SELECT
-		EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='sessions'),
-		EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='immutable_message_identities'),
-		EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_recovery_tail')`).Scan(&hasSessions, &hasMessageIdentities, &hasIncidentLists); err != nil {
-		return fmt.Errorf("sessiondb: inspect schema: %w", err)
-	}
-	if hasSessions && !hasMessageIdentities {
-		return fmt.Errorf("sessiondb: current immutable message identity schema required; align local data manually")
-	}
-	if hasIncidentLists {
-		return fmt.Errorf("sessiondb: current recovery list schema required; align local data manually")
-	}
-	// Initialize one schema atomically. Autocommit used to durably commit every
-	// table/index separately, making native Windows/race fixture
-	// startup dominate the full suite and leaving partial schemas on failure.
-	tx, err := db.Begin()
+	ctx := context.Background()
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("sessiondb: begin schema initialization: %w", err)
+		return fmt.Errorf("sessiondb: begin schema check: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	_, err = tx.Exec(schema)
+	fresh, err := Format.Require(ctx, tx)
 	if err != nil {
-		return fmt.Errorf("sessiondb: migrate: %w", err)
+		return fmt.Errorf("sessiondb: %w", err)
 	}
-	if _, err := tx.Exec(`SELECT capability_selection FROM session_agent_settings LIMIT 0`); err != nil {
-		return fmt.Errorf("sessiondb: current capability schema required; align local data manually: %w", err)
+	if !fresh {
+		return tx.Commit()
 	}
-	if _, err := tx.Exec(`SELECT internal_id,collaboration_json FROM messages LIMIT 0`); err != nil {
-		return fmt.Errorf("sessiondb: current message provenance schema required; align local data manually: %w", err)
+	// Create one schema atomically. Autocommit used to durably commit every
+	// table/index separately, leaving partial schemas on failure.
+	if _, err := tx.ExecContext(ctx, schema); err != nil {
+		return fmt.Errorf("sessiondb: create schema: %w", err)
 	}
-	if _, err := tx.Exec(`SELECT internal_id,session_id,agent_id,message_json FROM immutable_message_identities LIMIT 0`); err != nil {
-		return fmt.Errorf("sessiondb: current immutable message identity schema required; align local data manually: %w", err)
-	}
-	// Current-format databases already contain every column. Re-parsing the
-	// entire schema for 21 mostly failing ALTERs on each open was both a legacy
-	// upgrade path and a dominant cost under the race detector. Never upgrade
-	// an outdated database implicitly; validate it without changing its data.
-	checks := []string{
-		`SELECT display_meta,content_type,tool_error,provider_items FROM messages LIMIT 0`,
-		`SELECT parent_session_id,agent_category,agent_name,depth,account_id FROM sessions LIMIT 0`,
-		`SELECT api_standard,inherit_source,context_compaction_percent,account_id FROM session_agent_settings LIMIT 0`,
-		`SELECT provider_id,model_id,account_id FROM context_compactions LIMIT 0`,
-		`SELECT request_kind,request_outcome,account_id FROM usage_requests LIMIT 0`,
-		`SELECT code_intelligence,max_sub_agents FROM session_flags LIMIT 0`,
-	}
-	for _, query := range checks {
-		if _, err := tx.Exec(query); err != nil {
-			return fmt.Errorf("sessiondb: current schema required; align local data manually: %w", err)
-		}
-	}
-	if _, err := tx.Exec(`SELECT report_id,report_revision FROM sub_agent_results LIMIT 0`); err != nil {
-		return fmt.Errorf("sessiondb: current sub-agent result schema required; align local data manually: %w", err)
+	if err := Format.Stamp(ctx, tx); err != nil {
+		return fmt.Errorf("sessiondb: record format: %w", err)
 	}
 	return tx.Commit()
 }

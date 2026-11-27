@@ -530,6 +530,10 @@ func (c *Conversation) UpdateTurnStatus(status TurnStatus) {
 	if message.LifecyclePhase != status.Phase && status.OperationID == "" {
 		message.Time = time.Now()
 	}
+	if status.Provider == "" && strings.HasPrefix(status.Phase, "compaction_") {
+		// A compaction event without its writer keeps the writer it named.
+		status.Provider = message.LifecycleProvider
+	}
 	if message.LifecyclePhase == status.Phase &&
 		message.LifecycleProgress == status.Progress &&
 		message.LifecycleProvider == status.Provider &&

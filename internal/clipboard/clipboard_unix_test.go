@@ -58,8 +58,8 @@ func TestWaylandSessionNeverPastesXWaylandClipboard(t *testing.T) {
 				"wl-paste": test.paste,
 				"xclip":    `printf 'older XWayland entry'`,
 			})
-			t.Setenv("WAYLAND_DISPLAY", "wayland-0")
-			t.Setenv("DISPLAY", ":0")
+			t.Setenv("WAYLAND_DISPLAY", filepath.Join(t.TempDir(), "missing-wayland"))
+			t.Setenv("DISPLAY", ":98765")
 			got := Read(FmtText)
 			if (got != nil) != test.readable || string(got) != test.want {
 				t.Fatalf("Read = %q (readable %t), want %q", got, got != nil, test.want)
@@ -78,8 +78,8 @@ func TestWaylandSessionWithoutWlClipboardNamesWhatToInstall(t *testing.T) {
 	calls := fakeTools(t, map[string]string{
 		"xclip": `while read -r _; do :; done; printf 'older XWayland entry'`,
 	})
-	t.Setenv("WAYLAND_DISPLAY", "wayland-0")
-	t.Setenv("DISPLAY", ":0")
+	t.Setenv("WAYLAND_DISPLAY", filepath.Join(t.TempDir(), "missing-wayland"))
+	t.Setenv("DISPLAY", ":98765")
 	if got := Read(FmtText); got != nil {
 		t.Fatalf("Read = %q; an XWayland read can paste an older entry", got)
 	}
@@ -101,7 +101,7 @@ func TestX11SessionReadsXclipAndTreatsAMissingTargetAsEmpty(t *testing.T) {
 		"xclip":    `echo "Error: target STRING not available" >&2; exit 1`,
 		"wl-paste": `printf 'not this session'`,
 	})
-	t.Setenv("DISPLAY", ":0")
+	t.Setenv("DISPLAY", ":98765")
 	if got := Read(FmtText); got == nil || len(got) != 0 {
 		t.Fatalf("Read = %q (nil %t), want readable and empty", got, got == nil)
 	}
@@ -115,7 +115,7 @@ func TestX11SessionUsesXselWhenXclipIsMissing(t *testing.T) {
 	calls := fakeTools(t, map[string]string{
 		"xsel": `if [ "$2" = "--output" ]; then printf 'from xsel'; else while read -r _; do :; done; fi`,
 	})
-	t.Setenv("DISPLAY", ":0")
+	t.Setenv("DISPLAY", ":98765")
 	if got := string(Read(FmtText)); got != "from xsel" {
 		t.Fatalf("Read = %q", got)
 	}
@@ -133,8 +133,8 @@ func TestWaylandImageReadTriesEachImageTypeAndNeverXclip(t *testing.T) {
 		"wl-paste": `case "$3" in image/jpeg) printf 'JPEGDATA';; *) echo 'Clipboard content is not available as requested type' >&2; exit 1;; esac`,
 		"xclip":    `printf 'older image'`,
 	})
-	t.Setenv("WAYLAND_DISPLAY", "wayland-0")
-	t.Setenv("DISPLAY", ":0")
+	t.Setenv("WAYLAND_DISPLAY", filepath.Join(t.TempDir(), "missing-wayland"))
+	t.Setenv("DISPLAY", ":98765")
 	if got := string(Read(FmtImage)); got != "JPEGDATA" {
 		t.Fatalf("Read image = %q", got)
 	}

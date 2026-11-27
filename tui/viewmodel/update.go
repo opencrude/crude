@@ -57,6 +57,10 @@ import (
 )
 
 func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if reply, ok := msg.(tea.ClipboardMsg); ok {
+		m.terminalPasteAnswer(reply)
+		return m, nil
+	}
 	if paste, pasted := msg.(tea.PasteMsg); pasted {
 		// One decode for every text owner: composer, fields, editor, terminals.
 		msg = tea.PasteMsg{Content: ui.PastedLineBreaks(paste.Content)}
@@ -1012,6 +1016,10 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			cmds = append(cmds, cmd)
 		}
 	case clipboardAsyncResultMsg:
+		if q := msg.terminalQuery; q != nil {
+			cmds = append(cmds, func() tea.Msg { return q }, m.clipboardAsyncCommand(msg.request))
+			break
+		}
 		if cmd := m.applyClipboardAsyncResult(msg); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
@@ -1597,6 +1605,14 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 				}
 				fw.MarkContentDirty()
 				if cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+			}
+		}
+	case agentReceiptResult:
+		if msg.screen == m.historyScreen && msg.generation == m.workspaceSwitchGen.Load() {
+			if fw := m.windowManager.Window(string(ui.OverlayLocalHistory)); fw != nil {
+				if cmd := m.forwardEventToWindowContent(fw, msg.result); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
 			}

@@ -23,6 +23,7 @@ import (
 	"crude/internal/metrics"
 	"crude/internal/perfdata"
 	"crude/tui"
+	"crude/tui/dataupdate"
 	"crude/tui/desktopnotify"
 	startuptui "crude/tui/startup"
 	"crude/types/statuscenter"
@@ -85,8 +86,9 @@ func shellDialer(home string, flags CLIFlags) remote.Dialer {
 		return newCoreRestartDialer(home, flags.CoreHandover)
 	}
 	if flags.SSHHost == "" {
+		// The shell shows a data update itself, so it does not wait for one.
 		return func(ctx context.Context, clientID string) (*coreclient.Client, error) {
-			return ConnectCore(ctx, home, clientID)
+			return connectCore(ctx, home, clientID)
 		}
 	}
 	options := corewire.SSHOptions{Host: flags.SSHHost, User: flags.SSHUser, Port: flags.SSHPort, IdentityFile: flags.SSHIdentity}
@@ -227,20 +229,51 @@ func runConnectedShellAttachment(home, root, resumeID, profile string, flags CLI
 	ctx := context.Background()
 	namespace := draftNamespace(flags, "")
 	dial := shellDialer(home, flags)
-	connectCtx, connectCancel := context.WithTimeout(ctx, 30*time.Second)
-	navigation, err := remote.ConnectStartup(connectCtx, remote.Options{Root: root, Logger: lg, Dial: dial, Namespace: namespace, ClientID: shellClientID(drafts.attachment.ClientID, namespace)})
-	connectCancel()
+	var navigation *remote.StartupClient
+	updateShown := false
+	for {
+		connectCtx, connectCancel := context.WithTimeout(ctx, 30*time.Second)
+		navigation, err = remote.ConnectStartup(connectCtx, remote.Options{Root: root, Logger: lg, Dial: dial, Namespace: namespace, ClientID: shellClientID(drafts.attachment.ClientID, namespace)})
+		connectCancel()
+		if !coreclient.IsCoreUpdating(err) {
+			break
+		}
+		// The core updates saved data before it serves sessions. Show it,
+		// then connect again.
+		carrier := localCarrier(DataDir(home))
+		if flags.SSHHost != "" {
+			carrier = sshCarrier(corewire.SSHOptions{Host: flags.SSHHost, User: flags.SSHUser, Port: flags.SSHPort, IdentityFile: flags.SSHIdentity})
+		}
+		proceed, shown, updateErr := followDataUpdate(ctx, carrier, shellClientID(drafts.attachment.ClientID, namespace+"\x00update"))
+		if updateErr != nil {
+			return fmt.Errorf("show the data update: %w", updateErr)
+		}
+		updateShown = updateShown || shown
+		if !proceed {
+			return nil
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("connect core: %w", err)
 	}
 	defer func() { result = errors.Join(result, navigation.Close()) }()
 	inspectCtx, inspectCancel := context.WithTimeout(ctx, 15*time.Second)
 	explicit := flags.Workspace != "" || flags.Path != ""
-	selection, err := navigation.InspectLaunch(inspectCtx, coreprotocol.StartupInspectRequest{Root: root, Explicit: explicit, AllowFile: flags.Path != ""})
+	selection, err := navigation.InspectLaunch(inspectCtx, coreprotocol.StartupInspectRequest{Root: root, Explicit: explicit, AllowFile: flags.Path != "", TakeDataUpdate: true})
 	inspectCancel()
 	if err != nil {
 		return fmt.Errorf("inspect launch folder: %w", err)
 	}
+	if selection.DataUpdate != nil && !updateShown {
+		choice, err := dataupdate.Run(ctx, *selection.DataUpdate, nil, nil)
+		if err != nil {
+			return err
+		}
+		if choice != dataupdate.Continue {
+			return nil
+		}
+	}
+	selection.DataUpdate = nil
 	entry := coreprotocol.EntryIntent{Explicit: explicit}
 	if flags.CoreHandover != "" {
 		entry = flags.handoverEntry
@@ -366,4 +399,66 @@ func rememberInitialBackend(ctx context.Context, manager *remoteBackendManager, 
 		}
 	}
 	return id, manager.store.Save(ctx, remoteconn.Connection{ID: id, Name: flags.SSHHost, Kind: "ssh", Host: flags.SSHHost, User: flags.SSHUser, Port: flags.SSHPort, IdentityFile: flags.SSHIdentity, Carrier: "auto"})
+}
+
+// followDataUpdate shows the core's data update until it finishes. A clean
+// update that finishes within a moment shows nothing. It reports false when
+// the user closed the window; the core keeps updating.
+func followDataUpdate(ctx context.Context, carrier coreclient.Dialer, clientID string) (bool, bool, error) {
+	watchCtx, stopWatch := context.WithCancel(ctx)
+	defer stopWatch()
+	feed := make(chan dataupdate.Status, 1)
+	go func() {
+		defer close(feed)
+		deliver := func(s dataupdate.Status) bool {
+			select {
+			case feed <- s:
+				return true
+			case <-watchCtx.Done():
+				return false
+			}
+		}
+		err := coreclient.WatchDataUpdate(watchCtx, carrier, clientID, false, func(u coreprotocol.DataUpdate) {
+			deliver(dataupdate.Status{Update: u})
+		})
+		if err != nil && watchCtx.Err() == nil {
+			deliver(dataupdate.Status{Err: err})
+		}
+	}()
+	first := coreprotocol.DataUpdate{Phase: coreprotocol.DataUpdateChecking}
+	settle := time.NewTimer(400 * time.Millisecond)
+	defer settle.Stop()
+wait:
+	for {
+		select {
+		case s, ok := <-feed:
+			if !ok || s.Err != nil {
+				// The update phase ended before a final status; connect again.
+				return true, false, nil
+			}
+			first = s.Update
+			if first.Final && first.Quiet() {
+				return true, false, nil
+			}
+			if first.Phase != coreprotocol.DataUpdateChecking {
+				break wait
+			}
+		case <-settle.C:
+			break wait
+		case <-ctx.Done():
+			return false, false, ctx.Err()
+		}
+	}
+	retry := func() {
+		go func() {
+			retryCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			defer cancel()
+			_ = coreclient.WatchDataUpdate(retryCtx, carrier, clientID, true, func(coreprotocol.DataUpdate) { cancel() })
+		}()
+	}
+	result, err := dataupdate.Run(ctx, first, feed, retry)
+	if err != nil {
+		return false, true, err
+	}
+	return result == dataupdate.Continue, true, nil
 }

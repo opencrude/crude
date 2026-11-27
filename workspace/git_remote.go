@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"crude/internal/gitplatform"
 	"crude/text/textencoding"
 	"crude/workspace/fileio"
 	"crude/workspace/localhistory"
@@ -160,7 +161,7 @@ func execRemoteAtRoot(ctx context.Context, root string, env []string, args ...st
 		return "", err
 	}
 	out, err := fileio.RunOwnedCommand(ctx, fileio.OwnedCommand{
-		Executable: executable, Arguments: args, Directory: root, OutputLimit: 1 << 20,
+		Executable: executable, Arguments: append(gitplatform.Args(), args...), Directory: root, OutputLimit: 1 << 20,
 		Environment: append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GCM_INTERACTIVE=never"), env...),
 	})
 	text := strings.TrimSpace(string(out.Output))
@@ -356,7 +357,7 @@ func (s *GitService) conflictedPaths(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	closeGitRepository(repo)
-	out, err := exec.CommandContext(ctx, "git", "-C", root, "diff", "--name-only", "--diff-filter=U", "-z").Output()
+	out, err := exec.CommandContext(ctx, "git", append(gitplatform.Args(), "-C", root, "diff", "--name-only", "--diff-filter=U", "-z")...).Output()
 	if err != nil {
 		return nil, err
 	}
@@ -489,7 +490,7 @@ func (s *GitService) ContinueOperation(ctx context.Context) error {
 	if operation == GitOperationMerge {
 		args = []string{"commit", "--no-edit"}
 	}
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
+	cmd := exec.CommandContext(ctx, "git", append(append(gitplatform.Args(), "-C", root), args...)...)
 	cmd.Env = append(os.Environ(), "GIT_EDITOR=true")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git %s: %s", strings.Join(args, " "), strings.TrimSpace(string(out)))

@@ -108,12 +108,8 @@ the error type; `RetryInfo.retryDelay` becomes the server-advised cooldown that
 both the request's own backoff and the supervisor honor; an `ErrorInfo` reason
 (`API_KEY_INVALID`, `BILLING_DISABLED`) is kept as classification evidence; and a
 `QuotaFailure` naming a per-day quota is a quota limit, so it needs attention
-instead of retrying every few minutes. For every protocol, an HTTP 429 whose
-server-advised wait (`Retry-After`, `retry-after-ms` or `RetryInfo`) is longer
-than one hour is the same quota evidence: no automatic retry inside the
-five-minute cooldown ceiling can outlast it. A shorter advised wait stays
-transient, and other statuses keep their own classification (a gateway `408`
-with a day-long `Retry-After` still recovers automatically). Per-minute quota and `503` overload stay
+instead of retrying every few minutes. A retry delay, even a day, does not prove a billing limit.
+The shared cooldown handles temporary throttling on all protocols. Per-minute quota and `503` overload stay
 transient. A Gemini candidate that ends with `MALFORMED_FUNCTION_CALL`,
 `UNEXPECTED_TOOL_CALL`, `MALFORMED_RESPONSE`, `MISSING_THOUGHT_SIGNATURE` or
 `TOO_MANY_TOOL_CALLS` is a failed generation, retried like a transient fault

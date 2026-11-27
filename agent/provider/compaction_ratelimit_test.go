@@ -183,12 +183,12 @@ func TestNativeRateLimitPermanentEvidence(t *testing.T) {
 	for _, failure := range []string{"daily_quota", "http_veto", "stream_veto"} {
 		t.Run(failure, func(t *testing.T) {
 			sim, p, req := nativeRateFixture(t, providersim.Responses, CompactionProviderOnly)
-			// A provider's daily quota has a retry window over an hour. An
+			// Only a confirmed quota is permanent, not a long delay. An
 			// explicit no-retry header also outranks an otherwise short 429.
 			wantRequests := 1
 			switch failure {
 			case "daily_quota":
-				sim.Script(providersim.HTTPError(providersim.RateLimit).WithRetryHint(providersim.RetryAfterSeconds(7200)))
+				sim.Script(providersim.HTTPError(providersim.Quota).WithRetryHint(providersim.RetryAfterSeconds(7200)))
 			case "http_veto":
 				sim.Script(providersim.HTTPError(providersim.RateLimit).WithRetryHint(providersim.RetryAfterSeconds(2)))
 			case "stream_veto":

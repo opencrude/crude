@@ -17,6 +17,7 @@ import (
 	"crude/agent/tools"
 	"crude/agent/turnloop"
 	"crude/agent/worktree"
+	"crude/internal/gitplatform"
 	"crude/types/command"
 	"crude/types/toolresult"
 	"crude/workspace/fileio"
@@ -421,7 +422,7 @@ func planInspection(ctx context.Context, line, root, cwd string) *fileio.Command
 		args = append([]string{args[0], "--no-config"}, args[1:]...)
 	case "git":
 		env = append(env, "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0")
-		gitFlags := []string{"--no-pager", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=" + os.DevNull, "-c", "log.showSignature=false"}
+		gitFlags := append(gitplatform.Args(), "--no-pager", "-c", "core.fsmonitor=false", "-c", "core.hooksPath="+os.DevNull, "-c", "log.showSignature=false")
 		if args[1] == "status" {
 			// Git status can invoke configured clean/process filters. Read
 			// config with an exact non-executing builtin, and disable each

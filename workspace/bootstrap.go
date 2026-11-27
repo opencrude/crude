@@ -884,6 +884,7 @@ func compactionRecordView(record sessiondb.CompactionRecord) conversation.Messag
 		ProviderID:             record.ProviderID,
 		AccountID:              record.AccountID,
 		ModelID:                record.ModelID,
+		LifecycleProvider:      record.Writer,
 		LifecyclePhase:         phase,
 		LifecycleOperationID:   record.OperationID,
 		LifecycleTrigger:       record.Trigger,

@@ -593,33 +593,18 @@ func thinkingPreviewBody(content string, display reasoning.Display) string {
 	return content
 }
 
+// renderErrorMessage paints a turn error with the same card as a failed
+// recovery incident: the reason in the heading, all evidence when expanded.
 func renderErrorMessage(msg conversation.ChatMessage, ctx renderContext) messageLines {
 	if ctx.innerW <= 0 {
 		return messageLines{}
 	}
-	reason, details, _ := strings.Cut(strings.TrimSpace(msg.Content), "\n")
-	title := tools.ToolTitle{Action: "Turn failed", Metadata: tools.CollapseLine(reason), Failed: true}
-	header := paintToolTitle(title, conversation.ToolStatusError, false, true, ctx.spinFrame, "")
-	var suffix []RowSpan
-	if msg.Content != "" {
-		glyph := " ▸"
-		if ctx.disclosure == DisclosureExpanded {
-			glyph = " ▾"
-		}
-		suffix = []RowSpan{{Text: glyph, Role: ui.ColorMuted}}
-	}
-	var out messageLines
-	lines := wrapCompactToolTitle(header, ctx.innerW, suffix)
+	content := strings.TrimSpace(msg.Content)
+	reason, _, _ := strings.Cut(content, "\n")
+	header := failedTurnStyle.header(ctx, "Turn failed", tools.CollapseLine(reason), ui.ColorFg, nil)
+	out := messageLines{lines: []string{header.PlainText()}, native: []PaintLine{header}}
 	if ctx.disclosure == DisclosureExpanded {
-		header.Spans = append(header.Spans, suffix...)
-		lines = wrapToolTitle(header, ctx.innerW)
-	}
-	for _, line := range lines {
-		out.lines = append(out.lines, line.PlainText())
-		out.native = append(out.native, line)
-	}
-	if ctx.disclosure == DisclosureExpanded {
-		out.appendPlainToolBody("execute_command", details, ctx.innerW, ctx.height, false, true)
+		failedTurnStyle.appendBody(&out, ctx, content, failedTurnGuidance)
 	}
 	return out
 }
@@ -840,21 +825,28 @@ func renderCompactionMessage(msg conversation.ChatMessage, ctx renderContext) me
 		if msg.LifecycleBeforeTokens > 0 {
 			title.Operand = rendering.FormatTokens(msg.LifecycleBeforeTokens)
 		}
+		// The title names the writer; the detail says what it does now. The
+		// model is in the expanded result, not on the live row.
 		detail = strings.TrimSpace(msg.LifecycleStageName)
+		if detail == "" && (msg.LifecycleProvider == "errand" || msg.LifecycleProvider == "native") {
+			detail = "Preparing"
+		}
 	}
+	var route []string
 	switch msg.LifecycleTrigger {
 	case "manual", "requested":
-		title.Action += " (Manual)"
+		route = append(route, "Manual")
 	case "automatic", "background", "loop_end", "decay":
-		title.Action += " (Auto)"
+		route = append(route, "Auto")
+	}
+	if writer := compactionWriterLabel(msg); writer != "" {
+		route = append(route, writer)
+	}
+	if len(route) > 0 {
+		title.Action += " (" + strings.Join(route, " - ") + ")"
 	}
 	if detail != "" {
 		title.Metadata = "· " + detail
-	}
-	if active && !msg.Time.IsZero() {
-		if elapsed := time.Since(msg.Time); elapsed >= time.Second {
-			title.Metadata = strings.TrimSpace(title.Metadata + " " + rendering.FormatDuration(elapsed))
-		}
 	}
 	out := messageLines{frameSensitive: active}
 	header := paintToolTitle(title, status, active, !active, ctx.spinFrame, "")
@@ -885,9 +877,33 @@ func renderCompactionMessage(msg conversation.ChatMessage, ctx renderContext) me
 		if msg.LifecycleBeforeTokens > 0 {
 			body += fmt.Sprintf("\nSource: %d tokens\nKept: %d tokens", msg.LifecycleBeforeTokens, msg.LifecycleAfterTokens)
 		}
+		if msg.ModelID != "" {
+			body += "\nModel: " + msg.ModelID
+		}
 		out.appendPlainToolBody("", strings.TrimSpace(body), ctx.innerW, ctx.height, false, true)
 	}
 	return out
+}
+
+// compactionWriterLabel names who writes the checkpoint: the provider's own
+// compaction, Errand, or the agent's model by name. A checkpoint saved before
+// writers were recorded names none.
+func compactionWriterLabel(msg conversation.ChatMessage) string {
+	switch msg.LifecycleProvider {
+	case "native":
+		return "Native"
+	case "errand":
+		return "Errand"
+	case "model":
+		if _, name, found := strings.Cut(msg.ModelID, "/"); found && name != "" {
+			return name
+		}
+		if msg.ModelID != "" {
+			return msg.ModelID
+		}
+		return "Model"
+	}
+	return ""
 }
 
 // compactionTokenSummary renders the token result of a completed compaction, or

@@ -156,11 +156,6 @@ func (s *Session) recallMemoryContext(
 		return "", nil
 	}
 	limit, budget := settings.RecallLimitOrDefault(defaultRecallLimit), settings.RecallBudgetOrDefault(defaultRecallBudgetTokens)
-	// Leave room for changes of direction within this turn when ranking is on.
-	if settings.Ranker.Enabled == "on" {
-		limit = max(1, (limit+1)/2)
-		budget = max(1, budget/2)
-	}
 	records, err := store.Recall(ctx, memory.RecallQuery{
 		Text:         query,
 		ActivePaths:  activePaths,

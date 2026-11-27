@@ -165,16 +165,15 @@ succeed before completion is acknowledged. Input's owning turn and generation
 are reserved before publication, and first/last human-prompt metadata commits in
 the same transaction as the transcript row.
 
-Existing development databases are aligned explicitly outside product code, not
-upgraded by opening them. Backups must include committed SQLite WAL state and
-associated configuration, references and Local History. Validate full typed
+Known earlier session formats are updated by the core before it opens a workspace.
+Backups include committed SQLite WAL pages; associated references and Local
+History objects stay in place. Validate full typed
 context/checkpoint sources before populating an identity registry; the lossy
 transcript projection alone is not authoritative. Preserve existing IDs, unknown
 historical identities, metadata, timestamps, provenance, pins, receipts and
 history. A newly established revision baseline is not evidence of past publication
-counts. Stage and verify conversion before replacing any live data, fence the
-replacement against unchanged preimages, and verify passive resume without
-provider/tool/child replay. One-off alignment tools do not ship in the product.
+counts. Verify conversion in a transaction under the writer lock. Verify passive resume
+without provider, tool or child replay.
 
 ## Layered policy
 
@@ -195,24 +194,17 @@ provider/tool/child replay. One-off alignment tools do not ship in the product.
 3. Persist the exact source before any extraction. A source that fits the
    writer's known limits goes in one request and preserves message order;
    extraction on a different model, endpoint, or no-tools envelope need not
-   share a cache entry. A longer source is read in chronological parts like a
-   ledger: each part's request carries the running checkpoint of every earlier
-   part and returns it updated with that part, so the result is one checkpoint
-   of the whole source, not a merge of separate summaries. Individual large
-   messages and tool arguments/results are split on Unicode code-point
-   boundaries without deleting their text. Every piece names its source
-   message, character range, role, origin and tool-result identity as data,
-   not instructions; inline media is described, not sent again. When a limit
-   narrows, the same part is planned again from the same running checkpoint;
-   finished parts are never read twice. A running checkpoint that leaves no
-   room for the next part is shortened first.
-4. Extract all four sections (intent, work, state, continuation) in one
-   combined request that reads the source once. A section the model omits, a
-   truncated response, an output cap the provider over-advertises, or a
-   rejected request shape falls back to extracting the missing sections one at
-   a time on the same compaction model; that fallback is learned for the
-   connection and model for a day. A limit the adaptation could not meet is
-   not evidence against the combined request. The selected model's configured
+   share a cache entry. A longer source is divided into attributed parts. Each part
+   keeps message order, Unicode boundaries, origin, tool identity and source
+   offsets. Independent requests read the parts; the reducer merges their notes
+   in source order, not completion order. A later correction can supersede an
+   earlier decision. Missing sections use the same notes. A narrower limit
+   splits the affected part rather than resending every completed part. Keep
+   the full source if extraction or validation fails.
+4. Prefer one request for the four sections (intent, work, state and
+   continuation). When separate requests are needed, the first request over
+   the common prefix supplies usage and limit evidence for the others. This
+   permits reuse of a provider cache; it does not guarantee a cache hit. The selected model's configured
    reasoning remains active on every extraction request. The response
    allowance follows its model output capability and each request's available
    context, including hidden reasoning; it is independent of checkpoint text
@@ -235,6 +227,17 @@ provider/tool/child replay. One-off alignment tools do not ship in the product.
    | HTTP 429 "Request too large ... tokens per min" | A per-request token limit, handled as a stated window; waiting never helps |
    | 400 or 422 without a parameter, credential, permission, model, policy or quota code | Halve the input and the output allowance until a request is accepted; when even a request below 4,096 estimated tokens is refused, restore the limits and stop with the provider's refusal |
    | The same large request timed out twice (408, 504, 524, deadline, interrupted stream) | Halve the input |
+
+   **Concurrent requests.** Model requests share admission by configured
+   endpoint and account, including requests from other agents and models.
+   Each accepted request can open a further place. A refusal that explicitly
+   identifies overlapping requests reduces admission, including to one. Keep
+   the place until the body closes, not just until headers arrive. The inferred
+   upper bound expires. Generic 429s, per-minute token limits, quotas and
+   retry vetoes are not evidence of a concurrency limit. Each request owner
+   still decides whether replay is safe. Single-attempt operations are not
+   replayed by the admission layer. Native checkpoint bytes and stored-response
+   IDs remain bound to the producing wire; they never travel with this limit.
 
    Rate limits and overloads are retried with the provider's advice, not
    shrunk. A compaction makes at most 16 adaptations; each makes the next
@@ -467,7 +470,7 @@ Responses delta uploads and inline-image replay recovery are specified in
 - **Survival.** Background failures back off exponentially and never block.
   The capacity margin is the largest step growth since the last checkpoint,
   so one large paste cannot keep the agent near capacity. At capacity, after
-  the compaction model's adaptive handling (chained parts, staged sections,
+  the compaction model's adaptive handling (parallel parts, staged sections,
   learned limits, retries) has failed because the connection is
   unavailable (credentials, missing model, outage) or cannot fit even a small
   part within its limits, the agent's own model can write that checkpoint. It need not have a separate endpoint.
@@ -761,9 +764,12 @@ particular request paths; they are not a total billing guarantee.
 
 ## Memory jobs and shutdown
 
-When action ranking is enabled, initial human recall reserves about half the
-turn's memory count and estimated token budget. At a configured tool-round
-boundary, the run uses its own task, tool results and paths to find candidates.
+Human recall and each action ranking use the full recall count and estimated
+token budget of their own; a turn has no shared total. Until 2026-11-27 the
+ranker could add only what was left of the turn's total after the human recall,
+so a long turn stopped receiving memories after its first few rounds. At a
+configured tool-round boundary, the run uses its own task, tool results and
+paths to find candidates.
 It sends up to eight unseen revisions, with applicable recorded feedback, to
 the explicit ranking account in one bounded request. Each candidate gets an
 independent score: a yes/no probability from a decision model, or an explicit
@@ -778,6 +784,15 @@ Decision checks have a two-second deadline. Chat allows eight seconds for text
 generation, which also bounds an Automatic model-list lookup (cached per
 account). Neither mode falls back to another model or endpoint.
 
+- **Knowledge never leaves recall for its age or the size of the store.** Only
+  an explicit forget, a merge or a supersession that has contradicting
+  feedback retires a record. Recall itself ranks recency and relevance. Until
+  2026-11-27 maintenance archived every unpinned record beyond 200 active ones
+  (lowest importance first) and every automatic record unused for 45 days; in
+  one workspace that hid 126 records from recall, 90 of them only for the count,
+  including stated user preferences
+  (`TestMemoryMaintenanceNeverArchivesKnowledgeForCountOrAge`). The data update
+  returns those records to recall.
 - **Every human message reaches memory.** Steering sent while a turn runs is
   stored with that turn's number, like the request that started it. The turn
   mirror keeps each human message of the turn as the human typed it, and each

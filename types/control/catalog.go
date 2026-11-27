@@ -214,7 +214,10 @@ var commandCatalog = func() []Descriptor {
 		effect := Read
 		props := `{}`
 		required := []string(nil)
+		const page = `"cursor":{"type":"string","description":"next_cursor of the previous page; omit for the first page."},"limit":{"type":"integer","minimum":1,"maximum":128,"description":"Most records in one page; each page also stays inside the 64 KiB result bound."}`
 		switch id {
+		case "execution.list", "execution.integrations":
+			props = `{` + page + `}`
 		case "execution.create":
 			effect = Execute
 			props = `{"mode":{"type":"string","enum":["auto","shared","worktree"]},"base_commit":{"type":"string"},"independent":{"type":"boolean"},"include_ignored":{"type":"array","items":{"type":"string"}}}`
@@ -231,13 +234,23 @@ var commandCatalog = func() []Descriptor {
 		case "execution.settle":
 			props, required, effect = `{"id":{"type":"string"},"session_id":{"type":"string"},"agent_id":{"type":"string"},"recovery_id":{"type":"string"},"recovery_generation":{"type":"integer","minimum":1}}`, []string{"id", "session_id", "agent_id", "recovery_id", "recovery_generation"}, Write
 		case "execution.review":
-			props, required = `{"id":{"type":"string"},"discard":{"type":"boolean","description":"Review only the source for discard, even if destination changes conflict. Returns discard_digest including HEAD and ignored-file bytes."}}`, []string{"id"}
+			props, required = `{"id":{"type":"string"},"discard":{"type":"boolean","description":"Review only the source for discard, even if destination changes conflict. plan.discard_digest covers HEAD and ignored-file bytes."},`+page+`}`, []string{"id"}
 		case "execution.keep":
 			props, required, effect = `{"id":{"type":"string"},"keep":{"type":"boolean","description":"True retains intentionally, false clears Keep so the parent can clean up."}}`, []string{"id", "keep"}, Write
 		case "execution.cleanup":
-			props, required, effect = `{"id":{"type":"string"},"discard":{"type":"boolean","description":"Archive and remove an unwanted result without integrating it. Active pins still block."},"digest":{"type":"string","description":"Required for discard: discard_digest from execution.review with discard=true."}}`, []string{"id"}, Delete
+			props, required, effect = `{"id":{"type":"string"},"discard":{"type":"boolean","description":"Archive and remove an unwanted result without integrating it. Active pins still block."},"digest":{"type":"string","description":"Required for discard: plan.discard_digest from execution.review with discard=true."}}`, []string{"id"}, Delete
 		}
 		description := "Managed execution through accepted documents and Local History. Any workspace agent may inspect/review and clean settled work; active work and recovery remain protected. Exact resource target matches id, plan.context_id or operation_id. Owner is gateway attribution."
+		switch id {
+		case "execution.review":
+			description = "Returns plan (pass it unchanged to execution.apply, or use plan.discard_digest for a discard cleanup), summary counts, and one page of changed paths with type, mode, hash and size. Follow next_cursor for more paths of the same review. File bytes are not returned; read them in the execution root. " + description
+		case "execution.list":
+			description = "Lists compact identity, roots, readiness, pins and storage. Follow next_cursor for more. " + description
+		case "execution.integrations":
+			description = "Lists integration journal entries (state, receipt, plan token and change count) without file bytes. Follow next_cursor for more. " + description
+		case "execution.apply":
+			description = "Takes the plan from execution.review, unchanged. The owner reloads the full reviewed plan and rechecks source and destination before it writes. " + description
+		}
 		if id == "execution.reconcile" {
 			description = "Release only execution pins proven stale by exact terminal runs, no live local work and no recovery/queued/selected references. Returns released pins and retained reasons; never kills agents or deletes worktrees."
 		}
@@ -245,6 +258,9 @@ var commandCatalog = func() []Descriptor {
 			description = "Explicitly cancel one exact parked recovery retaining this execution, including another parent's abandoned task. Use only after deciding the work is unwanted. Open its owning root session with session.open first if cold. Refuses live/replaced/unrelated incidents. Preserves recovery history; never deletes a checkout. Then reconcile, review and cleanup."
 		}
 		add(id, Domain, effect, description, props, required...)
+		// Every command on one execution or operation names it as the exact
+		// resource target too; discovery shows that before the first call.
+		out[len(out)-1].Requires.Resource = id != "execution.list" && id != "execution.integrations" && id != "execution.create"
 	}
 	for _, id := range []string{"settings.set", "settings.reset"} {
 		props := `{"scope":{"type":"string","enum":["application","workspace","session"]},"path":{"type":"string","description":"Exact dot-separated JSON field path. Reset removes only this field's override; application reset uses shipped defaults."}`

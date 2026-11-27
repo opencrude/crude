@@ -383,3 +383,17 @@ func TestCompactWaitTitleMatchesItsTarget(t *testing.T) {
 		})
 	}
 }
+
+// The writer label is enough on the live row: the user asked for what
+// happens now instead of the model ID, which stays in the expanded result.
+func TestCompactionRowShowsWriterAndMeasuredPhaseWithoutTimer(t *testing.T) {
+	for writer, label := range map[string]string{"native": "Native", "errand": "Errand"} {
+		for stage, want := range map[string]string{"Read 50%": "· Read 50%", "": "· Preparing"} {
+			msg := conversation.ChatMessage{LifecyclePhase: "compaction_extracting", LifecycleTrigger: "automatic", LifecycleProvider: writer, ModelID: "ollama/deepseek-v4.1-flash:1017", LifecycleStageName: stage, LifecycleBeforeTokens: 411900, Time: time.Now().Add(-30 * time.Minute)}
+			row := strings.Join(renderCompactionMessage(msg, renderContext{innerW: 90, contentWidth: 90}).lines, " ")
+			if !strings.Contains(row, "(Auto - "+label+") 411.9K "+want) || strings.Contains(row, "deepseek") || strings.Contains(row, "30m") {
+				t.Errorf("wrong active row: %q", row)
+			}
+		}
+	}
+}

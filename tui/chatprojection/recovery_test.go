@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"crude/tui/cell"
 	"crude/tui/theme"
 	"crude/tui/ui"
 	"crude/types/conversation"
@@ -17,7 +18,7 @@ import (
 func TestExpandedRecoveryKeepsDiagnosticsReadableAndHydrationIdentical(t *testing.T) {
 	for _, th := range []*theme.Theme{theme.DefaultDark(), theme.DefaultLight()} {
 		for _, width := range []int{1, 12, 40, 80, 160} {
-			for _, state := range []recovery.State{recovery.Recovering, recovery.NeedsAttention, recovery.Recovered, recovery.Interrupted} {
+			for _, state := range []recovery.State{recovery.Recovering, recovery.NeedsAttention, recovery.Recovered, recovery.Interrupted, recovery.Failed} {
 				status := recovery.Status{
 					ID: "incident", AgentID: "owner", Generation: 4, State: state,
 					StartedAt: time.Unix(1000, 0), UpdatedAt: time.Unix(1001, 0),
@@ -49,7 +50,9 @@ func TestExpandedRecoveryKeepsDiagnosticsReadableAndHydrationIdentical(t *testin
 					t.Fatalf("state=%s width=%d: recovery drifted on hydration/tick", state, width)
 				}
 				body := strings.Join(rows.lines[1:], "")
-				compact := func(text string) string { return strings.Join(strings.Fields(text), "") }
+				compact := func(text string) string {
+					return strings.Join(strings.Fields(strings.NewReplacer("│", "", "▎", "").Replace(text)), "")
+				}
 				if !strings.Contains(compact(body), compact(status.Detail)) || !strings.Contains(compact(body), compact(status.Action)) {
 					t.Fatalf("diagnostic or action was truncated at width %d", width)
 				}
@@ -59,7 +62,7 @@ func TestExpandedRecoveryKeepsDiagnosticsReadableAndHydrationIdentical(t *testin
 					}
 					if index > 0 {
 						for _, span := range line.Spans {
-							if span.Role != ui.ColorFg && span.Role != ui.ColorMuted {
+							if span.Role != ui.ColorFg && span.Role != ui.ColorMuted && strings.TrimSpace(span.Text) != "▎" {
 								t.Fatalf("whole diagnostic was severity-tinted: %+v", span)
 							}
 						}
@@ -223,5 +226,68 @@ func benchmarkExpandedRecoveryClock(b *testing.B, paragraphs int) {
 	for i := 0; i < b.N; i++ {
 		renderer.SetSpinFrame(1000 + (i%500)*400)
 		_, _, _ = renderer.ExportMessageRows(100)
+	}
+}
+
+// A turn that stopped on an error must stand apart from tool rows and
+// assistant text: before this card its heading painted in muted ink and its
+// expanded body repeated "Turn failed" with no next step.
+func TestFailedTurnIsOneDistinctCard(t *testing.T) {
+	failed := recovery.Status{
+		ID: "incident", AgentID: "owner", Generation: 2, State: recovery.Failed,
+		Summary: "Turn failed",
+		Detail:  "Provider quota or billing limit reached: API 429: insufficient_quota: The account has no remaining credit.",
+	}
+	for _, th := range []*theme.Theme{theme.DefaultDark(), theme.DefaultLight()} {
+		for _, message := range []conversation.ChatMessage{
+			{InternalID: "incident", Role: conversation.RoleStatus, Recovery: &failed},
+			{InternalID: "error", Role: conversation.RoleError, Content: failed.Detail},
+		} {
+			ctx := renderContext{th: th, tokens: ui.NewTokenSet(th), innerW: 100, contentWidth: 84}
+			collapsed := renderMessageContent(message, ctx, false)
+			header := collapsed.native[len(collapsed.native)-1]
+			if header.VisibleWidth() != ctx.innerW {
+				t.Fatalf("the error band does not fill the row: %q", header.PlainText())
+			}
+			want := []struct {
+				text string
+				role ui.SemanticColor
+			}{{"✕ ", ui.ColorError}, {"Turn failed", ui.ColorError}, {" · ", ui.ColorMuted}}
+			for i, w := range want {
+				span := header.Spans[i+1]
+				if span.Text != w.text || span.Role != w.role {
+					t.Fatalf("heading span %d = %+v, want %q", i, span, w.text)
+				}
+			}
+			if header.Spans[1].Attr != cell.AttrBold || header.Spans[2].Attr != cell.AttrBold || header.Spans[4].Role != ui.ColorFg ||
+				!strings.HasPrefix(header.Spans[4].Text, "Provider quota or billing limit reached") {
+				t.Fatalf("heading is not a bold severity title with a readable reason: %+v", header.Spans)
+			}
+			for i, span := range header.Spans {
+				if tinted := span.BgSet && span.BgRole == ui.ColorIncompleteBg; tinted != (i > 0) {
+					t.Fatalf("only the transcript gutter stays off the error band: %d %+v", i, span)
+				}
+			}
+			ctx.disclosure = DisclosureExpanded
+			expanded := renderMessageContent(message, ctx, false)
+			body := expanded.native[1:]
+			text := strings.Join(expanded.lines, "\n")
+			if strings.Count(text, "Turn failed") != 1 || !strings.Contains(text, "remaining credit.") || !strings.Contains(text, failedTurnGuidance) {
+				t.Fatalf("expanded card repeats the heading, loses evidence or has no next step:\n%s", text)
+			}
+			for _, line := range body {
+				if len(line.Spans) < 3 || line.Spans[0].Text != "│ " || line.Spans[0].BgSet || line.Spans[1].Text != "▎ " || line.Spans[1].Role != ui.ColorError ||
+					line.Spans[2].Role == ui.ColorError || !line.Spans[2].BgSet || line.VisibleWidth() != ctx.innerW {
+					t.Fatalf("expanded line is not inside the card: %+v", line.Spans)
+				}
+			}
+		}
+	}
+	attention := failed
+	attention.State, attention.Summary, attention.Action = recovery.NeedsAttention, "Run needs attention", "Resolve the issue, then Continue"
+	ctx := renderContext{th: theme.DefaultDark(), tokens: ui.NewTokenSet(theme.DefaultDark()), innerW: 100}
+	line := recoveryHeader(conversation.ChatMessage{Recovery: &attention}, ctx)
+	if line.Spans[1].Text != "⚠ " || line.Spans[1].Role != ui.ColorWarning || line.Spans[2].Role != ui.ColorWarning || line.Spans[2].BgSet {
+		t.Fatalf("attention is a warning without the error band: %+v", line.Spans)
 	}
 }

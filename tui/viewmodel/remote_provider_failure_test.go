@@ -27,8 +27,7 @@ func TestRemoteQuotaFailureIsVisibleAfterRecoveryAndOnFirstRequest(t *testing.T)
 		case 2:
 			return simulatedAnswer(strings.Repeat("Accepted work after recovery.\n\n", 20)).WithTools(providersim.ToolCall{ID: "read-plan", Name: "get_plan", Arguments: `{}`})
 		case 3, 4:
-			return providersim.HTTPError(providersim.RateLimit).WithRetryHint(providersim.RetryAfterSeconds(86400)).
-				WithFaultMessage("This request would exceed your account's rate limit. Please try again later.")
+			return providersim.HTTPError(providersim.Quota).WithFaultMessage("The account has no remaining credit.")
 		default:
 			t.Error("a settled quota verdict was retried")
 			return providersim.HTTPError(providersim.Auth)

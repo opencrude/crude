@@ -456,7 +456,6 @@ func (slot *PrecompactionSlot) start(a *Agent, msgs []provider.ChatMessage, tool
 	slot.emit(AgentEvent{Type: "context_precompaction", Data: map[string]any{"phase": "started", "request_id": job.requestID, "before_tokens": job.sourceTokens}})
 	slot.tasks.Add(1)
 	emit := slot.backgroundEmit(job.requestID)
-	sameConnection := provider.SameConnection(compactor.Provider, a.Provider)
 	go func() {
 		defer slot.tasks.Done()
 		defer close(job.done)
@@ -480,9 +479,6 @@ func (slot *PrecompactionSlot) start(a *Agent, msgs []provider.ChatMessage, tool
 		}
 		slot.failures++
 		slot.retryAt = time.Now().Add(retry.Exponential(slot.failures, time.Second, retry.MaxCooldown))
-		if concurrencyRefusal(job.err) && sameConnection {
-			_ = provider.RecordConcurrencyRefused(compactor.Provider, compactor.Model)
-		}
 		slot.emit(AgentEvent{Type: "context_precompaction", Data: map[string]any{"phase": "failed", "request_id": job.requestID, "error": compactErrorText(job.err), "retry_in_seconds": time.Until(slot.retryAt).Seconds()}})
 	}()
 	return true
@@ -521,15 +517,6 @@ func (job *precompactionJob) wait(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-}
-
-func concurrencyRefusal(err error) bool {
-	var status *provider.StatusError
-	if errors.As(err, &status) && (status.StatusCode == 429 || status.StatusCode == 503 || status.StatusCode == 529) {
-		return true
-	}
-	text := strings.ToLower(fmt.Sprint(err))
-	return strings.Contains(text, "concurren") || strings.Contains(text, "too many requests") || strings.Contains(text, "overloaded")
 }
 
 // backgroundCompactor is an independent agent instance for extraction. It

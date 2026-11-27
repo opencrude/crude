@@ -163,15 +163,16 @@ selectors. See the [Windows emoji regression](../issues/2026-11-25-windows-emoji
   shell. An external text paste over SSH still uses the host terminal's paste
   shortcut. An empty but readable clipboard never replays an older copy.
 - **One clipboard per desktop session** (`internal/clipboard`). Crude reads
-  the clipboard of the display server it runs in: Wayland through
-  wl-clipboard, X11 through xclip or xsel, macOS through pbpaste, Termux
-  through termux-api, Windows through the Win32 clipboard. A Wayland session
-  never reads XWayland's clipboard, because a compositor can leave an older
-  entry there: on KDE Plasma, xclip pasted an earlier copy. The tool's
-  "nothing copied" answer is final; Crude never asks another clipboard.
-  Writes may also go through XWayland, which the compositor forwards. When
-  the session's tool is missing, Ctrl+V names the package to install, and
-  the terminal's paste shortcut still works.
+  the clipboard of the display server it runs in. Linux uses native X11 selections or
+  Wayland ext/wlr data-control without helper packages. The copy owner serves the
+  selection until replaced. A compositor with data-control (KWin, wlroots,
+  Hyprland, niri, COSMIC) is read directly, never through XWayland, whose copy can
+  be older. Mutter (GNOME) and its forks have no data-control but give XWayland each
+  new selection at once, so Crude uses XWayland there, in Vim's Wayland-then-X11
+  order. Without either, wl-clipboard or the local terminal (OSC 52) can answer an
+  explicit paste. A readable empty selection is final. Unsolicited or stale
+  terminal replies are ignored. X11 can also use xclip or xsel. macOS, Termux and
+  Windows keep their own system clipboard paths.
 - Composer Ctrl+V checks for actual image bytes before it attaches an image.
   Some X11 clipboard owners send plain text in response to an image request;
   in that case the composer reads the text format. An empty bracketed paste

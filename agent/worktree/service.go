@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"crude/internal/gitplatform"
 	"crude/workspace/fileio"
 )
 
@@ -305,7 +306,7 @@ func (s *Service) rejectAppliedFilters(ctx context.Context, root string, extra [
 }
 
 func (s *Service) gitInput(ctx context.Context, root string, stdin []byte, args ...string) ([]byte, error) {
-	argv := append([]string{"-c", "core.hooksPath=" + os.DevNull, "-c", "core.fsmonitor=false", "-C", root}, args...)
+	argv := append(append(gitplatform.Args(), "-c", "core.hooksPath="+os.DevNull, "-c", "core.fsmonitor=false", "-C", root), args...)
 	cmd := exec.CommandContext(ctx, "git", argv...)
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)

@@ -28,9 +28,12 @@ XWayland, which the compositor forwards. When the session's tool is missing,
 Ctrl+V says which package to install; the terminal's paste shortcut still
 works. Windows is unchanged.
 
-No Go package reads a Wayland clipboard natively: the X11 libraries see the
-same XWayland copy, and the others start the same tools. The session's own
-tool is the dependable choice.
+This fixed stale XWayland reads but not the reported no-helper Ghostty paste.
+Crude now includes a native Wayland and X11 client. KWin offers data-control, so
+Crude never reads XWayland there. GNOME's Mutter has no data-control but updates
+XWayland's selection as soon as a Wayland client copies, so Crude uses XWayland
+on GNOME. Without either, a local terminal can answer an explicit paste.
+See [text input](../reference/text-input.md#clipboard) for current selection ownership.
 
 ## Regression checks
 

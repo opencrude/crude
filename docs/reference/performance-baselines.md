@@ -1540,7 +1540,7 @@ inside repeated schema initialization, not a deadlocked test. The initializer
 autocommitted every table/index and reparsed the schema for 21 mostly failing
 legacy column additions on every open. Current schemas now initialize in one
 transaction; failed validation rolls back without changing existing rows.
-Outdated schemas require manual alignment, not automatic upgrades.
+The separate startup updater now handles older session formats; ordinary opens do not run conversion steps.
 
 `BenchmarkSessionDatabaseStartup` measures fresh on-disk session creation and
 close with WAL and durability enabled. Three Linux/amd64 Go 1.25.9 i7-10750H

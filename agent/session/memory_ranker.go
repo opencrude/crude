@@ -84,20 +84,20 @@ func (s *Session) rankActionMemories(parent context.Context, owner, root string,
 	if len(state.Actions) == 0 {
 		return nil, nil
 	}
-	seen, spent, count := activeRecallUsage(active)
-	budget := settings.RecallBudgetOrDefault(defaultRecallBudgetTokens) - spent
-	limit := min(r.TopK, settings.RecallLimitOrDefault(defaultRecallLimit)-count)
-	if budget <= 0 || limit <= 0 {
-		return nil, nil
-	}
-	records, err := store.Recall(ctx, memory.RecallQuery{Text: strings.Join(state.Actions, " ") + " " + state.Task, ActivePaths: paths, Limit: 50})
+	// Every ranking has its own limit and budget. Knowledge that a long turn
+	// needs late must not lose to what earlier rounds of the turn received;
+	// revisions already in context are never sent again.
+	seen := shownMemories(active)
+	budget := settings.RecallBudgetOrDefault(defaultRecallBudgetTokens)
+	limit := min(r.TopK, settings.RecallLimitOrDefault(defaultRecallLimit))
+	records, err := store.Recall(ctx, memory.RecallQuery{Text: strings.Join(state.Actions, " ") + " " + state.Task, ActivePaths: paths, Exclude: seen, Limit: 50})
 	if err != nil {
 		return nil, err
 	}
 	var pool []memory.ScoredRecord
 	var questions []string
 	for _, rec := range records {
-		if seen[memory.RevisionRef{ID: rec.ID, Revision: rec.Revision}] || memory.EstimateTokens(recallBlock([]memory.ScoredRecord{rec})) > budget {
+		if memory.EstimateTokens(recallBlock([]memory.ScoredRecord{rec})) > budget {
 			continue
 		}
 		key := fmt.Sprintf("m%d", len(pool))
@@ -308,30 +308,4 @@ func shownMemories(messages []provider.ChatMessage) map[memory.RevisionRef]bool 
 		}
 	}
 	return shown
-}
-
-// Only count Crude's hidden recall blocks. A tool result or human message
-// quoting one cannot consume another agent's budget or suppress a memory.
-func activeRecallUsage(active []provider.ChatMessage) (map[memory.RevisionRef]bool, int, int) {
-	seen := map[memory.RevisionRef]bool{}
-	spent, count := 0, 0
-	for _, m := range active {
-		if m.IsGenuineUserInput() || m.Origin == provider.OriginAssignment {
-			spent, count = 0, 0
-			continue
-		}
-		if m.Origin != provider.OriginRuntimeContext || m.Visibility != provider.VisibilityContextOnly || !m.Content.IsText() {
-			continue
-		}
-		block, items := prompt.ReadWorkspaceMemory(string(m.Content))
-		if len(items) == 0 {
-			continue
-		}
-		spent += memory.EstimateTokens(block)
-		count += len(items)
-		for _, v := range items {
-			seen[memory.RevisionRef{ID: v.ID, Revision: v.Revision}] = true
-		}
-	}
-	return seen, spent, count
 }

@@ -88,14 +88,14 @@ func TestRemoteAppJourneyCompactionQueuesFromBothShells(t *testing.T) {
 		for _, shell := range shells {
 			node := shell.app.ws.AgentMgr().Get(id)
 			if node.State.ActiveCompaction.Phase == "" ||
-				!strings.Contains(ansi.Strip(shell.app.View().RenderContent()), "Compacting context") {
+				!strings.Contains(ansi.Strip(shell.app.View().RenderContent()), "Compacting context (Manual - Errand)") {
 				return false
 			}
 		}
 		return true
 	})
 	for _, shell := range shells {
-		requirePaintedCompactionTitle(t, shell.app, "Compacting context (Manual) ")
+		requirePaintedCompactionTitle(t, shell.app, "Compacting context (Manual - Errand) ")
 	}
 	two.app.Input.SetInput("peer private draft")
 	send(one, "queued prompt one")
@@ -138,7 +138,7 @@ func TestRemoteAppJourneyCompactionQueuesFromBothShells(t *testing.T) {
 		t.Fatalf("queued execution order=%q", prompts)
 	}
 	for i, shell := range shells {
-		requirePaintedCompactionTitle(t, shell.app, "Compacted context (Manual) ")
+		requirePaintedCompactionTitle(t, shell.app, "Compacted context (Manual - Errand) ")
 		if shell.app.Input.Value() != fmt.Sprintf("new private draft %s", []string{"one", "two"}[i]) {
 			t.Fatal("completion replaced a newer private draft")
 		}
@@ -218,13 +218,13 @@ func TestRemoteAppJourneyStopCompactionPreservesQueuedPromptAndResumeIsPassive(t
 	if normal.Load() != 1 || !pendingJourneyPrompt(two.app, id, "queued prompt survives Stop") || two.app.Input.Value() != "newer private draft" {
 		t.Fatal("Stop started queued work or consumed accepted input/private draft")
 	}
-	liveRow := requirePaintedCompactionTitle(t, two.app, "Compaction cancelled (Manual) ")
+	liveRow := requirePaintedCompactionTitle(t, two.app, "Compaction cancelled (Manual - Errand) ")
 	resumed := coldResumeCompactionJourney(t, runtime, shells, root, server.BaseURL(providersim.Chat))
 	resumedID := resumed.app.AgentView.ActiveID()
 	if !pendingJourneyPrompt(resumed.app, resumedID, "queued prompt survives Stop") || normal.Load() != 1 || extraction.Load() != 1 {
 		t.Fatal("cold resume lost queued input or replayed provider work")
 	}
-	if resumedRow := requirePaintedCompactionTitle(t, resumed.app, "Compaction cancelled (Manual) "); resumedRow != liveRow {
+	if resumedRow := requirePaintedCompactionTitle(t, resumed.app, "Compaction cancelled (Manual - Errand) "); resumedRow != liveRow {
 		t.Fatalf("cold resume changed cancelled row: live=%q resumed=%q", liveRow, resumedRow)
 	}
 }
@@ -352,9 +352,9 @@ func runRemoteRequestedCompaction(t *testing.T, betweenSteps bool) {
 	}
 	gate.Release()
 	remoteJourneyUntil(t, shells, func() bool {
-		return extraction.Load() == 1 && strings.Contains(ansi.Strip(shell.app.View().RenderContent()), "Compacting context")
+		return extraction.Load() == 1 && strings.Contains(ansi.Strip(shell.app.View().RenderContent()), "Compacting context (Manual - Errand)")
 	})
-	requirePaintedCompactionTitle(t, shell.app, "Compacting context (Manual) ")
+	requirePaintedCompactionTitle(t, shell.app, "Compacting context (Manual - Errand) ")
 	compactGate.Release()
 	wantPhase, wantTrigger, wantNormal := statuscenter.AgentCompactionResult, "manual", int32(1)
 	if betweenSteps {
@@ -364,7 +364,7 @@ func runRemoteRequestedCompaction(t *testing.T, betweenSteps bool) {
 		return extraction.Load() == 1 && shell.app.ws.AgentActivity(id).Status.Phase == wantPhase &&
 			strings.Contains(ansi.Strip(shell.app.View().RenderContent()), "Compacted context")
 	})
-	liveRow := requirePaintedCompactionTitle(t, shell.app, "Compacted context (Manual) ")
+	liveRow := requirePaintedCompactionTitle(t, shell.app, "Compacted context (Manual - Errand) ")
 	for _, message := range shell.app.ws.AgentMgr().Get(id).State.Messages.Messages() {
 		if message.LifecyclePhase == "compaction_completed" && message.LifecycleTrigger == wantTrigger {
 			wantTrigger = ""
@@ -383,7 +383,7 @@ func runRemoteRequestedCompaction(t *testing.T, betweenSteps bool) {
 		t.Fatalf("model requests=%d, want %d in the original turn", normal.Load(), wantNormal)
 	}
 	resumed := coldResumeCompactionJourney(t, runtime, shells, root, server.BaseURL(providersim.Chat))
-	if resumedRow := requirePaintedCompactionTitle(t, resumed.app, "Compacted context (Manual) "); resumedRow != liveRow {
+	if resumedRow := requirePaintedCompactionTitle(t, resumed.app, "Compacted context (Manual - Errand) "); resumedRow != liveRow {
 		t.Fatalf("cold resume changed requested row: live=%q resumed=%q", liveRow, resumedRow)
 	}
 	if normal.Load() != wantNormal || extraction.Load() != 1 {
@@ -426,13 +426,13 @@ func TestRemoteAppJourneyAutomaticCompactionTitleSurvivesColdResume(t *testing.T
 	remoteJourneyUntil(t, shells, func() bool {
 		return normal.Load() == 1 && shell.app.ws.AgentActivity(id).Status.Phase == statuscenter.AgentCompleted
 	})
-	liveRow := requirePaintedCompactionTitle(t, shell.app, "Compacted context (Auto) ")
+	liveRow := requirePaintedCompactionTitle(t, shell.app, "Compacted context (Auto - Errand) ")
 	if extraction.Load() == 0 {
 		t.Fatal("automatic compaction did not reach the provider")
 	}
 	extractions := extraction.Load()
 	resumed := coldResumeCompactionJourney(t, runtime, shells, root, endpoint)
-	if resumedRow := requirePaintedCompactionTitle(t, resumed.app, "Compacted context (Auto) "); resumedRow != liveRow {
+	if resumedRow := requirePaintedCompactionTitle(t, resumed.app, "Compacted context (Auto - Errand) "); resumedRow != liveRow {
 		t.Fatalf("cold resume changed automatic row: live=%q resumed=%q", liveRow, resumedRow)
 	}
 	if normal.Load() != 1 || extraction.Load() != extractions {

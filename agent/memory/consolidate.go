@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 )
 
 // Consolidation limits: conservative on purpose, because a background rewrite that
@@ -274,92 +273,4 @@ func (st *Store) DuplicateSuggestions(ctx context.Context) ([][]RevisionRef, err
 		}
 	}
 	return suggestions, nil
-}
-
-// DecayArchive demotes long-unused auto-extracted records out of the
-// auto-injection set. Pinned records and records the agent or user wrote
-// explicitly never decay. Archived records still match explicit searches.
-func (st *Store) DecayArchive(ctx context.Context, unusedFor time.Duration) (int, error) {
-	cutoff := time.Now().Add(-unusedFor).UnixNano()
-	rows, err := st.db.QueryContext(ctx, `
-		SELECT id, revision FROM workspace_memories m
-		WHERE status = ? AND pinned = 0 AND source = ?
-		  AND created_at < ? AND updated_at < ?
-		  AND NOT EXISTS(SELECT 1 FROM memory_feedback f WHERE f.memory_id=m.id AND f.revision=m.revision AND f.kind=? AND f.at>=?)
-		LIMIT 100
-	`, StatusActive, SourceAuto, cutoff, cutoff, FeedbackUseful, cutoff)
-	if err != nil {
-		return 0, fmt.Errorf("memory: decay query: %w", err)
-	}
-	var refs []RevisionRef
-	for rows.Next() {
-		var ref RevisionRef
-		if err := rows.Scan(&ref.ID, &ref.Revision); err != nil {
-			_ = rows.Close()
-			return 0, fmt.Errorf("memory: decay scan: %w", err)
-		}
-		refs = append(refs, ref)
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return 0, err
-	}
-	if err := rows.Close(); err != nil {
-		return 0, err
-	}
-	if len(refs) == 0 {
-		return 0, nil
-	}
-	if err := st.Archive(ctx, refs, ActorConsolidation, "decayed: no recent usefulness evidence"); err != nil {
-		return 0, err
-	}
-	return len(refs), nil
-}
-
-// EnforceCap archives the lowest-value unpinned actives when the active set
-// exceeds cap, keeping the auto-injection candidate pool bounded.
-func (st *Store) EnforceCap(ctx context.Context, cap int) (int, error) {
-	if cap <= 0 {
-		return 0, nil
-	}
-	active, err := st.CountByStatus(ctx, StatusActive)
-	if err != nil {
-		return 0, err
-	}
-	excess := active - cap
-	if excess <= 0 {
-		return 0, nil
-	}
-	rows, err := st.db.QueryContext(ctx, `
-		SELECT id, revision FROM workspace_memories
-		WHERE status = ? AND pinned = 0
-		ORDER BY importance ASC, updated_at ASC
-		LIMIT ?
-	`, StatusActive, excess)
-	if err != nil {
-		return 0, fmt.Errorf("memory: cap query: %w", err)
-	}
-	var refs []RevisionRef
-	for rows.Next() {
-		var ref RevisionRef
-		if err := rows.Scan(&ref.ID, &ref.Revision); err != nil {
-			_ = rows.Close()
-			return 0, fmt.Errorf("memory: cap scan: %w", err)
-		}
-		refs = append(refs, ref)
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return 0, err
-	}
-	if err := rows.Close(); err != nil {
-		return 0, err
-	}
-	if len(refs) == 0 {
-		return 0, nil
-	}
-	if err := st.Archive(ctx, refs, ActorConsolidation, "capped: active set over limit"); err != nil {
-		return 0, err
-	}
-	return len(refs), nil
 }

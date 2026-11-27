@@ -1,7 +1,10 @@
 package viewmodel
 
 import (
+	"encoding/base64"
 	"errors"
+	uv "github.com/charmbracelet/ultraviolet"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -141,5 +144,73 @@ func TestPasteNamesTheMissingClipboardTool(t *testing.T) {
 	}
 	if got := ui.ClipboardReadUnavailable("wl-clipboard"); !strings.HasPrefix(got, "Install wl-clipboard to paste with Ctrl+V, or paste with your terminal's ") {
 		t.Fatalf("message = %q", got)
+	}
+}
+
+// The terminal owns the current Wayland selection. Ctrl+V must read it when
+// wl-paste is absent, ignore unsolicited replies and keep the initiating draft.
+func TestWaylandPasteWithoutHelperUsesTerminalSelection(t *testing.T) {
+	app := setupChatInputApp(t, 100, 30, false)
+	wsOf(app).Logger = stubLogger{}
+	activatePasteSession(app, workspace.NewSession("wayland", t.TempDir(), nil, stubLogger{}))
+	t.Cleanup(app.StopAsyncIO)
+	t.Cleanup(installAsyncClipboardBackendForTest(app, clipboardAsyncBackend{terminalRead: true, read: func(clipboard.Format) []byte { return nil }, missingTool: func() string { return "wl-clipboard" }}))
+	answer := func(selection, text string) {
+		raw := []byte("\x1b]52;" + selection + ";" + base64.StdEncoding.EncodeToString([]byte(text)) + "\x1b\\")
+		d := uv.EventDecoder{}
+		n, e := d.Decode(raw)
+		event, ok := e.(uv.ClipboardEvent)
+		if !ok || n != len(raw) {
+			t.Fatalf("not a terminal reply: %T", e)
+		}
+		app.Update(tea.ClipboardMsg(event))
+	}
+	answer("c", "unsolicited")
+	if app.Input.Value() != "" {
+		t.Fatal("accepted unsolicited paste")
+	}
+	start := func() clipboardAsyncResultMsg {
+		_, cmd := app.dispatchChatKey(tea.KeyPressMsg{Code: 'v', Mod: tea.ModCtrl}, nil)
+		if cmd == nil {
+			t.Fatal("paste key was ignored")
+		}
+		query, ok := cmd().(clipboardAsyncResultMsg)
+		if !ok || query.terminalQuery == nil {
+			t.Fatal("did not query the terminal")
+		}
+		if msg := app.FilterTerminalClipboard(app, query.terminalQuery); reflect.TypeOf(msg) != reflect.TypeOf(tea.ReadClipboard()) {
+			t.Fatalf("wrong terminal operation %T", msg)
+		}
+		return query
+	}
+	query := start()
+	answer("p", "old primary selection")
+	answer("c", "new\r\nselection")
+	runAppCommand(t, app, app.clipboardAsyncCommand(query.request))
+	if got := app.Input.Value(); got != "new\nselection" {
+		t.Fatalf("wrong clipboard text: %q", got)
+	}
+	query = start()
+	app.workspaceSwitchGen.Add(1)
+	answer("c", "wrong workspace")
+	runAppCommand(t, app, app.clipboardAsyncCommand(query.request))
+	if strings.Contains(app.Input.Value(), "wrong workspace") {
+		t.Fatal("late reply reached a different workspace")
+	}
+}
+
+func TestUnconsumedTerminalPasteDoesNotHoldShutdown(t *testing.T) {
+	app := newTestApp(t)
+	s := asyncIOStateFor(app)
+	t.Cleanup(installAsyncClipboardBackendForTest(app, clipboardAsyncBackend{terminalRead: true, read: func(clipboard.Format) []byte { return nil }, missingTool: func() string { return "wl-clipboard" }}))
+	r := app.prepareClipboardAsyncRequest(clipboardAsyncRequestMsg{operation: clipboardAsyncPasteInputText})
+	if msg := <-r.result; msg.terminalQuery == nil {
+		t.Fatal("no pending read")
+	}
+	app.StopAsyncIO()
+	select {
+	case <-s.clipboardWorkerDone:
+	default:
+		t.Fatal("worker outlived shutdown")
 	}
 }

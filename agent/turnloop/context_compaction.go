@@ -38,6 +38,8 @@ type CompactResult struct {
 	ProviderID    string
 	AccountID     string
 	ModelID       string
+	// Writer is who wrote the checkpoint: "native", "errand" or "model".
+	Writer string
 }
 
 type CompactionCommit struct {
@@ -51,6 +53,8 @@ type CompactionCommit struct {
 	ProviderID    string
 	AccountID     string
 	ModelID       string
+	// Writer is who wrote the checkpoint: "native", "errand" or "model".
+	Writer string
 }
 
 type CompactionSource struct {
@@ -84,7 +88,31 @@ type compactOutcome struct {
 	ProviderID    string
 	AccountID     string
 	ModelID       string
+	// Writer is who wrote the checkpoint: compactionWriterNative,
+	// compactionWriterErrand or compactionWriterModel.
+	Writer string
 }
+
+const (
+	// compactionWriterNative is the provider's own compaction.
+	compactionWriterNative = "native"
+	// compactionWriterErrand is the Errand connection.
+	compactionWriterErrand = "errand"
+	// compactionWriterModel is the agent's model on its own connection.
+	compactionWriterModel = "model"
+)
+
+// compactionWriterName is who writes a checkpoint on this agent's connection.
+func (a *Agent) compactionWriterName() string {
+	if a.compactionWriter != "" {
+		return a.compactionWriter
+	}
+	return compactionWriterModel
+}
+
+// UseErrandCheckpointWriter marks a dedicated manual extractor. Selection
+// of the writer is independent of the wire used by the Errand account.
+func (a *Agent) UseErrandCheckpointWriter() { a.compactionWriter = compactionWriterErrand }
 
 func compactionThreshold(ctxWindow, percent int) int {
 	if ctxWindow <= 0 || percent <= 0 {
@@ -137,6 +165,7 @@ func (a *Agent) contextCompactor(targetWindow int) *Agent {
 	compactor.CompactionRetentionTokens = a.CompactionRetentionTokens
 	compactor.MaxOutputTokens = a.CompactionMaxOutput
 	compactor.CompactionAgentProfile = a.CompactionAgentProfile
+	compactor.UseErrandCheckpointWriter()
 	return compactor
 }
 
@@ -230,7 +259,12 @@ func (a *Agent) compactWithModel(
 // compactSource keeps the exact history authoritative for archival, human
 // intent and continuation. Only extraction may substitute an already verified
 // summary for the prefix that produced it.
-func (a *Agent) compactSource(ctx context.Context, msgs, source []provider.ChatMessage, tools []provider.ToolDef, requestID string, beforeTokens int, trigger string, emit func(AgentEvent)) (_ compactOutcome, outcomeErr error) {
+func (a *Agent) compactSource(ctx context.Context, msgs, source []provider.ChatMessage, tools []provider.ToolDef, requestID string, beforeTokens int, trigger string, emit func(AgentEvent)) (outcome compactOutcome, outcomeErr error) {
+	defer func() {
+		if outcome.Writer == "" {
+			outcome.Writer = a.compactionWriterName()
+		}
+	}()
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -313,6 +347,7 @@ func (a *Agent) compactSource(ctx context.Context, msgs, source []provider.ChatM
 	if main != nil && main.UsesNativeCompaction() && rejection == nil && warm {
 		owner := NewAgent(main, targetModel, a.logger)
 		owner.MaxOutputTokens = a.CompactionTargetOutput
+		owner.compactionWriter = compactionWriterNative
 		// Reading the checkpoint back is a normal request of the serving model,
 		// so it gets that model's normal response allowance. Hidden reasoning
 		// shares the allowance; the instructions never offer more text space
@@ -361,16 +396,19 @@ func (a *Agent) compactSource(ctx context.Context, msgs, source []provider.ChatM
 			a.checkpointRoute.remember(main, rejection)
 			fallbackChanged = true
 		} else if e != nil {
-			return compactOutcome{AccountID: main.AccountID, ProviderID: main.ID, ModelID: targetModel, Usage: usage}, &nativeCheckpointError{e}
+			if a.logger != nil {
+				a.logger.Warn("COMPACT", "native_failed", "model", targetModel, "error", compactErrorText(e))
+			}
+			return compactOutcome{AccountID: main.AccountID, ProviderID: main.ID, ModelID: targetModel, Usage: usage, Writer: compactionWriterNative}, &nativeCheckpointError{e}
 		} else if r.Turn {
-			return compactOutcome{turn: true, receipt: r.Receipt, Usage: usage, AccountID: main.AccountID, ProviderID: main.ID, ModelID: targetModel}, nil
+			return compactOutcome{turn: true, receipt: r.Receipt, Usage: usage, AccountID: main.AccountID, ProviderID: main.ID, ModelID: targetModel, Writer: compactionWriterNative}, nil
 		} else if r.Fallback == "" {
 			r.Message.Content = provider.TextContent(checkpoint)
-			outcome, finishErr := a.finishCheckpoint(ctx, msgs, tools, r.Message, targetModel, continuationLimit, fixed, compactOutcome{Usage: usage, ContextWindow: ctxWindow, RequestID: requestID, SourceTokens: beforeTokens, Role: role, Trigger: trigger, AccountID: main.AccountID, ProviderID: main.ID, ModelID: targetModel})
+			finished, finishErr := a.finishCheckpoint(ctx, msgs, tools, r.Message, targetModel, continuationLimit, fixed, compactOutcome{Usage: usage, ContextWindow: ctxWindow, RequestID: requestID, SourceTokens: beforeTokens, Role: role, Trigger: trigger, AccountID: main.AccountID, ProviderID: main.ID, ModelID: targetModel, Writer: compactionWriterNative})
 			if finishErr != nil {
-				return outcome, &nativeCheckpointError{finishErr}
+				return finished, &nativeCheckpointError{finishErr}
 			}
-			return outcome, nil
+			return finished, nil
 		} else {
 			fallback, fallbackChanged, transient = r.Fallback, r.Changed, r.Transient
 		}
@@ -406,9 +444,13 @@ func (a *Agent) compactSource(ctx context.Context, msgs, source []provider.ChatM
 		return writer.compactSource(ctx, msgs, source, tools, requestID, beforeTokens, trigger, emit)
 	}
 	if fallback != "" {
+		// The row now names this writer.
 		data := a.compactionEventData(requestID, trigger, role, 1, 0, beforeTokens, 0, ctxWindow)
-		data["stage_name"], data["stage_label"] = "Using Errand for compaction", "Using Errand for compaction"
+		data["stage_name"], data["stage_label"] = "", ""
 		emit(AgentEvent{Type: "context_compaction_stage", Data: data})
+		if a.logger != nil {
+			a.logger.Info("COMPACT", "native_fallback", "reason", fallback, "writer", a.compactionWriterName(), "model", a.Model)
+		}
 		if fallbackChanged {
 			notice := fallback + " Using Errand."
 			if rejection != nil {
@@ -446,27 +488,36 @@ func (a *Agent) compactSource(ctx context.Context, msgs, source []provider.ChatM
 
 	stages := rootprompt.CompactionStages()
 	sections := make(map[string]string, len(stages))
-	var aggregate provider.TokenUsage
+	// Every request of this compaction shares one state: the stages and the
+	// parts of a long source run at the same time and read the source once.
+	shared := newExtractionShared(a)
+	spent := func() provider.TokenUsage {
+		shared.mu.Lock()
+		defer shared.mu.Unlock()
+		return shared.usage
+	}
 	extractor := func(stage rootprompt.CompactionStage, index, outputBudget int) *compactionExtractor {
 		return &compactionExtractor{
 			agent: a, ctx: ctx, emit: emit, requestID: requestID, trigger: trigger, role: role,
 			stage: stage, stageIndex: index, beforeTokens: beforeTokens, targetWindow: ctxWindow,
 			system: msgs[0], common: common, tools: extractionTools, limits: limits, outputBudget: outputBudget,
+			shared: shared,
 		}
+	}
+	failed := func(stage string, index, completed, retry int) compactOutcome {
+		return compactOutcome{Usage: spent(), ContextWindow: ctxWindow, RequestID: requestID, Trigger: trigger, Role: role,
+			StageName: stage, StageIndex: index, Completed: completed, RetryAttempt: retry,
+			AccountID: a.Provider.AccountID, ProviderID: a.Provider.ID, ModelID: a.Model}
 	}
 	if !limits.sectioned {
 		// One request reads the source once and writes every section; any
 		// section it misses is extracted on its own below.
 		combined := rootprompt.CombinedCompactionStage()
-		data := a.compactionEventData(requestID, trigger, role, 1, 0, beforeTokens, 0, ctxWindow)
-		data["stage_name"], data["stage_label"] = combined.Name, combined.Label
-		emit(AgentEvent{Type: "context_compaction_stage", Data: data})
 		x := extractor(combined, 0, checkpointBudget-1)
+		x.progress("Writing", 0, nil)
 		text, combinedErr := x.request(source, rootprompt.InitialCompactionDirective())
-		aggregate = aggregate.Add(x.usage)
 		if ctx.Err() != nil {
-			return compactOutcome{Usage: aggregate, ContextWindow: ctxWindow, RequestID: requestID, Trigger: trigger, Role: role,
-				AccountID: a.Provider.AccountID, ProviderID: a.Provider.ID, ModelID: a.Model}, ctx.Err()
+			return failed("", 0, 0, 0), ctx.Err()
 		}
 		_, tooLarge := provider.RequestTooLarge(combinedErr, 0)
 		switch {
@@ -480,51 +531,43 @@ func (a *Agent) compactSource(ctx context.Context, msgs, source []provider.ChatM
 			}
 		case compactionModelUnavailable(combinedErr):
 			// An unavailable connection would fail every section the same way.
-			return compactOutcome{
-					Usage: aggregate, ContextWindow: ctxWindow, RequestID: requestID, Trigger: trigger, Role: role,
-					StageName: combined.Label, StageIndex: 1, RetryAttempt: x.retryAttempt,
-					AccountID: a.Provider.AccountID, ProviderID: a.Provider.ID, ModelID: a.Model,
-				},
-				fmt.Errorf("%s: %w", combined.Name, combinedErr)
+			return failed(combined.Label, 1, 0, x.retryAttempt()), fmt.Errorf("%s: %w", combined.Name, combinedErr)
 		case !tooLarge && !provider.TimedOut(combinedErr):
 			// An over-advertised output cap or a rejected request shape:
-			// extract one section at a time, in parts as needed. A limit the
+			// extract one section at a time from the same notes. A limit the
 			// adaptation could not meet is not evidence against one request.
 			limits.recordSectioned()
 		}
 	}
+	var missing []int
+	remaining := checkpointBudget - 1
 	for index, stage := range stages {
-		if sections[stage.Name] != "" {
-			continue
+		if sections[stage.Name] == "" {
+			missing = append(missing, index)
+		} else {
+			remaining -= provider.EstimateTokens(sections[stage.Name], targetModel)
 		}
-		remaining := checkpointBudget - 1
-		for _, section := range sections {
-			remaining -= provider.EstimateTokens(section, targetModel)
-		}
-		if remaining <= 0 {
-			return compactOutcome{Usage: aggregate, ContextWindow: ctxWindow, RequestID: requestID, Trigger: trigger, Role: role,
-					StageName: stage.Label, StageIndex: index + 1, Completed: index,
-					AccountID: a.Provider.AccountID, ProviderID: a.Provider.ID, ModelID: a.Model},
-				errors.New("extracted checkpoint consumed the continuation context budget")
-		}
-		data := a.compactionEventData(requestID, trigger, role, index+1, index, beforeTokens, 0, ctxWindow)
-		data["stage_name"] = stage.Name
-		data["stage_label"] = stage.Label
-		emit(AgentEvent{Type: "context_compaction_stage", Data: data})
-
-		x := extractor(stage, index, remaining)
-		stageText, stageErr := x.request(source, rootprompt.InitialCompactionDirective())
-		aggregate = aggregate.Add(x.usage)
-		if stageErr != nil {
-			return compactOutcome{
-					Usage: aggregate, ContextWindow: ctxWindow, RequestID: requestID, Trigger: trigger, Role: role,
-					StageName: stage.Label, StageIndex: index + 1, Completed: index, RetryAttempt: x.retryAttempt,
-					AccountID: a.Provider.AccountID, ProviderID: a.Provider.ID, ModelID: a.Model,
-				},
-				fmt.Errorf("%s stage: %w", stage.Name, stageErr)
-		}
-		sections[stage.Name] = stageText
 	}
+	if len(missing) > 0 {
+		shared.completed = len(sections)
+		if remaining <= 0 {
+			first := missing[0]
+			return failed(stages[first].Label, first+1, first, 0), errors.New("extracted checkpoint consumed the continuation context budget")
+		}
+		texts, failedAt, stageErr := extractSections(ctx, source, missing, func(stageCtx context.Context, index, budget int) *compactionExtractor {
+			x := extractor(stages[index], index, budget)
+			x.ctx = stageCtx
+			return x
+		}, remaining, targetModel)
+		if stageErr != nil {
+			return failed(stages[failedAt].Label, failedAt+1, shared.completed, extractor(stages[failedAt], failedAt, 0).retryAttempt()),
+				fmt.Errorf("%s stage: %w", stages[failedAt].Name, stageErr)
+		}
+		for _, index := range missing {
+			sections[stages[index].Name] = texts[index]
+		}
+	}
+	aggregate := spent()
 
 	checkpoint, err := rootprompt.BuildContextCheckpoint(role, sections)
 	if err != nil {
@@ -742,6 +785,9 @@ func compactionEventData(requestID, trigger, role string, stage, completed, befo
 
 func (a *Agent) compactionEventData(requestID, trigger, role string, stage, completed, before, after, ctxWindow int) map[string]any {
 	data := compactionEventData(requestID, trigger, role, stage, completed, before, after, ctxWindow)
+	if a != nil {
+		data["writer"] = a.compactionWriterName()
+	}
 	if a != nil && a.Provider != nil {
 		data["account_id"] = a.Provider.AccountID
 		data["provider_id"] = a.Provider.ID
@@ -1036,14 +1082,14 @@ func (a *Agent) CompactWithRequestID(
 			BeforeTokens: before, ContextWindow: outcome.ContextWindow, Usage: outcome.Usage,
 			RequestID: outcome.RequestID, Trigger: trigger, Role: checkpointRole(a.Depth),
 			StageName: outcome.StageName, StageIndex: outcome.StageIndex, Completed: outcome.Completed, RetryAttempt: outcome.RetryAttempt,
-			AccountID: outcome.AccountID, ProviderID: outcome.ProviderID, ModelID: outcome.ModelID,
+			AccountID: outcome.AccountID, ProviderID: outcome.ProviderID, ModelID: outcome.ModelID, Writer: outcome.Writer,
 		}, err
 	}
 	return CompactResult{
 		Messages: outcome.Messages, BeforeTokens: before, AfterTokens: outcome.AfterTokens,
 		ContextWindow: outcome.ContextWindow, Usage: outcome.Usage,
 		RequestID: outcome.RequestID, Trigger: outcome.Trigger, Role: outcome.Role,
-		AccountID: outcome.AccountID, ProviderID: outcome.ProviderID, ModelID: outcome.ModelID,
+		AccountID: outcome.AccountID, ProviderID: outcome.ProviderID, ModelID: outcome.ModelID, Writer: outcome.Writer,
 	}, nil
 }
 

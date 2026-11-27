@@ -120,6 +120,9 @@ func (c *Connection) startupCall(ctx context.Context, request coreprotocol.Reque
 				return bad(err)
 			}
 		}
+		if in.TakeDataUpdate {
+			out.DataUpdate = c.runtime.pendingDataUpdate.Swap(nil)
+		}
 		location, file, missing, err := inspectLaunchPath(in)
 		out.FilePath, out.FileMissing = file, missing
 		if in.Explicit {

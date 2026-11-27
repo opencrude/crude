@@ -241,6 +241,7 @@ func (p *Provider) Client(opts ...ClientOption) (*Client, error) {
 		return nil, fmt.Errorf("provider %s: no protocol registered", p.ID)
 	}
 	all := append([]ClientOption{
+		func(c *Client) { c.capacity = capacityKey(p) },
 		WithRequestExtras(p.requestExtras()),
 		WithMediaReplayRecovery(p.MediaReplayRecoveryEnabled()),
 		WithHeaderSource(p.headerSource(proto)),

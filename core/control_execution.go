@@ -13,6 +13,7 @@ import (
 	"crude/agent/worktree"
 	"crude/core/coreprotocol"
 	"crude/types/control"
+	"crude/workspace"
 )
 
 // Identity comes from the admitted gateway caller, never an input owner.
@@ -40,6 +41,7 @@ func (a *actor) prepareControlExecution(in control.Request, owner coreprotocol.O
 	}
 	keep := true
 	sourceReview := false
+	var page executionPage
 	var create struct {
 		Mode           worktree.Mode `json:"mode"`
 		BaseCommit     string        `json:"base_commit,omitempty"`
@@ -48,7 +50,10 @@ func (a *actor) prepareControlExecution(in control.Request, owner coreprotocol.O
 	}
 	switch in.CommandID {
 	case "execution.list", "execution.integrations":
-		if err := controlDecode(in.Input, &struct{}{}); err != nil {
+		if err := controlDecode(in.Input, &page); err != nil {
+			return controlFailure(in, control.Invalid, err.Error())
+		}
+		if _, err := page.limit(); err != nil {
 			return controlFailure(in, control.Invalid, err.Error())
 		}
 	case "execution.create":
@@ -99,7 +104,25 @@ func (a *actor) prepareControlExecution(in control.Request, owner coreprotocol.O
 			return controlFailure(in, control.Invalid, "id and keep boolean are required")
 		}
 		id, keep = input.ID, *input.Keep
-	case "execution.review", "execution.cleanup":
+	case "execution.review":
+		var input struct {
+			ID      string `json:"id"`
+			Discard bool   `json:"discard,omitempty"`
+			executionPage
+		}
+		if err := controlDecode(in.Input, &input); err != nil {
+			return controlFailure(in, control.Invalid, err.Error())
+		}
+		if _, err := input.limit(); err != nil {
+			return controlFailure(in, control.Invalid, err.Error())
+		}
+		if input.Cursor != "" {
+			if _, _, err := parseReviewCursor(input.Cursor); err != nil {
+				return controlFailure(in, control.Invalid, err.Error())
+			}
+		}
+		id, sourceReview, page = input.ID, input.Discard, input.executionPage
+	case "execution.cleanup":
 		var input struct {
 			ID      string `json:"id"`
 			Discard bool   `json:"discard,omitempty"`
@@ -185,21 +208,17 @@ func (a *actor) prepareControlExecution(in control.Request, owner coreprotocol.O
 			var err error
 			switch in.CommandID {
 			case "execution.list":
-				entries := service.List()
-				active := []worktree.Context{}
-				for _, entry := range entries {
-					if !entry.Removed {
-						active = append(active, entry)
-					}
-				}
-				output = active
+				output, err = executionInventoryPage(service.List(), page)
 			case "execution.integrations":
-				output, err = service.Integrations()
+				var statuses []workspace.IntegrationStatus
+				statuses, err = service.Integrations()
+				if err == nil {
+					output, err = executionIntegrationsPage(statuses, page)
+				}
 			case "execution.inspect":
 				var c worktree.Context
 				c, err = service.Inspect(id)
-				c.Baseline, c.ArchivedResult, c.DocumentRevisions = nil, nil, nil
-				output = c
+				output = compactExecution(c)
 			case "execution.reconcile":
 				output, err = reconcileExecution(ctx, service.Service, id, retention)
 			case "execution.settle":
@@ -222,18 +241,19 @@ func (a *actor) prepareControlExecution(in control.Request, owner coreprotocol.O
 						c, err = service.Inspect(c.ID)
 					}
 				}
-				output = c
+				output = compactExecution(c)
 				if c.ID != "" {
 					result.ResourceIDs = []string{c.ID}
 				}
 			case "execution.review":
-				if sourceReview {
-					output, err = service.ReviewDiscard(ctx, id)
-				} else {
-					var reviewed worktree.PlanDelta
-					reviewed, err = service.Review(ctx, id)
-					output = executionReviewToken(reviewed)
+				var review executionReview
+				review, err = a.reviewExecution(ctx, service, id, sourceReview, page)
+				if errors.Is(err, errExecutionReviewChanged) {
+					result.State = control.Failed
+					result.Fault = &control.Fault{Code: control.Stale, Message: err.Error()}
+					return
 				}
+				output = review
 			case "execution.apply":
 				// An exact committed owner receipt outranks current destination
 				// state. A lost reply must not re-review/replay the original effect.
@@ -264,6 +284,7 @@ func (a *actor) prepareControlExecution(in control.Request, owner coreprotocol.O
 					return
 				}
 				output, err = service.Apply(ctx, current)
+				a.executionReviews.forget(id)
 			case "execution.keep":
 				err = service.Keep(id, trusted, keep)
 				output = map[string]string{"id": id}
@@ -275,6 +296,7 @@ func (a *actor) prepareControlExecution(in control.Request, owner coreprotocol.O
 				}
 				cleanup.Check = func(ctx context.Context) error { return retention(ctx, trusted, id, c.Root) }
 				err = service.Cleanup(ctx, id, trusted, cleanup)
+				a.executionReviews.forget(id)
 				output = map[string]string{"id": id}
 			case "execution.undo":
 				output, err = service.Undo(ctx, id)
@@ -298,9 +320,15 @@ func (a *actor) prepareControlExecution(in control.Request, owner coreprotocol.O
 	}, nil, true
 }
 
-// Temporary bounded integration bootstrap using the existing PlanDelta schema.
-// Full plans stay with the document/Local History owner; replace this projection
-// with the complete bounded/paged review contract, not a full-plan fallback.
+// compactExecution drops the snapshot bytes of an execution. Its baseline and
+// archived result grow with the checkout; review and the owner keep them.
+func compactExecution(c worktree.Context) worktree.Context {
+	c.Baseline, c.ArchivedResult, c.DocumentRevisions = nil, nil, nil
+	return c
+}
+
+// executionReviewToken is the compact identity of a reviewed plan. Full plans
+// stay with the document/Local History owner; apply reloads and rechecks them.
 func executionReviewToken(p worktree.PlanDelta) worktree.PlanDelta {
 	return worktree.PlanDelta{ContextID: p.ContextID, Owner: p.Owner, Digest: p.Digest, SourceDigest: p.SourceDigest, Changes: []worktree.Change{}}
 }

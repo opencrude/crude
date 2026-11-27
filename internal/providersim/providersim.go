@@ -247,6 +247,12 @@ func (s *Server) Last() (Request, bool) {
 
 func receive(wire Wire, r *http.Request) (Request, error) {
 	raw, err := io.ReadAll(r.Body)
+	// A cancelled upload is not a malformed JSON request. Stop the HTTP
+	// handler without consuming a scripted turn; complete bodies still go
+	// through every wire's independent schema validation.
+	if err != nil && r.Context().Err() != nil {
+		panic(http.ErrAbortHandler)
+	}
 	return Request{Wire: wire, Method: r.Method, Path: r.URL.Path, Target: r.RequestURI, Header: r.Header.Clone(), Raw: raw}, err
 }
 

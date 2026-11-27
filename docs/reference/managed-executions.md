@@ -100,8 +100,8 @@ review, integration and Local History, even when ordinary ignore filtering is of
 There is no execution-count admission or reopen limit, and no retained-count,
 age or storage threshold. Snapshot safety bounds remain 20,000 baseline files, 256 MiB
 total and 32 MiB per file. They bound one isolated capture, not a pool of launch
-slots, and never forcibly prune work. Format changes require backed-up manual
-alignment; no legacy reader or automatic upgrade.
+slots, and never forcibly prune work. The core updates known session and Local History formats before attachment.
+Execution manifests have one current reader; never guess an unknown layout.
 
 ## Review, apply, undo and crash recovery
 

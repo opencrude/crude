@@ -57,6 +57,36 @@ type historyApplyResultMsg struct {
 	requestID string
 }
 
+type agentReceiptResult struct {
+	screen     *historyscreen.Screen
+	generation uint64
+	result     historyscreen.ReceiptMsg
+}
+
+func (m *App) readAgentReceipts(q localhistory.AgentReceiptQuery) tea.Cmd {
+	screen, gen, store := m.historyScreen, m.workspaceSwitchGen.Load(), m.ws.LocalHistory()
+	if screen == nil || store == nil {
+		return nil
+	}
+	ctx, cancel := m.sourceControlContext()
+	return func() tea.Msg {
+		defer cancel()
+		page, err := store.AgentReceipts(ctx, q)
+		result := historyscreen.ReceiptMsg{Query: q, Page: page}
+		if err != nil {
+			result.Error = err.Error()
+		}
+		return agentReceiptResult{screen, gen, result}
+	}
+}
+func (m *App) openAgentReceipts(session, agent string) tea.Cmd {
+	cmd := m.openLocalHistoryForMessage("", "", "")
+	if cmd == nil || m.historyOperation != nil || m.historySafetyOperation != nil {
+		return cmd
+	}
+	return m.readAgentReceipts(localhistory.AgentReceiptQuery{SessionID: session, AgentID: agent})
+}
+
 func (m *App) openLocalHistory() tea.Cmd { return m.openLocalHistoryForMessage("", "", "") }
 
 func (m *App) openLocalHistoryForPath(path string) tea.Cmd {

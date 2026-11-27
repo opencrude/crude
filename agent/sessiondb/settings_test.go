@@ -1,11 +1,15 @@
 package sessiondb
 
 import (
+	"errors"
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"crude/internal/dataformat"
 )
 
 func TestCurrentSchemaReopenPreservesAgentSettings(t *testing.T) {
@@ -49,21 +53,31 @@ func TestCurrentSchemaReopenPreservesAgentSettings(t *testing.T) {
 	}
 }
 
-func TestOutdatedCapabilitySelectionIsNotMigrated(t *testing.T) {
+// An existing database without the current format version was not updated.
+// Opening it must refuse and leave it unchanged, never upgrade it implicitly.
+func TestUnversionedSessionDatabaseIsRefusedUnchanged(t *testing.T) {
 	db, err := OpenAndMigrate(filepath.Join(t.TempDir(), "session.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if _, err := db.Exec(`ALTER TABLE session_agent_settings DROP COLUMN capability_selection`); err != nil {
+	if _, err := db.Exec(`PRAGMA user_version = 0; ALTER TABLE session_agent_settings DROP COLUMN capability_selection`); err != nil {
 		t.Fatal(err)
 	}
-	if err := Migrate(db); err == nil || !strings.Contains(err.Error(), "align local data manually") {
-		t.Fatalf("outdated session schema must require manual alignment: %v", err)
+	var needs *dataformat.ErrNeedsUpdate
+	if err := Migrate(db); !errors.As(err, &needs) || !strings.Contains(err.Error(), "restart Crude to update it") {
+		t.Fatalf("an unversioned session database was opened: %v", err)
 	}
 	var columns int
 	if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('session_agent_settings') WHERE name='capability_selection'`).Scan(&columns); err != nil || columns != 0 {
 		t.Fatalf("session schema was silently upgraded: %d, %v", columns, err)
+	}
+	if _, err := db.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, Format.Current+1)); err != nil {
+		t.Fatal(err)
+	}
+	var newer *dataformat.ErrNewer
+	if err := Migrate(db); !errors.As(err, &newer) || newer.Found != Format.Current+1 {
+		t.Fatalf("a session database from a newer Crude was opened: %v", err)
 	}
 }
 

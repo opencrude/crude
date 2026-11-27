@@ -54,9 +54,10 @@ type clipboardAsyncRequestMsg struct {
 }
 
 type clipboardAsyncResultMsg struct {
-	request  clipboardAsyncRequestMsg
-	content  string
-	readable bool
+	terminalQuery *terminalPasteQuery // intermediate wake; not a completed read
+	request       clipboardAsyncRequestMsg
+	content       string
+	readable      bool
 	// missingTool names the package that would let Crude read the desktop
 	// clipboard, when the read failed because it is not installed.
 	missingTool  string
@@ -68,8 +69,9 @@ type clipboardAsyncResultMsg struct {
 }
 
 type clipboardAsyncBackend struct {
-	read      func(clipboard.Format) []byte
-	writeText func(string) error
+	read         func(clipboard.Format) []byte
+	writeText    func(string) error
+	terminalRead bool // a local Wayland terminal can read the current selection
 	// missingTool reports the package to install after a failed read.
 	missingTool func() string
 }
@@ -115,6 +117,8 @@ type appAsyncIOState struct {
 	clipboardCond           *sync.Cond
 	clipboardClosed         bool
 	clipboardWorkerDone     chan struct{}
+	clipboardStop           chan struct{}
+	terminalQuery           *terminalPasteQuery
 	clipboardWorkerRun      bool
 	nextDirectory           uint64
 	latestDirectory         map[*filepickerscreen.Screen]uint64
@@ -149,6 +153,7 @@ func asyncIOStateFor(m *App) *appAsyncIOState {
 	}
 	state := &appAsyncIOState{
 		clipboardBackend: clipboardAsyncBackend{
+			terminalRead: os.Getenv("WAYLAND_DISPLAY") != "" && !rendering.RemoteTerminalSession(),
 			read: func(format clipboard.Format) []byte {
 				if rendering.RemoteTerminalSession() {
 					return nil // The SSH host does not own the user's clipboard.
@@ -182,6 +187,7 @@ func asyncIOStateFor(m *App) *appAsyncIOState {
 		pathSearchIntent:    make(map[*filepickerscreen.Screen]filepickerscreen.IntentToken),
 		treePathSearch:      newTreePathSearchState(),
 		clipboardWorkerDone: make(chan struct{}),
+		clipboardStop:       make(chan struct{}),
 		desktopLaunch:       fileio.OpenDesktopPathContext,
 		clientIOJobs:        make(map[uint64]context.CancelFunc),
 	}
@@ -212,7 +218,9 @@ func (m *App) prepareClipboardAsyncRequest(request clipboardAsyncRequestMsg) cli
 		}
 	}
 	state := asyncIOStateFor(m)
-	result := make(chan clipboardAsyncResultMsg, 1)
+	// A terminal read can emit one query before its final result. Both
+	// must fit even if the shell closes without consuming either message.
+	result := make(chan clipboardAsyncResultMsg, 2)
 	state.mu.Lock()
 	if state.clipboardClosed || m.asyncIOStopped.Load() {
 		state.mu.Unlock()
@@ -269,6 +277,12 @@ func (s *appAsyncIOState) runClipboardWorker() {
 		s.mu.Unlock()
 
 		result := executeClipboardAsyncRequest(job.backend, job.request)
+		if result.operationErr == errClipboardRead && job.backend.terminalRead {
+			// The terminal is a Wayland client. Ask it for the current
+			// selection, never XWayland or an earlier in-process copy.
+			terminalCopy = ""
+			s.readTerminalPaste(job, &result)
+		}
 		if job.request.operation == clipboardAsyncWriteText {
 			terminalCopy = ""
 			if result.operationErr != nil {
@@ -464,7 +478,7 @@ func (m *App) deliverClipboardResult(result clipboardAsyncResultMsg) tea.Cmd {
 }
 
 func (m *App) beginInputClipboardPaste(operation clipboardAsyncOperation) tea.Cmd {
-	if m.ActiveSession == nil || m.ActiveSession.RefStore == nil {
+	if m.ActiveSession == nil {
 		return nil
 	}
 	request := m.prepareClipboardAsyncRequest(clipboardAsyncRequestMsg{
@@ -944,6 +958,9 @@ func (m *App) stopAsyncIO() {
 	}
 	state.mu.Lock()
 	state.clipboardClosed = true
+	if state.clipboardStop != nil {
+		close(state.clipboardStop)
+	}
 	for _, cancel := range state.clientIOJobs {
 		cancel()
 	}

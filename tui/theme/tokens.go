@@ -30,6 +30,11 @@ type Glyphs struct {
 	CycleRight       string // next-value affordance of a cycle control
 	Modified         string // unsaved-change marker (rail, footer, field labels)
 	FocusEdge        string // left edge marking the focused form row or selected card
+	// ProgressBar fills a measured progress bar cell by cell; ProgressHalf
+	// fills its last half cell. The unfilled track uses ProgressBar in a
+	// quiet color.
+	ProgressBar  string
+	ProgressHalf string
 }
 
 // Typography captures semantic text emphasis that themes may vary without
@@ -82,6 +87,8 @@ func DefaultGlyphs() Glyphs {
 		CycleRight:       "›",
 		Modified:         "●",
 		FocusEdge:        "▎",
+		ProgressBar:      "━",
+		ProgressHalf:     "╸",
 	}
 }
 

@@ -506,6 +506,22 @@ Finish with `quit:F9`; the test requires the observation and a clean exit.
 This is local Linux rendered acceptance, not distinct-host or native Windows
 and macOS evidence.
 
+### Live manual compaction probe
+
+`TestLiveManualCompaction` uses the configured Errand account and model. It
+sends only a synthetic conversation and checks that the checkpoint contains
+facts from its beginning, middle and end. The fixture uses an intentionally
+small input planning window to exercise parallel parts without paying for a
+full session. It prints elapsed time, requests and reported token use. This
+is a billable, opt-in test, not a native capability probe or a speed benchmark
+for other accounts. Select the exact configuration, account and model:
+
+```sh
+CRUDE_COMPACT_CONFIG=/absolute/path/to/config.json \
+CRUDE_COMPACT_ACCOUNT="$ACCOUNT_ID" CRUDE_COMPACT_MODEL="$MODEL_ID" \
+  go test ./app -run '^TestLiveManualCompaction$' -count=1 -v
+```
+
 ### Live agent-wait acceptance
 
 `app/live_agent_wait_test.go` is opt-in actual-model acceptance with
@@ -1126,3 +1142,15 @@ Connected and parser regressions cover exact-context arrival, two shell views,
 peer edits, stale/cancelled work, malformed delta fallback, range bounds,
 full/delta negotiation and release-before-request ordering. Deterministic fixtures
 establish protocol behavior, not the installed provider's offered capabilities.
+
+### Linux desktop clipboard
+
+On a **disposable** X server or Wayland compositor with data-control, run
+`CRUDE_TEST_DISPOSABLE_DISPLAY=1 go test ./internal/clipboard -run TestNativeSelectionAcrossProcesses`.
+It replaces the selection. Separate Crude processes exchange UTF-8 and a 440 KB
+selection with an empty command search path. X11 uses ICCCM incremental transfers;
+a 1 MiB round trip with an independent xclip owner and reader also passed on Xvfb.
+Run the same fixture on a headless Sway compositor, without a usable X display.
+Then run it under a headless Weston, which has no data-control, with a disposable
+X server as `DISPLAY`; this is the GNOME path, and xclip must read Crude's copy.
+These tests cover the protocols, not every desktop or terminal permission setting.

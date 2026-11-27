@@ -17,14 +17,17 @@ const (
 )
 
 type StartupInspectRequest struct {
-	Explicit  bool   `json:"explicit,omitempty"`
-	AllowFile bool   `json:"allow_file,omitempty"`
-	Root      string `json:"root"`
+	// TakeDataUpdate requests the one-time report of an update completed before attachment.
+	TakeDataUpdate bool   `json:"take_data_update,omitempty"`
+	Explicit       bool   `json:"explicit,omitempty"`
+	AllowFile      bool   `json:"allow_file,omitempty"`
+	Root           string `json:"root"`
 }
 
 // StartupSnapshot contains detached metadata only. An empty error-free FolderKind
 // identifies a project candidate; no project services have been constructed.
 type StartupSnapshot struct {
+	DataUpdate       *DataUpdate                   `json:"data_update,omitempty"`
 	FileMissing      bool                          `json:"file_missing,omitempty"`
 	FilePath         string                        `json:"file_path,omitempty"`
 	ChooseWorkspace  bool                          `json:"choose_workspace,omitempty"`

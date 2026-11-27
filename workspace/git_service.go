@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"crude/internal/gitplatform"
+
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 )
@@ -220,7 +222,7 @@ func (s *GitService) runInput(ctx context.Context, input io.Reader, args ...stri
 	}
 	closeGitRepository(repo)
 	defer observeGit(args, time.Now())
-	cmdArgs := append([]string{"-C", root}, args...)
+	cmdArgs := append(append(gitplatform.Args(), "-C", root), args...)
 	cmd := exec.CommandContext(ctx, "git", cmdArgs...)
 	cmd.Stdin = input
 	out, err := cmd.CombinedOutput()

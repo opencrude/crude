@@ -1,7 +1,15 @@
 package viewmodel
 
 import (
+	"crude/types/setting"
+	"crude/workspace"
+	"crude/workspace/localhistory"
+	"github.com/charmbracelet/x/ansi"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -50,5 +58,58 @@ func TestLocalHistoryWindowCloseAndResizeRouteThroughWindowManager(t *testing.T)
 	app.dispatchMouseClick(tea.MouseClickMsg{X: x + grownW - 2, Y: y, Button: tea.MouseLeft})
 	if app.windowManager.Window(string(ui.OverlayLocalHistory)) != nil {
 		t.Fatal("close icon did not remove Local History overlay")
+	}
+}
+
+// Preview is an agent-wide read. A later empty message and the current disk
+// contents cannot hide an earlier edit or turn Enter into a restore.
+func TestConnectedAgentEditPreviewReadsEarlierReceipt(t *testing.T) {
+	var store *localhistory.Store
+	runtime := remoteJourneyRuntime(t, "http://unused.invalid", func(ws *workspace.Workspace) {
+		ws.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "on"}})
+		store = ws.LocalHistory
+	})
+	root := t.TempDir()
+	shell := newRemoteJourneyShell(t, runtime, root)
+	app := shell.app
+	id := remoteJourneyCreate(t, shell)
+	session := app.ActiveSession.SessionID
+	manifest, err := store.Snapshot(t.Context(), localhistory.SnapshotOptions{Kind: "before_message"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.BeginMessageScope(session, "older", manifest.ID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	path := "notes.txt"
+	op := localhistory.AgentOperation{ID: "confirmed-file-edit", SessionID: session, MessageID: "older", AgentID: id, Source: "edit_file", Paths: []localhistory.OperationPath{{Path: path, Before: &localhistory.OperationState{Type: localhistory.EntryFile, Mode: 0644, Data: []byte("old line\n")}, After: &localhistory.OperationState{Type: localhistory.EntryFile, Mode: 0644, Data: []byte("recorded line\n")}}}}
+	if err = store.RecordAgentOperation(t.Context(), op); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.CompleteAgentOperation(op.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(root, path), []byte("later external edit\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	app.Update(tea.WindowSizeMsg{Width: 110, Height: 32})
+	runAppCommand(t, app, app.openAgentReceipts(session, id))
+	view := func() string { return ansi.Strip(app.View().RenderContent()) }
+	if s := view(); !strings.Contains(s, path) || strings.Contains(s, "Restore preview") {
+		t.Fatalf("not an agent edit list: %s", s)
+	}
+	_, cmd := app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	runAppCommand(t, app, cmd)
+	if s := view(); !strings.Contains(s, "+recorded line") || !strings.Contains(s, "-old line") || strings.Contains(s, "+later external edit") {
+		t.Fatalf("not the historical diff: %s", s)
+	}
+	_, cmd = app.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	runAppCommand(t, app, cmd)
+	if !strings.Contains(view(), "Agent file changes") {
+		t.Fatal("Back did not return to the agent edits")
+	}
+	data, err := os.ReadFile(filepath.Join(root, path))
+	if err != nil || string(data) != "later external edit\n" {
+		t.Fatal("preview changed the working file", err)
 	}
 }

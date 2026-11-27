@@ -82,13 +82,10 @@ sufficient.
 
 ### Choose the right-sized fix
 
-- **No backward compatibility during active development.** Internal contracts and
-  persisted formats may change incompatibly. Do not add upgrades, legacy readers,
-  fallback adapters or compatibility branches.
-- **Breaking a format never permits losing work.** Back up affected local data,
-  align it manually outside product code, and verify content, identity,
-  provenance, history and resume. One-off conversion tooling does not stay in
-  the codebase.
+- **Keep one current reader.** Change internal formats without legacy readers or
+  fallback adapters. For saved data, ship frozen, tested steps in the startup
+  updater. Back up the committed preimage before changing a file; refuse newer
+  and unknown layouts. Verify content, identity, provenance, history and resume.
 - **No destructive Git rollbacks.** Never use `git checkout --`, `git reset`,
   `git restore`, `git clean` or equivalents to undo work. Reverse only your own
   edits by hand and preserve everything else.

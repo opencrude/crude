@@ -123,11 +123,11 @@ func TestControlExecutionLiveDocumentTopicApplyAndUndo(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(execution.Root, "live.txt"), []byte("ONE\nTWO\nthree\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	var plan worktree.PlanDelta
-	if err := json.Unmarshal(call("execution.review", execution.ID, map[string]any{"id": execution.ID}).Output, &plan); err != nil {
+	var review executionReview
+	if err := json.Unmarshal(call("execution.review", execution.ID, map[string]any{"id": execution.ID}).Output, &review); err != nil {
 		t.Fatal(err)
 	}
-	applied := call("execution.apply", execution.ID, map[string]any{"plan": plan})
+	applied := call("execution.apply", execution.ID, map[string]any{"plan": review.Plan})
 	delta := next()
 	if delta.header.Reset || delta.header.Seq != initial.header.Seq+1 || delta.update.Base != edited.Revision || delta.update.State.Revision != edited.Revision+1 || len(delta.update.Changes) != 1 || !delta.update.State.Dirty {
 		t.Fatalf("integration did not publish one contiguous delta: %+v", delta)
@@ -137,7 +137,7 @@ func TestControlExecutionLiveDocumentTopicApplyAndUndo(t *testing.T) {
 		t.Fatalf("integration recipient bytes=%q err=%v", text, err)
 	}
 	// Re-observe a lost reply while the recipient still holds the publication.
-	if duplicate := call("execution.apply", execution.ID, map[string]any{"plan": plan}); string(duplicate.Output) != string(applied.Output) {
+	if duplicate := call("execution.apply", execution.ID, map[string]any{"plan": review.Plan}); string(duplicate.Output) != string(applied.Output) {
 		t.Fatal("lost reply changed integration receipt")
 	}
 	close(delta.ack)

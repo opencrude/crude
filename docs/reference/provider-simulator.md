@@ -74,6 +74,16 @@ source and import hashes, compiler and descriptor-reader pins, and
 `googleapis.license.txt`. The generator does not use a live Discovery response
 or redistribute one.
 
+### Compaction capacity matrix
+
+`TestCompactionConcurrencyAcrossRegisteredWires` sends a multi-part manual
+checkpoint through each registered conversation encoder and decoder, with
+simulated limits of one, two and three concurrent requests. A second run must
+use all available places without another refusal. Both runs must preserve
+every numbered fact in the checkpoint. These are offline contract tests, not
+live attestations for seven accounts. Fill-in-the-middle is not a conversation
+wire and does not produce checkpoints.
+
 ### Synthetic facts
 
 No source establishes these; code marks each one `synthetic`.

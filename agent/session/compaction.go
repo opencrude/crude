@@ -413,6 +413,9 @@ func (s *Session) runPreparedCompaction(
 	usageModel = extractor.Model
 	compactAgent := s.newAgent(extractor, effectiveCfg.IsMultiAgentEnabled(), activeCfg.ModelModalities)
 	compactAgent.NativeCompactionProvider = main
+	if configErr == nil {
+		compactAgent.UseErrandCheckpointWriter()
+	}
 	compactAgent.CompactionTargetOutput = activeCfg.ModelMaxOutput
 	compactAgent.CompactionConfigError = configErr
 	compactAgent.AgentID = turnloop.AgentID(agentID)
@@ -442,6 +445,7 @@ func (s *Session) runPreparedCompaction(
 	commitData["provider_id"] = result.ProviderID
 	commitData["account_id"] = result.AccountID
 	commitData["model_id"] = result.ModelID
+	commitData["writer"] = result.Writer
 	emit(turnloop.AgentEvent{Type: "context_compaction_committing", Data: commitData})
 	if generation == 0 {
 		generation = 1
@@ -497,6 +501,7 @@ func (s *Session) finishManualCompactionError(
 	data["provider_id"] = result.ProviderID
 	data["account_id"] = result.AccountID
 	data["model_id"] = result.ModelID
+	data["writer"] = result.Writer
 	if ctx.Err() != nil || errors.Is(err, context.Canceled) {
 		emit(turnloop.AgentEvent{Type: "context_compaction_cancelled", Data: data})
 		return conversation.CompactResultMsg{OperationID: operationID, Cancelled: true}
@@ -577,6 +582,7 @@ func compactionRecordFromData(sessionID, agentID, state string, data map[string]
 		OperationID: compactionEventString(data, "request_id"), SessionID: sessionID, AgentID: agentID,
 		Trigger: compactionEventString(data, "trigger"), Role: compactionEventString(data, "role"), State: state,
 		ProviderID: compactionEventString(data, "provider_id"), AccountID: compactionEventString(data, "account_id"), ModelID: compactionEventString(data, "model_id"),
+		Writer:    compactionEventString(data, "writer"),
 		StageName: compactionEventString(data, "stage_name"), StageIndex: compactionEventInt(data, "stage"),
 		CompletedStages: compactionEventInt(data, "completed_stages"), StageCount: compactionEventInt(data, "stage_count"),
 		RetryAttempt: compactionEventInt(data, "retry"), RetryLimit: compactionEventInt(data, "retry_limit"),
@@ -640,6 +646,7 @@ func (s *Session) commitRootCompaction(agentID string, revision uint64, commit t
 	data["provider_id"] = commit.ProviderID
 	data["account_id"] = commit.AccountID
 	data["model_id"] = commit.ModelID
+	data["writer"] = commit.Writer
 	record := compactionRecordFromData(s.sessionID, agentID, sessiondb.CompactionCompleted, data)
 	_, err := s.publishRootContext(sessiondb.ContextPublication{
 		SessionID: s.sessionID, AgentID: s.sessionID, RuntimeAgentID: agentID, ExpectedRevision: revision,

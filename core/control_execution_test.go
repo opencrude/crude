@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -99,10 +100,11 @@ func TestControlExecutionRealDocumentIntegration(t *testing.T) {
 	if reviewed.Fault != nil {
 		t.Fatal(reviewed.Fault)
 	}
-	var plan worktree.PlanDelta
-	if err = json.Unmarshal(reviewed.Output, &plan); err != nil {
+	var review executionReview
+	if err = json.Unmarshal(reviewed.Output, &review); err != nil {
 		t.Fatal(err)
 	}
+	plan := review.Plan
 	raw, _ := json.Marshal(map[string]any{"plan": plan})
 	run, _, _ := a.prepareControlDomain(control.Request{ID: "apply", CommandID: "execution.apply", Target: control.Target{ResourceID: c.ID}, Input: raw}, owner)
 	applied := run(ctx)
@@ -149,6 +151,15 @@ func TestControlExecutionRealDocumentIntegration(t *testing.T) {
 	integrations := call("execution.integrations", "", struct{}{})
 	if integrations.Fault != nil {
 		t.Fatal(integrations.Fault)
+	}
+	var journal executionIntegrations
+	if err := json.Unmarshal(integrations.Output, &journal); err != nil || len(journal.Integrations) == 0 || journal.NextCursor != "" || bytes.Contains(integrations.Output, []byte(`"data"`)) {
+		t.Fatalf("integration journal page is not compact: %s %v", integrations.Output, err)
+	}
+	for _, entry := range journal.Integrations {
+		if entry.Receipt.OperationID == "" || entry.Plan.Digest == "" || len(entry.Plan.Changes) != 0 || entry.Changes == 0 {
+			t.Fatalf("incomplete journal entry: %+v", entry)
+		}
 	}
 }
 
@@ -245,10 +256,11 @@ func TestControlExecutionStaleReviewDoesNotApply(t *testing.T) {
 	if reviewed.Fault != nil {
 		t.Fatal(reviewed.Fault)
 	}
-	var plan worktree.PlanDelta
-	if err := json.Unmarshal(reviewed.Output, &plan); err != nil {
+	var review executionReview
+	if err := json.Unmarshal(reviewed.Output, &review); err != nil {
 		t.Fatal(err)
 	}
+	plan := review.Plan
 	put("one\nDIFFERENT\nthree\n")
 	failed := call("execution.apply", c.ID, map[string]any{"plan": plan})
 	if failed.Fault == nil || failed.Fault.Code != control.Stale || failed.State != control.Failed {

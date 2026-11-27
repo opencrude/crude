@@ -1,8 +1,10 @@
 package chatprojection
 
 import (
+	"crypto/sha256"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/alecthomas/chroma/v2"
 )
@@ -18,13 +20,16 @@ const diffSyntaxSyncBytes = 1 << 10
 // diffSyntaxCacheBytes bounds the retained background results.
 const diffSyntaxCacheBytes = 16 << 20
 
+// diffSyntaxJobKey names a whole diff file by its digest, so the shared lock
+// covers small fixed-size map operations, never hashing a large text.
 type diffSyntaxJobKey struct {
 	lexer string
-	text  string
+	sum   [sha256.Size]byte
 }
 
 type diffSyntaxJob struct {
 	key     diffSyntaxJobKey
+	size    int
 	lexer   chroma.Lexer
 	pending []string
 }
@@ -33,13 +38,15 @@ type diffSyntaxJob struct {
 // found their file pending mark themselves frame-sensitive, so the renderer
 // repaints them on the next activity phase and picks the result up here.
 var diffSyntax struct {
-	mu      sync.Mutex
-	done    map[diffSyntaxJobKey][][]RowSpan
-	order   []diffSyntaxJobKey
-	bytes   int
-	queued  map[diffSyntaxJobKey]bool
-	queue   []diffSyntaxJob
-	running bool
+	mu     sync.Mutex
+	done   map[diffSyntaxJobKey][][]RowSpan
+	order  []diffSyntaxJob // retained results, oldest first; pending is nil
+	bytes  int
+	queued map[diffSyntaxJobKey]bool
+	queue  []diffSyntaxJob
+	// running is written under mu and read without it: View asks it every
+	// frame and must never wait for the worker.
+	running atomic.Bool
 }
 
 // prepareDiffSyntax fills cache with tokens for texts, lexing synchronously
@@ -62,8 +69,9 @@ func prepareDiffSyntax(lexer chroma.Lexer, texts []string, cache map[diffSyntaxK
 		}
 		return true
 	}
-	key := diffSyntaxJobKey{lexer: lexer.Config().Name, text: strings.Join(pending, "\n")}
-	lines, ready := lookupDiffSyntax(key, lexer, pending)
+	text := strings.Join(pending, "\n")
+	key := diffSyntaxJobKey{lexer: lexer.Config().Name, sum: sha256.Sum256([]byte(text))}
+	lines, ready := lookupDiffSyntax(diffSyntaxJob{key: key, size: len(text), lexer: lexer, pending: pending})
 	for i, text := range pending {
 		var tokens []RowSpan
 		if ready {
@@ -75,20 +83,21 @@ func prepareDiffSyntax(lexer chroma.Lexer, texts []string, cache map[diffSyntaxK
 }
 
 // lookupDiffSyntax returns a finished result or queues the lexing once.
-func lookupDiffSyntax(key diffSyntaxJobKey, lexer chroma.Lexer, pending []string) ([][]RowSpan, bool) {
+func lookupDiffSyntax(job diffSyntaxJob) ([][]RowSpan, bool) {
 	diffSyntax.mu.Lock()
 	defer diffSyntax.mu.Unlock()
-	if lines, ok := diffSyntax.done[key]; ok {
+	if lines, ok := diffSyntax.done[job.key]; ok {
 		return lines, true
 	}
 	if diffSyntax.queued == nil {
 		diffSyntax.queued = make(map[diffSyntaxJobKey]bool)
 	}
-	if !diffSyntax.queued[key] {
-		diffSyntax.queued[key] = true
-		diffSyntax.queue = append(diffSyntax.queue, diffSyntaxJob{key: key, lexer: lexer, pending: append([]string(nil), pending...)})
-		if !diffSyntax.running {
-			diffSyntax.running = true
+	if !diffSyntax.queued[job.key] {
+		diffSyntax.queued[job.key] = true
+		job.pending = append([]string(nil), job.pending...)
+		diffSyntax.queue = append(diffSyntax.queue, job)
+		if !diffSyntax.running.Load() {
+			diffSyntax.running.Store(true)
 			go runDiffSyntax()
 		}
 	}
@@ -102,7 +111,7 @@ func runDiffSyntax() {
 	for {
 		diffSyntax.mu.Lock()
 		if len(diffSyntax.queue) == 0 {
-			diffSyntax.running = false
+			diffSyntax.running.Store(false)
 			diffSyntax.mu.Unlock()
 			return
 		}
@@ -118,14 +127,14 @@ func runDiffSyntax() {
 			diffSyntax.done = make(map[diffSyntaxJobKey][][]RowSpan)
 		}
 		diffSyntax.done[job.key] = lines
-		diffSyntax.order = append(diffSyntax.order, job.key)
-		// Tokens share the text's bytes; count the key and spans once.
-		diffSyntax.bytes += 2 * len(job.key.text)
+		diffSyntax.order = append(diffSyntax.order, diffSyntaxJob{key: job.key, size: job.size})
+		// Tokens share the text's bytes; count the text and spans once each.
+		diffSyntax.bytes += 2 * job.size
 		for len(diffSyntax.order) > 1 && diffSyntax.bytes > diffSyntaxCacheBytes {
 			oldest := diffSyntax.order[0]
 			diffSyntax.order = diffSyntax.order[1:]
-			diffSyntax.bytes -= 2 * len(oldest.text)
-			delete(diffSyntax.done, oldest)
+			diffSyntax.bytes -= 2 * oldest.size
+			delete(diffSyntax.done, oldest.key)
 		}
 		diffSyntax.mu.Unlock()
 	}
@@ -133,8 +142,4 @@ func runDiffSyntax() {
 
 // DiffSyntaxBusy reports whether background diff lexing is in progress, so a
 // transcript keeps repainting until its rows have their colors.
-func DiffSyntaxBusy() bool {
-	diffSyntax.mu.Lock()
-	defer diffSyntax.mu.Unlock()
-	return diffSyntax.running
-}
+func DiffSyntaxBusy() bool { return diffSyntax.running.Load() }

@@ -51,7 +51,8 @@ func receiptFilePermissions(path string, _ os.FileInfo) error {
 			return errors.New("receipt file has an unsupported Windows access-control entry")
 		}
 		sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
-		if ace.Mask != 0 && !trusted(sid) {
+		// OWNER RIGHTS (S-1-3-4) refers to the already verified object owner, not another account.
+		if ace.Mask != 0 && !trusted(sid) && !sid.IsWellKnown(windows.WinCreatorOwnerRightsSid) {
 			return fmt.Errorf("receipt file grants access to another Windows identity: %s", sid.String())
 		}
 	}

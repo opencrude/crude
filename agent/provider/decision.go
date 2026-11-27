@@ -104,7 +104,7 @@ func (p *Provider) Decide(ctx context.Context, state string, questions map[strin
 	c.hc = &hc
 	ctx, cancel := c.withTimeout(ctx)
 	defer cancel()
-	resp, err := c.do(ctx, http.MethodPost, decisionURL(c.base, path), body)
+	resp, err := c.modelPost(ctx, decisionURL(c.base, path), body)
 	if err != nil {
 		return nil, err
 	}

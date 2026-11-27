@@ -146,11 +146,11 @@ func TestWorkspaceJanitorReconcilesTerminalPinsAndCleansAnotherParentsWork(t *te
 	if reviewed.Fault != nil {
 		t.Fatal(reviewed.Fault)
 	}
-	var plan worktree.PlanDelta
-	if err := json.Unmarshal(reviewed.Output, &plan); err != nil || plan.DiscardDigest == "" {
+	var review executionReview
+	if err := json.Unmarshal(reviewed.Output, &review); err != nil || review.Plan.DiscardDigest == "" {
 		t.Fatal("missing discard review", err)
 	}
-	if got := call("execution.cleanup", map[string]any{"id": c.ID, "discard": true, "digest": plan.DiscardDigest}); got.Fault != nil {
+	if got := call("execution.cleanup", map[string]any{"id": c.ID, "discard": true, "digest": review.Plan.DiscardDigest}); got.Fault != nil {
 		t.Fatal(got.Fault)
 	}
 	if _, err := os.Stat(c.Root); !os.IsNotExist(err) {

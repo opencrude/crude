@@ -18,14 +18,17 @@ const (
 )
 
 type CompactionRecord struct {
-	OperationID     string
-	SessionID       string
-	AgentID         string
-	Trigger         string
-	Role            string
-	ProviderID      string
-	AccountID       string
-	ModelID         string
+	OperationID string
+	SessionID   string
+	AgentID     string
+	Trigger     string
+	Role        string
+	ProviderID  string
+	AccountID   string
+	ModelID     string
+	// Writer is who wrote the checkpoint: "native", "errand", "model", or
+	// empty for a checkpoint saved before writers were recorded.
+	Writer          string
 	State           string
 	StageName       string
 	StageIndex      int
@@ -80,7 +83,7 @@ func SaveCompactionRecord(db *sql.DB, record CompactionRecord) error {
 		record.OperationID, record.SessionID, record.AgentID, record.Trigger, record.Role, record.ProviderID, record.AccountID, record.ModelID,
 		record.State, record.StageName, record.StageIndex, record.CompletedStages, record.StageCount,
 		record.RetryAttempt, record.RetryLimit, record.BeforeTokens, record.AfterTokens,
-		record.ContextWindow, record.Error, record.StartedAt.UnixNano(), record.UpdatedAt.UnixNano(), ended,
+		record.ContextWindow, record.Error, record.StartedAt.UnixNano(), record.UpdatedAt.UnixNano(), ended, record.Writer,
 	)
 	return err
 }
@@ -119,7 +122,7 @@ func saveCompactionRecordTx(tx *sql.Tx, record CompactionRecord) error {
 		record.Trigger, record.Role, record.ProviderID, record.AccountID, record.ModelID, record.State,
 		record.StageName, record.StageIndex, record.CompletedStages, record.StageCount, record.RetryAttempt,
 		record.RetryLimit, record.BeforeTokens, record.AfterTokens, record.ContextWindow, record.Error,
-		record.StartedAt.UnixNano(), record.UpdatedAt.UnixNano(), ended)
+		record.StartedAt.UnixNano(), record.UpdatedAt.UnixNano(), ended, record.Writer)
 	return err
 }
 
@@ -128,12 +131,13 @@ const compactionUpsertSQL = `
 		operation_id, session_id, agent_id, trigger_kind, agent_role, provider_id, account_id, model_id, state,
 		stage_name, stage_index, completed_stages, stage_count, retry_attempt,
 		retry_limit, before_tokens, after_tokens, context_window, error_text,
-		started_at, updated_at, ended_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		started_at, updated_at, ended_at, writer
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(operation_id) DO UPDATE SET
 		provider_id = CASE WHEN excluded.provider_id != '' THEN excluded.provider_id ELSE context_compactions.provider_id END,
 		account_id = CASE WHEN excluded.account_id != '' THEN excluded.account_id ELSE context_compactions.account_id END,
 		model_id = CASE WHEN excluded.model_id != '' THEN excluded.model_id ELSE context_compactions.model_id END,
+		writer = CASE WHEN excluded.writer != '' THEN excluded.writer ELSE context_compactions.writer END,
 		state = excluded.state,
 		stage_name = excluded.stage_name,
 		stage_index = excluded.stage_index,
@@ -156,7 +160,7 @@ func ListCompactionRecords(db *sql.DB, sessionID, agentID string) ([]CompactionR
 		SELECT operation_id, session_id, agent_id, trigger_kind, agent_role, provider_id, account_id, model_id, state,
 		       stage_name, stage_index, completed_stages, stage_count, retry_attempt,
 		       retry_limit, before_tokens, after_tokens, context_window, error_text,
-		       started_at, updated_at, ended_at
+		       started_at, updated_at, ended_at, writer
 		FROM context_compactions
 		WHERE session_id = ? AND (? = '' OR agent_id = ?)
 		ORDER BY started_at, operation_id`, sessionID, agentID, agentID)
@@ -173,7 +177,7 @@ func ListCompactionRecords(db *sql.DB, sessionID, agentID string) ([]CompactionR
 			&record.OperationID, &record.SessionID, &record.AgentID, &record.Trigger, &record.Role, &record.ProviderID, &record.AccountID, &record.ModelID, &record.State,
 			&record.StageName, &record.StageIndex, &record.CompletedStages, &record.StageCount, &record.RetryAttempt,
 			&record.RetryLimit, &record.BeforeTokens, &record.AfterTokens, &record.ContextWindow, &record.Error,
-			&started, &updated, &ended,
+			&started, &updated, &ended, &record.Writer,
 		); err != nil {
 			return nil, err
 		}

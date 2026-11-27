@@ -79,11 +79,10 @@ func (s *Store) recoverPlanIndex() error {
 	return nil
 }
 
-func migrateMetadata(db *sql.DB) error {
-	_, err := db.Exec(`
-PRAGMA journal_mode=WAL;
-PRAGMA journal_size_limit=67108864;
-PRAGMA foreign_keys=ON;
+// metadataSchema is the current Local History metadata. A new store gets it
+// with its format version in one transaction; an existing store must already
+// have the current format version (see Format).
+const metadataSchema = `
 CREATE TABLE IF NOT EXISTS history_snapshots (
   snapshot_id TEXT PRIMARY KEY,
   parent_snapshot_id TEXT NOT NULL DEFAULT '',
@@ -199,59 +198,38 @@ CREATE TABLE IF NOT EXISTS history_retention_runs (
   removed_snapshots INTEGER NOT NULL,
   removed_objects INTEGER NOT NULL,
   freed_bytes INTEGER NOT NULL
-);`)
-	if err != nil {
-		return fmt.Errorf("localhistory: migrate metadata: %w", err)
+);`
+
+func migrateMetadata(db *sql.DB) error {
+	if _, err := db.Exec(`PRAGMA journal_mode=WAL; PRAGMA journal_size_limit=67108864; PRAGMA foreign_keys=ON;`); err != nil {
+		return fmt.Errorf("localhistory: configure metadata: %w", err)
 	}
-	for _, column := range []struct{ table, name, ddl string }{
-		{"history_agent_operations", "status", "TEXT NOT NULL DEFAULT 'prepared'"},
-		{"history_restore_plans", "session_id", "TEXT NOT NULL DEFAULT ''"},
-		{"history_restore_plans", "message_id", "TEXT NOT NULL DEFAULT ''"},
-		{"history_restore_plans", "agent_id", "TEXT NOT NULL DEFAULT ''"},
-		{"history_restore_events", "session_id", "TEXT NOT NULL DEFAULT ''"},
-		{"history_restore_events", "message_id", "TEXT NOT NULL DEFAULT ''"},
-		{"history_restore_events", "agent_id", "TEXT NOT NULL DEFAULT ''"},
-		{"history_restore_events", "notified", "INTEGER NOT NULL DEFAULT 0"},
-		{"history_restore_transactions", "applied_entries", "TEXT NOT NULL DEFAULT '{}'"},
-	} {
-		if err := ensureMetadataColumn(db, column.table, column.name, column.ddl); err != nil {
-			return err
+	ctx := context.Background()
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("localhistory: check metadata format: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	fresh, err := Format.Require(ctx, tx)
+	if err != nil {
+		return fmt.Errorf("localhistory: %w", err)
+	}
+	if fresh {
+		if _, err := tx.ExecContext(ctx, metadataSchema); err != nil {
+			return fmt.Errorf("localhistory: create metadata: %w", err)
 		}
+		if err := Format.Stamp(ctx, tx); err != nil {
+			return fmt.Errorf("localhistory: record metadata format: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("localhistory: create metadata: %w", err)
 	}
 	_, err = db.Exec(`UPDATE history_snapshots SET kind='startup_reconcile',label='Startup reconciliation' WHERE kind='baseline' AND snapshot_id<>(SELECT snapshot_id FROM history_snapshots WHERE kind='baseline' ORDER BY created_at ASC,rowid ASC LIMIT 1)`)
 	if err != nil {
 		return fmt.Errorf("localhistory: normalize baselines: %w", err)
 	}
 	return nil
-}
-
-func ensureMetadataColumn(db *sql.DB, table, name, ddl string) error {
-	rows, err := db.Query(`PRAGMA table_info(` + table + `)`)
-	if err != nil {
-		return err
-	}
-	found := false
-	for rows.Next() {
-		var cid int
-		var column, typ string
-		var notnull, pk int
-		var dflt any
-		if err := rows.Scan(&cid, &column, &typ, &notnull, &dflt, &pk); err != nil {
-			rows.Close()
-			return err
-		}
-		if column == name {
-			found = true
-		}
-	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
-	if found {
-		return nil
-	}
-	_, err = db.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + name + ` ` + ddl)
-	return err
 }
 
 // recordSnapshot indexes a saved manifest. The content-addressed manifest is

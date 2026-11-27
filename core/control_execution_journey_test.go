@@ -232,12 +232,12 @@ func TestControlExecutionConnectedSelectionAndChildIntegration(t *testing.T) {
 		if err != nil || !run.State.Terminal() || len(child.Pins) != 0 {
 			t.Fatal("child not settled", run, err, child.Pins)
 		}
-		var plan worktree.PlanDelta
-		if err := json.Unmarshal(parentCall("execution.review", child.ID, map[string]any{"id": child.ID}).Output, &plan); err != nil {
+		var review executionReview
+		if err := json.Unmarshal(parentCall("execution.review", child.ID, map[string]any{"id": child.ID}).Output, &review); err != nil {
 			t.Fatal(err)
 		}
 		var receipt worktree.Receipt
-		if err := json.Unmarshal(parentCall("execution.apply", child.ID, map[string]any{"plan": plan}).Output, &receipt); err != nil {
+		if err := json.Unmarshal(parentCall("execution.apply", child.ID, map[string]any{"plan": review.Plan}).Output, &receipt); err != nil {
 			t.Fatal(err)
 		}
 		accepted, err := ws.LiveDocuments.Snapshot(snap.ID)

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 	"unicode/utf8"
 
 	rootprompt "crude/agent/prompt"
@@ -154,73 +153,6 @@ func TestDuplicateSuggestionsNeverRetireAutomatically(t *testing.T) {
 	}
 	if active != 2 {
 		t.Fatalf("suggestions silently changed records: active = %d", active)
-	}
-}
-
-func TestEnforceCapArchivesLowestValue(t *testing.T) {
-	st := openTestStore(t)
-	ctx := context.Background()
-	titles := []string{"One", "Two", "Three", "Four"}
-	for i, title := range titles {
-		if _, err := st.Remember(ctx, Record{
-			Kind: KindFact, Title: title, Content: "Content " + title,
-			Importance: 10 + i*20,
-		}); err != nil {
-			t.Fatalf("Remember %s: %v", title, err)
-		}
-	}
-	archived, err := st.EnforceCap(ctx, 2)
-	if err != nil {
-		t.Fatalf("EnforceCap: %v", err)
-	}
-	if archived != 2 {
-		t.Fatalf("archived = %d, want 2", archived)
-	}
-	active, err := st.CountByStatus(ctx, StatusActive)
-	if err != nil {
-		t.Fatalf("CountByStatus: %v", err)
-	}
-	if active != 2 {
-		t.Fatalf("active = %d, want 2", active)
-	}
-}
-
-func TestDecayArchiveOnlyTouchesUnusedAutoRecords(t *testing.T) {
-	st := openTestStore(t)
-	ctx := context.Background()
-	old := time.Now().Add(-90 * 24 * time.Hour).UnixNano()
-	stale, err := st.Remember(ctx, Record{
-		Kind: KindFact, Title: "Stale", Content: "Old auto fact.",
-		Source: SourceAuto, CreatedAt: old,
-		Evidence: userEvidence(t, st, "old-session"),
-	})
-	if err != nil {
-		t.Fatalf("Remember: %v", err)
-	}
-	// Force timestamps into the past (Remember sets updated_at=now).
-	if _, err := st.db.ExecContext(ctx,
-		`UPDATE workspace_memories SET updated_at = ?, created_at = ? WHERE id = ?`,
-		old, old, stale.ID); err != nil {
-		t.Fatalf("age record: %v", err)
-	}
-	if _, err := st.Remember(ctx, Record{
-		Kind: KindFact, Title: "Fresh", Content: "Recent tool fact.", Source: SourceTool,
-	}); err != nil {
-		t.Fatalf("Remember fresh: %v", err)
-	}
-	archived, err := st.DecayArchive(ctx, 45*24*time.Hour)
-	if err != nil {
-		t.Fatalf("DecayArchive: %v", err)
-	}
-	if archived != 1 {
-		t.Fatalf("archived = %d, want 1", archived)
-	}
-	got, err := st.Get(ctx, stale.ID)
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if got.Status != StatusArchived {
-		t.Fatalf("stale record status = %q", got.Status)
 	}
 }
 

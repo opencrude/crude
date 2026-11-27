@@ -231,18 +231,22 @@ func (e *Editor) applyCommentLines(groups []selectedLines, selections []selectio
 		body     string
 		wrapped  bool
 	}
-	var lines []commentLine
+	var lines, blanks []commentLine
 	all := true
 	for _, g := range groups {
 		for line := g.first; line <= g.last; line++ {
 			raw := e.LineText(line)
 			head := len(leadingWhitespace(raw))
 			tail := len(strings.TrimRight(raw, " \t"))
+			off := e.buf.positionToOffset(Position{Line: line})
 			if tail <= head {
+				blanks = append(blanks, commentLine{at: off + head, tail: off + head})
 				continue
 			}
-			off := e.buf.positionToOffset(Position{Line: line})
 			body := raw[head:tail]
+			if prefix != "" && strings.HasPrefix(raw[head:], prefix+" ") {
+				body = raw[head:] // "// " on an empty line removes its space too.
+			}
 			wrapped := strings.HasPrefix(body, prefix)
 			if prefix == "" {
 				wrapped = len(body) >= len(start)+len(end) && strings.HasPrefix(body, start) && strings.HasSuffix(body, end)
@@ -253,6 +257,11 @@ func (e *Editor) applyCommentLines(groups []selectedLines, selections []selectio
 			lines = append(lines, commentLine{off + head, off + tail, body, wrapped})
 			all = all && wrapped
 		}
+	}
+	// Blank lines between code stay blank. When only blank lines are selected,
+	// as with a caret on an empty line, they are what the user comments.
+	if len(lines) == 0 {
+		lines, all = blanks, false
 	}
 	var edits []document.Edit
 	heads := map[int]int{}
@@ -279,6 +288,10 @@ func (e *Editor) applyCommentLines(groups []selectedLines, selections []selectio
 				tail = " " + tail
 			}
 			edits = append(edits, document.Edit{Start: line.at, End: line.at + len(head)}, document.Edit{Start: line.tail - len(tail), End: line.tail})
+		} else if line.at == line.tail {
+			// One insertion keeps both delimiters in order on an empty line.
+			edits = append(edits, document.Edit{Start: line.at, End: line.at, Text: start + "  " + end})
+			heads[line.at] = len(start) + 1
 		} else if !line.wrapped {
 			edits = append(edits, document.Edit{Start: line.at, End: line.at, Text: start + " "}, document.Edit{Start: line.tail, End: line.tail, Text: " " + end})
 			heads[line.at] = len(start) + 1

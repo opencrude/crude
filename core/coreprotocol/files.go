@@ -17,6 +17,7 @@ const (
 	FilesDelete            = "files.delete"
 	FilesEdit              = "files.edit"
 	FilesSearch            = "files.search"
+	HistoryAgentReceipts   = "history.agent_receipts"
 	HistoryTimeline        = "history.timeline"
 	HistoryFile            = "history.file"
 	HistoryStats           = "history.stats"
@@ -86,6 +87,15 @@ type FileSearchRequest struct {
 type FileSearchResult struct {
 	Matches []fileio.ProjectSearchMatch `json:"matches"`
 }
+
+// AgentReceiptRequest selects an agent in this session and checkout.
+type AgentReceiptRequest struct {
+	Query localhistory.AgentReceiptQuery
+}
+
+// AgentReceiptResult carries one page or one exact retained diff.
+type AgentReceiptResult struct{ Page localhistory.RunChangePage }
+
 type HistoryListRequest struct {
 	Path  string `json:"path,omitempty"`
 	Limit int    `json:"limit"`

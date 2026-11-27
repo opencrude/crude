@@ -309,10 +309,6 @@ func TestExposureCannotImproveScoreOrPreventDecay(t *testing.T) {
 	if err != nil || len(after) != 1 || after[0].Score > before[0].Score {
 		t.Fatalf("exposure increased rank: before=%+v after=%+v err=%v", before, after, err)
 	}
-	archived, err := store.DecayArchive(t.Context(), 45*24*time.Hour)
-	if err != nil || archived != 1 {
-		t.Fatalf("exposure prevented inactivity archive: %d %v", archived, err)
-	}
 }
 
 func TestConsolidationRejectsStaleAndScopedContradictions(t *testing.T) {

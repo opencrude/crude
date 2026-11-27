@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"crude/internal/gitplatform"
+
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 )
@@ -186,7 +188,7 @@ func gitWriteBlob(ctx context.Context, root, rel, text string, worktreeForm bool
 // corrupt content and are kept for the error text.
 func gitStdout(ctx context.Context, root string, stdin []byte, args ...string) ([]byte, error) {
 	defer observeGit(args, time.Now())
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
+	cmd := exec.CommandContext(ctx, "git", append(append(gitplatform.Args(), "-C", root), args...)...)
 	cmd.WaitDelay = time.Second
 	cmd.Stdin = bytes.NewReader(stdin)
 	stdout := gitBoundedOutput{limit: int(gitComparisonLimit)}

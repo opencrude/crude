@@ -88,7 +88,10 @@ type Agent struct {
 	CompactionTargetTokens int
 	CompactionMaxOutput    int
 	CompactionAgentProfile string
-	AgentID                AgentID
+	// compactionWriter names who writes this agent's checkpoints in the
+	// transcript; empty is the agent's own model.
+	compactionWriter string
+	AgentID          AgentID
 	// RunID is the immutable durable owner of this instance's effects. Never
 	// discover a replacement run from current inventory during tool execution.
 	RunID          string

@@ -43,16 +43,37 @@ func (s *Store) InspectRunChanges(ctx context.Context, agentID string, q RunChan
 	if q.RunID == "" || agentID == "" || q.After < 0 || (q.OperationID == "") != (q.Path == "") || (q.OperationID != "" && q.After != 0) {
 		return out, errors.New("select a run. For a diff, give its exact operation ID and path instead of a cursor")
 	}
+	const joins = ` FROM history_agent_operation_runs r JOIN history_agent_operations o USING(operation_id)
+ JOIN history_agent_operation_paths p USING(operation_id) WHERE r.run_id=? AND o.agent_id=?`
+	return s.receiptPage(ctx, joins, q.RunID, agentID, q, out)
+}
+
+// AgentReceiptQuery selects retained changes by author, independent of the last turn or undo eligibility.
+type AgentReceiptQuery struct {
+	SessionID, AgentID string
+	After              int64
+	OperationID, Path  string
+}
+
+// AgentReceipts reads committed before/after evidence, not an inverse of the current working tree.
+func (s *Store) AgentReceipts(ctx context.Context, q AgentReceiptQuery) (RunChangePage, error) {
+	out := RunChangePage{Coverage: "Direct file edits in this checkout. Shell commands and external tools are not attributed."}
+	if q.SessionID == "" || q.AgentID == "" || q.After < 0 || (q.OperationID == "") != (q.Path == "") || (q.After != 0 && q.Path != "") {
+		return out, errors.New("select an agent and a session")
+	}
+	const joins = ` FROM history_agent_operations o JOIN history_agent_operation_paths p USING(operation_id) WHERE o.session_id=? AND o.agent_id=? AND o.status='committed'`
+	return s.receiptPage(ctx, joins, q.SessionID, q.AgentID, RunChangeQuery{After: q.After, OperationID: q.OperationID, Path: q.Path}, out)
+}
+
+func (s *Store) receiptPage(ctx context.Context, joins, scope, agentID string, q RunChangeQuery, out RunChangePage) (RunChangePage, error) {
 	if err := s.beginOperation(); err != nil {
 		return out, err
 	}
 	defer s.endOperation()
-	const joins = ` FROM history_agent_operation_runs r JOIN history_agent_operations o USING(operation_id)
-	 JOIN history_agent_operation_paths p USING(operation_id) WHERE r.run_id=? AND o.agent_id=?`
 	if q.OperationID != "" {
 		var c RunChange
 		var before, after string
-		err := s.db.QueryRowContext(ctx, `SELECT o.operation_id,p.path,o.source,o.status,o.created_at,p.before_entry,p.after_entry`+joins+` AND o.operation_id=? AND p.path=?`, q.RunID, agentID, q.OperationID, q.Path).
+		err := s.db.QueryRowContext(ctx, `SELECT o.operation_id,p.path,o.source,o.status,o.created_at,p.before_entry,p.after_entry`+joins+` AND o.operation_id=? AND p.path=?`, scope, agentID, q.OperationID, q.Path).
 			Scan(&c.OperationID, &c.Path, &c.Source, &c.State, &c.CreatedAt, &before, &after)
 		if errors.Is(err, sql.ErrNoRows) {
 			return out, errors.New("this file receipt is unavailable for the selected run")
@@ -69,7 +90,7 @@ func (s *Store) InspectRunChanges(ctx context.Context, agentID string, q RunChan
 		return out, nil
 	}
 	const limit = 8
-	rows, err := s.db.QueryContext(ctx, `SELECT p.rowid,o.operation_id,p.path,o.source,o.status,o.created_at`+joins+` AND p.rowid>? ORDER BY p.rowid LIMIT ?`, q.RunID, agentID, q.After, limit+1)
+	rows, err := s.db.QueryContext(ctx, `SELECT p.rowid,o.operation_id,p.path,o.source,o.status,o.created_at`+joins+` AND p.rowid>? ORDER BY p.rowid LIMIT ?`, scope, agentID, q.After, limit+1)
 	if err != nil {
 		return out, err
 	}

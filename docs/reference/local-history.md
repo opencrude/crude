@@ -192,6 +192,7 @@ capture does not record a snapshot from a scan shared with other requests.
 - `/undo` always opens preview. Conflicts require an explicit exact choice;
   non-conflicting later text edits may use the all-hunks-applied reverse merge.
   Esc, close, or an empty selection never changes files.
+- **Preview this agent’s changes** lists retained direct edits across the agent’s session, including active and already-undone work. Select an entry to read its recorded diff. Preview does not prepare a restore. Shell and external-tool changes without receipts are not attributed to an agent.
 - Agent undo is operation-scoped, not a message-wide workspace reset. Direct
   file tools durably record exact preimages and intended postimages before the
   first mutation; failure to persist aborts the tool. Watcher-only, editor,

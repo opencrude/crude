@@ -577,6 +577,8 @@ func parseCompactionStatus(phase string, data any) TurnStatus {
 	status.AccountID, _ = values["account_id"].(string)
 	status.ProviderID, _ = values["provider_id"].(string)
 	status.ModelID, _ = values["model_id"].(string)
+	// The checkpoint writer: "native", "errand" or "model".
+	status.Provider, _ = values["writer"].(string)
 	if status.StageCount == 0 {
 		status.StageCount = 4
 	}

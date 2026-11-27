@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"net/http"
 	"strings"
 	"time"
 
@@ -40,7 +39,7 @@ func (x *compactExchange) send(ctx context.Context, path string, body []byte) ([
 	c := x.client
 	ctx, cancel := c.withTimeout(ctx)
 	defer cancel()
-	resp, err := c.do(ctx, http.MethodPost, joinPath(c.base, path), body)
+	resp, err := c.modelPost(ctx, joinPath(c.base, path), body)
 	if err != nil {
 		return nil, err
 	}

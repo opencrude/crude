@@ -44,7 +44,7 @@ func validateOwnerPath(path string, directory bool) error {
 			return errors.New("unsupported core owner access-control entry")
 		}
 		sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
-		if ace.Mask != 0 && !windows.EqualSid(sid, user.User.Sid) && !sid.IsWellKnown(windows.WinLocalSystemSid) && !sid.IsWellKnown(windows.WinBuiltinAdministratorsSid) {
+		if ace.Mask != 0 && !sid.IsWellKnown(windows.WinCreatorOwnerRightsSid) && !windows.EqualSid(sid, user.User.Sid) && !sid.IsWellKnown(windows.WinLocalSystemSid) && !sid.IsWellKnown(windows.WinBuiltinAdministratorsSid) {
 			return errors.New("core owner path grants another Windows identity access: " + path)
 		}
 	}

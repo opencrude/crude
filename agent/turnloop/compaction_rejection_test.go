@@ -36,7 +36,7 @@ func TestRequiredCompactionRateLimitRejectsLastResort(t *testing.T) {
 	commits := 0
 	a.CommitCompaction = func(CompactionCommit) error { commits++; return nil }
 	sim.Script(providersim.HTTPError(providersim.ContextOverflow),
-		providersim.HTTPError(providersim.RateLimit).WithRetryHint(providersim.RetryAfterSeconds(7200)),
+		providersim.HTTPError(providersim.Quota).WithRetryHint(providersim.RetryAfterSeconds(7200)),
 		providersim.HTTPError(providersim.Auth))
 	// Record an unwanted fourth call instead of relying on a simulator error.
 	sim.Respond(func(providersim.Request) providersim.Turn { return providersim.HTTPError(providersim.Auth) })
@@ -142,7 +142,7 @@ func TestRequiredCompactionRateLimitParkReopenAndRetry(t *testing.T) {
 			a.CompactionProvider = nil
 			fault := providersim.HTTPError(providersim.RateLimit)
 			if cause == "quota" {
-				fault = fault.WithRetryHint(providersim.RetryAfterSeconds(7200))
+				fault = providersim.HTTPError(providersim.Quota).WithRetryHint(providersim.RetryAfterSeconds(7200))
 			} else {
 				a.SetHTTPClient(&http.Client{Transport: agentRoundTripFunc(func(r *http.Request) (*http.Response, error) {
 					resp, err := http.DefaultTransport.RoundTrip(r)

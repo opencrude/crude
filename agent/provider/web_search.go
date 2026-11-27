@@ -239,7 +239,7 @@ func (p *Provider) SearchWeb(ctx context.Context, model, query string, limit int
 			sources, err = nil, requestCtx.Err()
 		}
 	}()
-	resp, err := c.do(requestCtx, http.MethodPost, endpoint, body)
+	resp, err := c.modelPost(requestCtx, endpoint, body)
 	if err != nil {
 		if errors.Is(err, errWebSearchAuth) {
 			return nil, errWebSearchAuth

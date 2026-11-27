@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -20,7 +21,10 @@ func TestCompactionWorkStageRecoversReasoningOutputExhaustion(t *testing.T) {
 	var workInputs []int
 	var truncated atomic.Int32
 	server := providersim.New(t, providersim.WithChatGateway("cmd/deepseek/deepseek-v4-flash", providersim.DeepSeek))
+	var observations sync.Mutex
 	server.Respond(func(r providersim.Request) providersim.Turn {
+		observations.Lock()
+		defer observations.Unlock()
 		var body map[string]json.RawMessage
 		if err := json.Unmarshal(r.Raw, &body); err != nil {
 			t.Error(err)
@@ -76,7 +80,10 @@ func TestCompactionWorkStageRecoversReasoningOutputExhaustion(t *testing.T) {
 func TestCompactionPreservesConfiguredModelOutputCap(t *testing.T) {
 	var caps []int
 	server := providersim.New(t)
+	var observations sync.Mutex
 	server.Respond(func(r providersim.Request) providersim.Turn {
+		observations.Lock()
+		defer observations.Unlock()
 		var body struct {
 			MaxTokens int `json:"max_tokens"`
 		}
@@ -108,7 +115,10 @@ func TestCompactionPreservesConfiguredModelOutputCap(t *testing.T) {
 func TestCompactionKeepsConfiguredReasoningForExtractionAndOrdinaryRequests(t *testing.T) {
 	var bodies []map[string]json.RawMessage
 	server := providersim.New(t)
+	var observations sync.Mutex
 	server.Respond(func(r providersim.Request) providersim.Turn {
+		observations.Lock()
+		defer observations.Unlock()
 		var body map[string]json.RawMessage
 		if err := json.Unmarshal(r.Raw, &body); err != nil {
 			t.Error(err)
@@ -143,7 +153,10 @@ func TestCompactionKeepsConfiguredReasoningForExtractionAndOrdinaryRequests(t *t
 func TestCompactionContextTruncationReplansInsteadOfRepeatingTheSameRequest(t *testing.T) {
 	var requests []int
 	server := providersim.New(t)
+	var observations sync.Mutex
 	server.Respond(func(r providersim.Request) providersim.Turn {
+		observations.Lock()
+		defer observations.Unlock()
 		body := canonicalChatRequest(t, r)
 		requests = append(requests, provider.EstimateMessagesTotal(body.Messages, body.Model))
 		if requests[len(requests)-1] > 10_000 {
@@ -167,7 +180,10 @@ func TestCompactionContextTruncationReplansInsteadOfRepeatingTheSameRequest(t *t
 func TestCompactionWithVeryLargeRealRequestKeepsContextWithinWindow(t *testing.T) {
 	var capacities []struct{ input, output int }
 	server := providersim.New(t)
+	var observations sync.Mutex
 	server.Respond(func(r providersim.Request) providersim.Turn {
+		observations.Lock()
+		defer observations.Unlock()
 		body := canonicalChatRequest(t, r)
 		capacities = append(capacities, struct{ input, output int }{
 			input:  provider.EstimateMessagesTotal(body.Messages, body.Model),
@@ -227,7 +243,10 @@ func TestCompactionRefinesOnlyOversizedSuccessfulCheckpointText(t *testing.T) {
 func TestCompactionUsesFullRemainingGenerationCapacityWithReasoning(t *testing.T) {
 	var capturedInput, capturedOutput int
 	server := providersim.New(t)
+	var observations sync.Mutex
 	server.Respond(func(r providersim.Request) providersim.Turn {
+		observations.Lock()
+		defer observations.Unlock()
 		body := canonicalChatRequest(t, r)
 		if capturedOutput == 0 {
 			// The serving model declares the conversation's tools; Crude budgets
@@ -256,7 +275,10 @@ func TestCompactionUsesReportedInputToLeaveRoomForReasoning(t *testing.T) {
 	var measuredInputs []int
 	var outputs []int
 	server := providersim.New(t)
+	var observations sync.Mutex
 	server.Respond(func(r providersim.Request) providersim.Turn {
+		observations.Lock()
+		defer observations.Unlock()
 		body := canonicalChatRequest(t, r)
 		estimated := estimateCanonicalRequest(body.Messages, allToolDefs(), body.Model)
 		measured := estimated * 2
@@ -294,7 +316,10 @@ func TestCompactionLearnsProviderOutputCeilingAcrossSessions(t *testing.T) {
 	var retainedSource bool
 	var firstTools string
 	server := providersim.New(t)
+	var observations sync.Mutex
 	server.Respond(func(r providersim.Request) providersim.Turn {
+		observations.Lock()
+		defer observations.Unlock()
 		limit, err := r.OutputLimit.Int64()
 		if err != nil {
 			t.Error(err)

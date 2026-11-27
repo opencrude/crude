@@ -676,7 +676,7 @@ steps:
 			// context the main model does not hold in cache, takes the
 			// portable path.
 			nativePlanned := a.Provider.NativeCompactionPlanned(a.Model) && requested == "" && ProviderCompactionWorthwhile(a.Provider, a.Model, msgs)
-			serial := nativePlanned || provider.SameConnection(compactionConnection, a.Provider) && provider.ConcurrencyRefused(compactionConnection, compactionModel)
+			serial := nativePlanned || provider.SerializesWith(compactionConnection, a.Provider)
 			deferCompaction := func(at int) bool {
 				if overflowPressure || activeTokens >= hardLimit {
 					return false
@@ -722,13 +722,13 @@ steps:
 				}
 				stageCount := len(rootprompt.CompactionStages())
 				commitData := compactionEventData(requestID, trigger, role, stageCount, stageCount, activeTokens, after, ctxWindow)
-				commitData["account_id"], commitData["provider_id"], commitData["model_id"] = outcome.AccountID, outcome.ProviderID, outcome.ModelID
+				commitData["account_id"], commitData["provider_id"], commitData["model_id"], commitData["writer"] = outcome.AccountID, outcome.ProviderID, outcome.ModelID, outcome.Writer
 				emit(AgentEvent{Type: "context_compaction_committing", Data: commitData})
 				if a.CommitCompaction != nil {
 					if err := a.CommitCompaction(CompactionCommit{
 						Messages: compacted, BeforeTokens: activeTokens, AfterTokens: after,
 						ContextWindow: ctxWindow, RequestID: requestID, Trigger: trigger, Role: role,
-						AccountID: outcome.AccountID, ProviderID: outcome.ProviderID, ModelID: outcome.ModelID,
+						AccountID: outcome.AccountID, ProviderID: outcome.ProviderID, ModelID: outcome.ModelID, Writer: outcome.Writer,
 					}); err != nil {
 						commitData["error"] = compactErrorText(err)
 						emit(AgentEvent{Type: "context_compaction_failed", Data: commitData})
@@ -904,7 +904,7 @@ steps:
 					}
 					var storage *compactionStorageError
 					data := compactionEventData(requestID, trigger, role, outcome.StageIndex, outcome.Completed, activeTokens, 0, ctxWindow)
-					data["account_id"], data["provider_id"], data["model_id"] = outcome.AccountID, outcome.ProviderID, outcome.ModelID
+					data["account_id"], data["provider_id"], data["model_id"], data["writer"] = outcome.AccountID, outcome.ProviderID, outcome.ModelID, outcome.Writer
 					data["stage_label"], data["retry"], data["error"] = outcome.StageName, outcome.RetryAttempt, compactErrorText(compactErr)
 					if ctx.Err() != nil {
 						clearUnsentRuntimeNotices()

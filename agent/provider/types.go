@@ -594,11 +594,12 @@ type CompletionResponse struct {
 // APIError is a structured error received inside a successful HTTP response
 // or an SSE stream.
 type APIError struct {
-	Type    string
-	Code    string
-	Message string
-	Param   string
-	details googleErrorFacts
+	capacityAdjusted bool
+	Type             string
+	Code             string
+	Message          string
+	Param            string
+	details          googleErrorFacts
 }
 
 func (e *APIError) codes() string {

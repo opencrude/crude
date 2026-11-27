@@ -561,6 +561,44 @@ func TestToggleComment_SkipsBlankLines(t *testing.T) {
 	assert.Equal(t, "// aa\n\n// bb", e.Value())
 }
 
+// A tester pressed Ctrl+/ on an empty line and nothing happened, while the
+// same key worked on a line with text. A caret on a blank line comments that
+// line, and a second press restores the original text and caret.
+func TestToggleComment_EmptyLineCommentsAndUncomments(t *testing.T) {
+	toggle := tea.KeyPressMsg{Code: '/', Mod: tea.ModCtrl}
+	for _, tc := range []struct {
+		name, file, before, after string
+		setup                     func(*Editor)
+		col                       int
+	}{
+		{"empty line", "test.go", "a\n\nb", "a\n// \nb", func(e *Editor) { e.SetCursorPosition(1, 0) }, 3},
+		{"indented blank line", "test.go", "\tif x {\n\t\n\t}", "\tif x {\n\t// \n\t}", func(e *Editor) { e.SetCursorPosition(1, 4) }, 7},
+		{"empty file", "test.py", "", "# ", func(e *Editor) {}, 2},
+		{"block comment language", "site.css", "a{}\n\n", "a{}\n/*  */\n", func(e *Editor) { e.SetCursorPosition(1, 0) }, 3},
+		{"only blank lines selected", "test.go", "a\n\n\nb", "a\n// \n// \nb", func(e *Editor) { selectRange(e, 1, 0, 3, 0) }, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := opsEditor(t, tc.file, tc.before)
+			tc.setup(e)
+			line, col := e.cursor.Line, e.CursorCol()
+			press(e, toggle)
+			assert.Equal(t, tc.after, e.Value())
+			if !e.HasSelection() {
+				assert.Equal(t, tc.col, e.CursorCol(), "the caret follows the inserted comment")
+			}
+			press(e, toggle)
+			assert.Equal(t, tc.before, e.Value(), "a second press uncomments")
+			assert.Equal(t, line, e.cursor.Line)
+			if !e.HasSelection() {
+				assert.Equal(t, col, e.CursorCol())
+			}
+			press(e, toggle)
+			e.Undo()
+			assert.Equal(t, tc.before, e.Value(), "one undo step")
+		})
+	}
+}
+
 func TestToggleComment_UncommentWithoutSpace(t *testing.T) {
 	e := opsEditor(t, "test.go", "//foo()")
 	press(e, tea.KeyPressMsg{Code: '/', Mod: tea.ModCtrl})

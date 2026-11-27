@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"crude/workspace/localhistory"
 	"fmt"
 	"strings"
 
@@ -480,6 +481,8 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 		}
 		m.persistComposerDraftIfChanged()
 		return nil
+	case historyscreen.ActionReceipts:
+		return m.readAgentReceipts(action.Payload.(localhistory.AgentReceiptQuery))
 	case historyscreen.ActionPreview:
 		request, _ := action.Payload.(historyscreen.PreviewRequest)
 		return m.historyPreviewCmd(request)

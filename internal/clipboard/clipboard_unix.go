@@ -97,6 +97,9 @@ func read(t Format) ([]byte, error) {
 	if t != FmtText && t != FmtImage {
 		return nil, errUnsupported
 	}
+	if data, err := nativeRead(t); err == nil {
+		return data, nil
+	}
 	readers, _ := sessionBackends(runtime.GOOS, os.Getenv)
 	for _, b := range readers {
 		commands := [][]string{b.readText}
@@ -157,6 +160,9 @@ func (b backend) reportsEmpty(stderr string) bool {
 func write(t Format, buf []byte) (bool, error) {
 	if t != FmtText {
 		return false, errUnsupported
+	}
+	if err := nativeCopy(buf); err == nil {
+		return true, nil
 	}
 	_, writers := sessionBackends(runtime.GOOS, os.Getenv)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)

@@ -869,6 +869,21 @@ func TestRunChangesUseRetainedPreimagesNotCurrentFile(t *testing.T) {
 	if err != nil || len(proof.Changes) != 1 || !strings.Contains(proof.Changes[0].Diff, "-original") || !strings.Contains(proof.Changes[0].Diff, "+retained this-attempt") || strings.Contains(proof.Changes[0].Diff, "later user edit") {
 		t.Fatalf("diff is not the retained operation: %+v %v", proof, err)
 	}
+	for _, q := range []AgentReceiptQuery{{SessionID: "session", AgentID: "agent"}, {SessionID: "session", AgentID: "agent", OperationID: "this-attempt", Path: "a.txt"}, {SessionID: "session", AgentID: "other"}} {
+		page, err := store.AgentReceipts(t.Context(), q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if q.AgentID == "other" {
+			if len(page.Changes) != 0 {
+				t.Fatal("cross-agent receipt")
+			}
+			continue
+		}
+		if len(page.Changes) != 1 || page.Changes[0].OperationID != "this-attempt" || q.Path != "" && !strings.Contains(page.Changes[0].Diff, "+retained this-attempt") {
+			t.Fatal(page)
+		}
+	}
 	q.RunID = "run-b"
 	if _, err := store.InspectRunChanges(t.Context(), "agent", q); err == nil {
 		t.Fatal("attempt B could substitute attempt A's diff")

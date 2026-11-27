@@ -1047,7 +1047,7 @@ func (m *App) buildChatContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 					active := agentID != "" && m.ws.AgentTurnActive(agentID)
 					open := func() { cmd := m.openLocalHistoryForMessage(sessionID, messageID, agentID); m.runDetachedAsyncCmd(cmd) }
 					st.Sections = append(st.Sections, ui.ContextMenuSection{SectionLabel: "Local history", Items: []ui.ContextMenuItem{
-						{Label: "Preview this agent's changes", Disabled: active, Action: open},
+						{Label: "Preview this agent's changes", Action: func() { m.runDetachedAsyncCmd(m.openAgentReceipts(sessionID, agentID)) }},
 						{Label: "Revert this agent's files", Disabled: active, Action: open},
 						{Label: "Open workspace history", Action: func() { m.runDetachedAsyncCmd(m.openLocalHistory()) }},
 					}})

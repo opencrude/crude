@@ -14,7 +14,11 @@ func TestMigrationWaitsForExistingMetadataReaderBeforeEnablingWAL(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer reader.Close()
-	if _, err := reader.Exec(`CREATE TABLE metadata_probe (value TEXT)`); err != nil {
+	// Another process created a current database without WAL and still reads it.
+	if _, err := reader.Exec(schema); err != nil {
+		t.Fatal(err)
+	}
+	if err := Format.Stamp(t.Context(), reader); err != nil {
 		t.Fatal(err)
 	}
 	tx, err := reader.Begin()
@@ -23,7 +27,7 @@ func TestMigrationWaitsForExistingMetadataReaderBeforeEnablingWAL(t *testing.T) 
 	}
 	defer func() { _ = tx.Rollback() }()
 	var count int
-	if err := tx.QueryRow(`SELECT count(*) FROM metadata_probe`).Scan(&count); err != nil {
+	if err := tx.QueryRow(`SELECT count(*) FROM sessions`).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 	writer, err := Open(path)

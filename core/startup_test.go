@@ -42,7 +42,7 @@ func TestStartupNavigationNeverConstructsWorkspace(t *testing.T) {
 	defer c.Close()
 	knownDesktop := testDesktop(t, home)
 	for _, root := range []string{home, knownDesktop, filepath.VolumeName(home) + string(filepath.Separator)} {
-		out := callCore(t, c, "inspect", "", coreprotocol.StartupInspect, coreprotocol.StartupInspectRequest{Root: root})
+		out := callCore(t, c, "inspect", "", coreprotocol.StartupInspect, &coreprotocol.StartupInspectRequest{Root: root})
 		var snapshot coreprotocol.StartupSnapshot
 		if err := coreprotocol.Decode(out.Payload, &snapshot); err != nil {
 			t.Fatal(err)

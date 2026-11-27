@@ -34,6 +34,9 @@ type Hello struct {
 	// SSHRelay can only narrow an OS-authenticated local connection to SSH
 	// authority. A network carrier can never use this to authenticate itself.
 	SSHRelay bool `json:"ssh_relay,omitempty"`
+	// DataUpdate asks only for the progress of the core's data update. It
+	// never starts a session.
+	DataUpdate *DataUpdateRequest `json:"data_update,omitempty"`
 }
 
 type SessionResume struct {
@@ -65,6 +68,9 @@ type Welcome struct {
 	// CoreStartedAt is when this core process started serving. Shells show
 	// it as core uptime; a resume always reaches the same process.
 	CoreStartedAt time.Time `json:"core_started_at"`
+	// DataUpdate is the progress of the core's data update: on a
+	// FaultCoreUpdating refusal and on each message a watcher receives.
+	DataUpdate *DataUpdate `json:"data_update,omitempty"`
 }
 
 // SessionEnd is the core's last message on the control stream: the session

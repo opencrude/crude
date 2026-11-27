@@ -133,7 +133,7 @@ func (m *compactionVisualModel) observePaint() tea.Cmd {
 	if !m.sawSize || m.mainSurf == nil || m.mainSurf.Width() != m.width || m.mainSurf.Height() != m.height || m.focusedPopup() != nil {
 		return nil
 	}
-	settled := paintedCompactionTitle(m.App, "Compacted context (Manual) ")
+	settled := paintedCompactionTitle(m.App, "Compacted context (Manual - Errand) ")
 	if m.revived {
 		if m.phase == "" && settled != "" && paintedCompactionChatContains(m.App, "Queued prompt executed exactly once") {
 			m.settledTitle = settled
@@ -147,7 +147,7 @@ func (m *compactionVisualModel) observePaint() tea.Cmd {
 			return m.mark("ready")
 		}
 	case "ready":
-		if active := paintedCompactionTitle(m.App, "Compacting context (Manual) "); active != "" {
+		if active := paintedCompactionTitle(m.App, "Compacting context (Manual - Errand) "); active != "" {
 			m.activeTitle = active
 			return m.mark("active")
 		}

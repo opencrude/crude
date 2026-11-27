@@ -22,6 +22,26 @@ All staged images are currently retained: Unix unlink success cannot prove that 
 core, helper or concurrent starter no longer needs an image. Disk use can therefore
 grow across builds; there is no automatic liveness-based pruning.
 
+## Saved data update
+
+Before admitting shells, the core surveys session, workspace and Local History databases,
+including deleted workspaces and retained execution history. Unknown, unreadable or
+newer data blocks admission. A shell can follow measured progress or retry after
+freeing space. `DataUpdateBlocked` names the file; it is not a successful partial update.
+Noninteractive clients wait for the same result. If the work finishes before a shell
+connects, only an explicit `TakeDataUpdate` startup inspection consumes the final report.
+
+The updater follows [Chromium’s versioned metadata](https://chromium.googlesource.com/chromium/src/+/main/sql/meta_table.h)
+and [Signal Desktop’s ordered updates](https://github.com/signalapp/Signal-Desktop/tree/main/ts/sql).
+It uses the [SQLite Online Backup API](https://www.sqlite.org/backup.html) to copy committed
+pages into an exclusive destination under `backups/`, not a file copy that could miss WAL data.
+Each database gets a checked backup and one transaction for all steps and its version stamp.
+Local History holds its capture/pruning lock while it verifies manifests and changes the index.
+A restart skips committed files and retries unfinished ones without replacing an older backup.
+To recover an old database, stop the core, keep the current database and its sidecars together,
+and restore the backup to the same relative path in a separate profile with the matching Crude version.
+Keep the associated reference files and Local History objects with that profile.
+
 ## Startup before workspace attachment
 
 The connected core can serve startup without a workspace attachment. Opening the

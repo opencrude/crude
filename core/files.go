@@ -300,6 +300,18 @@ func (a *actor) prepareFilesAtRoot(request coreprotocol.Request, root, execution
 		return work(func(ctx context.Context) (coreprotocol.Value, error) {
 			return wire(runtime.savedWorkspaceActivity(ctx)), ctx.Err()
 		})
+	case coreprotocol.HistoryAgentReceipts:
+		var in coreprotocol.AgentReceiptRequest
+		if err := decodeRequest(request, &in); err != nil {
+			return bad("invalid_request", err.Error())
+		}
+		return work(func(ctx context.Context) (coreprotocol.Value, error) {
+			if store == nil {
+				return nil, errors.New("local history is unavailable")
+			}
+			page, err := store.AgentReceipts(ctx, in.Query)
+			return wire(coreprotocol.AgentReceiptResult{Page: page}), err
+		})
 	case coreprotocol.HistoryTimeline, coreprotocol.HistoryFile:
 		if store == nil {
 			return bad("unavailable", "local history unavailable")

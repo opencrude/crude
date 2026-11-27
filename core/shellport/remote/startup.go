@@ -121,7 +121,7 @@ func (s *StartupClient) Inspect(ctx context.Context, root string) (coreprotocol.
 // InspectLaunch resolves the CLI path on the selected core before attachment.
 func (s *StartupClient) InspectLaunch(ctx context.Context, input coreprotocol.StartupInspectRequest) (coreprotocol.StartupSnapshot, error) {
 	var out coreprotocol.StartupSnapshot
-	err := s.call(ctx, coreprotocol.StartupInspect, input, &out)
+	err := s.call(ctx, coreprotocol.StartupInspect, &input, &out)
 	return out, err
 }
 

@@ -26,11 +26,17 @@ func TestHTTPGatewayRecoveryContinuesBeyondMaximumCooldownForEveryProtocol(t *te
 			t.Run(fmt.Sprintf("%s/child=%t", id, child), func(t *testing.T) {
 				server := providersim.New(t)
 				timeout := providersim.HTTPError(providersim.RequestTimeout).WithRetryHint(providersim.RetryAfterSeconds(86400))
-				server.Script(timeout, timeout, timeout, providersim.Text("finished"))
+				throttle := providersim.HTTPError(providersim.RateLimit).WithRetryHint(providersim.RetryAfterSeconds(86400))
+				server.Script(timeout, throttle, timeout, providersim.Text("finished"))
 				// This gateway reports a timeout as invalid input on every downstream wire.
 				var translations atomic.Int32
 				base := translatingGateway(t, server, fixture.wire, func(resp *http.Response) error {
-					if resp.StatusCode == http.StatusRequestTimeout {
+					switch resp.StatusCode {
+					case http.StatusTooManyRequests:
+						translations.Add(1)
+						_ = resp.Body.Close()
+						gatewayBody(resp, `{"error":{"type":"rate_limit_error","message":"This request would exceed your account's rate limit. Please try again later."}}`)
+					case http.StatusRequestTimeout:
 						translations.Add(1)
 						if err := resp.Body.Close(); err != nil {
 							return err

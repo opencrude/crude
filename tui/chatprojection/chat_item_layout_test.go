@@ -241,14 +241,14 @@ func TestErrorProjectionAligned(t *testing.T) {
 	if !strings.Contains(joined, "Retained error evidence") {
 		t.Fatalf("error continuation missing:\n%s", joined)
 	}
-	// Title and diagnostic continuations use the common tool-row gutter.
+	// The diagnostic hangs under the error edge, inside the transcript gutter.
 	foundCont := false
-	for _, l := range lines {
-		if strings.HasPrefix(l, "│   ") {
+	for _, l := range lines[1:] {
+		if strings.HasPrefix(l, "│ ▎ ") {
 			foundCont = true
 		}
 	}
 	if !foundCont {
-		t.Fatalf("continuation lines should be indented with hanging indent:\n%s", joined)
+		t.Fatalf("continuation lines should hang under the error edge:\n%s", joined)
 	}
 }

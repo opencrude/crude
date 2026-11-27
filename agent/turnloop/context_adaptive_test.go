@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -19,7 +20,10 @@ func TestCompactOversizedHistoryWithSmallerExtractionModel(t *testing.T) {
 	var calls atomic.Int32
 	var requests []provider.ChatRequest
 	server := providersim.New(t)
+	var observations sync.Mutex
 	server.Respond(func(r providersim.Request) providersim.Turn {
+		observations.Lock()
+		defer observations.Unlock()
 		body := canonicalChatRequest(t, r)
 		requests = append(requests, body)
 		input := estimateCanonicalRequest(body.Messages, body.Tools, body.Model)
@@ -277,14 +281,24 @@ func TestCompactionRejectsTruncatedStageAndPermanentFailures(t *testing.T) {
 func TestChunkedCompactionCancellationPreservesSource(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	// The parts are read at the same time. The first answer cancels the
+	// compaction; every other part waits for that and answers late. No part
+	// may be sent twice and nothing may be installed.
 	var calls atomic.Int32
+	var mu sync.Mutex
+	seen := map[string]int{}
 	server := providersim.New(t)
 	server.Respond(func(r providersim.Request) providersim.Turn {
-		if calls.Add(1) == 2 {
+		call := calls.Add(1)
+		mu.Lock()
+		seen[conversationText(r.Conversation)]++
+		mu.Unlock()
+		if call == 1 {
 			cancel()
 			return providersim.Turn{}
 		}
-		return providersim.Text("- first chunk: extracted")
+		<-ctx.Done()
+		return providersim.Text("- late part: extracted")
 	})
 	connection := provider.FromPreset("openai-chat", "key", server.BaseURL(providersim.Chat))
 	connection.Model = "adaptive-chunk-cancel"
@@ -296,9 +310,16 @@ func TestChunkedCompactionCancellationPreservesSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, err := agent.Compact(ctx, history, "system", nil)
-	if !errors.Is(err, context.Canceled) || len(result.Messages) != 0 || calls.Load() != 2 {
-		t.Fatalf("cancelled extraction retried or installed: result=%+v err=%v calls=%d", result, err, calls.Load())
+	if !errors.Is(err, context.Canceled) || len(result.Messages) != 0 {
+		t.Fatalf("cancelled extraction installed: result=%+v err=%v calls=%d", result, err, calls.Load())
 	}
+	mu.Lock()
+	for _, sent := range seen {
+		if sent != 1 {
+			t.Errorf("a part was sent %d times after the compaction was cancelled", sent)
+		}
+	}
+	mu.Unlock()
 	unchanged, err := json.Marshal(history)
 	if err != nil || string(unchanged) != string(original) {
 		t.Fatal("cancelled chunk extraction altered source")

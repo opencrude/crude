@@ -41,15 +41,16 @@ import (
 type Factory func(root string) (*workspace.Workspace, error)
 
 type Runtime struct {
-	mu         sync.Mutex
-	workspaces map[string]*actor
-	clients    map[string]*Connection
-	epochs     map[string]uint64
-	factory    Factory
-	receipts   *receiptJournal
-	closed     bool
-	creating   map[string]*workspaceCreation
-	factoryWG  sync.WaitGroup
+	pendingDataUpdate atomic.Pointer[coreprotocol.DataUpdate]
+	mu                sync.Mutex
+	workspaces        map[string]*actor
+	clients           map[string]*Connection
+	epochs            map[string]uint64
+	factory           Factory
+	receipts          *receiptJournal
+	closed            bool
+	creating          map[string]*workspaceCreation
+	factoryWG         sync.WaitGroup
 	// One admission authority spans every workspace and retained generation.
 	analysisGovernor *governor.Governor
 	// tools is the one tool store of this core, opened with the first
@@ -696,6 +697,8 @@ type actor struct {
 	presence         map[coreprotocol.Owner]shellPresence // attached shells' reports; see presence.go
 	topic            workspaceTopicState
 	states           workspaceStates
+	// executionReviews keeps the latest review of each execution for paging.
+	executionReviews executionReviewCache
 }
 
 type actorCommand struct {

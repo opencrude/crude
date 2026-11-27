@@ -10,10 +10,14 @@ import (
 	"os"
 
 	"crude/app"
+	"crude/internal/clipboard"
 	"crude/internal/console"
 )
 
 func main() {
+	if code, ok := clipboard.RunHelper(os.Args[1:]); ok {
+		os.Exit(code)
+	}
 	// Suppress slog globally: powernap uses slog.Default() which writes to
 	// os.Stderr and would corrupt the Bubble Tea TUI.
 	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))

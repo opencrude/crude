@@ -1584,6 +1584,7 @@ func (r *SubAgentRunner) runSubAgentLoop(
 		data["provider_id"] = commit.ProviderID
 		data["account_id"] = commit.AccountID
 		data["model_id"] = commit.ModelID
+		data["writer"] = commit.Writer
 		record := compactionRecordFromData(handle.SessionID, string(handle.Spec.ID), sessiondb.CompactionCompleted, data)
 		state, err := sessiondb.PublishContext(handle.DB, sessiondb.ContextPublication{
 			SessionID: handle.SessionID, AgentID: string(handle.Spec.ID), RuntimeAgentID: string(handle.Spec.ID), ExpectedRevision: recoveryState.contextRevisionValue(),

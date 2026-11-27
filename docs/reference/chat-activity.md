@@ -478,15 +478,17 @@ boundaries and cancelled recovery notices remain canonical evidence but are
 excluded before grouping, spacers and height calculation. Internal
 actor generations still include stopped/unbilled work for cancellation and
 recovery, but are not the displayed successful-call count.
-**Manual and automatic compaction use the same ordinary tool row.** An idle
-`/compact` and a request accepted mid-turn both show **(Manual)**. An automatic,
-background-prepared, end-of-work or recorded decay checkpoint shows **(Auto)**.
-The action, operand, marker and optional disclosure use the normal tool title.
-For example: `Compacting context (Manual) 420K · Capturing state`. A completed
-row shows the token result; a failed or stopped row shows its own outcome. There
-is no extra assistant header, progress grid, or border for manual compaction.
-The live event and the restored operation record supply the same trigger and
-state to the same renderer. Opening settled details shows the retained evidence.
+**Manual and automatic compaction use the same ordinary tool row.** The row names the trigger and actual writer, for example
+`Compacting context (Auto - Errand) 420K · Read 50%` or
+`Compacted context (Manual - Native)`. The live detail says compactly what
+happens now: `Preparing`, the measured fraction of parts read, or the current
+merge, writing or saving phase. Errand and Native need no model ID on the row;
+the model appears in the expanded result. When the agent's own model writes, its
+name is the writer label. Historical rows without a recorded writer keep just
+their trigger. Do not infer native support from a model name. Do not show part
+names or an elapsed timer. A completed row shows
+the token result; a failed or stopped row shows its outcome. Live and
+restored rows use the same renderer.
 
 Manual compaction owns the activity strip while its boundary is current:
 preparing, extraction, retry, and commit show operation progress without

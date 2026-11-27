@@ -1,6 +1,7 @@
 package turnloop
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"regexp"
@@ -20,7 +21,7 @@ import (
 // Testers' gateways refused Errand's compaction with "413 Request Entity Too
 // Large" and similar limit errors on every run: the model advertised a large
 // window, the route accepted far less. Errand now plans within the limits it
-// knows, reads a long history in chained parts, adapts to the evidence in a
+// knows, reads a long history in parallel parts, adapts to the evidence in a
 // rejection and remembers the limit, so the next compaction does not fail the
 // same way. Each case runs two compactions on fresh agents: the first adapts,
 // the second must not hit the limit again.
@@ -82,7 +83,7 @@ func newLimitedErrand(t *testing.T, reject func(r providersim.Request, body prov
 				return turn
 			}
 		}
-		if strings.Contains(conversationText(r.Conversation), "Running checkpoint of source parts") {
+		if strings.Contains(conversationText(r.Conversation), "Notes on source messages") {
 			e.chained.Add(1)
 		}
 		return factReply(r)
@@ -118,7 +119,7 @@ func requireEveryFact(t *testing.T, checkpoint string, count int) {
 	}
 }
 
-func TestErrandCompactionReadsHistoryInChainedPartsWithinAProxyBodyLimit(t *testing.T) {
+func TestErrandCompactionReadsHistoryInPartsWithinAProxyBodyLimit(t *testing.T) {
 	const limit = 96 << 10
 	e := newLimitedErrand(t, nil, providersim.WithProxyBodyLimit(limit))
 	history := factHistory(80, 300)
@@ -136,7 +137,7 @@ func TestErrandCompactionReadsHistoryInChainedPartsWithinAProxyBodyLimit(t *test
 	}
 	requireEveryFact(t, checkpoint, 81)
 	if e.chained.Load() == 0 {
-		t.Fatal("later parts did not carry the running checkpoint")
+		t.Fatal("no request merged the notes of the parts")
 	}
 	if learned := provider.LearnedRequestLimits("", e.connection, e.connection.Model); learned.Bytes <= 0 || learned.Bytes > limit {
 		t.Fatalf("learned body limit=%d, want a value within %d", learned.Bytes, limit)
@@ -346,4 +347,160 @@ func TestHumanCompactThroughALimitedErrandKeepsPromptToolsAndTask(t *testing.T) 
 	if !slices.Contains(declared, "read_file") || !slices.Contains(declared, "edit_file") {
 		t.Fatalf("the continuation lost its tools: %v", declared)
 	}
+}
+
+// concurrencyErrand serves Errand with latency, counts the requests that run
+// at the same time and, with limit > 0, refuses a request above limit the way
+// gateways do ("429 Too many concurrent requests").
+type concurrencyErrand struct {
+	*limitedErrand
+	running, peak atomic.Int32
+	refused       atomic.Int32
+	mu            sync.Mutex
+	sources       map[string]int
+}
+
+func newConcurrencyErrand(t *testing.T, protocol string, limit int32, latency time.Duration) *concurrencyErrand {
+	t.Helper()
+	e := &concurrencyErrand{sources: map[string]int{}}
+	wire := supervisedWires[protocol].wire
+	server := providersim.New(t)
+	connection := provider.FromPreset("openai-chat", "key", server.BaseURL(wire))
+	if err := connection.SetProtocolID(protocol); err != nil {
+		t.Fatal(err)
+	}
+	connection.Model = "compaction-test"
+	e.limitedErrand = &limitedErrand{server: server, connection: connection}
+	// Hold the first admitted wave until it reaches the provider's limit.
+	// A busy host must not change this test into a sequential workload.
+	saturation := make(chan struct{})
+	var saturate sync.Once
+	releaseWave := func() { saturate.Do(func() { close(saturation) }) }
+	t.Cleanup(releaseWave)
+	if limit <= 0 {
+		releaseWave()
+	}
+	server.Respond(func(r providersim.Request) providersim.Turn {
+		e.requests.Add(1)
+		running := e.running.Add(1)
+		if limit > 0 && running > limit {
+			e.refused.Add(1)
+			releaseWave()
+			e.running.Add(-1)
+			return providersim.HTTPError(providersim.RateLimit).WithFaultMessage("Too many concurrent requests for this model")
+		}
+		for peak := e.peak.Load(); running > peak && !e.peak.CompareAndSwap(peak, running); peak = e.peak.Load() {
+		}
+		text := conversationText(r.Conversation)
+		if !strings.Contains(text, "Notes on source messages") {
+			// A request that reads source messages: count each fact of tool
+			// output it reads. Human requests also travel in every request's
+			// manifest of recent requests, so they are not counted.
+			e.mu.Lock()
+			for _, fact := range factMarker.FindAllString(text, -1) {
+				if !strings.HasSuffix(fact, "0") {
+					e.sources[fact]++
+				}
+			}
+			e.mu.Unlock()
+		}
+		// Send acceptance now, keep the model slot busy while it produces
+		// the response. Sleeping before headers would instead simulate an
+		// upload delay, not concurrent inference on streaming backends.
+		hold := providersim.NewGate()
+		go func() {
+			select {
+			case <-saturation:
+			case <-time.After(4 * time.Second):
+				t.Errorf("first wave did not reach capacity %d", limit)
+				releaseWave()
+			}
+			time.Sleep(latency)
+			e.running.Add(-1)
+			hold.Release()
+		}()
+		return factReply(r).WithGate(hold)
+	})
+	e.connection.SetContextWindow(40_000)
+	return e
+}
+
+// The history is read once, in parts at the same time, and every section is
+// written from the same notes: a long compaction takes about as long as its
+// slowest part and its merges, not the sum of every part of every section.
+func TestErrandCompactionReadsTheHistoryOnceInPartsAtTheSameTime(t *testing.T) {
+	e := newConcurrencyErrand(t, "openai", 0, 150*time.Millisecond)
+	history := factHistory(120, 300)
+	started := time.Now()
+	checkpoint, _ := e.compact(t, history)
+	elapsed := time.Since(started)
+	requireEveryFact(t, checkpoint, 120)
+	if e.peak.Load() < 2 {
+		t.Fatalf("at most %d request ran at once; the parts must run at the same time", e.peak.Load())
+	}
+	for fact, reads := range e.sources {
+		if reads != 1 {
+			t.Fatalf("%s was read %d times; each source message must be read once", fact, reads)
+		}
+	}
+	requests := e.requests.Load()
+	t.Logf("%d requests, peak %d, elapsed %s; simulated serial service time %s", requests, e.peak.Load(), elapsed.Round(time.Millisecond), time.Duration(requests)*150*time.Millisecond)
+	if serial := time.Duration(requests) * 150 * time.Millisecond; elapsed > serial*2/3 {
+		t.Fatalf("%d requests took %s; one at a time they take %s", requests, elapsed, serial)
+	}
+}
+
+// Run the same manual, multi-part checkpoint through every conversation wire.
+// A learned limit must retain parallelism, not merely avoid another refusal.
+func TestCompactionConcurrencyAcrossRegisteredWires(t *testing.T) {
+	for _, protocol := range provider.ProtocolList() {
+		id := protocol.Info().ID
+		for _, limit := range []int32{1, 2, 3} {
+			t.Run(fmt.Sprintf("%s/limit-%d", id, limit), func(t *testing.T) {
+				e := newConcurrencyErrand(t, id, limit, 60*time.Millisecond)
+				e.connection.SetContextWindow(24_000)
+				const count = 240
+				history := factHistory(count, 420)
+				checkpoint, _ := e.compact(t, history)
+				requireEveryFact(t, checkpoint, count)
+				refused := e.refused.Load()
+				if refused == 0 {
+					t.Fatal("test never reached provider capacity")
+				}
+				e.peak.Store(0)
+				checkpoint, _ = e.compact(t, history)
+				requireEveryFact(t, checkpoint, count)
+				if got := e.peak.Load(); got != limit || e.refused.Load() != refused {
+					t.Fatalf("next compaction used %d of %d slots; %d new refusals", got, limit, e.refused.Load()-refused)
+				}
+			})
+		}
+	}
+}
+
+// The first answer has started but cannot end until a sibling arrives. This
+// checks the actual streaming boundary without a latency threshold or a live model.
+func TestCheckpointSectionsStartBeforeFirstAnswerFinishes(t *testing.T) {
+	gate := providersim.NewGate()
+	defer gate.Release()
+	sim := providersim.New(t)
+	p := provider.FromPreset("openai-chat", "key", sim.BaseURL(providersim.Chat))
+	p.SetContextWindow(200000)
+	a := newTestAgent(t, p, "shared-checkpoint-prefix")
+	history := factHistory(32, 40)
+	sim.Respond(func(r providersim.Request) providersim.Turn {
+		turn := factReply(r)
+		if r.Index == 1 {
+			return turn.WithGateAfter(2, gate)
+		}
+		gate.Release()
+		return turn
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+	defer cancel()
+	res, err := a.Compact(ctx, history, "Keep all facts.", nil)
+	if err != nil || len(res.Messages) == 0 {
+		t.Fatal("remaining sections waited for a complete first reply", err)
+	}
+	requireEveryFact(t, res.Messages[0].ContentString(), 32)
 }

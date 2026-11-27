@@ -171,7 +171,6 @@ func handshake(ctx context.Context, runtime *Runtime, conn corewire.Conn, auth A
 		}
 		return nil, nil, nil
 	}
-	var hello coreprotocol.Hello
 	welcome := coreprotocol.Welcome{Schema: coreprotocol.Schema, Build: buildinfo.ProtocolBuild, CoreBuildID: runtime.buildID(), CoreStartedAt: runtime.startedAt()}
 	refuse := func(code, message string) (*Connection, corewire.Stream, error) {
 		welcome.Fault = &coreprotocol.Fault{Code: code, Message: message}
@@ -180,20 +179,19 @@ func handshake(ctx context.Context, runtime *Runtime, conn corewire.Conn, auth A
 		_, _ = reader.Next() // peer FIN drains the typed refusal before close
 		return nil, nil, errors.New(code + ": " + message)
 	}
-	if err := coreprotocol.Decode(body, &hello); err != nil {
-		if schema, build, idErr := coreprotocol.HandshakeIdentity(body); idErr == nil && (schema != coreprotocol.Schema || build != buildinfo.ProtocolBuild) {
-			return refuse("schema_mismatch", fmt.Sprintf("core speaks protocol %s (build %s); client speaks %s (build %s)", coreprotocol.Schema, buildinfo.ProtocolBuild, schema, build))
+	hello, fault := admitHello(body)
+	if fault != nil {
+		return refuse(fault.Code, fault.Message)
+	}
+	if hello.DataUpdate != nil {
+		// This core finished its data update before it served sessions.
+		welcome.DataUpdate = &coreprotocol.DataUpdate{Phase: coreprotocol.DataUpdateFinished, Version: buildinfo.VersionString(), Final: true}
+		if err := send(control, &welcome); err != nil {
+			return nil, nil, err
 		}
-		return refuse("invalid_hello", err.Error())
-	}
-	if hello.Schema != coreprotocol.Schema {
-		return refuse("schema_mismatch", fmt.Sprintf("core speaks protocol %s (build %s); client speaks %s (build %s)", coreprotocol.Schema, buildinfo.ProtocolBuild, hello.Schema, hello.Build))
-	}
-	if !validID(hello.ClientID) {
-		return refuse("invalid_hello", "invalid client identity")
-	}
-	if hello.Build != buildinfo.ProtocolBuild {
-		return refuse("build_mismatch", "install the matching Crude build before connecting")
+		_ = control.CloseWrite()
+		_, _ = reader.Next()
+		return nil, nil, nil
 	}
 	runtime.mu.Lock()
 	draining := runtime.draining
@@ -604,4 +602,27 @@ func (c *Connection) serveSessionTopic(ctx context.Context, s corewire.Stream, r
 		c.sessionSeq++
 		c.sessionEvent = encoded
 	}
+}
+
+// admitHello decodes a Hello and checks the identity every core requires
+// before anything else: the same protocol schema, a valid client identity and
+// the same source cohort.
+func admitHello(body []byte) (coreprotocol.Hello, *coreprotocol.Fault) {
+	var hello coreprotocol.Hello
+	if err := coreprotocol.Decode(body, &hello); err != nil {
+		if schema, build, idErr := coreprotocol.HandshakeIdentity(body); idErr == nil && (schema != coreprotocol.Schema || build != buildinfo.ProtocolBuild) {
+			return hello, &coreprotocol.Fault{Code: "schema_mismatch", Message: fmt.Sprintf("core speaks protocol %s (build %s); client speaks %s (build %s)", coreprotocol.Schema, buildinfo.ProtocolBuild, schema, build)}
+		}
+		return hello, &coreprotocol.Fault{Code: "invalid_hello", Message: err.Error()}
+	}
+	if hello.Schema != coreprotocol.Schema {
+		return hello, &coreprotocol.Fault{Code: "schema_mismatch", Message: fmt.Sprintf("core speaks protocol %s (build %s); client speaks %s (build %s)", coreprotocol.Schema, buildinfo.ProtocolBuild, hello.Schema, hello.Build)}
+	}
+	if !validID(hello.ClientID) {
+		return hello, &coreprotocol.Fault{Code: "invalid_hello", Message: "invalid client identity"}
+	}
+	if hello.Build != buildinfo.ProtocolBuild {
+		return hello, &coreprotocol.Fault{Code: "build_mismatch", Message: "install the matching Crude build before connecting"}
+	}
+	return hello, nil
 }
