@@ -286,8 +286,11 @@ func Resolve(original, resolved []byte) (Resolution, error) {
 	out := Resolution{Documentation: doc}
 	if before["additionalTextEdits"] == nil && after["additionalTextEdits"] != nil {
 		out.Additional, err = additionalEdits(after["additionalTextEdits"])
+		if err != nil {
+			return Resolution{}, err
+		}
 	}
-	return out, err
+	return out, nil
 }
 
 func sameValue(a, b []byte) bool {

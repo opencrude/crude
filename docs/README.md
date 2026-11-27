@@ -211,6 +211,7 @@ documents to read before changing each area.
 
 ### Issues (dated user reports)
 
+- [Completion resolve leaked documentation through an error](issues/2026-11-27-completion-resolve-leak.md) — why a resolve that added documentation together with malformed additionalTextEdits returned the populated documentation alongside an error, and how Resolve now returns the zero Resolution on that path.
 - [Tab follows its file type](issues/2026-11-26-tab-follows-file-type.md) — why a saved or renamed file kept its old viewer until the tab was reopened, and how every view now follows the new name.
 - [Wayland clipboard](issues/2026-11-26-wayland-clipboard.md) — why Ctrl+V pasted an older clipboard entry on KDE Wayland, and how Crude now reads only the session's own clipboard.
 - [Errand compaction limits](issues/2026-11-26-errand-compaction-limits.md) — why Errand compaction failed with "Request Entity Too Large" on every run, and how it now plans within, adapts to and remembers route limits.
