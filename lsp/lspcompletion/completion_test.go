@@ -3,6 +3,7 @@ package lspcompletion
 import (
 	"bytes"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -75,6 +76,30 @@ func TestCompletionDocumentationResolveCannotChangeInsertionOrOpaqueIdentity(t *
 	numeric := []byte(`{"label":"n","data":1.00}`)
 	if _, err := resolvedDocs(numeric, []byte(`{"label":"n","data":1,"documentation":"same math is not same opaque token"}`)); !errors.Is(err, ErrInvalid) {
 		t.Fatal("numeric-token identity was normalized away", err)
+	}
+}
+
+// Resolve advertises an atomic refusal: every error path returns the zero
+// Resolution. When a server adds documentation together with malformed
+// additionalTextEdits, the documentation must not leak back through the
+// error. The previous code returned the populated Resolution on this path.
+func TestCompletionResolveRejectsMalformedAdditionalEditsAtomically(t *testing.T) {
+	original := []byte(`{"label":"x","insertText":"y","detail":"d"}`)
+	for name, resolved := range map[string]string{
+		"newText without range": `{"label":"x","insertText":"y","documentation":"doc","additionalTextEdits":[{"newText":"z"}]}`,
+		"range without newText": `{"label":"x","insertText":"y","documentation":"doc","additionalTextEdits":[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}}}]}`,
+		"three fields":          `{"label":"x","insertText":"y","documentation":"doc","additionalTextEdits":[{"newText":"z","range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}},"extra":1}]}`,
+		"not an array":          `{"label":"x","insertText":"y","documentation":"doc","additionalTextEdits":{"newText":"z"}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			r, err := Resolve(original, []byte(resolved))
+			if err == nil {
+				t.Fatalf("malformed additional edits accepted: %+v", r)
+			}
+			if !reflect.DeepEqual(r, Resolution{}) {
+				t.Fatalf("malformed resolve leaked partial Resolution: %+v (documentation=%+v)", r, r.Documentation)
+			}
+		})
 	}
 }
 
