@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // HistorySeconds is the retained per-second history of every series.
@@ -474,10 +475,10 @@ func recordEvent(event Event) {
 		event.Severity = "crit"
 	}
 	if len(event.Label) > 160 {
-		event.Label = event.Label[:160]
+		event.Label = event.Label[:truncateUTF8(event.Label, 160)]
 	}
 	if len(event.Detail) > 400 {
-		event.Detail = event.Detail[:400]
+		event.Detail = event.Detail[:truncateUTF8(event.Detail, 400)]
 	}
 	if len(event.Stack) > maxStallFrames {
 		event.Stack = event.Stack[:maxStallFrames]
@@ -576,4 +577,21 @@ func sortedByName[T any](values []T, name func(T) string) []T {
 	out := slices.Clone(values)
 	slices.SortFunc(out, func(a, b T) int { return strings.Compare(name(a), name(b)) })
 	return out
+}
+
+// truncateUTF8 returns the largest end <= max at which s[:end] stays valid
+// UTF-8, walking back to the last rune start so a multi-byte character is
+// never split. An event label or detail that exceeds its byte ceiling is
+// cut at a rune boundary instead of mid-rune, which would corrupt the
+// string and make encoding/json replace the orphaned trailing bytes with
+// U+FFFD when the snapshot is marshaled.
+func truncateUTF8(s string, max int) int {
+	if max >= len(s) {
+		return len(s)
+	}
+	end := max
+	for end > 0 && !utf8.RuneStart(s[end]) {
+		end--
+	}
+	return end
 }
