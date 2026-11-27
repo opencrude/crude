@@ -3,9 +3,11 @@ package metrics
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func fixedClock(t *testing.T, start time.Time) *time.Time {
@@ -227,4 +229,30 @@ func findTable(t *testing.T, s Snapshot, name string) TableSeries {
 	}
 	t.Fatalf("table %q missing", name)
 	return TableSeries{}
+}
+
+// A label or detail longer than its byte ceiling must be cut at a rune
+// boundary so the truncated string stays valid UTF-8. The previous code
+// sliced at the byte ceiling and split multi-byte characters, leaving an
+// orphaned continuation byte that encoding/json replaced with U+FFFD when
+// the snapshot was marshaled.
+func TestRecordEventKeepsLabelAndDetailValidUTF8AfterTruncation(t *testing.T) {
+	ResetForTest()
+	Note("g", "t", strings.Repeat("世", 100), strings.Repeat("界", 200), "warn")
+	evs := EventsSince(time.Time{})
+	if len(evs) != 1 {
+		t.Fatalf("event not recorded: %d", len(evs))
+	}
+	if !utf8.ValidString(evs[0].Label) {
+		t.Fatalf("label not valid UTF-8 after truncation: %q", evs[0].Label)
+	}
+	if !utf8.ValidString(evs[0].Detail) {
+		t.Fatalf("detail not valid UTF-8 after truncation: %q", evs[0].Detail)
+	}
+	if len(evs[0].Label) >= 300 {
+		t.Fatalf("label not truncated: %d", len(evs[0].Label))
+	}
+	if len(evs[0].Detail) >= 600 {
+		t.Fatalf("detail not truncated: %d", len(evs[0].Detail))
+	}
 }
