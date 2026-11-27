@@ -448,3 +448,29 @@ func TestCoreFileWatchQueueSaturationRequestsRecovery(t *testing.T) {
 		}
 	}
 }
+
+// The scope watcher (used while the recursive watcher is still being
+// promoted) and the recursive watcher must agree on whether a path is git
+// metadata. A nested .git path such as .git/refs/heads/main was previously
+// reported as non-git by the scope watcher, disagreeing with the recursive
+// watcher that reports it as git. coreWatchIsGit now covers .git and every
+// path nested under it.
+func TestCoreWatchIsGitCoversNestedGitPaths(t *testing.T) {
+	for _, test := range []struct {
+		rel string
+		git bool
+	}{
+		{".git", true},
+		{".git/HEAD", true},
+		{".git/refs/heads/main", true},
+		{".git/objects/pack/pack-abc.pack", true},
+		{".git/logs/HEAD", true},
+		{"README.md", false},
+		{"src/main.go", false},
+		{"foo/.git", false}, // a nested repo's .git is out of scope; only root .git counts
+	} {
+		if got := coreWatchIsGit(test.rel); got != test.git {
+			t.Errorf("coreWatchIsGit(%q) = %v, want %v", test.rel, got, test.git)
+		}
+	}
+}
