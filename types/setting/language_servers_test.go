@@ -139,6 +139,36 @@ func TestLSPValidationRejectsBoundsCollisionsAndNonJSON(t *testing.T) {
 	}
 }
 
+// Environment variable names that contain a digit, a letter, or other
+// ordinary characters must be accepted. The name must be rejected only when
+// it is empty, or when it contains "=", "\", or a NUL byte (the form shell
+// quoting and the kernel can carry through). A previous check matched the
+// literal text "\x00" (backslash, x, 0, 0) instead of the NUL byte, so names
+// containing "0" or a lowercase "x" were wrongly refused and silently turned
+// the language's server off.
+func TestLSPValidationAcceptsOrdinaryEnvironmentNamesAndRejectsBadOnes(t *testing.T) {
+	for _, name := range []string{"PORT_8080", "VERSION_10", "MY_VAR_x", "EXTRA_PATH", "HOME", "PATH"} {
+		s := DefaultLSP()
+		s.Languages["go"] = LSPLanguage{Enabled: true, Environment: map[string]string{name: "value"}}
+		if err := s.Validate(); err != nil {
+			t.Fatalf("ordinary environment name %q rejected: %v", name, err)
+		}
+		if _, ok := s.ResolveServer("main.go"); !ok {
+			t.Fatalf("ordinary environment name %q turned the server off", name)
+		}
+	}
+	for _, name := range []string{"", "A=B", "WITH\\SLASH", "A\x00B"} {
+		s := DefaultLSP()
+		s.Languages["go"] = LSPLanguage{Enabled: true, Environment: map[string]string{name: "value"}}
+		if err := s.Validate(); err == nil {
+			t.Fatalf("invalid environment name %q accepted", name)
+		}
+		if _, ok := s.ResolveServer("main.go"); ok {
+			t.Fatalf("invalid environment name %q launched a server", name)
+		}
+	}
+}
+
 // A saved entry for a language the catalog does not have, with no file
 // extension, matches no file. It must not turn off every other language.
 func TestStaleLanguageEntryDoesNotDisableOtherLanguages(t *testing.T) {
