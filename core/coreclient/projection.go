@@ -250,15 +250,21 @@ func (v *WorkspaceView) validateChanges(changes coreprotocol.AgentChangesResult)
 			return fmt.Errorf("%w: %s: %v", ErrResync, a.ID, err)
 		}
 	}
-	for id, parent := range parents {
+	for id := range parents {
 		path := make(map[string]bool)
 		for p := id; p != ""; p = parents[p] {
 			if path[p] {
 				return fmt.Errorf("%w: cyclic agent tree", ErrResync)
 			}
 			path[p] = true
-			if _, exists := parents[p]; !exists {
-				return fmt.Errorf("%w: missing parent %s for %s", ErrResync, parent, id)
+			// p is present (we got here by following a parent), so it is
+			// its parent that must exist in the tree. A non-empty parent
+			// that is itself unknown means p is the orphaned agent.
+			parent := parents[p]
+			if parent != "" {
+				if _, exists := parents[parent]; !exists {
+					return fmt.Errorf("%w: missing parent for %s", ErrResync, p)
+				}
 			}
 		}
 	}
