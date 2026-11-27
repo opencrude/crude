@@ -247,8 +247,8 @@ func TestWorkspaceViewMissingParentNamesTheOrphanedAgent(t *testing.T) {
 	}
 	// The orphan is B (its parent C is absent); A is present and is not
 	// named. The previous message named B as the parent and A as the id.
-	if !strings.Contains(err.Error(), "B") {
-		t.Fatalf("error does not name the orphaned agent B: %v", err)
+	if !strings.Contains(err.Error(), "missing parent C for B") {
+		t.Fatalf("error does not name the orphaned agent B and its missing parent C: %v", err)
 	}
 	if strings.Contains(err.Error(), "missing parent B for A") {
 		t.Fatalf("error still uses the old wrong message: %v", err)

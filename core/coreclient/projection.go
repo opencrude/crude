@@ -263,7 +263,7 @@ func (v *WorkspaceView) validateChanges(changes coreprotocol.AgentChangesResult)
 			parent := parents[p]
 			if parent != "" {
 				if _, exists := parents[parent]; !exists {
-					return fmt.Errorf("%w: missing parent for %s", ErrResync, p)
+					return fmt.Errorf("%w: missing parent %s for %s", ErrResync, parent, p)
 				}
 			}
 		}

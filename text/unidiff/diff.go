@@ -34,8 +34,11 @@ func GenerateDiff(beforeContent, afterContent, fileName string) (string, int, in
 	start := time.Now()
 	fileName = strings.TrimPrefix(fileName, "/")
 
+	// Render and count from one set of line edits; udiff.Unified would
+	// compute the same diff a second time. The edits come from this content,
+	// so ToUnified cannot reject them.
 	edits := udiff.Lines(beforeContent, afterContent)
-	unified := udiff.Unified("a/"+fileName, "b/"+fileName, beforeContent, afterContent)
+	unified, _ := udiff.ToUnified("a/"+fileName, "b/"+fileName, beforeContent, edits, udiff.DefaultContextLines)
 
 	// Count inserted and deleted lines from the structured edits rather than
 	// re-parsing the rendered diff. A rendered added line whose text begins
