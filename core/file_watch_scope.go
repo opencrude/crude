@@ -222,7 +222,7 @@ func (f fileWatchFeed) startScope(pin watchRoot, analysis <-chan struct{}, index
 					continue
 				}
 				rel, _ := filepath.Rel(root, path)
-				git := rel == ".git" || filepath.Dir(rel) == ".git"
+				git := coreWatchIsGit(rel)
 				publish(coreprotocol.FileChange{Path: path, Removed: removed, Git: git})
 			case _, ok := <-watchErrors:
 				if !ok {

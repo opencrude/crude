@@ -324,8 +324,7 @@ func (f fileWatchFeed) startRecursive(pin watchRoot) (*coreFileWatch, error) {
 				}
 				fileEvents.Inc()
 				key := coreWatchPathKey(path)
-				relKey := coreWatchPathKey(rel)
-				git := relKey == ".git" || strings.HasPrefix(relKey, ".git"+string(filepath.Separator))
+				git := coreWatchIsGit(rel)
 				// A new directory is observed without a gap: its watch is added
 				// and what it already holds is reported as created, in order.
 				// Builds, interpreters and package managers create directories
@@ -437,6 +436,17 @@ func skipCoreWatchPath(root, path string) bool {
 		}
 	}
 	return false
+}
+
+// coreWatchIsGit reports whether the watched path rel is part of the repo's
+// git metadata. The recursive watcher and the scope watcher (used while the
+// recursive watcher is still being promoted) must agree, so a consumer never
+// sees the same .git change with a different Git flag as the watch matures.
+// rel is the path relative to root; .git itself and everything nested under
+// it (.git/refs/heads/main, .git/objects/pack, .git/logs/HEAD) counts.
+func coreWatchIsGit(rel string) bool {
+	relKey := coreWatchPathKey(rel)
+	return relKey == ".git" || strings.HasPrefix(relKey, ".git"+string(filepath.Separator))
 }
 
 // Close cancels traversal and joins both workers. Callbacks must cooperate.
