@@ -10,8 +10,8 @@ import (
 	"crude/core/shellport"
 	"crude/internal/buildinfo"
 	"crude/tui/cell"
-	"crude/tui/screens/statusoverview"
 	"crude/tui/screens/termdock"
+	"crude/tui/screens/workspacehub"
 	"crude/workspace"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -73,13 +73,14 @@ func (m *errandPanelVisual) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case tea.KeyF3:
 			m.View()
-			rect, exists := m.screenRectOf(statusoverview.HeaderLinkID)
+			// Narrow panels show the short label "Errand".
+			rect, exists := m.screenRectOf(workspacehub.ErrandID)
 			body := ansi.Strip(m.View().RenderContent())
 			m.placed = exists && !rect.Empty() && rect.Y > m.headerScreen.Bounds().Y &&
-				strings.Contains(body, "Open workspace Errand") && !strings.Contains(body, "Naveen") &&
+				strings.Contains(rowText(m.App, rect.Y), "Errand") && !strings.Contains(body, "Naveen") &&
 				!strings.Contains(rowText(m.App, m.frameTopRow()), "Errand")
 			m.underlined = m.placed
-			for i := range len("Open workspace Errand") {
+			for i := range rect.W - 2 {
 				m.underlined = m.underlined && m.mainSurf.Buffer().Get(rect.X+1+i, rect.Y).Attr.Has(cell.AttrUnderline)
 			}
 			return m, nil

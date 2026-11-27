@@ -12,8 +12,6 @@ import (
 	"crude/workspace"
 )
 
-const workspaceErrandAction = "workspace-errand"
-
 const (
 	// The workspace agent is background inventory. The shell opens it after it
 	// has had time to paint and only while the user is not working, so it never

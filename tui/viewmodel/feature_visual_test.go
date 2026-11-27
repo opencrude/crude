@@ -15,6 +15,7 @@ import (
 
 	"crude/core/shellport"
 	"crude/tui/rendering"
+	historyscreen "crude/tui/screens/localhistory"
 	"crude/tui/screens/perfdash"
 	"crude/tui/screens/shellfooter"
 	"crude/tui/screens/termdock"
@@ -442,18 +443,38 @@ func (m *featureVisualModel) journeyFeature(key, phase int) error {
 		} else {
 			label = "Local History restore preview tracked.txt; not applied"
 			m.action(func(app *App) tea.Cmd {
-				// The first row administers review safety. Select the first
-				// snapshot explicitly rather than activating that new command.
-				_, next := app.Update(tea.KeyPressMsg{Code: tea.KeyDown})
-				_, open := app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-				return tea.Batch(next, open)
+				// Select the snapshot with the keyboard, Tab to Restore to
+				// here and press it. That opens the preview; nothing changes.
+				var cmds []tea.Cmd
+				press := func(code rune) {
+					_, cmd := app.Update(tea.KeyPressMsg{Code: code})
+					cmds = append(cmds, cmd)
+				}
+				for range 8 {
+					if event, ok := app.historyPanel.SelectedEvent(); ok && event.Label == "Before feature edit" {
+						break
+					}
+					press(tea.KeyDown)
+				}
+				for range 12 {
+					if app.focusedHistoryControl() == historyscreen.RestoreButtonID {
+						break
+					}
+					press(tea.KeyTab)
+				}
+				press(tea.KeyEnter)
+				return tea.Batch(cmds...)
 			})
 			err = m.await(func(v *controlVisualModel) error { return featureVisualPaint(v, "Restore preview", "tracked.txt") })
 		}
 	case 8:
 		label = "workspace settings persisted tab_size=8"
-		// History preview Esc goes back before the next Esc closes its dialog.
-		m.action(func(app *App) tea.Cmd { _, cmd := app.Update(tea.KeyPressMsg{Code: tea.KeyEsc}); return cmd })
+		// Esc closes the Restore preview dialog; the Workspace panel's
+		// window closes with its × like any pane window.
+		m.action(func(app *App) tea.Cmd {
+			_, cmd := app.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+			return tea.Batch(cmd, closeWorkspacePanelWindow(app))
+		})
 		err = m.journey(4)
 	}
 	if err != nil {

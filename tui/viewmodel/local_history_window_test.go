@@ -14,6 +14,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	historyscreen "crude/tui/screens/localhistory"
+	"crude/tui/screens/workspacehub"
 	"crude/tui/theme"
 	"crude/tui/ui"
 	"crude/tui/wm"
@@ -21,7 +22,7 @@ import (
 
 func TestLocalHistoryWindowUsesCanonicalFrameInteractions(t *testing.T) {
 	app := &App{Theme: theme.DefaultDark(), width: 120, height: 40}
-	fw := app.newLocalHistoryWindow(historyscreen.New(app.Theme))
+	fw := app.newRestoreWindow(historyscreen.New(app.Theme))
 	if !fw.Decorated() || !fw.Movable() || !fw.Closable() || !fw.Resizable() {
 		t.Fatalf("window interactions decorated=%v movable=%v closable=%v resizable=%v", fw.Decorated(), fw.Movable(), fw.Closable(), fw.Resizable())
 	}
@@ -39,7 +40,7 @@ func TestLocalHistoryWindowCloseAndResizeRouteThroughWindowManager(t *testing.T)
 	th := theme.DefaultDark()
 	app := &App{Theme: th, width: 120, height: 40, windowManager: wm.NewWindowManager()}
 	app.overlayHost = ui.NewOverlayHost(app.windowManager)
-	fw := app.newLocalHistoryWindow(historyscreen.New(th))
+	fw := app.newRestoreWindow(historyscreen.New(th))
 	fw.SetPosition(10, 5)
 	app.overlayHost.Open(ui.OverlayLocalHistory, fw, ui.ModalDialogPolicy(), nil)
 	w, h := fw.Size()
@@ -92,21 +93,21 @@ func TestConnectedAgentEditPreviewReadsEarlierReceipt(t *testing.T) {
 	if err = os.WriteFile(filepath.Join(root, path), []byte("later external edit\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	app.Update(tea.WindowSizeMsg{Width: 110, Height: 32})
+	app.Update(tea.WindowSizeMsg{Width: 150, Height: 40})
 	runAppCommand(t, app, app.openAgentReceipts(session, id))
 	view := func() string { return ansi.Strip(app.View().RenderContent()) }
-	if s := view(); !strings.Contains(s, path) || strings.Contains(s, "Restore preview") {
-		t.Fatalf("not an agent edit list: %s", s)
+	remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool {
+		return strings.Contains(view(), "recorded line") && strings.Contains(view(), "old line")
+	})
+	s := view()
+	if !strings.Contains(s, "Local History") || !strings.Contains(s, path) || !strings.Contains(s, "'s edits ▾") {
+		t.Fatalf("the Workspace panel does not show the agent's edits: %s", s)
 	}
-	_, cmd := app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	runAppCommand(t, app, cmd)
-	if s := view(); !strings.Contains(s, "+recorded line") || !strings.Contains(s, "-old line") || strings.Contains(s, "+later external edit") {
-		t.Fatalf("not the historical diff: %s", s)
+	if strings.Contains(s, "later external edit") || strings.Contains(s, "Restore preview") {
+		t.Fatalf("the preview read the working file or opened a restore: %s", s)
 	}
-	_, cmd = app.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
-	runAppCommand(t, app, cmd)
-	if !strings.Contains(view(), "Agent file changes") {
-		t.Fatal("Back did not return to the agent edits")
+	if app.hub.Active() != workspacehub.TabHistory || app.historyPanel.Mode() != historyscreen.ModeAgent {
+		t.Fatal("the agent's edits are not the Local History tab of the Workspace panel")
 	}
 	data, err := os.ReadFile(filepath.Join(root, path))
 	if err != nil || string(data) != "later external edit\n" {

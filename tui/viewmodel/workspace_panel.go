@@ -20,11 +20,11 @@ func (m *App) initWorkspacePanels() {
 			m.rootHost.Focus(id)
 		}
 	}
-	for _, view := range []statusoverview.ViewID{statusoverview.ViewTabs, statusoverview.ViewNotifications} {
-		screen := statusoverview.NewDocked(m.Theme, m.statusPanelProjection(view))
-		screen.SetFocusHandler(focus)
-		m.termDock.SetPanel(workspacePanelID(view), screen)
-	}
+	notices := statusoverview.NewDocked(m.Theme, m.statusPanelProjection(statusoverview.ViewNotifications))
+	notices.SetFocusHandler(focus)
+	m.termDock.SetPanel(termdock.PanelNotices, notices)
+	m.hub = m.newWorkspaceHub()
+	m.termDock.SetPanel(termdock.PanelWorkspace, m.hub)
 	m.problemsScreen = problems.New(m.Theme)
 	m.problemsScreen.SetFocusHandler(focus)
 	m.problemsScreen.SetModel(m.problemsModel())
@@ -37,8 +37,7 @@ func (m *App) statusPanelProjection(view statusoverview.ViewID) statusoverview.P
 	case statusoverview.ViewNotifications:
 		projection.Views[view] = m.statusNotificationItems()
 	default:
-		projection.Views[statusoverview.ViewTabs] = append(m.statusTabItems(), m.workspaceSessionItems()...)
-		projection.HeaderAction, projection.HeaderLabel = workspaceErrandAction, "Open workspace Errand"
+		projection.Views[statusoverview.ViewTabs] = m.statusTabItems()
 	}
 	return projection
 }
@@ -63,10 +62,9 @@ func (m *App) syncWorkspacePanels() {
 		return
 	}
 	m.workspacePanelLastVersion, m.workspacePanelLastSecond, m.workspacePanelVisible = version, second, visible
-	m.syncOpenTabStats()
 	if visible.workspace {
 		m.refreshWorkspaceSessions(false)
-		m.syncStatusPanel(termdock.PanelWorkspace, statusoverview.ViewTabs)
+		m.syncHubPages()
 	}
 	if visible.notices {
 		m.syncStatusPanel(termdock.PanelNotices, statusoverview.ViewNotifications)
@@ -109,6 +107,11 @@ func (m *App) toggleWorkspacePanel(panelID string) {
 	opened := m.termDock.TogglePanel(panelID)
 	m.setSessionDeckFocused(false)
 	m.setTermDockFocused(opened)
+	if opened && panelID == termdock.PanelWorkspace {
+		m.workspacePanelLastSecond = 0
+		m.syncWorkspacePanels()
+		m.runDetachedAsyncCmd(m.refreshWorkspaceHub(true))
+	}
 	if opened {
 		m.FocusStack.Clear()
 		if panelID == termdock.PanelNotices && m.ws.Status() != nil {
@@ -124,7 +127,7 @@ func (m *App) toggleWorkspacePanel(panelID string) {
 }
 
 func defaultWorkspacePanelHeight(panelID string) int {
-	if panelID == termdock.PanelMemory || panelID == termdock.PanelBoard {
+	if panelID == termdock.PanelMemory || panelID == termdock.PanelBoard || panelID == termdock.PanelWorkspace {
 		return 20
 	}
 	if panelID == termdock.PanelPerformance {
@@ -171,13 +174,4 @@ func (m *App) openTerminalPicker() {
 		return
 	}
 	m.openContextMenuState(tea.Mouse{X: max(0, m.width-30), Y: max(m.shellTopRow(), m.height-m.chromeBottomRows()-len(items)-3)}, menu)
-}
-
-func workspacePanelID(view statusoverview.ViewID) string {
-	switch view {
-	case statusoverview.ViewNotifications:
-		return termdock.PanelNotices
-	default:
-		return termdock.PanelWorkspace
-	}
 }

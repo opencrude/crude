@@ -13,6 +13,7 @@ import (
 	"crude/core/coreprotocol"
 	"crude/core/shellport"
 	historyscreen "crude/tui/screens/localhistory"
+	"crude/tui/screens/workspacehub"
 	"crude/tui/ui"
 	"crude/types/control"
 	"crude/workspace"
@@ -48,8 +49,18 @@ func openHistorySafetyKeys(t *testing.T, f renameConnectedFixture) {
 	}
 	renameConnectedKey(t, one, tea.KeyPressMsg{Code: tea.KeyEnter})
 	remoteJourneyUntil(t, f.shells, func() bool {
-		return one.app.historyScreen != nil && strings.Contains(ansi.Strip(one.app.View().RenderContent()), "Review safety references")
+		return one.app.workspaceHubShown() && one.app.hub.Active() == workspacehub.TabHistory &&
+			strings.Contains(ansi.Strip(one.app.View().RenderContent()), "Kept for review")
 	})
+	for range 12 {
+		if one.app.focusedHistoryControl() == historyscreen.KeptID {
+			break
+		}
+		renameConnectedKey(t, one, tea.KeyPressMsg{Code: tea.KeyTab})
+	}
+	if one.app.focusedHistoryControl() != historyscreen.KeptID {
+		t.Fatal("Tab does not reach Kept for review")
+	}
 	renameConnectedKey(t, one, tea.KeyPressMsg{Code: tea.KeyEnter})
 	remoteJourneyUntil(t, f.shells, func() bool {
 		return one.app.historySafety != nil && len(one.app.historySafety.page.Records) != 0

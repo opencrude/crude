@@ -617,8 +617,8 @@ func (m *App) buildSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 		st.Sections = append(st.Sections, ui.ContextMenuSection{
 			SectionLabel: "Local history",
 			Items: []ui.ContextMenuItem{
-				{Label: "Show history for this path", Action: func() { m.runDetachedAsyncCmd(m.openLocalHistoryForPath(target)) }},
-				{Label: "Open workspace history", Action: func() { m.runDetachedAsyncCmd(m.openLocalHistory()) }},
+				{Label: "Show Local History of this item", Action: func() { m.runDetachedAsyncCmd(m.openLocalHistoryForPath(target)) }},
+				{Label: "Open Local History", Action: func() { m.runDetachedAsyncCmd(m.openLocalHistory()) }},
 			},
 		})
 	}
@@ -1038,7 +1038,7 @@ func (m *App) buildChatContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 					snapshotID := canonical.HistorySafetySnapshot
 					st.Sections = append(st.Sections, ui.ContextMenuSection{SectionLabel: "Local history", Items: []ui.ContextMenuItem{
 						{Label: "Undo this restore", Action: func() { m.runDetachedAsyncCmd(m.openLocalHistoryForSnapshot(snapshotID)) }},
-						{Label: "Open workspace history", Action: func() { m.runDetachedAsyncCmd(m.openLocalHistory()) }},
+						{Label: "Open Local History", Action: func() { m.runDetachedAsyncCmd(m.openLocalHistory()) }},
 					}})
 				}
 				if role == workspace.MessageRoleUser {
@@ -1049,7 +1049,7 @@ func (m *App) buildChatContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 					st.Sections = append(st.Sections, ui.ContextMenuSection{SectionLabel: "Local history", Items: []ui.ContextMenuItem{
 						{Label: "Preview this agent's changes", Action: func() { m.runDetachedAsyncCmd(m.openAgentReceipts(sessionID, agentID)) }},
 						{Label: "Revert this agent's files", Disabled: active, Action: open},
-						{Label: "Open workspace history", Action: func() { m.runDetachedAsyncCmd(m.openLocalHistory()) }},
+						{Label: "Open Local History", Action: func() { m.runDetachedAsyncCmd(m.openLocalHistory()) }},
 					}})
 				}
 			}

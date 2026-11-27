@@ -8,7 +8,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/internal/providersim"
-	"crude/tui/screens/statusoverview"
 	"crude/tui/screens/termdock"
 	"crude/types/statuscenter"
 )
@@ -87,12 +86,7 @@ func TestConnectedCacheHeaderAndUsageDistinguishMissFromNoReport(t *testing.T) {
 	viewer.app.toggleWorkspacePanel(termdock.PanelWorkspace)
 	viewer.app.setTermDockHeight(29)
 	viewer.app.paintShellFrame()
-	screen := viewer.app.termDock.Panel(termdock.PanelWorkspace).(*statusoverview.Surface)
-	list, dock := screen.ListBounds(), viewer.app.termDockRect
-	for y := dock.Y + 1 + list.Y; y < dock.Y+1+list.Y+4 && !screen.IsExpanded("agent:"+id); y++ {
-		viewer.app.rootHost.Handle(tea.MouseClickMsg{X: dock.X + list.X + 4, Y: y, Button: tea.MouseLeft})
-	}
-	if !screen.IsExpanded("agent:" + id) {
+	if !expandHubTabsRow(viewer.app, "agent:"+id) {
 		t.Fatal("the agent usage disclosure did not open")
 	}
 	viewer.app.paintShellFrame()

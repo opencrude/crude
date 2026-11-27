@@ -1137,7 +1137,7 @@ agent and every application-scope write stays human-only. A workspace may choose
 inheriting every other terminal field. Auto order, detection and failure rules
 are in [in-app terminals](in-app-terminals.md#shell-selection).
 
-The Local History window exposes logical/physical diagnostics and the command
+The Workspace panel's Storage page shows Local History's disk use and the command
 palette provides `Create History Snapshot`, `Verify Local History`, `Prune Local
 History`, and `Open Local History Folder`.
 

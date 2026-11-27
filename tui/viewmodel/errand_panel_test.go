@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/tui/screens/statusoverview"
 	"crude/tui/screens/termdock"
+	"crude/tui/screens/workspacehub"
 	"crude/tui/ui"
 	"crude/types/setting"
 	"crude/workspace"
@@ -61,7 +61,7 @@ func TestWorkspaceErrandPanelPlacementAndNamedAgentAbsence(t *testing.T) {
 					}
 				}
 				requireErrandAbsentFromAgentList(t, app)
-				rect, ok := app.screenRectOf(statusoverview.HeaderLinkID)
+				rect, ok := app.screenRectOf(workspacehub.ErrandID)
 				if !ok || rect.Empty() || rect.Y <= app.headerScreen.Bounds().Y {
 					t.Fatalf("link is not mounted in the panel: %+v", rect)
 				}

@@ -16,6 +16,7 @@ import (
 	"crude/core/coreprotocol"
 	"crude/core/shellport"
 	historyscreen "crude/tui/screens/localhistory"
+	"crude/tui/screens/workspacehub"
 	"crude/tui/ui"
 	"crude/tui/wm"
 	"crude/types/setting"
@@ -57,69 +58,60 @@ type historyApplyResultMsg struct {
 	requestID string
 }
 
-type agentReceiptResult struct {
-	screen     *historyscreen.Screen
-	generation uint64
-	result     historyscreen.ReceiptMsg
-}
-
-func (m *App) readAgentReceipts(q localhistory.AgentReceiptQuery) tea.Cmd {
-	screen, gen, store := m.historyScreen, m.workspaceSwitchGen.Load(), m.ws.LocalHistory()
-	if screen == nil || store == nil {
+// openLocalHistory shows the Local History tab of the Workspace panel with
+// every recorded change.
+func (m *App) openLocalHistory() tea.Cmd {
+	if m.historyPanel == nil {
 		return nil
 	}
-	ctx, cancel := m.sourceControlContext()
-	return func() tea.Msg {
-		defer cancel()
-		page, err := store.AgentReceipts(ctx, q)
-		result := historyscreen.ReceiptMsg{Query: q, Page: page}
-		if err != nil {
-			result.Error = err.Error()
-		}
-		return agentReceiptResult{screen, gen, result}
+	m.historyPanel.SetMode(historyscreen.ModeTimeline)
+	if m.historyPanel.Path() != "" {
+		m.historyPanel.BeginTimeline("")
 	}
-}
-func (m *App) openAgentReceipts(session, agent string) tea.Cmd {
-	cmd := m.openLocalHistoryForMessage("", "", "")
-	if cmd == nil || m.historyOperation != nil || m.historySafetyOperation != nil {
-		return cmd
-	}
-	return m.readAgentReceipts(localhistory.AgentReceiptQuery{SessionID: session, AgentID: agent})
+	return m.openWorkspaceHub(workspacehub.TabHistory)
 }
 
-func (m *App) openLocalHistory() tea.Cmd { return m.openLocalHistoryForMessage("", "", "") }
-
+// openLocalHistoryForPath shows the recorded changes of one file or folder.
 func (m *App) openLocalHistoryForPath(path string) tea.Cmd {
-	cmd := m.openLocalHistoryForMessage("", "", "")
-	if cmd == nil || m.ws.LocalHistory() == nil {
-		return cmd
+	if m.historyPanel == nil {
+		return nil
 	}
 	rel, err := filepath.Rel(m.ws.RootPath(), path)
-	if err != nil {
-		return cmd
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		m.Feedback.NotifyError("Local History keeps only files in this workspace")
+		return nil
 	}
-	rel = filepath.ToSlash(rel)
-	return func() tea.Msg {
-		records, err := m.ws.LocalHistory().FileHistory(rel, 500)
-		if err != nil {
-			return historyscreen.TimelineMsg{Error: err.Error()}
-		}
-		stats, err := m.ws.LocalHistory().Stats()
-		if err != nil {
-			return historyscreen.TimelineMsg{Error: err.Error()}
-		}
-		return historyscreen.TimelineMsg{Records: records, Stats: stats, Paths: []string{rel}}
+	if rel = filepath.ToSlash(rel); rel == "." {
+		rel = ""
 	}
+	m.historyPanel.SetMode(historyscreen.ModeTimeline)
+	m.historyPanel.BeginTimeline(rel)
+	return m.openWorkspaceHub(workspacehub.TabHistory)
 }
 
-func (m *App) openLatestHistoryCmd(agentID string) tea.Cmd {
-	if m.ActiveSession == nil || m.ws.HistoryService() == nil {
+// openAgentReceipts shows one agent's recorded file edits.
+func (m *App) openAgentReceipts(session, agent string) tea.Cmd {
+	if m.historyPanel == nil {
+		return nil
+	}
+	name := "Agent"
+	if node := m.ws.AgentMgr().Get(agent); node != nil {
+		name = m.agentLabel(node)
+	}
+	m.historyPanel.SetMode(historyscreen.ModeAgent)
+	m.historyPanel.SetAgent(historyscreen.AgentRef{SessionID: session, AgentID: agent, Name: name})
+	return tea.Batch(m.openWorkspaceHub(workspacehub.TabHistory), m.readHistoryReceipts(localhistory.AgentReceiptQuery{SessionID: session, AgentID: agent}))
+}
+
+// openLatestHistoryCmd previews undoing the agent's latest changes in
+// sessionID.
+func (m *App) openLatestHistoryCmd(sessionID, agentID string) tea.Cmd {
+	if sessionID == "" || m.ws.HistoryService() == nil {
 		return func() tea.Msg { return historyLatestMsg{Error: "No active session history"} }
 	}
 	if agentID == "" {
 		return func() tea.Msg { return historyLatestMsg{Error: "No active agent history"} }
 	}
-	sessionID := m.ActiveSession.SessionID
 	return func() tea.Msg {
 		scopes, err := m.ws.HistoryService().AgentUndoableScopes(sessionID, agentID)
 		if err != nil {
@@ -151,103 +143,149 @@ func overlappingLatestScopes(scopes []localhistory.MessageScope) []localhistory.
 	return out
 }
 
+// openLocalHistoryForMessage previews undoing one message's changes.
 func (m *App) openLocalHistoryForMessage(sessionID, messageID, agentID string) tea.Cmd {
+	heading := "Undo the changes of this message?"
+	if agentID != "" {
+		name := "the agent"
+		if node := m.ws.AgentMgr().Get(agentID); node != nil {
+			name = m.agentLabel(node)
+		}
+		heading = "Undo " + name + "'s latest changes?"
+	}
+	return m.openRestorePreview(historyscreen.PreviewRequest{SessionID: sessionID, MessageID: messageID, AgentID: agentID, Heading: heading})
+}
+
+// openLocalHistoryForSnapshot previews returning to the files a snapshot
+// kept, such as the copy made before a restore.
+func (m *App) openLocalHistoryForSnapshot(snapshotID string) tea.Cmd {
+	if snapshotID == "" {
+		return nil
+	}
+	return m.openRestorePreview(historyscreen.PreviewRequest{SnapshotID: snapshotID, Heading: "Undo this restore?"})
+}
+
+// openRestorePreview opens the Restore preview dialog for request. An
+// unresolved restore keeps the dialog on that outcome: a new preview never
+// replaces it.
+func (m *App) openRestorePreview(request historyscreen.PreviewRequest) tea.Cmd {
 	if m.ws == nil || m.ws.HistoryService() == nil {
 		if m.Feedback != nil {
-			m.Feedback.NotifyError("Local history is unavailable")
+			m.Feedback.NotifyError("Local History is off for this workspace")
 		}
 		return nil
 	}
-	m.overlayHost.Close(ui.OverlayLocalHistory)
-	screen := historyscreen.New(m.Theme)
-	_, safetyAvailable := m.ws.(shellport.HistorySafety)
-	screen.SetSafetyAvailable(safetyAvailable)
-	m.historyScreen = screen
-	win := m.newLocalHistoryWindow(screen)
-	wm.CenterOnScreen(win, m.width, m.height)
-	m.overlayHost.Open(ui.OverlayLocalHistory, win, ui.ModalDialogPolicy(), func() {
-		m.closeHistorySafetyView()
-		m.historyScreen = nil
-	})
+	screen := m.restoreScreen()
 	if operation := m.historyOperation; operation != nil {
 		operation.screen = screen
 		if !operation.busy {
 			screen.Handle(ui.EventContext{}, ui.CustomEvent(operation.state))
 		}
-		return nil // Never replace unresolved state with a fresh Apply preview.
+		return nil
 	}
 	if m.historySafetyOperation != nil {
 		return m.openHistorySafety()
 	}
-	if messageID != "" {
-		return func() tea.Msg {
-			var plan localhistory.RestorePlan
-			var err error
-			if agentID == "" {
-				plan, err = m.ws.HistoryService().PlanMessageRestore(context.Background(), sessionID, messageID)
-			} else {
-				plan, err = m.ws.HistoryService().PlanAgentRestore(context.Background(), sessionID, messageID, agentID)
-			}
-			if err != nil {
-				return historyscreen.PlanMsg{Error: err.Error()}
-			}
-			return historyscreen.PlanMsg{Plan: plan}
-		}
-	}
-	return func() tea.Msg {
-		records, err := m.ws.LocalHistory().Timeline(500)
-		if err != nil {
-			return historyscreen.TimelineMsg{Error: err.Error()}
-		}
-		stats, err := m.ws.LocalHistory().Stats()
-		if err != nil {
-			return historyscreen.TimelineMsg{Error: err.Error()}
-		}
-		return historyscreen.TimelineMsg{Records: records, Stats: stats}
-	}
+	screen.Begin(request)
+	m.markRestoreDirty()
+	return m.historyPreviewCmd(screen.Request())
 }
 
-func (m *App) openLocalHistoryForSnapshot(snapshotID string) tea.Cmd {
-	if snapshotID == "" || m.openLocalHistoryForMessage("", "", "") == nil {
+// restoreScreen returns the open Restore preview dialog's body, opening the
+// dialog when it is closed.
+func (m *App) restoreScreen() *historyscreen.Screen {
+	if m.historyScreen != nil && m.overlayHost.IsOpen(ui.OverlayLocalHistory) {
+		m.closeHistorySafetyView()
+		m.mountHistoryBody(m.historyScreen)
+		return m.historyScreen
+	}
+	m.overlayHost.Close(ui.OverlayLocalHistory)
+	screen := historyscreen.New(m.Theme)
+	m.historyScreen = screen
+	win := m.newRestoreWindow(screen)
+	wm.CenterOnScreen(win, m.width, m.height)
+	m.overlayHost.Open(ui.OverlayLocalHistory, win, ui.ModalDialogPolicy(), func() {
+		m.closeHistorySafetyView()
+		m.historyScreen = nil
+	})
+	if frame, ok := win.Content.(*ui.WindowFrameWidget); ok {
+		frame.Focus(screen.PreferredFocus())
+	}
+	return screen
+}
+
+// deliverRestoreState gives a plan or a restore outcome to the open Restore
+// preview. It goes to the dialog's body directly: delivery through keyboard
+// focus would lose it while no control of a small dialog has focus yet.
+func (m *App) deliverRestoreState(msg tea.Msg, outcome bool) {
+	if m.historyScreen == nil || !m.overlayHost.IsOpen(ui.OverlayLocalHistory) {
+		return
+	}
+	m.historyScreen.Handle(ui.EventContext{}, ui.CustomEvent(msg))
+	m.focusRestoreDialog(outcome)
+	m.markRestoreDirty()
+}
+
+// focusRestoreDialog gives the Restore preview keyboard focus once its
+// controls are mounted: the file list with a plan, otherwise the buttons.
+// A plan keeps a control the user already focused; an outcome replaces the
+// list, so it always moves focus.
+func (m *App) focusRestoreDialog(outcome bool) {
+	fw := m.overlayHost.Window(ui.OverlayLocalHistory)
+	if fw == nil || m.historyScreen == nil {
+		return
+	}
+	frame, ok := fw.Content.(*ui.WindowFrameWidget)
+	if !ok || frame.Body() != m.historyScreen {
+		return
+	}
+	host := frame.Host()
+	host.Layout()
+	if current := host.Focused(); !outcome && current != ui.RootID && current != "" && host.Component(current) != nil {
+		return
+	}
+	host.Focus(m.historyScreen.PreferredFocus())
+}
+
+func (m *App) markRestoreDirty() {
+	if fw := m.overlayHost.Window(ui.OverlayLocalHistory); fw != nil {
+		if frame, ok := fw.Content.(*ui.WindowFrameWidget); ok {
+			frame.Host().MarkLayout()
+		}
+		fw.MarkContentDirty()
+	}
+	m.forceFrame()
+}
+
+// openHistorySafetyWindow shows the copies kept for reviewed edits in the
+// same dialog.
+func (m *App) openHistorySafetyWindow() tea.Cmd {
+	if _, ok := m.ws.(shellport.HistorySafety); !ok {
 		return nil
 	}
-	return m.historyPreviewCmd(historyscreen.PreviewRequest{SnapshotID: snapshotID})
+	m.restoreScreen()
+	return m.openHistorySafety()
 }
 
-func (m *App) newLocalHistoryWindow(screen *historyscreen.Screen) *wm.FloatingWindow {
-	w, h := fitFloatingSize(m.width, m.height, 82, 28, 58, 16)
-	minW, minH := min(58, w), min(16, h)
-	frame := ui.NewWindowFrameWidget(m.Theme, ui.NewID(ui.RootID, "local-history-frame"), ui.FrameWindow, "Local History", screen, nil, true, w, h)
-	win := wm.NewFloatingWindow(string(ui.OverlayLocalHistory), "Local History", frame, w, h,
+func (m *App) newRestoreWindow(screen *historyscreen.Screen) *wm.FloatingWindow {
+	w, h := fitFloatingSize(m.width, m.height, 112, 32, 60, 16)
+	minW, minH := min(60, w), min(16, h)
+	frame := ui.NewWindowFrameWidget(m.Theme, ui.NewID(ui.RootID, "local-history-frame"), ui.FrameWindow, "Restore preview", screen, nil, true, w, h)
+	return wm.NewFloatingWindow(string(ui.OverlayLocalHistory), "Restore preview", frame, w, h,
 		wm.WithDecoration(true), wm.WithMovable(true), wm.WithClosable(true), wm.WithFocusable(true), wm.WithResizable(true), wm.WithModal(true), wm.WithMinSize(minW, minH), wm.WithMaxSize(max(w, m.width-2), max(h, m.height-2)), wm.WithClickOutside(wm.ClickOutsideIgnore))
-	return win
 }
 
+// openHistoryCandidates shows the Local History tab when several agent turns
+// changed the same files, so the user picks the turn to undo.
 func (m *App) openHistoryCandidates(msg historyCandidatesMsg) tea.Cmd {
-	if m.openLocalHistoryForMessage("", "", "") == nil {
+	if m.historyPanel == nil || len(msg.Scopes) == 0 {
 		return nil
 	}
-	return func() tea.Msg {
-		timeline, err := m.ws.LocalHistory().Timeline(10000)
-		if err != nil {
-			return historyscreen.TimelineMsg{Error: err.Error()}
-		}
-		byID := make(map[string]localhistory.SnapshotRecord, len(timeline))
-		for _, record := range timeline {
-			byID[record.ID] = record
-		}
-		records := make([]localhistory.SnapshotRecord, 0, len(msg.Scopes))
-		refs := make(map[string]historyscreen.MessageRef)
-		for _, scope := range msg.Scopes {
-			record := byID[scope.BeforeSnapshot]
-			record.ID = "message-scope:" + msg.SessionID + ":" + scope.MessageID + ":" + scope.AgentID
-			record.Label = "Message " + scope.MessageID + fmt.Sprintf(" · %d changed path(s)", len(scope.ChangedPaths))
-			records = append(records, record)
-			refs[record.ID] = historyscreen.MessageRef{SessionID: msg.SessionID, MessageID: scope.MessageID, AgentID: scope.AgentID}
-		}
-		stats, _ := m.ws.LocalHistory().Stats()
-		return historyscreen.TimelineMsg{Records: records, Stats: stats, Messages: refs}
-	}
+	m.historyPanel.SetMode(historyscreen.ModeTimeline)
+	m.historyPanel.BeginTimeline("")
+	m.historyPanel.SelectMessage(msg.SessionID, msg.Scopes[0].MessageID)
+	m.Feedback.NotifyInfo("Several agent turns changed the same files. Select the turn to undo, then choose Undo changes.")
+	return m.openWorkspaceHub(workspacehub.TabHistory)
 }
 
 func (m *App) captureHistoryCmd() tea.Cmd {
@@ -289,9 +327,9 @@ func (m *App) historyPreviewCmd(request historyscreen.PreviewRequest) tea.Cmd {
 				plan, err = m.ws.HistoryService().PlanAgentRestore(context.Background(), request.SessionID, request.MessageID, request.AgentID)
 			}
 			if err != nil {
-				return historyscreen.PlanMsg{Error: err.Error()}
+				return historyscreen.PlanMsg{Error: err.Error(), Generation: request.Generation}
 			}
-			return historyscreen.PlanMsg{Plan: plan}
+			return historyscreen.PlanMsg{Plan: plan, Generation: request.Generation}
 		}
 		var plan localhistory.RestorePlan
 		var err error
@@ -301,9 +339,9 @@ func (m *App) historyPreviewCmd(request historyscreen.PreviewRequest) tea.Cmd {
 			plan, err = m.ws.LocalHistory().PlanRestore(context.Background(), request.SnapshotID, historySnapshotOptions(settings))
 		}
 		if err != nil {
-			return historyscreen.PlanMsg{Error: err.Error()}
+			return historyscreen.PlanMsg{Error: err.Error(), Generation: request.Generation}
 		}
-		return historyscreen.PlanMsg{Plan: plan}
+		return historyscreen.PlanMsg{Plan: plan, Generation: request.Generation}
 	}
 }
 
@@ -468,7 +506,7 @@ func (m *App) applyHistoryRefresh(result localhistory.RestoreResult) tea.Cmd {
 		}
 	}
 	if m.Feedback != nil {
-		m.Feedback.NotifyInfo(fmt.Sprintf("Restored %d file(s). Open Local History to undo.", len(result.Paths)))
+		m.Feedback.NotifyInfo(fmt.Sprintf("Restored %s. Undo it in Local History.", countNoun(len(result.Paths), "file")))
 	}
 	return tea.Batch(cmds...)
 }

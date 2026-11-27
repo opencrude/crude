@@ -13,13 +13,15 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"crude/core/shellport"
+	historyscreen "crude/tui/screens/localhistory"
 	"crude/tui/ui"
 	"crude/workspace/localhistory"
 )
 
-// Run sequentially through scripts/tuishot.sh: F2 target preview, F3 armed
-// confirmation (no mutation), F4 applied/safety snapshot, F5 inverse preview,
-// F6 armed inverse (still no mutation), F7 undone, F9 verify and exit.
+// Run sequentially through scripts/tuishot.sh: F2 target preview, F3 Restore
+// focused (no mutation), F4 applied/safety snapshot, F5 inverse preview,
+// F6 inverse Restore focused (still no mutation), F7 undone, F9 verify and
+// exit.
 func TestHistorySafetyVisualAcceptance(t *testing.T) {
 	if os.Getenv("CRUDE_VISUAL_HISTORY_SAFETY") != "1" {
 		t.Skip("dedicated sequential native restore capture")
@@ -170,6 +172,37 @@ func (m *historySafetyVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// restoreDialogFocus is the focused control of the Restore preview dialog.
+func restoreDialogFocus(a *App) ui.ComponentID {
+	if fw := a.overlayHost.Window(ui.OverlayLocalHistory); fw != nil {
+		if frame, ok := fw.Content.(*ui.WindowFrameWidget); ok {
+			return frame.Host().Focused()
+		}
+	}
+	return ""
+}
+
+// focusRestoreButton moves keyboard focus to the dialog's buttons, then to
+// Restore with Left when Cancel has it. Nothing is restored yet.
+func focusRestoreButton(a *App) tea.Cmd {
+	var cmds []tea.Cmd
+	for range 6 {
+		if restoreDialogFocus(a) == historyscreen.ActionsID {
+			break
+		}
+		_, cmd := a.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+		cmds = append(cmds, cmd)
+	}
+	for range 2 {
+		if a.historyScreen == nil || a.historyScreen.Restoring() {
+			break
+		}
+		_, cmd := a.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
+		cmds = append(cmds, cmd)
+	}
+	return tea.Batch(cmds...)
+}
+
 func (m *historySafetyVisualModel) journeySafety(phase int) error {
 	if err := m.connect(); err != nil {
 		return err
@@ -179,9 +212,15 @@ func (m *historySafetyVisualModel) journeySafety(phase int) error {
 	case 1:
 		m.action(func(a *App) tea.Cmd { return a.openLocalHistoryForSnapshot(m.target) })
 		label = "immutable target preview"
-	case 2, 3, 4, 5, 6:
+	case 2, 5:
+		m.action(focusRestoreButton)
+		label = map[int]string{2: "Restore focused; no mutation", 5: "inverse Restore focused; no mutation"}[phase]
+	case 3, 6:
 		m.action(func(a *App) tea.Cmd { _, cmd := a.Update(tea.KeyPressMsg{Code: tea.KeyEnter}); return cmd })
-		label = map[int]string{2: "armed restore; no mutation", 3: "restored with durable safety snapshot", 4: "safety inverse preview", 5: "armed inverse; no mutation", 6: "inverse restored original later bytes"}[phase]
+		label = map[int]string{3: "restored with durable safety snapshot", 6: "inverse restored original later bytes"}[phase]
+	case 4:
+		m.action(func(a *App) tea.Cmd { _, cmd := a.Update(tea.KeyPressMsg{Code: 'u', Text: "u"}); return cmd })
+		label = "safety inverse preview"
 	}
 	if phase >= 3 && phase <= 5 {
 		want = "BEFORE RESTORE\n"
@@ -192,11 +231,23 @@ func (m *historySafetyVisualModel) journeySafety(phase int) error {
 		}
 		switch phase {
 		case 1, 4:
-			return featureVisualPaint(v, "Restore preview", "safety.txt")
+			// The plan is reviewable: its file and Restore button are shown.
+			return featureVisualPaint(v, "Restore preview", "safety.txt", "Restore 1 file")
 		case 2, 5:
-			return featureVisualPaint(v, "Press Enter again to restore 1 file.")
+			if restoreDialogFocus(v.App) != historyscreen.ActionsID || !v.historyScreen.Restoring() {
+				return fmt.Errorf("the Restore button does not have keyboard focus (%q, %q)", restoreDialogFocus(v.App), v.historyScreen.FocusedAction())
+			}
+			return featureVisualPaint(v, "Restore 1 file", "Cancel")
 		case 3, 6:
-			return featureVisualPaint(v, "Undo this restore", "Restored 1 file. Press U to undo.")
+			// The heading of an inverse preview also says "Undo this
+			// restore": wait for the outcome itself.
+			if v.historyOperation != nil {
+				return fmt.Errorf("the restore is still running")
+			}
+			if data, err := os.ReadFile(m.path); err != nil || string(data) != want {
+				return fmt.Errorf("disk=%q want=%q err=%v", data, want, err)
+			}
+			return featureVisualPaint(v, "Undo this restore", "Restored 1 file.")
 		}
 		return nil
 	}); err != nil {

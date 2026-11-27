@@ -950,8 +950,6 @@ func (m *App) statusNotificationItems() []statusoverview.Item {
 func (m *App) handleStatusOverviewNavigate(msg statusoverview.NavigateMsg) tea.Cmd {
 	action := msg.Action
 	switch {
-	case action == workspaceErrandAction:
-		return m.openWorkspaceErrand()
 	case action == "agent.retry":
 		return m.retryAgentRecovery(msg.Item.Owner.ID)
 	case action == "status.switch":
@@ -1049,9 +1047,6 @@ func (m *App) handleStatusOverviewNavigate(msg statusoverview.NavigateMsg) tea.C
 	if m.termDock != nil {
 		m.termDock.ClosePanel()
 		m.setTermDockFocused(false)
-	}
-	if m.overlayHost != nil {
-		m.overlayHost.Close(ui.OverlayTabStats)
 	}
 	return nil
 }

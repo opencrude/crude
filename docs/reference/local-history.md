@@ -187,12 +187,67 @@ capture does not record a snapshot from a scan shared with other requests.
   store permanently over budget and discarded all ordinary history each pass.
   The WAL is truncated to 64 MiB after checkpoints.
 
+## Where people see Local History
+
+Local History is the **Local History** tab of the Workspace panel
+(`tui/screens/localhistory/panel.go`, mounted by
+`tui/viewmodel/workspace_hub.go`). Like every movable panel it docks, opens as
+a main tab or opens in its own window. Entry points that are not the panel
+itself (the palette, **Show Local History of this item** in the file tree,
+**Preview this agent's changes** and **Open Local History** in chat) show the
+tab where the panel already is, or open it in a window.
+
+- The top row holds the filter (**All changes ▾**, or one agent's file edits),
+  what the list holds (`312 changes recorded since Oct 3 · 213 MB on disk`), a
+  one-row chart of changes per day for 30 days, and **Kept for review** or
+  **Show all files** for the whole list.
+- The timeline lists every recorded point newest first, named by what happened
+  and who did it (`Bisi changed 3 files`, `Changed outside agents · 1 file`,
+  `Changed while Crude was closed`), never by capture kind or message ID.
+  `history.events` serves it; each point carries the paths it changed since
+  the previous full snapshot, computed once per store from immutable manifests.
+- The selected point's files show beside the list in the shared Git diff
+  document (`history.event_changes`, 40 files a page with **More files**).
+  Narrow panels show the list, and Enter opens the diff; Esc returns.
+- An agent's file edits come from operation receipts. Each row is one edit;
+  its preview shows the two recorded versions (`history.agent_receipts` with an
+  exact operation and path), never the current file.
+- **Undo changes…** and **Restore to here…** sit in the preview heading (or in
+  a row above a narrow list) and act on the selected point. A long title keeps
+  its row; the actions then move beside its time. Nothing in the tab changes
+  files.
+- Tab walks the tab strip, the filter and **Kept for review**, the row actions
+  above a narrow list, the list, the preview heading's actions, the preview and
+  **Open workspace Errand**, in that order. Unavailable actions are skipped. In
+  a window or a main tab the shell reads focus from the host that mounts the
+  panel, so a key never resets it to the list.
+
+## Restore preview
+
+Every restore, undo and recovery check opens one **Restore preview** dialog
+(`tui/screens/localhistory/history.go`). Its question names the action
+(`Undo “Bisi changed 3 files”?`, `Restore every file to Today 10:42:05?`). The
+file list has a check box per file and states what happens to it; the selected
+file's diff shows beside it. Space ticks a file; E replaces a file that
+changed later (the detail line then warns that later edits are lost and
+**Restore** turns red). The action row is **Restore n files / Cancel** with
+Cancel focused, so a stray Enter never changes files. After a restore the same
+dialog offers **Undo this restore**; an unknown outcome offers only **Check the
+result**. **Kept for review** uses the same dialog for the reviewed-edit safety
+list.
+
+Each preview has a generation. The plan read for it carries that generation
+back, and the dialog drops a plan for an earlier preview, so a slow read can
+never fill a later question with other files. Plans and restore outcomes go to
+the dialog's body directly, not through keyboard focus; the file list takes
+focus when the plan arrives, and the buttons take it after a restore.
+
 ## Restore and agent undo
 
 - `/undo` always opens preview. Conflicts require an explicit exact choice;
   non-conflicting later text edits may use the all-hunks-applied reverse merge.
   Esc, close, or an empty selection never changes files.
-- **Preview this agent’s changes** lists retained direct edits across the agent’s session, including active and already-undone work. Select an entry to read its recorded diff. Preview does not prepare a restore. Shell and external-tool changes without receipts are not attributed to an agent.
+- **Preview this agent’s changes** shows the agent's file edits in the Local History tab: every retained direct edit across the agent's session, including active and already-undone work. Select an entry to read its recorded diff. Preview does not prepare a restore. Shell and external-tool changes without receipts are not attributed to an agent.
 - Agent undo is operation-scoped, not a message-wide workspace reset. Direct
   file tools durably record exact preimages and intended postimages before the
   first mutation; failure to persist aborts the tool. Watcher-only, editor,

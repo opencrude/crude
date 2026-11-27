@@ -798,7 +798,8 @@ repeating those hints on every frame.
 ## Identity And Usage
 
 Current selection and historical production identities are separate. The header
-and collapsed Open Tabs identity use the owning session's current configuration,
+and the collapsed rows of the Workspace panel's Tabs page use the owning
+session's current configuration,
 including after a background-tab settings save. An in-flight request retains its
 producing identity. The previous model's context occupancy is not attributed to
 a newly selected model.
@@ -814,8 +815,8 @@ not inferred successes: counts are labelled unreported or as a known lower bound
 Distinct actor generations remain a separate internal metric. Revisions replace
 requests and invalidate the cached rollup. Live and resumed rollups use
 stable monetary accumulation order and retain unknown/estimated/partial cost
-availability. Open Tabs keeps current identity, activity, turn count and cost in
-collapsed rows; expanded usage exposes each producing model alongside the
+availability. The Tabs page keeps current identity, activity, turn count and
+cost in collapsed rows; expanded usage exposes each producing model alongside the
 existing aggregate totals.
 
 ## Usage accounting
@@ -870,7 +871,7 @@ existing aggregate totals.
   Background context-summary preparation/readiness is explained in agent details,
   never an unexplained "checkpoint…" suffix. Its exact job lifecycle settles on
   completion, discard, failure and cancellation without changing the live phase.
-  An open Open Tabs disclosure refreshes on the existing workspace-status cadence,
+  An open Workspace Tabs disclosure refreshes on the existing workspace-status cadence,
   retaining selection, filter and expansion rather than leaving a stale snapshot.
 
 ## Recovery And Stop

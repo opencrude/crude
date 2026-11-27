@@ -7,7 +7,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/tui/ui"
 	"crude/types/conversation"
 	"crude/workspace"
 )
@@ -45,9 +44,9 @@ func (m *checkpointStatusVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if key, ok := msg.(tea.KeyPressMsg); ok {
 		switch key.Code {
 		case tea.KeyF5:
-			m.openTabStats("agent:root")
+			cmd := m.openWorkspaceTabs("agent:root")
 			m.forceFrame()
-			return m, nil
+			return m, cmd
 		case tea.KeyF7:
 			m.ws.ApplyAgentEvent(workspace.AgentEvent{AgentID: "root", Type: "context_precompaction", Data: map[string]any{"phase": "ready", "request_id": "visual-summary"}})
 			m.forceFrame()
@@ -57,7 +56,6 @@ func (m *checkpointStatusVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.forceFrame()
 			return m, nil
 		case tea.KeyF9:
-			m.overlayHost.Close(ui.OverlayTabStats)
 			return m, tea.Quit
 		}
 	}

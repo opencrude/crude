@@ -154,6 +154,16 @@ func (h historyStore) AgentReceipts(ctx context.Context, q localhistory.AgentRec
 	err := h.w.call(ctx, coreprotocol.HistoryAgentReceipts, &coreprotocol.AgentReceiptRequest{Query: q}, &out)
 	return out.Page, err
 }
+func (h historyStore) Events(ctx context.Context, path string) ([]localhistory.Event, error) {
+	var out coreprotocol.HistoryEventsResult
+	err := h.w.call(ctx, coreprotocol.HistoryEvents, &coreprotocol.HistoryEventsRequest{Path: path}, &out)
+	return out.Events, err
+}
+func (h historyStore) EventChanges(ctx context.Context, q localhistory.EventQuery) (localhistory.EventPage, error) {
+	var out coreprotocol.HistoryEventChangesResult
+	err := h.w.call(ctx, coreprotocol.HistoryEventChanges, &coreprotocol.HistoryEventChangesRequest{Query: q}, &out)
+	return out.Page, err
+}
 func (h historyStore) FileHistory(path string, limit int) ([]localhistory.SnapshotRecord, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
 	defer cancel()

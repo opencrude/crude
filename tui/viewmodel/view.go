@@ -391,18 +391,20 @@ func (m *App) syncRootFocus() {
 					id = current
 				}
 			} else if view := m.activeGitReview(); view != nil {
+				// The content may be mounted in a pane window: read the
+				// focus of the host that mounts it, not the shell's.
 				id = view.screen.DocumentID()
-				if current := m.rootHost.Focused(); strings.HasPrefix(string(current), string(view.screen.ID())+"/") {
+				if current := m.hostFor(id).Focused(); strings.HasPrefix(string(current), string(view.screen.ID())+"/") {
 					id = current
 				}
 			} else if content := m.activePanelTabContent(); content != nil {
 				id = preferredFocus(content)
-				if current := m.rootHost.Focused(); panelOwnsFocus(content, current) {
+				if current := m.hostFor(id).Focused(); panelOwnsFocus(content, current) {
 					id = current
 				}
 			} else if view := m.activeLocalDiff(); view != nil {
 				id = view.screen.DocumentID()
-				if current := m.rootHost.Focused(); current == view.screen.ID() || strings.HasPrefix(string(current), string(view.screen.ID())+"/") {
+				if current := m.hostFor(id).Focused(); current == view.screen.ID() || strings.HasPrefix(string(current), string(view.screen.ID())+"/") {
 					id = current
 				}
 			} else {

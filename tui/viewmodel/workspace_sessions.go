@@ -11,7 +11,9 @@ import (
 	"crude/core/shellport"
 	"crude/tui/screens/sessionpicker"
 	"crude/tui/screens/statusoverview"
+	"crude/tui/screens/workspacehub"
 	"crude/tui/ui"
+	"crude/workspace"
 )
 
 // Cache the lightweight workspace registry, not an enrichment scan that opens
@@ -59,6 +61,10 @@ func (m *App) workspaceSessionItems() []statusoverview.Item {
 	}
 	items[0].Label = fmt.Sprintf("Previous Sessions (%d)", len(sessions))
 	live := m.sessionLiveInfos(sessions)
+	costs := map[string]workspace.SessionCost{}
+	for _, cost := range m.hubReads.usage.Sessions {
+		costs[cost.SessionID] = cost
+	}
 	for _, group := range sessionpicker.BuildSessionGroups(sessions) {
 		items = append(items, statusoverview.Item{ID: "sessions-date:" + group.Label, Label: group.Label, Header: true})
 		for _, meta := range group.Sessions {
@@ -73,6 +79,10 @@ func (m *App) workspaceSessionItems() []statusoverview.Item {
 			if info.SubAgents > 0 {
 				parts = append(parts, fmt.Sprintf("%d sub-agents", info.SubAgents))
 			}
+			cost, priced := costs[meta.ID]
+			if priced && cost.Requests > 0 {
+				parts = append(parts, workspacehub.USD(cost.CostUSD))
+			}
 			if meta.CreatedAt > 0 {
 				parts = append(parts, time.Unix(0, meta.CreatedAt).Format("15:04"))
 			}
@@ -84,6 +94,7 @@ func (m *App) workspaceSessionItems() []statusoverview.Item {
 					{Label: "Last prompt", Value: meta.LastPrompt.String},
 					{Label: "Model", Value: meta.Model, Role: ui.ColorMuted},
 					{Label: "Created", Value: time.Unix(0, meta.CreatedAt).Format("2006-01-02 15:04"), Role: ui.ColorMuted},
+					{Label: "Cost", Value: sessionCostText(cost, priced), Role: ui.ColorMuted},
 					{Label: "Session ID", Value: meta.ID, Role: ui.ColorMuted},
 				},
 				PrimaryAction: "session:resume:" + meta.ID, PrimaryLabel: "Resume session", PrimaryEnabled: true,
@@ -91,6 +102,18 @@ func (m *App) workspaceSessionItems() []statusoverview.Item {
 		}
 	}
 	return items
+}
+
+// sessionCostText is a session's recorded cost and use, sub-agents included.
+func sessionCostText(cost workspace.SessionCost, priced bool) string {
+	if !priced || cost.Requests == 0 {
+		return "No priced requests"
+	}
+	text := workspacehub.USD(cost.CostUSD) + " · " + countNoun(cost.Requests, "request")
+	if span := workspacehub.DateRange(cost.First, cost.Last, time.Now()); span != "" {
+		text += " · " + span
+	}
+	return text
 }
 
 func (m *App) resumeWorkspaceSession(id string) tea.Cmd {

@@ -42,7 +42,9 @@ import (
 	"crude/tui/screens/shelltabs"
 	"crude/tui/screens/shellterm"
 	"crude/tui/screens/shelltree"
+	"crude/tui/screens/statusoverview"
 	"crude/tui/screens/termdock"
+	"crude/tui/screens/workspacehub"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
@@ -339,18 +341,27 @@ type App struct {
 	// thinkingLatch records sessions that have already promoted a reasoning
 	// block. Once latched, every later thinking block in that session opens in
 	// its own pane instead of restarting inline. A settings change clears it.
-	thinkingLatch          map[*workspace.Session]bool
-	editorScreen           *shelleditor.Screen
-	launcherScreen         *launcher.Screen
-	onboarding             onboardingState
-	projectTools           projectToolsState
-	workspaceInfos         []workspace.Info
-	workspaceActivity      workspaceActivityState
-	workspaceListLoading   bool
-	workspaceListError     string
-	workspaceListCancel    context.CancelFunc
-	historyScreen          *historyscreen.Screen
-	historyOperation       *historyOperation
+	thinkingLatch        map[*workspace.Session]bool
+	editorScreen         *shelleditor.Screen
+	launcherScreen       *launcher.Screen
+	onboarding           onboardingState
+	projectTools         projectToolsState
+	workspaceInfos       []workspace.Info
+	workspaceActivity    workspaceActivityState
+	workspaceListLoading bool
+	workspaceListError   string
+	workspaceListCancel  context.CancelFunc
+	historyScreen        *historyscreen.Screen
+	historyOperation     *historyOperation
+	// The Workspace panel and its pages; hubReads fences their reads.
+	hub                    *workspacehub.Hub
+	hubTabs                *statusoverview.Surface
+	hubSessions            *statusoverview.Surface
+	historyPanel           *historyscreen.Panel
+	hubOverview            *workspacehub.Overview
+	hubStorage             *workspacehub.Storage
+	hubReads               hubReads
+	hubCleanup             *hubCleanupPrompt
 	historySafety          *historySafetyView
 	historySafetyOperation *historySafetyOperation
 	sessionPicker          *sessionpicker.Screen

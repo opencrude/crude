@@ -479,8 +479,9 @@ History is the local-history surface of a workspace.
 
 Optional native workspace retention administration. All calls run off Update.
 The core derives evidence and attribution; inspection never grants the older
-author's reviewed-edit mutation authority. The existing Local History window
-owns the paged list/detail and the human-only exact-inspection confirmation.
+author's reviewed-edit mutation authority. The Restore preview dialog's
+**Kept for review** view owns the paged list/detail and the human-only
+exact-inspection confirmation.
 
 | Member | TUI | coreprotocol |
 |---|---|---|

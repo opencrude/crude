@@ -214,6 +214,9 @@ func (m *App) preparePlacedPanel(id string) {
 	case termdock.PanelWorkspace, termdock.PanelProblems, termdock.PanelNotices:
 		m.workspacePanelLastVersion, m.workspacePanelLastSecond = 0, 0
 		m.syncWorkspacePanels()
+		if id == termdock.PanelWorkspace {
+			m.runDetachedAsyncCmd(m.refreshWorkspaceHub(true))
+		}
 	case termdock.PanelPerformance:
 		// The next tick refreshes it; the new placement may change chart width.
 		m.perf.requestedAt = time.Time{}

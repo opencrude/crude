@@ -64,6 +64,9 @@ type Store struct {
 	// The next caller that holds mu serves all of them with one scan.
 	captures   []*captureRequest
 	capturesMu sync.Mutex
+	// events remembers which paths each snapshot changed, so the History
+	// panel reads every immutable manifest once per Store, not per view.
+	events eventIndex
 }
 
 // statEntry is a file's observed metadata and the content it had then.

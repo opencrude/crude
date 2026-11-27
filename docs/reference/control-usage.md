@@ -451,9 +451,9 @@ VirtualList owns its two-row height, scrolling and hit lookup; names and paths
 are never separate selectable entries. Subtitles use `ColorMuted` from the live
 theme and middle truncation at the pane width, without extra separator rows.
 
-## Workspace and Open Tabs rows
+## Workspace panel rows
 
-- Workspace and Open Tabs collapsed resource rows occupy exactly one line.
+- The Tabs and Sessions pages' collapsed resource rows occupy exactly one line.
   Keep explicit Workspace section headings even for a single group. Click,
   Enter/Space, and Left/Right own disclosure; Open/Resume is an explicit action
   inside expanded details, not an ambiguous first click.

@@ -18,6 +18,8 @@ const (
 	FilesEdit              = "files.edit"
 	FilesSearch            = "files.search"
 	HistoryAgentReceipts   = "history.agent_receipts"
+	HistoryEvents          = "history.events"
+	HistoryEventChanges    = "history.event_changes"
 	HistoryTimeline        = "history.timeline"
 	HistoryFile            = "history.file"
 	HistoryStats           = "history.stats"
@@ -95,6 +97,21 @@ type AgentReceiptRequest struct {
 
 // AgentReceiptResult carries one page or one exact retained diff.
 type AgentReceiptResult struct{ Page localhistory.RunChangePage }
+
+// HistoryEventsRequest lists the timeline, or only the points that changed
+// Path or anything below it.
+type HistoryEventsRequest struct {
+	Path string `json:"path,omitempty"`
+}
+
+// HistoryEventsResult is the timeline newest first.
+type HistoryEventsResult struct{ Events []localhistory.Event }
+
+// HistoryEventChangesRequest selects one page of one point's changed files.
+type HistoryEventChangesRequest struct{ Query localhistory.EventQuery }
+
+// HistoryEventChangesResult carries both versions of each file on the page.
+type HistoryEventChangesResult struct{ Page localhistory.EventPage }
 
 type HistoryListRequest struct {
 	Path  string `json:"path,omitempty"`

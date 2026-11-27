@@ -581,7 +581,7 @@ and run it through `scripts/tuishot.sh` with `CRUDE_BIN`/`CRUDE_ARGS`, at
 press F4 (the painted tooltip shows the absolute path). F3 releases Errand's
 question; F4 checks that it is a modal over the unchanged tab and draft.
 Click the modal's **Cancel**, then F4 checks that it closed. F5 shows the
-Workspace panel; click **Open workspace Errand** in its panel header; F4 checks its normal
+Workspace panel; click **Open workspace Errand** on its tab strip; F4 checks its normal
 agent tab. F9 exits. `CRUDE_ERRAND_VISUAL_RESULT` receives
 `ERRAND_VISUAL_SUCCESS` or the failed phase and its state.
 
@@ -593,11 +593,26 @@ the existing Errand; F4 verifies its normal composer. F5 restores the main draft
 Move the pointer away, then hover the Crude wordmark; F6 verifies both distinct
 native build hashes. F9 checks all observations and writes `CRUDE_VISUAL_PROOF`.
 The TUI hash is the actual test image; the core hash is controlled fixture data.
-`TestWorkspacePanelLinkMatchesProblems` compares actual link cells across
+`TestHubErrandLinkMatchesProblems` compares actual link cells across
 dark/light themes and constrained widths. The shared `ActionLink` regression
 also checks that idle, hovered and focused labels stay underlined.
 `TestConnectedConnectionDetailsUsesServerImage` separately checks propagation
 from a real core handshake through the remote port into the painted reader.
+
+### Workspace panel acceptance
+
+`TestWorkspaceHubVisualAcceptance` (`CRUDE_VISUAL_WORKSPACE_HUB=1`) shows the
+Workspace panel with fixed cost and storage reports and a real Local History
+store. Precompile the viewmodel test binary and capture it at 160x45 and 90x28,
+one capture at a time. F2 opens Overview in a window; F8 shows the next page
+(Tabs, then Sessions); F3 shows Local History with the agent turn selected; F6
+opens its Restore preview, and Escape closes it; F4 shows Storage; F5 opens the
+Remove temporary files confirmation, and Escape closes it; F7 docks the
+window; F9 exits. Check that the tab strip, **Open workspace Errand**, the cost
+tiles, the chart, the preview heading and the cleanup actions are whole at
+both sizes. Keyboard and window behavior is covered headlessly by
+`TestWorkspacePanelWindowTabWalksEveryControl`,
+`TestHistorySafetyVisualHarnessHeadless` and `TestFeatureVisualHarnessHeadless`.
 
 `go test ./internal/crashlog -count=1` runs genuine subprocess fatal/recovered crashes
 and checks report contents, private permissions and normal-exit cleanup.

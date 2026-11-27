@@ -860,6 +860,14 @@ func (document *Document) toggleFile(fileIndex int) {
 
 func (document *Document) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	if document.geometryState != "" {
+		// Rows wait for the width profile; focus keys still leave the
+		// document, so a parent's Tab order and Esc keep working.
+		if evt.IsKey() {
+			switch evt.Key.String() {
+			case "tab", "shift+tab", "esc":
+				return ui.EventResult{}
+			}
+		}
 		return ui.EventResult{Handled: true}
 	}
 	paint := ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}

@@ -1,8 +1,6 @@
 package perfdash
 
 import (
-	"math"
-
 	"crude/tui/ui"
 )
 
@@ -66,21 +64,13 @@ func paintResourceRow(p *painter, row resourceRow, x, y, w int, extra bool) {
 
 // paintShareBar draws share of width cells in eighths.
 func paintShareBar(p *painter, x, y, width int, share float64) {
-	fill := int(math.Round(share * float64(width*8)))
-	if share > 0 && fill == 0 {
-		fill = 1
-	}
 	accent := p.tokens.Color(ui.ColorAccent)
 	track := p.tokens.Color(ui.ColorBorder)
-	for i := range width {
-		n := min(max(fill-i*8, 0), 8)
-		switch {
-		case n == 8:
-			p.set(x+i, y, '█', accent, p.bg)
-		case n > 0:
-			p.set(x+i, y, []rune("▏▎▍▌▋▊▉")[n-1], accent, p.bg)
-		default:
+	for i, glyph := range ui.ShareBar(width, share) {
+		if glyph == 0 {
 			p.set(x+i, y, '·', track, p.bg)
+			continue
 		}
+		p.set(x+i, y, glyph, accent, p.bg)
 	}
 }

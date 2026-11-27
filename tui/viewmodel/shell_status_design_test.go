@@ -170,10 +170,13 @@ func TestBackgroundContextSummaryIsExplainedInDetailsNotHeader(t *testing.T) {
 	// Check the ordinary Workspace disclosure, not only its projection data.
 	app.toggleWorkspacePanel(termdock.PanelWorkspace)
 	app.paintShellFrame()
-	screen := app.termDock.Panel(termdock.PanelWorkspace).(*statusoverview.Surface)
-	list, dock := screen.ListBounds(), app.termDockRect
-	for y := dock.Y + 1 + list.Y; y < dock.Y+1+list.Y+4 && !screen.IsExpanded("agent:root"); y++ {
-		app.rootHost.Handle(tea.MouseClickMsg{X: dock.X + list.X + 4, Y: y, Button: tea.MouseLeft})
+	screen := app.hubTabs
+	list, ok := app.screenRectOf(statusoverview.ListID)
+	if !ok || list.Empty() {
+		t.Fatal("the Workspace panel's Tabs list is not on screen")
+	}
+	for y := list.Y; y < list.Y+4 && !screen.IsExpanded("agent:root"); y++ {
+		app.rootHost.Handle(tea.MouseClickMsg{X: list.X + 4, Y: y, Button: tea.MouseLeft})
 	}
 	app.paintShellFrame()
 	var rendered strings.Builder

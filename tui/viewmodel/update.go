@@ -199,6 +199,11 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, cmd
 			}
 		}
+		if prompt := m.hubCleanup; prompt != nil {
+			if handled, cmd := m.confirmModalInput(hubCleanupOverlay, key, false, prompt.activate); handled {
+				return m, cmd
+			}
+		}
 	}
 	if handled, cmd := m.handleUntitledOverwriteInput(msg); handled {
 		return m, cmd
@@ -501,7 +506,6 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case statusoverview.CloseMsg:
 		if m.overlayHost != nil {
-			m.overlayHost.Close(ui.OverlayTabStats)
 			m.overlayHost.Close(ui.OverlayPromptHistory)
 		}
 		if m.termDock != nil {
@@ -521,14 +525,12 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.openMainPaneMenu()
 		case "nav.back", "nav.forward":
 			return m, m.navigateHistory(msg.Action == "nav.back")
-		case "workspace":
-			m.openTabStats(msg.TargetID)
-		case "activity":
-			m.openTabStats(msg.TargetID)
+		case "workspace", "activity":
+			return m, m.openWorkspaceTabs(msg.TargetID)
 		case "notifications":
 			m.toggleWorkspacePanel(termdock.PanelNotices)
 		case "tabs":
-			m.openTabStats(msg.TargetID)
+			return m, m.openWorkspaceTabs(msg.TargetID)
 		case "editor-indentation":
 			if m.EditorState.Editor != nil && msg.TargetID == "editor:"+m.EditorState.ActiveView {
 				return m, m.openIndentationMenu(m.EditorState.Editor)
@@ -912,7 +914,7 @@ func (m *App) handleTick(msg TickMsg) (tea.Model, tea.Cmd) {
 	m.syncLanguageServerSettings()
 	m.syncAgentStatusInventory()
 	m.syncPerfAttention(now)
-	perfCmd := m.requestPerfSnapshot(false)
+	perfCmd := tea.Batch(m.requestPerfSnapshot(false), m.pollWorkspaceHub())
 	errandCmd := m.workspaceErrandTick(now)
 	activityCmd := m.workspaceActivityCmd(now)
 	var launcherCmd tea.Cmd
@@ -1609,20 +1611,26 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 				}
 			}
 		}
-	case agentReceiptResult:
-		if msg.screen == m.historyScreen && msg.generation == m.workspaceSwitchGen.Load() {
-			if fw := m.windowManager.Window(string(ui.OverlayLocalHistory)); fw != nil {
-				if cmd := m.forwardEventToWindowContent(fw, msg.result); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
-			}
+	case hubUsageMsg:
+		m.applyWorkspaceUsage(msg)
+	case hubStorageMsg:
+		m.applyWorkspaceStorage(msg)
+	case hubCleanupMsg:
+		if cmd := m.applyWorkspaceCleanup(msg); cmd != nil {
+			cmds = append(cmds, cmd)
 		}
-	case historyscreen.TimelineMsg, historyscreen.PlanMsg:
-		if fw := m.windowManager.Window(string(ui.OverlayLocalHistory)); fw != nil {
-			if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
-				cmds = append(cmds, cmd)
-			}
+	case historyEventsMsg:
+		if cmd := m.applyHistoryEvents(msg); cmd != nil {
+			cmds = append(cmds, cmd)
 		}
+	case historyPreviewMsg:
+		m.applyHistoryPreview(msg)
+	case historyReceiptsMsg:
+		if cmd := m.applyHistoryReceipts(msg); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case historyscreen.PlanMsg:
+		m.deliverRestoreState(msg, false)
 	case historyApplyResultMsg:
 		if cmd := m.applyHistoryResult(msg); cmd != nil {
 			cmds = append(cmds, cmd)
@@ -1636,14 +1644,13 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			cmds = append(cmds, cmd)
 		}
 	case historyscreen.AppliedMsg:
-		if fw := m.windowManager.Window(string(ui.OverlayLocalHistory)); fw != nil {
-			if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-		}
+		m.deliverRestoreState(msg, true)
 		if msg.Error == "" && msg.RequestID == "" {
 			if cmd := m.applyHistoryRefresh(msg.Result); cmd != nil {
 				cmds = append(cmds, cmd)
+			}
+			if m.workspaceHubShown() {
+				cmds = append(cmds, m.readHistoryEvents())
 			}
 			if msg.Warning != "" {
 				m.Feedback.NotifyError(msg.Warning)

@@ -653,11 +653,15 @@ type actor struct {
 	// jobCancels cancels exactly one requester's in-flight job.
 	jobCancels map[string]context.CancelFunc
 	// progress delivers request-scoped output to the requesting connection.
-	progress       func(coreprotocol.Owner, coreprotocol.Progress)
-	runtime        *Runtime
-	projectTools   *workspace.ProjectToolSetupOwner
-	id             string
-	ws             *workspace.Workspace
+	progress     func(coreprotocol.Owner, coreprotocol.Progress)
+	runtime      *Runtime
+	projectTools *workspace.ProjectToolSetupOwner
+	id           string
+	ws           *workspace.Workspace
+	// usage remembers what each session database contributed to the
+	// Workspace panel's cost report, for the folder in usageDir.
+	usage          *workspace.UsageReader
+	usageDir       string
 	accessDB       *workspace.DB // immutable lifetime handle; sql.DB fences concurrent close
 	receipts       *receiptJournal
 	commands       chan actorCommand

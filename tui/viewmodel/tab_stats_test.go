@@ -1,66 +1,37 @@
 package viewmodel
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
-	tea "charm.land/bubbletea/v2"
-
-	"crude/tui/screens/statusoverview"
-	"crude/tui/ui"
+	"crude/tui/screens/termdock"
+	"crude/tui/screens/workspacehub"
 	"crude/workspace"
 )
 
-func TestOpenTabsUsesVisibleTabInventory(t *testing.T) {
-	app := newTransitionApp(t)
-	t.Cleanup(wsOf(app).Close)
-	app.minimizeAgent("agent-1")
-	app.AddOrchestrator("visible")
-	app.AddOrchestrator("minimized")
-	app.minimizeAgent("minimized")
-	app.AddOrchestrator("unmounted")
-	app.Win.CloseTabByID(app.Win.TabByTitle(app.agentTabTitle("unmounted")).ID)
-	path := filepath.Join(t.TempDir(), "visible.go")
-	if err := os.WriteFile(path, []byte("package main\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := app.openEditorTab(path); err != nil {
-		t.Fatal(err)
-	}
-	items := app.openTabItems()
-	if len(items) != 2 || items[0].ID != "agent:visible" || items[1].ID != "editor:"+path {
-		t.Fatalf("Open Tabs does not match visible strip order: %+v", items)
-	}
-	// Workspace deliberately retains minimized agents; only Open Tabs filters.
-	retained := false
-	for _, item := range app.statusTabItems() {
-		retained = retained || item.ID == "agent:minimized"
-	}
-	if !retained {
-		t.Fatal("Open Tabs filtering removed minimized agents from Workspace")
-	}
-	app.Win.CloseTabByID(app.Win.TabByTitle(app.editorTabTitle(path)).ID)
-	if items = app.openTabItems(); len(items) != 1 || items[0].ID != "agent:visible" {
-		t.Fatalf("retained editor without a tab leaked into modal: %+v", items)
-	}
-}
-
-func TestOpenTabsModalIsWiderAndClamped(t *testing.T) {
+// The header's tab count opens the Workspace panel's Tabs page in a window
+// with the pointed-to agent selected and its details open. No second Open
+// Tabs window exists.
+func TestHeaderTabCountOpensWorkspaceTabs(t *testing.T) {
 	app := newFullTestApp(t)
+	app.width, app.height = 160, 40
 	app.AddOrchestrator("root")
-	for _, width := range []int{160, 80} {
-		app.width, app.height = width, 36
-		app.openTabStats("agent:root")
-		win := app.overlayHost.Window(ui.OverlayTabStats)
-		if win == nil {
-			t.Fatal("Open Tabs modal did not open")
-		}
-		if got, want := win.ContentBounds().W, min(112, width-4); got != want {
-			t.Fatalf("modal width=%d want %d", got, want)
-		}
-		app.overlayHost.Close(ui.OverlayTabStats)
+	runAppCommand(t, app, app.openWorkspaceTabs("agent:root"))
+	if app.hub.Active() != workspacehub.TabTabs || !app.panelShown(termdock.PanelWorkspace) {
+		t.Fatalf("Workspace Tabs page is not shown: tab=%s", app.hub.Active())
+	}
+	tab := app.panelTab(termdock.PanelWorkspace)
+	if tab == nil || !app.Win.IsFloating(tab.Group) {
+		t.Fatal("the Workspace panel did not open in its own window")
+	}
+	if item, ok := app.hubTabs.Selected(); !ok || item.ID != "agent:root" || !app.hubTabs.IsExpanded("agent:root") {
+		t.Fatalf("the pointed-to agent is not selected and open: %+v", item)
+	}
+	// A second click switches the shown hub instead of opening another one.
+	runAppCommand(t, app, app.openLocalHistory())
+	runAppCommand(t, app, app.openWorkspaceTabs(""))
+	if app.hub.Active() != workspacehub.TabTabs || app.panelTab(termdock.PanelWorkspace).ID != tab.ID {
+		t.Fatal("the Workspace panel moved instead of switching its tab")
 	}
 }
 
@@ -72,12 +43,8 @@ func TestOpenAgentDetailsFollowBackgroundSummaryLifecycle(t *testing.T) {
 		wsOf(app).ApplyAgentEvent(workspace.AgentEvent{AgentID: "root", Type: "context_precompaction", Data: map[string]any{"phase": phase, "request_id": "summary"}})
 	}
 	apply("started")
-	app.openTabStats("agent:root")
-	win := app.overlayHost.Window(ui.OverlayTabStats)
-	frame := win.Content.(*ui.WindowFrameWidget)
-	screen := frame.Body().(*statusoverview.Surface)
-	frame.Focus(statusoverview.ListID)
-	frame.HandleEvent(tea.KeyPressMsg{Code: tea.KeyRight})
+	runAppCommand(t, app, app.openWorkspaceTabs("agent:root"))
+	screen := app.hubTabs
 	if !screen.IsExpanded("agent:root") {
 		t.Fatal("setup: agent details did not expand")
 	}
@@ -108,20 +75,17 @@ func TestOpenAgentDetailsFollowBackgroundSummaryLifecycle(t *testing.T) {
 	}
 }
 
-func TestPreviousSessionsIsFinalWorkspaceSection(t *testing.T) {
+// Open agents and previous sessions are separate Workspace tabs.
+func TestPreviousSessionsHaveTheirOwnWorkspaceTab(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator("root")
-	items := app.statusPanelProjection(statusoverview.ViewTabs).Views[statusoverview.ViewTabs]
-	index := -1
-	for i, item := range items {
+	for _, item := range app.statusTabItems() {
 		if item.ID == "previous-sessions" {
-			index = i
-		}
-		if index >= 0 && item.ID == "agent:root" {
-			t.Fatal("agent row appears after Previous Sessions")
+			t.Fatal("previous sessions appear on the Tabs page")
 		}
 	}
-	if index < 1 || items[len(items)-1].ID != "sessions-empty" {
-		t.Fatalf("Previous Sessions is not the final section: %+v", items)
+	items := app.workspaceSessionItems()
+	if len(items) == 0 || items[0].ID != "previous-sessions" || items[len(items)-1].ID != "sessions-empty" {
+		t.Fatalf("Sessions page items: %+v", items)
 	}
 }

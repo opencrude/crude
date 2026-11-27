@@ -370,7 +370,12 @@ composer path.
   coordinates, so popovers, hit policy and composer ownership need no special
   case. A component is mounted in exactly one host; `hostFor`, `mainHost` and
   `screenRectOf` resolve focus, key dispatch and geometry to the root host or
-  the window's frame host.
+  the window's frame host. `syncRootFocus` keeps a control the user focused in
+  a panel, review or comparison tab by reading the focus of that tab's own
+  host; reading the shell host instead reset focus to the preferred control on
+  every key, so Tab could not leave the first control of a panel in a window.
+  A comparison whose rows still wait for the width profile lets Tab,
+  Shift+Tab and Esc pass to its parent.
 - Focus: `syncPaneWindowFocus` keeps Window's focused group and the WM's focused
   window in agreement. Code that focuses a window group raises its window; a
   user who raises a window moves the focused group into it; leaving every
@@ -442,11 +447,11 @@ ownership are all retained. A stray click must never destroy work in flight.
   take seconds (`tui/viewmodel/remote_lifecycle.go` `sessionLifecycleBusy`).
   It is not an ordinary Agents row
   and does not count toward that sidebar badge or the Workspace panel's agent
-  list. **Open workspace Errand** in the **Workspace panel header**, beside its
-  search, opens its existing normal agent tab with the normal chat, composer
-  and status bar. Its tab retains the usual window and minimize actions.
-  The application header has no Errand link. Narrow panels move the link to a
-  compact row below search, like Problems. Tab reaches it from search; Enter
+  list. **Open workspace Errand** at the right end of the Workspace panel's tab
+  strip, on every page, opens its existing normal agent tab with the normal
+  chat, composer and status bar. Its tab retains the usual window and minimize
+  actions. The application header has no Errand link. A narrow panel shows the
+  short label **Errand**. Tab reaches it after the page's last control; Enter
   and pointer activation use the same navigation and return focus to the composer.
   Before the core has returned it, opening the panel link waits and opens the tab when it
   arrives; a failed start opens Errand's settings. Errand is permanent, so it has

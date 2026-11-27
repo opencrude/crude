@@ -99,6 +99,9 @@ func (a *actor) prepareFilesAtRoot(request coreprotocol.Request, root, execution
 		if run, known := a.prepareHistorySafety(request); known {
 			return run, true
 		}
+		if run, known := a.prepareWorkspaceData(request); known {
+			return run, true
+		}
 	}
 	ops, store, history := a.ws.FileOps, a.ws.LocalHistory, a.ws.HistoryService
 	if root != a.ws.RootPath {
@@ -312,6 +315,30 @@ func (a *actor) prepareFilesAtRoot(request coreprotocol.Request, root, execution
 			page, err := store.AgentReceipts(ctx, in.Query)
 			return wire(coreprotocol.AgentReceiptResult{Page: page}), err
 		})
+	case coreprotocol.HistoryEvents:
+		var in coreprotocol.HistoryEventsRequest
+		if err := decodeRequest(request, &in); err != nil {
+			return bad("invalid_request", err.Error())
+		}
+		return work(func(ctx context.Context) (coreprotocol.Value, error) {
+			if store == nil {
+				return nil, errors.New("local history is unavailable")
+			}
+			events, err := store.Events(ctx, in.Path)
+			return wire(coreprotocol.HistoryEventsResult{Events: events}), err
+		})
+	case coreprotocol.HistoryEventChanges:
+		var in coreprotocol.HistoryEventChangesRequest
+		if err := decodeRequest(request, &in); err != nil {
+			return bad("invalid_request", err.Error())
+		}
+		return work(func(ctx context.Context) (coreprotocol.Value, error) {
+			if store == nil {
+				return nil, errors.New("local history is unavailable")
+			}
+			page, err := store.EventChanges(ctx, in.Query)
+			return wire(coreprotocol.HistoryEventChangesResult{Page: page}), err
+		})
 	case coreprotocol.HistoryTimeline, coreprotocol.HistoryFile:
 		if store == nil {
 			return bad("unavailable", "local history unavailable")
@@ -401,7 +428,7 @@ func (a *actor) prepareFilesAtRoot(request coreprotocol.Request, root, execution
 
 func filesMutation(method string) bool {
 	switch method {
-	case coreprotocol.FilesCreate, coreprotocol.FilesCreateFolder, coreprotocol.FilesRename, coreprotocol.FilesCopy, coreprotocol.FilesDelete, coreprotocol.FilesEdit, coreprotocol.HistoryPrune, coreprotocol.HistoryCapture, coreprotocol.HistoryPlan, coreprotocol.HistoryPlanPaths, coreprotocol.HistoryPlanMessage, coreprotocol.HistoryPlanAgent, coreprotocol.HistorySafetyChange:
+	case coreprotocol.FilesCreate, coreprotocol.FilesCreateFolder, coreprotocol.FilesRename, coreprotocol.FilesCopy, coreprotocol.FilesDelete, coreprotocol.FilesEdit, coreprotocol.HistoryPrune, coreprotocol.HistoryCapture, coreprotocol.HistoryPlan, coreprotocol.HistoryPlanPaths, coreprotocol.HistoryPlanMessage, coreprotocol.HistoryPlanAgent, coreprotocol.HistorySafetyChange, coreprotocol.WorkspaceCleanup:
 		return true
 	}
 	return false

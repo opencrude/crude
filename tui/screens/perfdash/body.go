@@ -358,8 +358,6 @@ func sectionOfRef(ref seriesRef) string {
 
 // --- paint -------------------------------------------------------------------
 
-var eighths = [9]rune{' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
-
 type painter struct {
 	buf    *surface.CellBuffer
 	tokens *ui.TokenSet
@@ -601,7 +599,7 @@ func (b *body) paintCard(p *painter, c *card, x, y, w, hoverCol int, linkHover b
 			}
 			fill := min(max(level-row*8, 0), 8)
 			if fill > 0 {
-				p.set(x+col, yy, eighths[fill], p.sevColor(c.severity(v)), cellBg)
+				p.set(x+col, yy, ui.VerticalEighths[fill], p.sevColor(c.severity(v)), cellBg)
 				continue
 			}
 			ch, color := ' ', fg
@@ -681,16 +679,11 @@ func (b *body) paintTable(p *painter, blk *block, x, y, w int) {
 					share = float64(row.Sum) / float64(t.total)
 				}
 				barW := c.width - 5
-				fillEighths := int(math.Round(share * float64(barW*8)))
-				for j := 0; j < barW; j++ {
-					n := min(max(fillEighths-j*8, 0), 8)
-					ch := eighths[n]
-					if n == 8 {
-						ch = '█'
-					} else if n > 0 {
-						ch = []rune("▏▎▍▌▋▊▉")[n-1]
+				for j, glyph := range ui.ShareBar(barW, share) {
+					if glyph == 0 {
+						glyph = ' '
 					}
-					p.set(cx+j, ry, ch, p.tokens.Color(ui.ColorAccent), p.bg)
+					p.set(cx+j, ry, glyph, p.tokens.Color(ui.ColorAccent), p.bg)
 				}
 				p.text(cx+barW, ry, 5, padLeft(formatValue(share*100, "%"), 5), muted, 0)
 			case "time":
@@ -721,13 +714,12 @@ func (b *body) paintSpark(p *painter, x, y, w int, points []int64) {
 	if len(points) == 0 {
 		return
 	}
-	// Fold points into w columns, keeping the most recent on the right.
-	folded := make([]int64, w)
+	values := make([]float64, len(points))
 	for i, v := range points {
-		col := i * w / len(points)
-		folded[col] += v
+		values[i] = float64(v)
 	}
-	peak := int64(0)
+	folded := ui.FoldColumns(values, w)
+	peak := 0.0
 	for _, v := range folded {
 		peak = max(peak, v)
 	}
@@ -735,11 +727,7 @@ func (b *body) paintSpark(p *painter, x, y, w int, points []int64) {
 		return
 	}
 	for i, v := range folded {
-		level := int(math.Round(float64(v) / float64(peak) * 8))
-		if v > 0 && level == 0 {
-			level = 1
-		}
-		p.set(x+i, y, eighths[level], p.tokens.Color(ui.ColorAccent2), p.bg)
+		p.set(x+i, y, ui.ColumnCell(ui.ColumnLevel(v, peak, 1), 0), p.tokens.Color(ui.ColorAccent2), p.bg)
 	}
 }
 

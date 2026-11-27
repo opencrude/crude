@@ -233,6 +233,9 @@ func (m *App) themeConsumers() []themeConsumer {
 				if m.gitPanel != nil {
 					m.gitPanel.SetTheme(th)
 				}
+				if m.hub != nil {
+					m.hub.SetTokens(ui.NewTokenSet(th))
+				}
 				for _, s := range m.termScreens {
 					if s != nil {
 						s.SetTheme(th)

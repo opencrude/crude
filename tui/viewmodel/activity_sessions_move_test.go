@@ -55,7 +55,7 @@ func TestPreviousSessionsResumeDirectlyInsideWorkspace(t *testing.T) {
 			app.width, app.height = 160, 36
 			seedWorkspaceSession(t, app, "saved-session", "Fix compiler warnings")
 			app.toggleWorkspacePanel(termdock.PanelWorkspace)
-			app.paintShellFrame()
+			clickHubTab(t, app, "Sessions")
 			if strings.Contains(rowText(app, app.height-1), "Previous Sessions") {
 				t.Fatal("Previous Sessions must not have a footer button")
 			}
@@ -165,7 +165,7 @@ func TestWorkspaceSessionsSearchRefreshAndEmptyState(t *testing.T) {
 	t.Cleanup(wsOf(app).Close)
 	app.width, app.height = 160, 36
 	app.toggleWorkspacePanel(termdock.PanelWorkspace)
-	app.paintShellFrame()
+	clickHubTab(t, app, "Sessions")
 	foundEmpty := false
 	for y := 0; y < app.height; y++ {
 		foundEmpty = foundEmpty || strings.Contains(rowText(app, y), "No previous sessions yet")
@@ -191,7 +191,7 @@ func TestWorkspaceSessionsSearchRefreshAndEmptyState(t *testing.T) {
 	if !strings.Contains(painted.String(), "Fix compiler warnings") || strings.Contains(painted.String(), "Improve documentation") {
 		t.Fatal("Workspace search does not filter session rows")
 	}
-	panel := app.termDock.Panel(termdock.PanelWorkspace).(*statusoverview.Surface)
+	panel := app.hubSessions
 	selected, ok := panel.Selected()
 	if !ok || selected.ID != "session:first" {
 		t.Fatalf("filtered selection=%+v", selected)

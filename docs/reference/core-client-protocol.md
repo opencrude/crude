@@ -527,7 +527,7 @@ closed and typed, not arbitrary method invocation. Current families are:
 | Family | Operations |
 |---|---|
 | Detached startup | `startup.inspect`, `.browse`, `.catalog`, `.save`, `.onboarding` |
-| Workspace | `workspace.attach`, `.detach`, `.snapshot`, `.delete_preview`, `.delete_saved`, `.restore_deleted`; `agent.changes` |
+| Workspace | `workspace.attach`, `.detach`, `.snapshot`, `.delete_preview`, `.delete_saved`, `.restore_deleted`; `agent.changes`; Workspace panel data `workspace.usage` (model use summed from every session and sub-agent database, cached per database by size and modification time), `.storage` (the workspace folder measured by kind) and the journaled `.cleanup` (temporary files of sessions the core has not loaded, Local History retention, worktree cleanup with the normal retention check) |
 | Session/agent | `session.create`, `.open`, `.ensure`, `.list`, `.snapshots`; `agent.submit`, `.steer`, `.decide`, `.cancel`, `.terminate`, `.yolo`, `.plan_mode`, `.plan_review_open`, `.plan_comment`, `.plan_review_settle`, `.goal`, `.loop`, `.recover`, `.recover_cancel`, `.stop_command`, `.compact`, `.append_messages` |
 | Receipts | `request.receipt`, `request.cancel` (exact in-flight job) |
 | LSP | `lsp.snapshot`, `.notify_watched_files_changed`, `.set_active_file`, `.start_for_workspace`, `.stop`, `.restart_server`, `.stop_server`, `.navigation`, `.navigation_target`, `.completions`, `.completion_inspect`, `.completion_release`, `.inlay_hints`, `.inlay_inspect`, `.inlay_release`, `.document_symbols`, `.hover`, `.signature_help`; retained actions `.code_actions`, `.action_preview`, `.actions_release`; reviewed `.rename_preview`, `.edit_apply`, `.edit_release`, `.edit_receipt` |
@@ -537,7 +537,7 @@ closed and typed, not arbitrary method invocation. Current families are:
 | Bulk transfer | `StreamBulk` method-specific metadata, ordered chunks, final digest; no connection-private response tokens |
 | Terminals | `terminal.list`, `.create`, `.rows`, `.control`, `.release`, `.close`; terminal grid topics and ordered lease input streams; explicit typed input/resize commands remain available |
 | Files | browse/catalog, chunked reads, create/folder/rename/delete/edit/search, canonical `files.replace_plan` and saved workspace listing |
-| Local History | timeline/file/stats, operation/path/message/agent plans, apply/verify/prune/capture |
+| Local History | timeline/file/stats, `history.events` (points with changed paths) and `.event_changes` (one point's file versions, paged), `.agent_receipts` (with exact recorded versions), operation/path/message/agent plans, apply/verify/prune/capture |
 | References | create/import/list, content/media reads, exact content save, rename/delete |
 | Prompt history | `history.list`, `.record`, `.restore`, `.import-attachment`, `.read-media` |
 | Git | snapshot/comparison/annotation, reviewed stage/unstage and hunks, staged commit, commit inspection, checkout and reviewed discard |

@@ -226,6 +226,14 @@ func (ab *ActionBar) ButtonLabelsForTest() []string {
 
 func (ab *ActionBar) FocusFirst() { ab.focused = 0 }
 
+// FocusedAction is the action of the button that Enter activates.
+func (ab *ActionBar) FocusedAction() string {
+	if ab == nil || ab.focused < 0 || ab.focused >= len(ab.buttons) {
+		return ""
+	}
+	return ab.buttons[ab.focused].action
+}
+
 func (ab *ActionBar) FocusLast() {
 	if n := len(ab.buttons); n > 0 {
 		ab.focused = n - 1

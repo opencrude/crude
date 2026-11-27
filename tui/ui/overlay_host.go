@@ -20,7 +20,6 @@ const (
 	OverlayOperationIssue    OverlayID = "operation-issue"
 	OverlayAISetup           OverlayID = "ai-setup-reminder"
 	OverlayAgentPrompt       OverlayID = "agent-prompt"
-	OverlayTabStats          OverlayID = "tab-stats"
 	OverlayPromptHistory     OverlayID = "prompt-history"
 	OverlayTextPrompt        OverlayID = "text-prompt"
 	OverlayTreeDelete        OverlayID = "tree-delete-confirm"

@@ -89,8 +89,13 @@ func (m *App) mountHistoryBody(body ui.Component) {
 		return
 	}
 	width, height := fw.Size()
+	title := "Kept for review"
+	if _, restore := body.(*historyscreen.Screen); restore {
+		title = "Restore preview"
+	}
 	frame := ui.NewWindowFrameWidget(m.Theme, ui.NewID(ui.RootID, "local-history-frame"),
-		ui.FrameWindow, "Local History", body, nil, true, width, height)
+		ui.FrameWindow, title, body, nil, true, width, height)
+	fw.Title = title
 	frame.SetMarkContentDirty(fw.MarkContentDirty)
 	fw.SetContent(frame)
 	m.forceFrame()
@@ -195,10 +200,9 @@ func (m *App) applyHistorySafetyRead(msg historySafetyReadMsg) tea.Cmd {
 			v.screen.SetDetail(msg.detail)
 		case "restore":
 			m.closeHistorySafetyView()
+			m.historyScreen.Begin(historyscreen.PreviewRequest{SnapshotID: msg.plan.TargetSnapshotID, Heading: "Restore the files to this kept copy?"})
 			m.mountHistoryBody(m.historyScreen)
-			if fw := m.overlayHost.Window(ui.OverlayLocalHistory); fw != nil {
-				return m.forwardEventToWindowContent(fw, historyscreen.PlanMsg{Plan: msg.plan})
-			}
+			m.deliverRestoreState(historyscreen.PlanMsg{Plan: msg.plan, Generation: m.historyScreen.Request().Generation}, false)
 		}
 		if knownCleanup {
 			m.Feedback.NotifyError("Review safety evidence was returned, but its exchange cleanup is unconfirmed.")
@@ -240,8 +244,9 @@ func (m *App) handleHistorySafetyAction(action *ui.Action) tea.Cmd {
 			v.screen.SetPage(v.page)
 			m.markHistorySafetyDirty()
 		} else {
+			// The list is the first view of this dialog: Back closes it.
 			m.closeHistorySafetyView()
-			m.mountHistoryBody(m.historyScreen)
+			m.overlayHost.Close(ui.OverlayLocalHistory)
 		}
 	case historyscreen.ActionSafetyRelease, historyscreen.ActionSafetyReprotect:
 		m.confirmHistorySafety(action.ID == historyscreen.ActionSafetyRelease)

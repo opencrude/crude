@@ -25,6 +25,11 @@ type HistoryRestoreReceipts interface {
 // LocalHistoryStore reads immutable project snapshots and plans restores.
 type LocalHistoryStore interface {
 	AgentReceipts(context.Context, localhistory.AgentReceiptQuery) (localhistory.RunChangePage, error)
+	// Events lists the timeline newest first, or only the points that changed
+	// path or anything below it.
+	Events(ctx context.Context, path string) ([]localhistory.Event, error)
+	// EventChanges reads one page of a point's changed files, both versions.
+	EventChanges(context.Context, localhistory.EventQuery) (localhistory.EventPage, error)
 	FileHistory(path string, limit int) ([]localhistory.SnapshotRecord, error)
 	PlanRestore(ctx context.Context, targetSnapshotID string, opts localhistory.SnapshotOptions) (localhistory.RestorePlan, error)
 	PlanRestorePaths(ctx context.Context, targetSnapshotID string, opts localhistory.SnapshotOptions, paths []string) (localhistory.RestorePlan, error)

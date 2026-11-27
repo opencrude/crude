@@ -12,8 +12,8 @@ import (
 
 	"crude/agent/session"
 	"crude/internal/providersim"
-	"crude/tui/screens/statusoverview"
 	"crude/tui/screens/termdock"
+	"crude/tui/screens/workspacehub"
 	"crude/tui/ui"
 )
 
@@ -28,9 +28,9 @@ func openErrandHeader(t *testing.T, app *App) {
 		app.toggleWorkspacePanel(termdock.PanelWorkspace)
 	}
 	app.paintShellFrame()
-	bounds, ok := app.screenRectOf(statusoverview.HeaderLinkID)
+	bounds, ok := app.screenRectOf(workspacehub.ErrandID)
 	if !ok || bounds.Empty() {
-		t.Fatal("Open workspace Errand is not visible in the Workspace panel header")
+		t.Fatal("Open workspace Errand is not on the Workspace panel tab strip")
 	}
 	_, cmd := app.Update(tea.MouseClickMsg{X: bounds.X + 1, Y: bounds.Y, Button: tea.MouseLeft})
 	runAppCommand(t, app, cmd)

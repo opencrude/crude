@@ -34,6 +34,9 @@ type RunChange struct {
 	CreatedAt   int64  `json:"created_unix_ns"`
 	Diff        string `json:"diff,omitempty"`
 	DiffNote    string `json:"diff_note,omitempty"`
+	// File holds both recorded versions for the History panel's preview.
+	// Only AgentReceipts fills it, for one exact receipt.
+	File *EventFile `json:"file,omitempty"`
 }
 
 // InspectRunChanges observes receipts, not current working files. The stable
@@ -62,7 +65,48 @@ func (s *Store) AgentReceipts(ctx context.Context, q AgentReceiptQuery) (RunChan
 		return out, errors.New("select an agent and a session")
 	}
 	const joins = ` FROM history_agent_operations o JOIN history_agent_operation_paths p USING(operation_id) WHERE o.session_id=? AND o.agent_id=? AND o.status='committed'`
-	return s.receiptPage(ctx, joins, q.SessionID, q.AgentID, RunChangeQuery{After: q.After, OperationID: q.OperationID, Path: q.Path}, out)
+	page, err := s.receiptPage(ctx, joins, q.SessionID, q.AgentID, RunChangeQuery{After: q.After, OperationID: q.OperationID, Path: q.Path}, out)
+	if err != nil || q.OperationID == "" || len(page.Changes) != 1 || page.Changes[0].State != "committed" {
+		return page, err
+	}
+	file, err := s.receiptVersions(ctx, q)
+	if err != nil {
+		return page, err
+	}
+	page.Changes[0].File = &file
+	return page, nil
+}
+
+// receiptVersions reads the before and after states one receipt recorded.
+func (s *Store) receiptVersions(ctx context.Context, q AgentReceiptQuery) (EventFile, error) {
+	if err := s.beginOperation(); err != nil {
+		return EventFile{}, err
+	}
+	defer s.endOperation()
+	var before, after string
+	if err := s.db.QueryRowContext(ctx, `SELECT p.before_entry,p.after_entry FROM history_agent_operation_paths p JOIN history_agent_operations o USING(operation_id)
+ WHERE o.session_id=? AND o.agent_id=? AND o.status='committed' AND o.operation_id=? AND p.path=?`, q.SessionID, q.AgentID, q.OperationID, q.Path).Scan(&before, &after); err != nil {
+		return EventFile{}, err
+	}
+	file := EventFile{Path: q.Path}
+	version := func(raw string) ([]byte, bool, string) {
+		if raw == "" {
+			return nil, false, ""
+		}
+		var entry Entry
+		if err := json.Unmarshal([]byte(raw), &entry); err != nil {
+			return nil, true, "This receipt cannot be read."
+		}
+		return s.eventVersion(entry, true)
+	}
+	var beforeNote string
+	file.Before, file.BeforePresent, beforeNote = version(before)
+	file.After, file.AfterPresent, file.Note = version(after)
+	if file.Note == "" {
+		file.Note = beforeNote
+	}
+	file.Binary = isBinary(file.Before) || isBinary(file.After)
+	return file, nil
 }
 
 func (s *Store) receiptPage(ctx context.Context, joins, scope, agentID string, q RunChangeQuery, out RunChangePage) (RunChangePage, error) {

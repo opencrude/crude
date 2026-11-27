@@ -14,6 +14,7 @@ import (
 
 	"crude/core/shellport"
 	historyscreen "crude/tui/screens/localhistory"
+	"crude/tui/screens/workspacehub"
 	"crude/tui/ui"
 	"crude/workspace"
 )
@@ -107,8 +108,8 @@ func runReviewSafetyVisual(t *testing.T, headless bool, width, height int) {
 				program.Send(tea.KeyPressMsg{Code: r, Text: string(r)})
 			}
 			key(tea.KeyEnter)
-			// Enter the timeline's first native command row.
-			if !m.awaitHistoryTimeline() {
+			// Tab to Kept for review in the Local History tab and press it.
+			if !m.awaitHistoryTimeline() || !m.focusKept() {
 				return
 			}
 			key(tea.KeyEnter)
@@ -144,8 +145,12 @@ func runReviewSafetyVisual(t *testing.T, headless bool, width, height int) {
 			key(tea.KeyEnter) // explicit re-protection
 			if observe() {
 				key(tea.KeyEsc) // detail to reference page
-				key(tea.KeyEsc) // reference page to existing timeline
-				key(tea.KeyEsc) // close Local History
+				key(tea.KeyEsc) // close Kept for review
+				// Close the Workspace panel's window as its × does.
+				_ = m.check(func(v *controlVisualModel) error {
+					closeWorkspacePanelWindow(v.App)
+					return nil
+				})
 				key(tea.KeyEsc) // leave editor focus before native quit
 				program.Send(tea.KeyPressMsg{Code: 'q', Mod: tea.ModCtrl})
 			}
@@ -168,18 +173,38 @@ func runReviewSafetyVisual(t *testing.T, headless bool, width, height int) {
 
 func (m *reviewSafetyVisualModel) awaitHistoryTimeline() bool {
 	err := m.await(func(v *controlVisualModel) error {
-		if v.historyScreen == nil {
-			return fmt.Errorf("Local History timeline not yet mounted")
+		if !v.workspaceHubShown() || v.hub.Active() != workspacehub.TabHistory {
+			return fmt.Errorf("the Local History tab is not shown")
 		}
-		if strings.Contains(ansi.Strip(v.View().RenderContent()), "Loading Local History") {
+		if strings.Contains(ansi.Strip(v.View().RenderContent()), "Reading Local History") {
 			return fmt.Errorf("Local History timeline has not settled")
 		}
-		return featureVisualPaint(v, "Review safety references")
+		return featureVisualPaint(v, "Kept for review")
 	})
 	if err != nil {
 		m.program.Send(reviewSafetyVisualDone{phase: -1, err: err})
 	}
 	return err == nil
+}
+
+// focusKept presses Tab until Kept for review has keyboard focus. Each
+// check runs after the keys sent before it.
+func (m *reviewSafetyVisualModel) focusKept() bool {
+	focused := func(v *controlVisualModel) error {
+		if id := v.focusedHistoryControl(); id != historyscreen.KeptID {
+			return fmt.Errorf("focus is on %q, not Kept for review", id)
+		}
+		return nil
+	}
+	var err error
+	for range 12 {
+		if err = m.check(focused); err == nil {
+			return true
+		}
+		m.program.Send(tea.KeyPressMsg{Code: tea.KeyTab})
+	}
+	m.program.Send(reviewSafetyVisualDone{phase: -1, err: err})
+	return false
 }
 
 func (m *reviewSafetyVisualModel) clickSafety(action string) bool {
