@@ -404,7 +404,11 @@ func (c *Connection) serveCommand(ctx context.Context, s corewire.Stream, reader
 				return
 			}
 		case <-cmd.done:
-			coreRequests.Since(request.Method, admitted)
+			if coreprotocol.RemoteBound(request.Method) {
+				coreRemoteRequests.Since(request.Method, admitted)
+			} else {
+				coreRequests.Since(request.Method, admitted)
+			}
 			// The worker has completed, so its last progress note is already
 			// queued or sent. A ready final must not overtake that pending note.
 			// Older notes remain coalesced in the existing one-slot channel.

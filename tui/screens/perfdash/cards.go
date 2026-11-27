@@ -124,7 +124,7 @@ func buildCard(d Data, ref seriesRef) (card, bool) {
 			c.values[i], c.peaks[i], c.counts[i] = float64(p.P95), float64(p.Max), p.Count
 		}
 		current := series.Recent.P95
-		c.headline, c.headSev = "p95 "+formatMicros(current), severityOf(current, series.Meta)
+		c.headline, c.headSev = "p95 "+formatMicros(current), perfdata.PercentileSeverity(current, series.Meta)
 		if series.Recent.Count == 0 {
 			c.headline, c.headSev = "idle", SeverityOK
 		}

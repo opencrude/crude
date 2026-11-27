@@ -726,7 +726,11 @@ func (c *Client) callWith(ctx context.Context, workspaceID, method string, in co
 	started := time.Now()
 	defer func() {
 		elapsed := time.Since(started)
-		clientRequests.Observe(method, elapsed)
+		if coreprotocol.RemoteBound(method) {
+			clientRemoteRequests.Observe(method, elapsed)
+		} else {
+			clientRequests.Observe(method, elapsed)
+		}
 		metrics.Blocking("core request", method, elapsed)
 	}()
 	identity := coreprotocol.CommandIdentity{Method: method, ID: id}
@@ -1096,6 +1100,8 @@ var (
 	clientRequests = metrics.NewTable(metrics.Meta{Name: "link.requests", SaveLabels: true, Group: metrics.GroupRPC, Title: "Shell requests by method",
 		Help: "Round trip from the shell to the core and back, per method. Compare with the core's own time to separate transport from work.",
 		Warn: 100_000, Crit: 1_000_000})
+	clientRemoteRequests = metrics.NewTable(metrics.Meta{Name: "link.requests.remote", SaveLabels: true, Group: metrics.GroupRPC, Title: "Model and remote requests",
+		Help: "Round trips of requests that wait for a model or a remote server: compaction, commit messages and Git transfers. They are slow by nature."})
 	linkResumes = metrics.NewCounter(metrics.Meta{Name: "link.resume", Group: metrics.GroupRPC, Title: "Session resumes",
 		Help: "Carrier losses survived by resuming the session over a new carrier."})
 )

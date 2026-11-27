@@ -15,6 +15,8 @@ import (
 var (
 	coreRequests = metrics.NewTable(metrics.Meta{Name: "core.requests", SaveLabels: true, Group: metrics.GroupCore, Title: "Requests by method",
 		Help: "Core time from admission to response for each request method.", Warn: 100_000, Crit: 1_000_000})
+	coreRemoteRequests = metrics.NewTable(metrics.Meta{Name: "core.requests.remote", SaveLabels: true, Group: metrics.GroupCore, Title: "Model and remote requests",
+		Help: "Requests that wait for a model or a remote server: compaction, commit messages and Git transfers. They are slow by nature; their owners report failures."})
 	coreActor = metrics.NewLatency(metrics.Meta{Name: "core.actor", SaveLabels: true, Group: metrics.GroupCore, Title: "Workspace actor step",
 		Help: "One step of a workspace actor. While a step runs, that workspace's agent events and requests wait.",
 		Warn: 10_000, Crit: 50_000})

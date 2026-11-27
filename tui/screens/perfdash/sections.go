@@ -68,6 +68,7 @@ var curated = map[string][]seriesRef{
 		{processCore, "core.actor"}, {processCore, "core.queue"}, {processShell, "link.fetch"},
 		{processCore, "core.changes"}, {processCore, "core.resync"}, {processShell, "link.resync"},
 		{processCore, "core.actor.work"}, {processShell, "link.requests"}, {processCore, "core.requests"},
+		{processShell, "link.requests.remote"}, {processCore, "core.requests.remote"},
 	},
 	SectionAgents: {
 		{processCore, "agent.streams"}, {processCore, "agent.output"}, {processCore, "agent.retries"},

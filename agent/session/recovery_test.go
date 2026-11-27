@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -429,9 +430,12 @@ func TestHumanMessageContinuesParkedRootRecovery(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the new message did not start the next turn")
 	}
-	incident, found, err := sessiondb.LoadRecoveryIncident(session.DB(), session.SessionID(), orchestrator.ID, parked.ID)
-	if err != nil || !found || incident.Status.State != recoverytypes.Continued {
-		t.Fatalf("parked incident = %+v found=%v err=%v", incident.Status, found, err)
+	// The settled incident keeps its status; the next turn took over its
+	// message lists, so only its record is read.
+	records, err := sessiondb.LoadRecoveryRecords(session.DB(), session.SessionID())
+	settled := slices.IndexFunc(records, func(record recoverytypes.Status) bool { return record.ID == parked.ID })
+	if err != nil || settled < 0 || records[settled].State != recoverytypes.Continued {
+		t.Fatalf("parked incident records = %+v err=%v", records, err)
 	}
 	if retry := session.RetryRecoveryFor(orchestrator.ID, parked.ID, parked.Generation); retry == nil {
 		t.Fatal("the settled incident can still be retried")

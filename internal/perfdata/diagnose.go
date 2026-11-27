@@ -31,6 +31,21 @@ type Finding struct {
 func SeverityOf(v int64, meta metrics.Meta) Severity {
 	return ThresholdSeverity(float64(v), float64(meta.Warn), float64(meta.Crit))
 }
+
+// PercentileSeverity rates a latency percentile. A percentile is its
+// histogram bucket's upper bound (or the observed maximum), so the true value
+// is at most p: it crosses a threshold only when p is above it. Thresholds
+// usually sit on bucket bounds; comparing with >= flagged every p95 in the
+// bucket below a threshold (frame handoffs of 0.5 to 1 ms read as "1.0ms").
+func PercentileSeverity(p int64, meta metrics.Meta) Severity {
+	switch {
+	case meta.Crit > 0 && p > meta.Crit:
+		return SeverityCrit
+	case meta.Warn > 0 && p > meta.Warn:
+		return SeverityWarn
+	}
+	return SeverityOK
+}
 func ThresholdSeverity(value, warn, crit float64) Severity {
 	if crit > 0 && value >= crit {
 		return SeverityCrit
@@ -187,7 +202,7 @@ func inputFinding(d Data) Finding {
 	if !ok || input.Window.Count == 0 {
 		return Finding{}
 	}
-	sev := SeverityOf(input.Window.P95, input.Meta)
+	sev := PercentileSeverity(input.Window.P95, input.Meta)
 	if sev == SeverityOK {
 		return Finding{}
 	}
@@ -265,7 +280,7 @@ func latencyFinding(d Data, p Process, name, section, title, detail string) Find
 	if !ok || series.Window.Count == 0 {
 		return Finding{}
 	}
-	sev := SeverityOf(series.Window.P95, series.Meta)
+	sev := PercentileSeverity(series.Window.P95, series.Meta)
 	if sev == SeverityOK {
 		return Finding{}
 	}

@@ -324,24 +324,42 @@ CREATE INDEX IF NOT EXISTS idx_agent_recoveries_agent
     ON agent_recoveries(session_id, agent_id, generation, updated_at);
 
 -- A checkpoint's archive and active context are its archive_json and
--- active_context_json arrays followed by tail rows of the same field; writers
--- keep the arrays empty. version advances with every write of a field's list.
-CREATE TABLE IF NOT EXISTS agent_recovery_tail (
-    incident_id    TEXT NOT NULL,
+-- active_context_json arrays followed by the rows of one message list of the
+-- same field; writers keep the arrays empty. A list belongs to a runtime agent,
+-- not to one incident: a new run of the agent extends the list its previous
+-- run left, so a turn writes the messages it adds, never the history again.
+-- version advances with every write of a list. agent_recovery_lists names the
+-- list and version that hold an incident's field; when a later run rewrites
+-- that list, an earlier settled incident no longer has its own list.
+CREATE TABLE IF NOT EXISTS agent_message_lists (
+    list_id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id       TEXT NOT NULL,
     field          TEXT NOT NULL,
+    version        INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_message_lists_agent
+    ON agent_message_lists(agent_id, field, list_id);
+
+CREATE TABLE IF NOT EXISTS agent_message_list_rows (
+    list_id        INTEGER NOT NULL,
     position       INTEGER NOT NULL,
     message_json   BLOB NOT NULL,
-    PRIMARY KEY (incident_id, field, position),
-    FOREIGN KEY (incident_id) REFERENCES agent_recoveries(incident_id) ON DELETE CASCADE
+    PRIMARY KEY (list_id, position),
+    FOREIGN KEY (list_id) REFERENCES agent_message_lists(list_id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS agent_recovery_lists (
     incident_id    TEXT NOT NULL,
     field          TEXT NOT NULL,
+    list_id        INTEGER NOT NULL,
     version        INTEGER NOT NULL,
     PRIMARY KEY (incident_id, field),
     FOREIGN KEY (incident_id) REFERENCES agent_recoveries(incident_id) ON DELETE CASCADE
 );
+
+CREATE INDEX IF NOT EXISTS idx_agent_recovery_lists_list
+    ON agent_recovery_lists(list_id);
 
 CREATE TABLE IF NOT EXISTS session_runtime_state (
     key        TEXT PRIMARY KEY,
@@ -453,15 +471,21 @@ func Open(dbPath string) (*sql.DB, error) {
 }
 
 func Migrate(db *sql.DB) error {
-	var hasSessions, hasMessageIdentities bool
-	if err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='sessions')`).Scan(&hasSessions); err != nil {
+	// Recovery lists used to belong to their incident (agent_recovery_tail).
+	// Their rows hold the messages of unfinished runs, so an outdated database
+	// is refused rather than opened without them.
+	var hasSessions, hasMessageIdentities, hasIncidentLists bool
+	if err := db.QueryRow(`SELECT
+		EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='sessions'),
+		EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='immutable_message_identities'),
+		EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_recovery_tail')`).Scan(&hasSessions, &hasMessageIdentities, &hasIncidentLists); err != nil {
 		return fmt.Errorf("sessiondb: inspect schema: %w", err)
-	}
-	if err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='immutable_message_identities')`).Scan(&hasMessageIdentities); err != nil {
-		return fmt.Errorf("sessiondb: inspect immutable message identity schema: %w", err)
 	}
 	if hasSessions && !hasMessageIdentities {
 		return fmt.Errorf("sessiondb: current immutable message identity schema required; align local data manually")
+	}
+	if hasIncidentLists {
+		return fmt.Errorf("sessiondb: current recovery list schema required; align local data manually")
 	}
 	// Initialize one schema atomically. Autocommit used to durably commit every
 	// table/index separately, making native Windows/race fixture

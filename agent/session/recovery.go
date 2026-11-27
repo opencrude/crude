@@ -70,6 +70,14 @@ func newRecoveryRunState(input provider.UserInput, checkpoint *sessiondb.Recover
 }
 
 func (s *recoveryRunState) snapshot(archive, active []provider.ChatMessage) {
+	// A run's request history starts with its system prompt. The prompt is
+	// composed for each request, not accepted history: restore and turn
+	// finalization drop it. Keeping it would also shift every archive message
+	// by one between the run's checkpoints and admission or finalization, so
+	// each of those checkpoints would write the whole stored archive again.
+	if len(archive) > 0 && archive[0].Role == "system" {
+		archive = archive[1:]
+	}
 	s.mu.Lock()
 	// The recovery state's existing archive is the canonical accepted source for
 	// every stable message identity already observed. Provider request projection

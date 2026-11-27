@@ -37,6 +37,42 @@ workload. Tighten the allocation ceilings when all three have headroom. Use
 actual reference hardware for latency and dropped-frame claims; GOMAXPROCS=2
 on a faster processor is a useful contention test, not T470 certification.
 
+## Prompt send in dense sessions and dashboard false alarms (2026-11-27)
+
+The Performance archive of a 66,000-second Windows core showed every
+`agent.submit` at 1.1–2.0 s (`storage.session` 1.4–2.6 s: "Prepare and write"
+0.7–1.0 s, then "Commit" 0.7–0.8 s) in a 908 MB session with 4,800 messages.
+Each human message started a recovery incident whose archive held the whole
+history (122 MB of JSON in that session); per-incident lists wrote it again on
+every send and deleted it when the turn ended. Child agents mirror their
+checkpoints into the same parent database, so the composer waited behind them
+too. The rounds' archive also began with the request's system prompt, which
+admission's archive lacked, so the first round checkpoint of each turn wrote the
+whole archive a second time.
+
+Recovery lists now belong to the runtime agent and a new incident extends them
+([run recovery](run-recovery.md)). `BenchmarkNewTurnCheckpoint_2000Msgs`
+(windows/amd64, i7-9850H, `-benchtime=10x`): 920–981 ms, 70.9 MB and 71,600
+allocations before; 3.2–3.9 ms, 3.35 MB and 490–527 allocations after
+(ceiling 4,000,000 B / 590 allocations). On a copy of the 908 MB session, a
+warm admission checkpoint takes 2–5 ms. A list the process does not remember
+is compared with its rows instead of being written again: 444 ms for the same
+session when the rows match. The first turn after a restart usually still
+stores the archive once, because the resumed archive lacks the hidden context
+messages of the live one. Steady-state tool rounds are unchanged
+(`BenchmarkRecoveryCheckpoint_2000Msgs` 357–359 allocations).
+
+Two dashboard findings were false. A latency percentile is its histogram
+bucket's upper bound, so "Frame handoff waits: 1.0ms p95" meant at most 1 ms,
+under the 1 ms threshold; percentiles now cross a threshold only above it.
+Compaction, model-written commit messages and Git transfers wait for a model or
+a remote server, and a 30–110 s compaction read as "Slow core work"; they are
+timed in `core.requests.remote` and `link.requests.remote` without thresholds.
+`storage.session` now saves its operation labels, so archived stalls name the
+write. Still open: a single offscreen assistant message whose Markdown takes
+50–340 ms to render is materialized on the UI goroutine during `View`, inside
+the 4 ms budget's first item (`materializeOffscreen`), and shows as "UI froze".
+
 ## Dense child panes and retained surface fills (2026-11-25)
 
 `BenchmarkDenseChildPaneUpdate` measures a warm compact child's sync and first

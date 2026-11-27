@@ -555,7 +555,7 @@ func TestPassiveRootResumeRejectsIdentityAndTranscriptConflicts(t *testing.T) {
 			if _, err := s.db.Exec(`UPDATE agent_recoveries SET archive_json=? WHERE incident_id='incident'`, raw); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := s.db.Exec(`DELETE FROM agent_recovery_tail WHERE incident_id='incident' AND field='archive'`); err != nil {
+			if _, err := s.db.Exec(`DELETE FROM agent_recovery_lists WHERE incident_id='incident' AND field='archive'`); err != nil {
 				t.Fatal(err)
 			}
 			path, sessionID := s.dbPath, s.sessionID

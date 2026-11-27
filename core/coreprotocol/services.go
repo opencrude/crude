@@ -42,6 +42,18 @@ const (
 	MarkBoardRead        = "board.mark_read"
 )
 
+// RemoteBound reports a request whose duration a model or a remote server
+// sets, not local work: compaction, a commit message written by a model and
+// Git transfers. Its time is recorded apart from local request latency, where
+// a normal 40-second compaction read as a stalled core.
+func RemoteBound(method string) bool {
+	switch method {
+	case AgentCompact, GitCommitMessage, GitFetch, GitPull, GitPush, GitLFS:
+		return true
+	}
+	return false
+}
+
 // GitChangeComparison serializes per-file failures explicitly, never as an error interface.
 type GitChangeComparison struct {
 	Change     workspace.GitChange     `json:"change"`

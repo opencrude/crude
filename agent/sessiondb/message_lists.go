@@ -59,9 +59,9 @@ type listWrite struct {
 	result  storedList
 }
 
-// changesTail reports whether the write touches tail rows.
-func (w listWrite) changesTail(stored storedList) bool {
-	return w.rewrite || len(w.tail) != 0 || w.keep != stored.tail()
+// changesTail reports whether the write touches the storedTail rows.
+func (w listWrite) changesTail(storedTail int) bool {
+	return w.rewrite || len(w.tail) != 0 || w.keep != storedTail
 }
 
 var (
@@ -192,7 +192,7 @@ func loadContextEncodingTx(tx *sql.Tx, key contextCacheKey) ([]byte, error) {
 
 // writeContextTailTx applies a write's tail rows; the caller stores its base.
 func writeContextTailTx(tx *sql.Tx, key contextCacheKey, stored storedList, write listWrite) error {
-	if !write.changesTail(stored) {
+	if !write.changesTail(stored.tail()) {
 		return nil
 	}
 	if _, err := tx.Exec(`DELETE FROM agent_context_tail WHERE session_id=? AND agent_id=? AND position>=?`, key.sessionID, key.agentID, write.keep); err != nil {
@@ -207,15 +207,26 @@ func writeContextTailTx(tx *sql.Tx, key contextCacheKey, stored storedList, writ
 }
 
 // Recovery lists.
+//
+// An incident's archive and active context are lists of its runtime agent
+// (agent_message_lists), not of the incident. A turn starts a new incident
+// whose archive is the whole history plus the new input; owning lists per
+// incident wrote that history again on every turn (~1 s and ~70 MB for 2,000
+// messages) and deleted it when the turn ended. An agent has one unfinished
+// run at a time, so a new incident takes over the list its agent's previous
+// run left and writes what it adds. A list another unfinished incident still
+// holds is never taken: the new incident starts its own list instead.
 
 const (
 	recoveryArchiveField = "archive"
 	recoveryActiveField  = "active"
 )
 
+// recoveryListKey identifies one list. List IDs are never reused, so an ID
+// and version name exactly one stored content.
 type recoveryListKey struct {
-	db                *sql.DB
-	incidentID, field string
+	db     *sql.DB
+	listID int64
 }
 
 type recoveryListEntry struct {
@@ -234,77 +245,217 @@ func rememberRecoveryList(key recoveryListKey, entry recoveryListEntry, owned bo
 	recoveryLists.put(key, entry, approxMessagesBytes(entry.list.messages))
 }
 
-// recoveryListVersionsTx reads an incident's list versions by field; a field
-// without one has never been written as a list.
-func recoveryListVersionsTx(tx *sql.Tx, incidentID string) (map[string]int64, error) {
-	rows, err := tx.Query(`SELECT field,version FROM agent_recovery_lists WHERE incident_id=?`, incidentID)
+// recoveryListRef is the list and version that hold one field of an
+// incident. A field without a list was never written as one. current reports
+// that the list still stores that version.
+type recoveryListRef struct {
+	listID, version int64
+	current         bool
+}
+
+// recoveryListRefsTx reads an incident's list references by field.
+func recoveryListRefsTx(tx *sql.Tx, incidentID string) (map[string]recoveryListRef, error) {
+	rows, err := tx.Query(`SELECT r.field,r.list_id,r.version,COALESCE(l.version,0) FROM agent_recovery_lists r
+		LEFT JOIN agent_message_lists l ON l.list_id=r.list_id WHERE r.incident_id=?`, incidentID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	versions := make(map[string]int64, 2)
+	refs := make(map[string]recoveryListRef, 2)
 	for rows.Next() {
 		var field string
-		var version int64
-		if err := rows.Scan(&field, &version); err != nil {
+		var ref recoveryListRef
+		var stored int64
+		if err := rows.Scan(&field, &ref.listID, &ref.version, &stored); err != nil {
 			return nil, err
 		}
-		versions[field] = version
+		ref.current = stored == ref.version
+		refs[field] = ref
 	}
-	return versions, rows.Err()
+	return refs, rows.Err()
 }
 
-// planRecoveryListTx plans storing messages as an incident field's list at
-// its stored version. The remembered list is used only while its version is
-// the stored one.
-func planRecoveryListTx(key recoveryListKey, version int64, messages []provider.ChatMessage) (storedList, listWrite, error) {
-	remembered, known := recoveryLists.get(key)
-	known = known && version != 0 && remembered.version == version
+// recoveryListTarget is the list a checkpoint writes one field into, at the
+// version it currently stores. A zero listID means a new list.
+type recoveryListTarget struct {
+	listID, version int64
+}
+
+// recoveryListTargetTx chooses where an incident's field is written: its own
+// list while it still holds it, else the newest list of its agent that no
+// other unfinished incident holds, else a new list.
+func recoveryListTargetTx(tx *sql.Tx, incidentID, agentID, field string, own recoveryListRef) (recoveryListTarget, error) {
+	if own.listID != 0 && own.current {
+		return recoveryListTarget{listID: own.listID, version: own.version}, nil
+	}
+	var target recoveryListTarget
+	err := tx.QueryRow(`SELECT list_id,version FROM agent_message_lists WHERE agent_id=? AND field=? ORDER BY list_id DESC LIMIT 1`, agentID, field).Scan(&target.listID, &target.version)
+	if errors.Is(err, sql.ErrNoRows) {
+		return recoveryListTarget{}, nil
+	}
+	if err != nil {
+		return recoveryListTarget{}, err
+	}
+	var held bool
+	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM agent_recovery_lists l JOIN agent_recoveries r ON r.incident_id=l.incident_id
+		WHERE l.list_id=? AND l.version=? AND r.incident_id<>? AND r.state NOT IN (?,?,?,?))`,
+		target.listID, target.version, incidentID, settledRecoveryStates[0], settledRecoveryStates[1], settledRecoveryStates[2], settledRecoveryStates[3]).Scan(&held); err != nil {
+		return recoveryListTarget{}, err
+	}
+	if held {
+		return recoveryListTarget{}, nil
+	}
+	return target, nil
+}
+
+// planRecoveryListTx plans storing messages into target and reports the list
+// to write and how many rows it holds. The remembered list is used only while
+// its version is the stored one. A stored list this process does not
+// remember (the first turn after a restart) is compared with its rows.
+func planRecoveryListTx(tx *sql.Tx, db *sql.DB, target recoveryListTarget, messages []provider.ChatMessage) (recoveryListTarget, int, listWrite, error) {
+	var remembered recoveryListEntry
+	known := false
+	if target.listID != 0 {
+		remembered, known = recoveryLists.get(recoveryListKey{db, target.listID})
+		known = known && remembered.version == target.version
+		if !known && messages != nil {
+			return planStoredListWriteTx(tx, target, messages)
+		}
+	}
 	shared := 0
 	if known {
 		shared = commonMessagePrefix(remembered.list.messages, messages)
 	}
 	write, err := planListWrite(remembered.list, known, shared, messages)
-	return remembered.list, write, err
+	return target, remembered.list.tail(), write, err
 }
 
-// writeRecoveryListTx applies a planned write's tail rows and advances the
-// field's version; the caller has stored its base. An unchanged list keeps
-// its version. The returned function records the written list once the
-// transaction commits.
-func writeRecoveryListTx(tx *sql.Tx, key recoveryListKey, stored storedList, version int64, write listWrite, owned bool) (func(), error) {
-	if !write.changesTail(stored) {
-		return func() {}, nil
+// planStoredListWriteTx plans storing next over list rows whose messages are
+// not in memory. Rows are compared byte for byte with the encoded messages
+// up to the first difference; rows that already hold them stay and only the
+// rest is written. When fewer rows match than would be deleted, a new list
+// is written instead: it inserts no more rows, and the old list's rows are
+// removed when its run ends (DeleteRecoveryCheckpoint), not while a prompt
+// is being sent. The write also empties the incident's base, which an older
+// incident may still hold messages in, so the rows alone are the list.
+func planStoredListWriteTx(tx *sql.Tx, target recoveryListTarget, next []provider.ChatMessage) (recoveryListTarget, int, listWrite, error) {
+	fail := func(err error) (recoveryListTarget, int, listWrite, error) {
+		return recoveryListTarget{}, 0, listWrite{}, err
 	}
-	if _, err := tx.Exec(`DELETE FROM agent_recovery_tail WHERE incident_id=? AND field=? AND position>=?`, key.incidentID, key.field, write.keep); err != nil {
-		return nil, err
+	var stored int
+	if err := tx.QueryRow(`SELECT count(*) FROM agent_message_list_rows WHERE list_id=?`, target.listID).Scan(&stored); err != nil {
+		return fail(err)
 	}
-	for i, raw := range write.tail {
-		if _, err := tx.Exec(`INSERT INTO agent_recovery_tail(incident_id,field,position,message_json) VALUES(?,?,?,?)`, key.incidentID, key.field, write.keep+i, raw); err != nil {
-			return nil, err
+	rows, err := tx.Query(`SELECT message_json FROM agent_message_list_rows WHERE list_id=? ORDER BY position`, target.listID)
+	if err != nil {
+		return fail(err)
+	}
+	encoded := make([][]byte, 0, len(next))
+	keep := 0
+	for keep < len(next) && rows.Next() {
+		var raw sql.RawBytes
+		if err := rows.Scan(&raw); err != nil {
+			rows.Close()
+			return fail(err)
+		}
+		message, err := json.Marshal(&next[keep])
+		if err != nil {
+			rows.Close()
+			return fail(err)
+		}
+		encoded = append(encoded, message)
+		if !bytes.Equal(message, raw) {
+			break
+		}
+		keep++
+	}
+	if err := rows.Close(); err != nil {
+		return fail(err)
+	}
+	for i := len(encoded); i < len(next); i++ {
+		message, err := json.Marshal(&next[i])
+		if err != nil {
+			return fail(err)
+		}
+		encoded = append(encoded, message)
+	}
+	write := listWrite{rewrite: true, base: emptyListBase, result: storedList{messages: next}}
+	if keep < stored-keep {
+		write.tail = encoded
+		return recoveryListTarget{}, 0, write, nil
+	}
+	write.keep, write.tail = keep, encoded[keep:]
+	return target, stored, write, nil
+}
+
+// writeRecoveryListTx applies a planned write's rows to target and records
+// the incident's reference own moves to; the caller has stored the
+// incident's base. An unchanged list keeps its version. The returned function
+// records the written list once the transaction commits.
+func writeRecoveryListTx(tx *sql.Tx, db *sql.DB, incidentID, agentID, field string, own recoveryListRef, target recoveryListTarget, storedRows int, write listWrite, owned bool) (func(), error) {
+	listID, version := target.listID, target.version
+	changed := listID == 0 || write.changesTail(storedRows)
+	if changed {
+		version++
+		if listID == 0 {
+			result, err := tx.Exec(`INSERT INTO agent_message_lists(agent_id,field,version) VALUES(?,?,?)`, agentID, field, version)
+			if err != nil {
+				return nil, err
+			}
+			if listID, err = result.LastInsertId(); err != nil {
+				return nil, err
+			}
+		} else {
+			if _, err := tx.Exec(`DELETE FROM agent_message_list_rows WHERE list_id=? AND position>=?`, listID, write.keep); err != nil {
+				return nil, err
+			}
+			if _, err := tx.Exec(`UPDATE agent_message_lists SET agent_id=?,version=? WHERE list_id=?`, agentID, version, listID); err != nil {
+				return nil, err
+			}
+		}
+		for i, raw := range write.tail {
+			if _, err := tx.Exec(`INSERT INTO agent_message_list_rows(list_id,position,message_json) VALUES(?,?,?)`, listID, write.keep+i, raw); err != nil {
+				return nil, err
+			}
 		}
 	}
-	version++
-	if _, err := tx.Exec(`INSERT INTO agent_recovery_lists(incident_id,field,version) VALUES(?,?,?) ON CONFLICT(incident_id,field) DO UPDATE SET version=excluded.version`, key.incidentID, key.field, version); err != nil {
+	if !changed && own.listID == listID && own.version == version {
+		return func() {}, nil
+	}
+	if _, err := tx.Exec(`INSERT INTO agent_recovery_lists(incident_id,field,list_id,version) VALUES(?,?,?,?)
+		ON CONFLICT(incident_id,field) DO UPDATE SET list_id=excluded.list_id,version=excluded.version`, incidentID, field, listID, version); err != nil {
 		return nil, err
 	}
+	if !changed {
+		return func() {}, nil
+	}
+	key := recoveryListKey{db, listID}
 	return func() { rememberRecoveryList(key, recoveryListEntry{version: version, list: write.result}, owned) }, nil
 }
 
-// loadRecoveryListTx decodes an incident field's base and tail rows, and
-// remembers the list at its stored version so the incident's next checkpoint
-// extends it.
-func loadRecoveryListTx(tx *sql.Tx, key recoveryListKey, version int64, base []byte) ([]provider.ChatMessage, error) {
-	tail, err := queryTail(tx, `SELECT message_json FROM agent_recovery_tail WHERE incident_id=? AND field=? ORDER BY position`, key.incidentID, key.field)
-	if err != nil {
-		return nil, err
+// errRecoveryListReplaced reports an incident whose list a later run of its
+// agent rewrote. Only a settled incident can lose its list this way.
+var errRecoveryListReplaced = errors.New("sessiondb: a later run replaced this incident's recovery list")
+
+// loadRecoveryListTx decodes an incident field's base and list rows, and
+// remembers the list at its stored version so the next checkpoint extends it.
+func loadRecoveryListTx(tx *sql.Tx, db *sql.DB, ref recoveryListRef, field string, base []byte) ([]provider.ChatMessage, error) {
+	var rows [][]byte
+	if ref.listID != 0 {
+		if !ref.current {
+			return nil, fmt.Errorf("%w (%s)", errRecoveryListReplaced, field)
+		}
+		var err error
+		if rows, err = queryTail(tx, `SELECT message_json FROM agent_message_list_rows WHERE list_id=? ORDER BY position`, ref.listID); err != nil {
+			return nil, err
+		}
 	}
-	stored, err := decodeMessageList(base, tail)
+	stored, err := decodeMessageList(base, rows)
 	if err != nil {
-		return nil, fmt.Errorf("sessiondb: decode recovery %s: %w", key.field, err)
+		return nil, fmt.Errorf("sessiondb: decode recovery %s: %w", field, err)
 	}
-	if version != 0 {
-		rememberRecoveryList(key, recoveryListEntry{version: version, list: stored}, false)
+	if ref.listID != 0 {
+		rememberRecoveryList(recoveryListKey{db, ref.listID}, recoveryListEntry{version: ref.version, list: stored}, false)
 	}
 	return stored.messages, nil
 }

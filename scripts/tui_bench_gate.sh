@@ -153,7 +153,7 @@ run_bench '^BenchmarkOpenIndexedHistory$' ./workspace/localhistory
 run_bench '^BenchmarkPublishContext(ReplaceUnrelatedArchiveHistory|RecoveryImage)$' ./agent/sessiondb
 run_bench '^BenchmarkDenseRecoverySnapshot$' ./agent/session
 run_bench '^Benchmark(DenseNoticeFooterReads|TickPreferenceReads)$' ./core/shellport/remote
-run_bench '^Benchmark(CheckpointAppend_560Msgs|RecoveryCheckpoint_(560|2000)Msgs)$' ./agent/sessiondb
+run_bench '^Benchmark(CheckpointAppend_560Msgs|RecoveryCheckpoint_(560|2000)Msgs|NewTurnCheckpoint_2000Msgs)$' ./agent/sessiondb
 run_bench '^BenchmarkSessionDatabaseStartup$' ./agent/sessiondb
 run_bench '^BenchmarkEstimateMultipartImage$' ./agent/provider
 run_bench '^Benchmark(ProjectInsightsCached10kDiagnostics|UsageSummaryCached1000Requests)$' ./workspace

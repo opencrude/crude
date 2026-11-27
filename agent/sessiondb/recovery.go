@@ -31,6 +31,10 @@ type RecoveryCheckpoint struct {
 	InFlightTools      []provider.ChatMessage
 }
 
+// settledRecoveryStates are the states of an incident that owns no
+// unfinished work (recovery.State.Settled).
+var settledRecoveryStates = [4]string{string(recovery.Recovered), string(recovery.Cancelled), string(recovery.Continued), string(recovery.Failed)}
+
 type recoveryInput struct {
 	provider.UserInput
 	PlanningCycle      *string                `json:"planning_cycle,omitempty"`
@@ -97,21 +101,26 @@ func saveRecoveryCheckpointTx(tx *sql.Tx, db *sql.DB, sessionID string, checkpoi
 	if err != nil {
 		return nil, fmt.Errorf("sessiondb: encode recovery input: %w", err)
 	}
-	var versions map[string]int64
+	var refs map[string]recoveryListRef
 	if rowExists {
-		if versions, err = recoveryListVersionsTx(tx, checkpoint.Status.ID); err != nil {
+		if refs, err = recoveryListRefsTx(tx, checkpoint.Status.ID); err != nil {
 			return nil, err
 		}
 	}
-	archiveKey := recoveryListKey{db, checkpoint.Status.ID, recoveryArchiveField}
-	archiveVersion := versions[recoveryArchiveField]
-	archiveStored, archive, err := planRecoveryListTx(archiveKey, archiveVersion, checkpoint.Archive)
+	incidentID, agentID := checkpoint.Status.ID, checkpoint.Status.AgentID
+	archiveTarget, err := recoveryListTargetTx(tx, incidentID, agentID, recoveryArchiveField, refs[recoveryArchiveField])
+	if err != nil {
+		return nil, err
+	}
+	archiveTarget, archiveStored, archive, err := planRecoveryListTx(tx, db, archiveTarget, checkpoint.Archive)
 	if err != nil {
 		return nil, fmt.Errorf("sessiondb: encode recovery archive: %w", err)
 	}
-	activeKey := recoveryListKey{db, checkpoint.Status.ID, recoveryActiveField}
-	activeVersion := versions[recoveryActiveField]
-	activeStored, active, err := planRecoveryListTx(activeKey, activeVersion, checkpoint.ActiveContext)
+	activeTarget, err := recoveryListTargetTx(tx, incidentID, agentID, recoveryActiveField, refs[recoveryActiveField])
+	if err != nil {
+		return nil, err
+	}
+	activeTarget, activeStored, active, err := planRecoveryListTx(tx, db, activeTarget, checkpoint.ActiveContext)
 	if err != nil {
 		return nil, fmt.Errorf("sessiondb: encode recovery context: %w", err)
 	}
@@ -174,11 +183,11 @@ func saveRecoveryCheckpointTx(tx *sql.Tx, db *sql.DB, sessionID string, checkpoi
 		return nil, fmt.Errorf("sessiondb: save recovery checkpoint: %w", err)
 	}
 	archiveOwned := activeOwned && sameMessageArray(checkpoint.Archive, checkpoint.ActiveContext)
-	recordArchive, err := writeRecoveryListTx(tx, archiveKey, archiveStored, archiveVersion, archive, archiveOwned)
+	recordArchive, err := writeRecoveryListTx(tx, db, incidentID, agentID, recoveryArchiveField, refs[recoveryArchiveField], archiveTarget, archiveStored, archive, archiveOwned)
 	if err != nil {
 		return nil, fmt.Errorf("sessiondb: save recovery archive: %w", err)
 	}
-	recordActive, err := writeRecoveryListTx(tx, activeKey, activeStored, activeVersion, active, activeOwned)
+	recordActive, err := writeRecoveryListTx(tx, db, incidentID, agentID, recoveryActiveField, refs[recoveryActiveField], activeTarget, activeStored, active, activeOwned)
 	if err != nil {
 		return nil, fmt.Errorf("sessiondb: save recovery context: %w", err)
 	}
@@ -317,14 +326,14 @@ func loadRecoveryCheckpoints(db *sql.DB, query string, args ...any) ([]RecoveryC
 	result := make([]RecoveryCheckpoint, 0, len(found))
 	for _, item := range found {
 		checkpoint := item.checkpoint
-		versions, err := recoveryListVersionsTx(tx, checkpoint.Status.ID)
+		refs, err := recoveryListRefsTx(tx, checkpoint.Status.ID)
 		if err != nil {
 			return nil, err
 		}
-		if checkpoint.Archive, err = loadRecoveryListTx(tx, recoveryListKey{db, checkpoint.Status.ID, recoveryArchiveField}, versions[recoveryArchiveField], item.archive); err != nil {
+		if checkpoint.Archive, err = loadRecoveryListTx(tx, db, refs[recoveryArchiveField], recoveryArchiveField, item.archive); err != nil {
 			return nil, err
 		}
-		if checkpoint.ActiveContext, err = loadRecoveryListTx(tx, recoveryListKey{db, checkpoint.Status.ID, recoveryActiveField}, versions[recoveryActiveField], item.active); err != nil {
+		if checkpoint.ActiveContext, err = loadRecoveryListTx(tx, db, refs[recoveryActiveField], recoveryActiveField, item.active); err != nil {
 			return nil, err
 		}
 		result = append(result, checkpoint)
@@ -400,12 +409,61 @@ func RebindRecoveryAgent(db *sql.DB, sessionID, fromAgentID, toAgentID string) e
 	return err
 }
 
+// DeleteRecoveryCheckpoint removes a finished run's incident. The lists of a
+// run that owns its context stay for its agent's next run to extend. A mirror
+// (a child's incident copied into its parent's database, with no context
+// owner) has no next run there, so its lists go with it. Lists that no
+// incident holds and that are not the newest of their agent can no longer be
+// taken over either. Both are removed here, when a run ends, rather than
+// while a prompt is being sent.
 func DeleteRecoveryCheckpoint(db *sql.DB, incidentID string) error {
 	if db == nil || incidentID == "" {
 		return nil
 	}
-	_, err := db.Exec(`DELETE FROM agent_recoveries WHERE incident_id=?`, incidentID)
-	return err
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var owner string
+	err = tx.QueryRow(`SELECT context_owner_id FROM agent_recoveries WHERE incident_id=?`, incidentID).Scan(&owner)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var mirrored []any
+	if owner == "" {
+		rows, err := tx.Query(`SELECT list_id FROM agent_recovery_lists WHERE incident_id=?`, incidentID)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var listID int64
+			if err := rows.Scan(&listID); err != nil {
+				rows.Close()
+				return err
+			}
+			mirrored = append(mirrored, listID)
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(`DELETE FROM agent_recoveries WHERE incident_id=?`, incidentID); err != nil {
+		return err
+	}
+	for _, listID := range mirrored {
+		if _, err := tx.Exec(`DELETE FROM agent_message_lists WHERE list_id=? AND list_id NOT IN (SELECT list_id FROM agent_recovery_lists)`, listID); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(`DELETE FROM agent_message_lists WHERE list_id NOT IN (SELECT list_id FROM agent_recovery_lists)
+		AND list_id NOT IN (SELECT max(list_id) FROM agent_message_lists GROUP BY agent_id, field)`); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 type recoveryScanner interface {

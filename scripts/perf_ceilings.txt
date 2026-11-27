@@ -146,6 +146,9 @@ BenchmarkPublishContextRecoveryImage/bytes_4194304 40000 170
 BenchmarkCheckpointAppend_560Msgs 2350000 480
 BenchmarkRecoveryCheckpoint_560Msgs 2300000 395
 BenchmarkRecoveryCheckpoint_2000Msgs 5300000 395
+# A new turn's first checkpoint extends its agent's stored lists (was 71,600 allocations
+# and 70 MB rewriting the whole history; windows/amd64 measured 3.35 MB / 490).
+BenchmarkNewTurnCheckpoint_2000Msgs 4000000 590
 BenchmarkEstimateMultipartImage/bytes_1024 3800 21
 BenchmarkEstimateMultipartImage/bytes_4194304 10100000 21
 BenchmarkSessionDatabaseStartup 9000 215

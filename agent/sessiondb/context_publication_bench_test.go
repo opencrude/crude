@@ -110,6 +110,41 @@ func benchmarkRecoveryCheckpoint(b *testing.B, history int) {
 	}
 }
 
+// newTurn admits a human message as a new run does: a new incident whose
+// first checkpoint holds the whole archive and the published context. The
+// turn then ends cleanly and its incident is discarded.
+func (c *checkpointBench) newTurn() {
+	c.created++
+	c.round++
+	delta := ContextMessageDelta{Message: provider.ChatMessage{InternalID: fmt.Sprintf("t%d", c.round), Role: "user", Content: provider.TextContent("next request")}, Turn: 200 + c.round, CreatedAt: c.created, AgentID: "root"}
+	archive := append(c.state.Messages[:len(c.state.Messages):len(c.state.Messages)], delta.Message)
+	checkpoint := c.checkpoint(archive)
+	checkpoint.Status.ID = fmt.Sprintf("incident-%d", c.round)
+	state, err := PublishContext(c.db, ContextPublication{SessionID: "session", AgentID: "root", RuntimeAgentID: "root", ExpectedRevision: c.state.Revision,
+		Mutation: ContextMutation{Append: []ContextMessageDelta{delta}}, Recovery: checkpoint})
+	if err != nil {
+		c.b.Fatal(err)
+	}
+	c.state = state
+	if err := DeleteRecoveryCheckpoint(c.db, checkpoint.Status.ID); err != nil {
+		c.b.Fatal(err)
+	}
+}
+
+// BenchmarkNewTurnCheckpoint_2000Msgs is a new turn's admission checkpoint
+// and its clean discard over a dense history. A new incident extends the
+// lists the agent's previous run stored, so a turn writes the messages it
+// adds, never the history again.
+func BenchmarkNewTurnCheckpoint_2000Msgs(b *testing.B) {
+	bench := newCheckpointBench(b, 2000)
+	bench.newTurn()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		bench.newTurn()
+	}
+}
+
 // Appending stores only the new messages as tail rows. The stored list must
 // stay exactly what encoding the full context produces, for every message
 // shape, so archives and replays compare equal.

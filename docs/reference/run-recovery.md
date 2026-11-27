@@ -220,7 +220,7 @@ must not append the final response or its continuation suffix a second time. See
   rewrite no messages.
 - Message lists (a context, a checkpoint's archive and active context) are a
   base JSON array in the owning row followed by tail rows, one encoded message
-  each (`agent_context_tail`, `agent_recovery_tail`; `agent/sessiondb/message_lists.go`).
+  each (`agent_context_tail`, `agent_message_list_rows`; `agent/sessiondb/message_lists.go`).
   The list's encoding is byte-identical to encoding the whole list
   (`TestCheckpointAppendKeepsExactContextEncoding`). Writers keep the base
   empty and replace tail rows from the first changed message, so a tool round
@@ -228,13 +228,35 @@ must not append the final response or its continuation suffix a second time. See
   lists moved to rows) is moved to rows by its next write. The owning rows also
   carry the revision and recovery status that change every round, and SQLite
   rewrites a whole row on any update, so no list may live inline there.
+- A recovery list belongs to the runtime agent (`agent_message_lists`), not to
+  one incident. Each human message starts a new incident whose archive is the
+  whole history; when lists belonged to incidents, every send wrote that history
+  again (1.1–2 s of `agent.submit` in a 4,800-message session) and the clean
+  end of the turn deleted it. An agent has one unfinished run at a time: a new
+  incident takes over the newest list of its agent that no other unfinished
+  incident holds, and writes only what it adds
+  (`TestNewTurnsWriteOnlyTheirOwnMessagesToRecoveryLists`). A list an unfinished
+  incident holds is never taken; the new incident starts its own list.
+  `agent_recovery_lists` names the list and version that hold each incident's
+  field. When a later run rewrites a list, a settled incident that held it no
+  longer has its own lists, and loading it fails rather than returning another
+  run's messages. A run's archive never stores the request's system prompt:
+  restore and finalization drop it, and keeping it shifted every message by one
+  between admission and round checkpoints.
   Planning a write needs the stored list without reading it back: the context
-  is cached by revision and write time, a recovery list by its field's version
-  in `agent_recovery_lists`; both caches record only committed writes, and an
-  unknown list is rewritten whole. A committed prefix was validated when it was
-  committed, so a replacement validates only its new messages. Loaders read a
-  base and its tail in one transaction; deleting an incident cascades to its
-  rows.
+  is cached by revision and write time, a recovery list by list ID and version;
+  both caches record only committed writes. A list the process does not
+  remember (the first turn after a restart) is compared with its rows byte for
+  byte up to the first difference: matching rows stay, and when fewer rows
+  match than would be deleted, a new list is written instead. A resumed archive
+  is the transcript, without the hidden context messages the live archive held,
+  so the first turn after a restart usually stores the archive once more. A
+  committed prefix was validated when it was committed, so a replacement
+  validates only its new messages. Loaders read a base and its rows in one
+  transaction. Deleting an incident removes its references; its agent's newest
+  list stays for the next run, while a child mirror's lists (no context owner)
+  and lists no incident holds that are no longer their agent's newest are
+  removed when the run ends, never while a prompt is sent.
   Stopped children use current authoritative context and retain newer facts;
   parent mirrors/results are separately checked, never silently acknowledged.
   Root and child checkpoints reconcile exact late lifecycle controls and

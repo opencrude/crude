@@ -211,6 +211,7 @@ documents to read before changing each area.
 
 ### Issues (dated user reports)
 
+- [Prompt send lag in dense sessions](issues/2026-11-27-prompt-send-lag.md) — why pressing Enter in a long session waited one to two seconds, longer with several agents, why the Performance dashboard showed false problems, and how recovery lists now extend instead of rewriting the history.
 - [LSP environment variable names with "0" or "x" turned servers off](issues/2026-11-27-lsp-env-var-name-validation.md) — why a saved language whose `environment` map had a name like `PORT_8080` silently failed validation, and how the name check now matches only `=`, `\`, and a NUL byte.
 - [Completion resolve leaked documentation through an error](issues/2026-11-27-completion-resolve-leak.md) — why a resolve that added documentation together with malformed additionalTextEdits returned the populated documentation alongside an error, and how Resolve now returns the zero Resolution on that path.
 - [Metrics events split multi-byte UTF-8 at the truncation boundary](issues/2026-11-27-metrics-truncation-utf8.md) — why an event label or detail longer than its byte ceiling could split a multi-byte character and show as `\ufffd` after JSON marshaling, and how truncation now cuts at a rune boundary.

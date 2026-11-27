@@ -184,8 +184,9 @@ func checkNaturalCompletionPersistenceRetry(t *testing.T, boundary bool) {
 	trigger := `CREATE TRIGGER reject_turn_finish BEFORE UPDATE ON agent_turns
 		WHEN NEW.state='completed' BEGIN SELECT RAISE(ABORT, 'ledger unavailable'); END`
 	if boundary {
-		trigger = `CREATE TRIGGER reject_turn_finish BEFORE INSERT ON agent_recovery_tail
-			WHEN NEW.field='archive' AND instr(CAST(NEW.message_json AS TEXT), 'accepted final answer')>0
+		trigger = `CREATE TRIGGER reject_turn_finish BEFORE INSERT ON agent_message_list_rows
+			WHEN NEW.list_id IN (SELECT list_id FROM agent_message_lists WHERE field='archive')
+				AND instr(CAST(NEW.message_json AS TEXT), 'accepted final answer')>0
 			BEGIN SELECT RAISE(ABORT, 'checkpoint unavailable'); END`
 	}
 	if _, err := s.db.Exec(trigger); err != nil {

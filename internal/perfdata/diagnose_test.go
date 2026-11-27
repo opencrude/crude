@@ -92,6 +92,48 @@ func TestCanonicalRulesPreserveRankAndThresholds(t *testing.T) {
 	}
 }
 
+// A percentile is its bucket's upper bound: a p95 of exactly 1 ms means "at
+// most 1 ms". The dashboard reported "Frame handoff waits: 1.0ms p95" as a
+// problem for handoffs of 0.5 to 1 ms, under the 1 ms threshold.
+func TestPercentileAtThresholdBucketBoundIsNotAFinding(t *testing.T) {
+	present := func(p95 int64) metrics.LatencySeries {
+		return metrics.LatencySeries{Meta: metrics.Meta{Name: "ui.present", Warn: 1_000, Crit: 16_000}, Total: 100,
+			Window: metrics.Summary{Count: 100, P95: p95, Max: 1_466}, Recent: metrics.Summary{Count: 100, P95: p95, Max: 1_466}}
+	}
+	input := latency("ui.input", 10, 1_000)
+	for _, test := range []struct {
+		p95  int64
+		want bool
+	}{{1_000, false}, {1_466, true}} {
+		shell := metrics.Snapshot{Taken: time.Now(), Seconds: 5, Step: 1, Latencies: []metrics.LatencySeries{input, present(test.p95)}}
+		core := metrics.Snapshot{Taken: shell.Taken, Latencies: []metrics.LatencySeries{latency("core.actor", 1, 100)}}
+		found := false
+		for _, f := range Diagnose(Data{Shell: shell, Core: &core}) {
+			found = found || strings.HasPrefix(f.Title, "Frame handoff waits")
+		}
+		if found != test.want {
+			t.Fatalf("p95 %d µs with a 1 ms threshold: finding=%v, want %v", test.p95, found, test.want)
+		}
+	}
+	if got := PercentileSeverity(16_000, metrics.Meta{Warn: 1_000, Crit: 16_000}); got != SeverityWarn {
+		t.Fatalf("p95 in the bucket under the critical bound rated %v, want warning", got)
+	}
+}
+
+// Compaction, model-written commit messages and Git transfers wait for a
+// model or a remote server. A 40-second compaction is not a stalled core.
+func TestModelAndRemoteRequestsAreNotSlowCoreWork(t *testing.T) {
+	remote := metrics.TableSeries{Meta: metrics.Meta{Name: "core.requests.remote"}, Rows: []metrics.TableRow{{Key: "agent.compact", Count: 1, Sum: 45_000_000, Max: 45_000_000}}}
+	local := metrics.TableSeries{Meta: metrics.Meta{Name: "core.requests", Warn: 100_000, Crit: 1_000_000}, Rows: []metrics.TableRow{{Key: "agent.submit", Count: 1, Sum: 2_000, Max: 2_000}}}
+	core := metrics.Snapshot{Taken: time.Now(), Latencies: []metrics.LatencySeries{latency("core.actor", 1, 100)}, Tables: []metrics.TableSeries{remote, local}}
+	shell := metrics.Snapshot{Taken: core.Taken, Seconds: 5, Step: 1, Latencies: []metrics.LatencySeries{latency("ui.input", 10, 1_000)}}
+	for _, f := range Diagnose(Data{Shell: shell, Core: &core}) {
+		if strings.Contains(f.Title, "agent.compact") {
+			t.Fatalf("model-bound request reported as a problem: %+v", f)
+		}
+	}
+}
+
 func TestBusyUsesMetricsProjectionAndNotProcessCPU(t *testing.T) {
 	s := metrics.Snapshot{Taken: time.Now(), Seconds: 2, Step: 1, UIBusyPeak: 80, Latencies: []metrics.LatencySeries{
 		{Meta: metrics.Meta{Name: "ui.update"}, Total: 2, Window: metrics.Summary{Count: 2, Sum: 800_000}, Recent: metrics.Summary{Count: 2, Sum: 800_000}, Points: []metrics.LatencyPoint{{Sum: 800_000}, {}}},

@@ -15,12 +15,13 @@ type ForkIdentity struct {
 }
 
 // forkDroppedTables hold state owned by the source's live runtime, not by its
-// conversation: an unfinished run's recovery, deliveries admitted to the
+// conversation: an unfinished run's recovery and the message lists its
+// agents' runs extend, deliveries admitted to the
 // source's agent, its file claims, the results of its own children and the
 // usage it was billed for. A fork that kept them would resume someone else's
 // work or fail to bind children whose parent is the source.
 var forkDroppedTables = []string{
-	"agent_recoveries", "collaboration_admissions", "file_claims", "sub_agent_results", "usage_requests", "session_goal_handover",
+	"agent_recoveries", "agent_message_list_rows", "agent_message_lists", "collaboration_admissions", "file_claims", "sub_agent_results", "usage_requests", "session_goal_handover",
 }
 
 // A fork inherits the reviewed evidence, not the source's pending input,

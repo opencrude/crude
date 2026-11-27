@@ -78,7 +78,7 @@ func OverviewHeadlines(d Data) []Headline {
 			out = append(out, Headline{Label: label, Value: "idle (no recent observations)", Severity: SeverityUnknown})
 			return
 		}
-		out = append(out, Headline{label, FormatMicros(series.Recent.P95), SeverityOf(series.Recent.P95, series.Meta)})
+		out = append(out, Headline{label, FormatMicros(series.Recent.P95), PercentileSeverity(series.Recent.P95, series.Meta)})
 	}
 	addLatency("Input", ProcessShell, "ui.input")
 	if _, ok := d.BusySeries(); ok {
