@@ -209,7 +209,7 @@ func (s LSP) Validate() error {
 			}
 		}
 		for name, value := range cfg.Environment {
-			if name == "" || strings.ContainsAny(name, "=\\x00") || strings.ContainsRune(value, 0) {
+			if name == "" || strings.ContainsAny(name, "=\x00\\") || strings.ContainsRune(value, 0) {
 				return fmt.Errorf("%s: invalid environment variable", id)
 			}
 		}
