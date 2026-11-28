@@ -151,7 +151,7 @@ func testLiveGeminiToolRoundTrip(t *testing.T, protocol string) {
 
 	// Exact replay keeps Gemini's own signatures.
 	answer, finish, _ := liveTurn(t, p, model, history, liveGeminiTools)
-	if finish != "stop" || !strings.Contains(strings.ToLower(answer.ContentString()), "user") {
+	if finish != "stop" || !strings.Contains(strings.ToLower(answer.ContentString()), "test-host") {
 		t.Fatalf("exact replay: finish=%q answer=%q", finish, answer.ContentString())
 	}
 

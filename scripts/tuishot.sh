@@ -33,6 +33,7 @@
 # WEZTERM_CONFIG may select the installed Crude GUI configuration for acceptance.
 # GHOSTTY_BIN and GHOSTTY_CONFIG may select the portable Ghostty and its profile.
 # CRUDE_BIN may select a prebuilt, deterministic visual acceptance test binary.
+# IMPORT_BIN may select ImageMagick's import; otherwise the one on PATH runs.
 # An isolated CRUDE_HOME must be a real short directory, not a symlink to a
 # long path: the core canonicalizes it before creating its Unix socket.
 set -uo pipefail
@@ -113,7 +114,8 @@ trap cleanup EXIT
 mkdir -p "$WORK" "$OUTDIR"
 : > "$LOG"
 
-IMPORT=/home/user/tools/imagemagick-7.1.2-18/bin/import
+IMPORT="${IMPORT_BIN:-$(command -v import || true)}"
+[ -n "$IMPORT" ] && [ -x "$IMPORT" ] || { echo 'ERROR: ImageMagick import not found; set IMPORT_BIN' >&2; exit 1; }
 export DISPLAY="${DISPLAY:-:0}"
 
 if [ -n "${CRUDE_BIN:-}" ]; then

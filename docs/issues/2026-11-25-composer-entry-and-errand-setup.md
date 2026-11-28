@@ -148,7 +148,7 @@ Measuring the real home folder exposed sustained background work, so the same
 policy also makes the recursive watcher and the text index demand-driven for
 top-level folders (browsed folders and open files are watched; an index builds
 on the first content query; Find in Files and Go to File still walk on
-request). On `C:\Users\name` (182 root entries), resident memory 60 s after
+request). On a home folder with 182 root entries, resident memory 60 s after
 attach fell from 297 MB to 46 MB and Go heap from 175 MB to 8.4 MB; attach took
 45 ms. A filesystem-root watcher no longer retries a parent that cannot exist.
 Tests that failed on `812adcc3` include
