@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
 	"unicode/utf8"
+
+	"golang.org/x/sync/errgroup"
 )
 
 // Event is one recorded point of the workspace timeline and the files that
@@ -217,20 +220,31 @@ func (s *Store) eventChanges(ctx context.Context, records []SnapshotRecord) (map
 	out := make(map[string]eventChange, len(records))
 	var base Manifest // the loaded manifest of baseID, when it was needed
 	baseID := ""
+	var loaded map[string]Manifest
 	for i := len(records) - 1; i >= 0; i-- {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
+		if (len(records)-1-i)%eventLoadBatch == 0 {
+			var err error
+			if loaded, err = s.loadUncachedManifests(ctx, records[max(0, i-eventLoadBatch+1):i+1]); err != nil {
+				return nil, err
+			}
+		}
 		record := records[i]
 		change, ok := s.events.changes[record.ID]
 		if !ok || change.base != baseID {
-			manifest, err := s.LoadManifest(record.ID)
-			if err != nil {
-				return nil, err
+			manifest, preloaded := loaded[record.ID]
+			if !preloaded {
+				var err error
+				if manifest, err = s.LoadManifest(record.ID); err != nil {
+					return nil, err
+				}
 			}
 			change = eventChange{base: baseID, full: manifest.ScopePaths == nil && manifest.ScopeRoots == nil}
 			if baseID != "" {
 				if base.ID != baseID {
+					var err error
 					if base, err = s.LoadManifest(baseID); err != nil {
 						return nil, err
 					}
@@ -253,6 +267,44 @@ func (s *Store) eventChanges(ctx context.Context, records []SnapshotRecord) (map
 		}
 	}
 	return out, nil
+}
+
+// eventLoadBatch is how many manifests the first timeline read loads at
+// once. Loading reads, decodes and verifies each manifest: 55 points of this
+// repository took 1.5 s on one core and 0.6 s in batches. Memory holds no
+// more than one batch of decoded manifests.
+const eventLoadBatch = 8
+
+// loadUncachedManifests loads, on several cores, the manifests of records
+// whose changes the index does not hold yet.
+func (s *Store) loadUncachedManifests(ctx context.Context, records []SnapshotRecord) (map[string]Manifest, error) {
+	var ids []string
+	for _, record := range records {
+		if _, ok := s.events.changes[record.ID]; !ok {
+			ids = append(ids, record.ID)
+		}
+	}
+	if len(ids) < 2 {
+		return nil, nil
+	}
+	manifests := make([]Manifest, len(ids))
+	group, _ := errgroup.WithContext(ctx)
+	group.SetLimit(runtime.GOMAXPROCS(0))
+	for i, id := range ids {
+		group.Go(func() error {
+			manifest, err := s.LoadManifest(id)
+			manifests[i] = manifest
+			return err
+		})
+	}
+	if err := group.Wait(); err != nil {
+		return nil, err
+	}
+	loaded := make(map[string]Manifest, len(ids))
+	for i, id := range ids {
+		loaded[id] = manifests[i]
+	}
+	return loaded, nil
 }
 
 // changedPaths lists the paths both manifests observe whose entries differ.

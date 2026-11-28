@@ -80,6 +80,48 @@ func TestOverviewShowsCostTilesChartAndModels(t *testing.T) {
 	}
 }
 
+// A refresh keeps the totals and the reader's place: the page does not
+// collapse to its loading message or jump back to its top while the core
+// reads, and its heading says it is updating.
+func TestOverviewRefreshKeepsTotalsAndScroll(t *testing.T) {
+	now := time.Now()
+	overview := NewOverview(ui.NewTokenSet(theme.DefaultDark()))
+	overview.now = func() time.Time { return now }
+	data := OverviewData{Report: usageReport(now), Read: now}
+	overview.SetData(data)
+	host := ui.NewHost(theme.DefaultDark(), overview)
+	host.Resize(100, 12)
+	host.MarkLayout()
+	host.Layout()
+	for range 2 {
+		host.Deliver(OverviewID, tea.MouseWheelMsg{X: 10, Y: 5, Button: tea.MouseWheelDown})
+	}
+	scrolled := overview.scroll.model.Offset()
+	if scrolled == 0 {
+		t.Fatal("the Overview did not scroll")
+	}
+	data.Loading = true
+	overview.SetData(data)
+	screen := paint(t, overview, 100, 12)
+	if overview.scroll.model.Offset() != scrolled {
+		t.Fatalf("a refresh moved the page from row %d to row %d", scrolled, overview.scroll.model.Offset())
+	}
+	if strings.Contains(screen, "Reading the cost") || !strings.ContainsAny(screen, "▁▂▃▄▅▆▇█") {
+		t.Fatalf("a refresh replaced the totals with the loading message:\n%s", screen)
+	}
+	overview.scroll.model.ScrollTo(0)
+	if top := paint(t, overview, 100, 12); !strings.Contains(top, "· updating…") {
+		t.Fatalf("the heading does not say the totals are updating:\n%s", top)
+	}
+	overview.scroll.model.ScrollTo(scrolled)
+	data.Loading = false
+	overview.SetData(data)
+	paint(t, overview, 100, 12)
+	if overview.scroll.model.Offset() != scrolled {
+		t.Fatalf("the refreshed totals moved the page from row %d to row %d", scrolled, overview.scroll.model.Offset())
+	}
+}
+
 // The workspace tile counts sessions, else requests, never "0 sessions",
 // and drops the start date before it truncates.
 func TestOverviewWorkspaceTileFitsItsDetail(t *testing.T) {

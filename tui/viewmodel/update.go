@@ -1936,13 +1936,18 @@ func (m *App) forwardNativeWindowContent(fw *wm.FloatingWindow, w *ui.WindowFram
 			return result.Cmd, result.Handled
 		}
 		if group, ok := paneGroupFromOverlay(ui.OverlayID(fw.ID)); ok {
-			if result.Action.Payload == paneWindowNewTab {
+			switch result.Action.Payload {
+			case paneWindowNewTab:
 				x, y := fw.Position()
 				w, _ := fw.Size()
-				rect := ui.Rect{X: x + w - 3 - 2*ui.TitleActionWidth, Y: y, W: ui.TitleActionWidth, H: 1}
+				buttons := len(m.paneWindowTitleActions(group))
+				rect := ui.Rect{X: x + w - 3 - buttons*ui.TitleActionWidth, Y: y, W: ui.TitleActionWidth, H: 1}
 				return tea.Batch(result.Cmd, m.openContextMenuState(tea.Mouse{X: rect.X + 1, Y: rect.Y + 1}, m.paneWindowNewTabMenu(group))), result.Handled
+			case paneWindowMainTabs:
+				m.moveWindowToMainTabs(group)
+			default:
+				m.dockPaneWindow(group)
 			}
-			m.dockPaneWindow(group)
 			return result.Cmd, result.Handled
 		}
 	}

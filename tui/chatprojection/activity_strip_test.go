@@ -223,13 +223,13 @@ func TestCompactionActivityOwnsStripUntilNextTurn(t *testing.T) {
 	}{
 		{"compaction_preparing", "Compacting context", true},
 		{"compaction_extracting", "Compacting context", true},
-		{"compaction_retrying", "Recovering compaction", true},
+		{"compaction_retrying", "⚠ Recovering compaction", true},
 		{"compaction_committing", "Saving checkpoint", true},
 		{"compaction_cancelling", "Stopping compaction", false},
 		{"compaction_completed", "Context compacted · Ready to continue", false},
 		{"compaction_cancelled", "Compaction cancelled", false},
-		{"compaction_failed", "Compaction failed · details in transcript", false},
-		{"compaction_interrupted", "Compaction interrupted · original context kept", false},
+		{"compaction_failed", "✕ Compaction failed · details in transcript", false},
+		{"compaction_interrupted", "⚠ Compaction interrupted · original context kept", false},
 	} {
 		view.Active, view.CompactionPhase = phase.active, phase.name
 		strip.Update(view, 100, th, tokens)
@@ -363,8 +363,8 @@ func TestAttentionAndInterruptionOutrankPlanEvenWithStaleActiveFlag(t *testing.T
 			phase statuscenter.AgentPhase
 			label string
 		}{
-			{statuscenter.AgentNeedsAttention, "Needs attention · work kept · /retry to continue"},
-			{statuscenter.AgentInterrupted, "Interrupted · work kept · /retry to continue"},
+			{statuscenter.AgentNeedsAttention, "⚠ Needs attention · work kept · /retry to continue"},
+			{statuscenter.AgentInterrupted, "⚠ Interrupted · work kept · /retry to continue"},
 			{statuscenter.AgentCancelled, "Stopped"},
 		} {
 			var strip ActivityStrip
@@ -376,6 +376,56 @@ func TestAttentionAndInterruptionOutrankPlanEvenWithStaleActiveFlag(t *testing.T
 					t.Fatalf("active=%v phase=%s: %+v", active, tc.phase, line)
 				}
 			}
+		}
+	}
+}
+
+// A provider retry waited in the same quiet ink as ordinary work, so a rate
+// limit read as "all is well". Problem rows lead with the transcript's sign
+// in its color; the retry heading and countdown are in the warning color and
+// the provider's reason stays supporting text, on every countdown frame.
+func TestActivityStripMarksProblemStates(t *testing.T) {
+	th := theme.DefaultDark()
+	retryAt := time.UnixMilli(70_000)
+	for _, tc := range []struct {
+		name  string
+		view  statuscenter.AgentActivityView
+		mark  string
+		role  ui.SemanticColor
+		text  string
+		frame int
+	}{
+		{"rate limit retry", statuscenter.AgentActivityView{Active: true, RetryAttempt: 2, RetryLimit: 6, RetryReason: "Provider rate limit reached",
+			Status: statuscenter.AgentStatusSnapshot{Phase: statuscenter.AgentRetrying, RetryAt: retryAt}},
+			"⚠ ", ui.ColorWarning, "⚠ Retrying request · attempt 2/6 · in 65s · Provider rate limit reached", 5_000},
+		{"recovering", statuscenter.AgentActivityView{Active: true, Status: statuscenter.AgentStatusSnapshot{Phase: statuscenter.AgentRecovering}},
+			"⚠ ", ui.ColorWarning, "⚠ Recovering", 0},
+		{"needs attention", statuscenter.AgentActivityView{Status: statuscenter.AgentStatusSnapshot{Phase: statuscenter.AgentNeedsAttention}},
+			"⚠ ", ui.ColorWarning, "⚠ Needs attention · work kept · /retry to continue", 0},
+		{"failed", statuscenter.AgentActivityView{Status: statuscenter.AgentStatusSnapshot{Phase: statuscenter.AgentFailed}},
+			"✕ ", ui.ColorError, "✕ Turn failed · details in transcript", 0},
+	} {
+		var strip ActivityStrip
+		strip.Update(tc.view, 120, th, ui.NewTokenSet(th))
+		for _, frame := range []int{tc.frame, tc.frame + 1_000} {
+			line := strip.Line(frame)
+			if len(line.Spans) < 2 || line.Spans[0].Text != tc.mark || line.Spans[0].Role != tc.role || line.Spans[1].Role != tc.role {
+				t.Fatalf("%s frame %d: no %q sign in %v: %+v", tc.name, frame, tc.mark, tc.role, line.Spans)
+			}
+			if frame == tc.frame && line.PlainText() != tc.text {
+				t.Fatalf("%s: strip=%q want %q", tc.name, line.PlainText(), tc.text)
+			}
+			if tc.name == "rate limit retry" && line.Spans[len(line.Spans)-1].Role != ui.ColorActivityText {
+				t.Fatalf("retry reason is not supporting text: %+v", line.Spans)
+			}
+		}
+	}
+	// Ordinary work and a stop by the user carry no problem sign.
+	for _, phase := range []statuscenter.AgentPhase{statuscenter.AgentTool, statuscenter.AgentCancelled, statuscenter.AgentWaiting} {
+		var strip ActivityStrip
+		strip.Update(statuscenter.AgentActivityView{Active: phase != statuscenter.AgentCancelled, Status: statuscenter.AgentStatusSnapshot{Phase: phase, Detail: "Working"}}, 120, th, ui.NewTokenSet(th))
+		if text := strip.Line(0).PlainText(); strings.HasPrefix(text, "⚠") || strings.HasPrefix(text, "✕") {
+			t.Fatalf("phase %s shows a problem sign: %q", phase, text)
 		}
 	}
 }

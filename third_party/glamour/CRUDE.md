@@ -42,6 +42,12 @@ Inferred file-reference AutoLink nodes carry the private
 literal source spelling, including inside tables, without a duplicate footer.
 Authored web links and their table footers keep the upstream behavior.
 
+Code blocks call chroma's `quick.Highlight` steps directly, with the lexer
+lookup memoized by fence language (`codeLexer`). Chroma's `lexers.Get` globs
+every file pattern twice for a name it does not know, such as the empty
+language of an unlabeled fence, on each render. Analysis, fallback,
+formatter, style and output are unchanged.
+
 Upstream golden outputs for `code_block` and issues 107, 239, 257, 48 and 79
 are calibrated to Crude's existing Chroma/Lip Gloss/xansi dependency graph.
 Before updating these imported baselines, all 54 outputs were compared byte for

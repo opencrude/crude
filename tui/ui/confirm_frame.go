@@ -126,16 +126,15 @@ func BuildConfirmFrame(th *theme.Theme, spec ConfirmFrameSpec) *ComponentWidget 
 		spec.FocusedIndex = len(spec.Buttons) - 1
 	}
 
+	// Every color is a role: the frame fills the dialog and the host's
+	// tokens resolve the text, so a theme switch recolors an open dialog.
 	tokens := NewTokenSet(th)
-	popupBG := tokens.Color(ColorPopupBg)
-	mutedFG := tokens.Color(ColorMuted)
-	fg := tokens.Color(ColorFg)
-	accent := tokens.Color(ColorPopupTitle)
+	accent := ColorPopupTitle
 	switch spec.Severity {
 	case ConfirmPromptDanger:
-		accent = tokens.Color(ColorError)
+		accent = ColorError
 	case ConfirmPromptWarning:
-		accent = tokens.Color(ColorWarning)
+		accent = ColorWarning
 	}
 
 	detailLines := wrapDetailLines(spec.Detail, spec.Width-confirmDetailWrapWidth, spec.DetailMaxLines)
@@ -143,19 +142,15 @@ func BuildConfirmFrame(th *theme.Theme, spec ConfirmFrameSpec) *ComponentWidget 
 	// Body rows: question, optional wrapped detail, buttons, hint.
 	var bodyChildren []Component
 
-	qLabel := NewLabel(NewID(RootID, "confirm/question"), spec.Question, th)
-	qLabel.SetStyle(fg, popupBG, cell.AttrBold)
-	bodyChildren = append(bodyChildren, qLabel)
+	bodyChildren = append(bodyChildren, dialogLabel(th, "confirm/question", spec.Question, ColorFg, cell.AttrBold))
 
 	if len(detailLines) > 0 {
-		bodyChildren = append(bodyChildren, spacerLabel(th, popupBG, "confirm/sp1"))
+		bodyChildren = append(bodyChildren, dialogLabel(th, "confirm/sp1", " ", ColorFg, 0))
 		for i, line := range detailLines {
-			lab := NewLabel(NewID(RootID, "confirm/detail-"+itoa(i)), line, th)
-			lab.SetStyle(mutedFG, popupBG, 0)
-			bodyChildren = append(bodyChildren, lab)
+			bodyChildren = append(bodyChildren, dialogLabel(th, "confirm/detail-"+itoa(i), line, ColorMuted, 0))
 		}
 	}
-	bodyChildren = append(bodyChildren, spacerLabel(th, popupBG, "confirm/sp2"))
+	bodyChildren = append(bodyChildren, dialogLabel(th, "confirm/sp2", " ", ColorFg, 0))
 
 	// Buttons size to their labels; variants come from action semantics
 	// (destructive = danger, affirmative = primary, neutral = secondary).
@@ -170,9 +165,7 @@ func BuildConfirmFrame(th *theme.Theme, spec ConfirmFrameSpec) *ComponentWidget 
 	bodyChildren = append(bodyChildren, btnRow)
 
 	// Standard hint: navigation is uniform across every dialog in the app.
-	hint := NewLabel(NewID(RootID, "confirm/hint"), "←→ switch · enter confirm · esc cancel", th)
-	hint.SetStyle(mutedFG, popupBG, cell.AttrItalic)
-	bodyChildren = append(bodyChildren, hint)
+	bodyChildren = append(bodyChildren, dialogLabel(th, "confirm/hint", "←→ switch · enter confirm · esc cancel", ColorMuted, cell.AttrItalic))
 
 	body := NewStack(NewID(RootID, "confirm/body"), Vertical, 0, bodyChildren...)
 
@@ -456,9 +449,12 @@ func confirmVisualChange(cw *ComponentWidget, fn func() bool) bool {
 	return changed
 }
 
-func spacerLabel(th *theme.Theme, bg cell.Color, id string) *Label {
-	lab := NewLabel(NewID(RootID, id), " ", th)
-	lab.SetStyle(cell.NoColor, bg, 0)
+// dialogLabel is one dialog text row: its ink is a role and its background
+// is the frame's fill beneath it, so both follow a theme switch.
+func dialogLabel(th *theme.Theme, id, text string, role SemanticColor, attr cell.Attrs) *Label {
+	lab := NewLabel(NewID(RootID, id), text, th)
+	lab.SetStyle(cell.NoColor, cell.NoColor, attr)
+	lab.SetColorRole(role)
 	return lab
 }
 

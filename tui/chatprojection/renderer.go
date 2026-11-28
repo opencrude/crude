@@ -72,6 +72,9 @@ type Renderer struct {
 	// rederived on every source sync, but a settled result's payload verdict
 	// is immutable, so dense transcripts must not reparse it per event.
 	eligibility map[*conversation.ChatMessage]eligibilityMemo
+	// plans holds which plan messages a later one of the same plan replaced,
+	// derived once per transcript change (see planMessageSuperseded).
+	plans planSupersession
 	// Retained activity build state (see syncActivityItems): the canonical
 	// list it was built from, the flattened rows with each canonical row's
 	// start, each item's first flat row, and the recent-round window start.
@@ -1682,38 +1685,69 @@ func (r *Renderer) buildRenderContext(msg *conversation.ChatMessage, suppressHea
 // planMessageSuperseded collapses historical snapshots when a newer plan
 // mutation/snapshot exists for the same plan id. The underlying transcript
 // remains intact and an explicit expansion still reveals the older snapshot.
+// Every rendered plan row asks; the answer is derived once per transcript
+// change, not by parsing every later plan per row.
 func (r *Renderer) planMessageSuperseded(msg *conversation.ChatMessage) bool {
-	if msg == nil || msg.Role != conversation.RoleTool || !tools.IsPlanTool(msg.ToolName) || msg.ToolStatus == "error" {
+	if !livePlanMessage(msg) {
 		return false
 	}
-	view, ok := parsePlanView(msg.Content)
-	if !ok || view.ID == "" {
-		return false
+	if !r.plans.valid {
+		r.derivePlanSupersession()
 	}
+	return r.plans.superseded[msg] || msg.InternalID != "" && r.plans.supersededIDs[msg.InternalID]
+}
+
+func livePlanMessage(msg *conversation.ChatMessage) bool {
+	return msg != nil && msg.Role == conversation.RoleTool && tools.IsPlanTool(msg.ToolName) && msg.ToolStatus != "error"
+}
+
+// planSupersession is the derived plan chronology of the retained transcript.
+// Plan IDs are memoized by content, so a sync parses only changed plans.
+type planSupersession struct {
+	valid         bool
+	ids           map[*conversation.ChatMessage]planIdentity
+	superseded    map[*conversation.ChatMessage]bool
+	supersededIDs map[string]bool
+}
+
+type planIdentity struct{ content, id string }
+
+// derivePlanSupersession walks the transcript from its end: a plan message
+// is superseded when a later live message carries the same plan ID.
+func (r *Renderer) derivePlanSupersession() {
 	messages := r.activityFlat
 	if messages == nil {
 		messages = r.sync.Messages
 	}
-	idx := -1
-	for i, candidate := range messages {
-		if candidate == msg || msg.InternalID != "" && candidate.InternalID == msg.InternalID {
-			idx = i
-			break
-		}
-	}
-	if idx < 0 {
-		return false // an external pane has no retained chronology to supersede
-	}
-	for _, next := range messages[idx+1:] {
-		if next == nil || next.Role != conversation.RoleTool || !tools.IsPlanTool(next.ToolName) || next.ToolStatus == "error" {
+	ids := make(map[*conversation.ChatMessage]planIdentity)
+	superseded := make(map[*conversation.ChatMessage]bool)
+	supersededIDs := make(map[string]bool)
+	seen := make(map[string]bool)
+	for i := len(messages) - 1; i >= 0; i-- {
+		msg := messages[i]
+		if !livePlanMessage(msg) {
 			continue
 		}
-		nextView, nextOK := parsePlanView(next.Content)
-		if nextOK && nextView.ID == view.ID {
-			return true
+		identity, ok := r.plans.ids[msg]
+		if !ok || identity.content != msg.Content {
+			identity = planIdentity{content: msg.Content}
+			if view, parsed := parsePlanView(msg.Content); parsed {
+				identity.id = view.ID
+			}
 		}
+		ids[msg] = identity
+		if identity.id == "" {
+			continue
+		}
+		if seen[identity.id] {
+			superseded[msg] = true
+			if msg.InternalID != "" {
+				supersededIDs[msg.InternalID] = true
+			}
+		}
+		seen[identity.id] = true
 	}
-	return false
+	r.plans = planSupersession{valid: true, ids: ids, superseded: superseded, supersededIDs: supersededIDs}
 }
 
 func (r *Renderer) renderSingleMessage(msg *conversation.ChatMessage) ([]string, []PaintLine) {

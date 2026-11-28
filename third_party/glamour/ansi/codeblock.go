@@ -7,7 +7,8 @@ import (
 	"sync"
 
 	"github.com/alecthomas/chroma/v2"
-	"github.com/alecthomas/chroma/v2/quick"
+	"github.com/alecthomas/chroma/v2/formatters"
+	"github.com/alecthomas/chroma/v2/lexers"
 	"github.com/alecthomas/chroma/v2/styles"
 )
 
@@ -22,6 +23,61 @@ const (
 // mutex for synchronizing access to the chroma style registry.
 // Related https://github.com/alecthomas/chroma/pull/650
 var mutex = sync.Mutex{}
+
+// codeLexers memoizes chroma's lexer lookup by fence language. For a name it
+// does not know as a lexer name or alias, such as the "" of an unlabeled
+// fence, lexers.Get globs every registered file pattern twice (about 3 ms) on
+// each render. The registry is immutable after init, so the answer, nil
+// included, never changes; the table is bounded because labels are free text.
+var codeLexers struct {
+	sync.Mutex
+	byLanguage map[string]chroma.Lexer
+}
+
+const codeLexerLimit = 1024
+
+func codeLexer(language string) chroma.Lexer {
+	codeLexers.Lock()
+	lexer, known := codeLexers.byLanguage[language]
+	codeLexers.Unlock()
+	if known {
+		return lexer
+	}
+	lexer = lexers.Get(language)
+	codeLexers.Lock()
+	defer codeLexers.Unlock()
+	if codeLexers.byLanguage == nil || len(codeLexers.byLanguage) >= codeLexerLimit {
+		codeLexers.byLanguage = make(map[string]chroma.Lexer)
+	}
+	codeLexers.byLanguage[language] = lexer
+	return lexer
+}
+
+// highlight is quick.Highlight with the memoized lexer lookup: a known lexer,
+// else analysis of the code, else plain text.
+func highlight(w io.Writer, source, language, formatter, style string) error {
+	lexer := codeLexer(language)
+	if lexer == nil {
+		lexer = lexers.Analyse(source)
+	}
+	if lexer == nil {
+		lexer = lexers.Fallback
+	}
+	lexer = chroma.Coalesce(lexer)
+	format := formatters.Get(formatter)
+	if format == nil {
+		format = formatters.Fallback
+	}
+	theme := styles.Get(style)
+	if theme == nil {
+		theme = styles.Fallback
+	}
+	tokens, err := lexer.Tokenise(nil, source)
+	if err != nil {
+		return err
+	}
+	return format.Format(w, theme, tokens)
+}
 
 // A CodeBlockElement is used to render code blocks.
 type CodeBlockElement struct {
@@ -139,7 +195,7 @@ func (e *CodeBlockElement) Render(w io.Writer, ctx RenderContext) error {
 		if ctx.options.Source != nil {
 			output = &highlighted
 		}
-		err := quick.Highlight(output, e.Code, e.Language, formatter, theme)
+		err := highlight(output, e.Code, e.Language, formatter, theme)
 		if err != nil {
 			return fmt.Errorf("glamour: error highlighting code: %w", err)
 		}

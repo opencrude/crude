@@ -51,7 +51,10 @@ and mandatory safety checks still apply. See [workspace entry defaults](settings
   mandatory; every failure after mutation rolls back before returning.
 - Snapshot, SQLite, verification, pruning, and restore work always runs in a
   command/background service, never Bubble Tea `Update`. Project switch and
-  shutdown wait for active restore ownership.
+  shutdown wait for active restore ownership. A switch is refused during a
+  restore, an open message scope or a live capture; a capture that was
+  cancelled (Local History turned off) only delays it while `Stop` joins it
+  (`TestCancelledCaptureDoesNotRefuseProjectSwitch`).
 - Integration apply/undo capture their safety snapshot and register its existing
   message scope under one Store/process mutation gate (`SnapshotMessageScope`).
   Retention cannot prune the preimage between those steps. Prepared, committed

@@ -33,6 +33,7 @@ type ActivityStrip struct {
 	waitStart                time.Time
 	retryAt                  time.Time
 	retryPrefix, retryReason string
+	retryMark                PaintLine
 	waitSecond               int
 	waitLine                 PaintLine
 	tide                     ui.TextTideMotion
@@ -81,12 +82,12 @@ func (s *ActivityStrip) Update(source statuscenter.AgentActivityView, width int,
 
 	status := source.Status
 	if source.CompactionPhase != "" {
-		label, role := "Compacting context", ui.ColorActivityText
+		label, role, mark := "Compacting context", ui.ColorActivityText, PaintLine{}
 		switch source.CompactionPhase {
 		case "compaction_cancelling":
 			label = "Stopping compaction"
 		case "compaction_retrying":
-			label = "Recovering compaction"
+			label, role, mark = "Recovering compaction", ui.ColorWarning, problemMark(ui.ColorWarning)
 		case "compaction_committing":
 			label = "Saving checkpoint"
 		case "compaction_completed":
@@ -94,11 +95,11 @@ func (s *ActivityStrip) Update(source statuscenter.AgentActivityView, width int,
 		case "compaction_cancelled":
 			label = "Compaction cancelled"
 		case "compaction_failed":
-			label, role = "Compaction failed · details in transcript", ui.ColorError
+			label, role, mark = "Compaction failed · details in transcript", ui.ColorError, problemMark(ui.ColorError)
 		case "compaction_interrupted":
-			label = "Compaction interrupted · original context kept"
+			label, role, mark = "Compaction interrupted · original context kept", ui.ColorWarning, problemMark(ui.ColorWarning)
 		}
-		s.add(PaintLine{Spans: []RowSpan{{Text: label, Role: role}}})
+		s.add(markedLine(mark, RowSpan{Text: label, Role: role}))
 		return
 	}
 	label := stripText(status.Detail)
@@ -130,6 +131,15 @@ func (s *ActivityStrip) Update(source statuscenter.AgentActivityView, width int,
 		label, role = "Interrupted · work kept · /retry to continue", ui.ColorWarning
 	}
 	if status.NeedsAction || status.Phase == statuscenter.AgentNeedsAttention || status.Phase == statuscenter.AgentInterrupted || status.Phase == statuscenter.AgentFailed || status.Phase == statuscenter.AgentRetrying || status.Phase == statuscenter.AgentRecovering || status.Phase == statuscenter.AgentCancelling {
+		// Something went wrong: the strip leads with the same sign the
+		// transcript uses, so a retry wait never reads as ordinary work.
+		var mark PaintLine
+		switch status.Phase {
+		case statuscenter.AgentFailed:
+			mark = problemMark(ui.ColorError)
+		case statuscenter.AgentNeedsAttention, statuscenter.AgentInterrupted, statuscenter.AgentRetrying, statuscenter.AgentRecovering:
+			mark = problemMark(ui.ColorWarning)
+		}
 		if status.Phase == statuscenter.AgentRetrying || status.Phase == statuscenter.AgentRecovering {
 			label = "Retrying request"
 			if status.Phase == statuscenter.AgentRecovering {
@@ -142,12 +152,11 @@ func (s *ActivityStrip) Update(source statuscenter.AgentActivityView, width int,
 			if source.RetryLimit > 0 {
 				label += fmt.Sprintf("/%d", source.RetryLimit)
 			}
-			s.retryAt, s.retryPrefix, s.retryReason = status.RetryAt, label, stripText(source.RetryReason)
-			if s.retryReason != "" {
-				label += " · " + s.retryReason
-			}
+			s.retryAt, s.retryPrefix, s.retryReason, s.retryMark = status.RetryAt, label, stripText(source.RetryReason), mark
+			s.add(s.retryLine(label))
+			return
 		}
-		s.add(PaintLine{Spans: []RowSpan{{Text: label, Role: role}}})
+		s.add(markedLine(mark, RowSpan{Text: label, Role: role}))
 		return
 	}
 	if status.Phase == statuscenter.AgentSending || status.Phase == statuscenter.AgentPreparing || status.Phase == statuscenter.AgentUploading || status.Phase == statuscenter.AgentWaiting {
@@ -212,6 +221,40 @@ func (s *ActivityStrip) Update(source statuscenter.AgentActivityView, width int,
 	}
 }
 
+// problemMark is the sign that leads a strip row about a problem: the warning
+// sign the transcript's recovery rows use, or the failed turn's cross.
+func problemMark(role ui.SemanticColor) PaintLine {
+	glyph := "⚠"
+	if role == ui.ColorError {
+		glyph = "✕"
+	}
+	return PaintLine{Spans: []RowSpan{{Text: glyph + " ", Role: role}}}
+}
+
+// markedLine prefixes spans with an optional problem sign.
+func markedLine(mark PaintLine, spans ...RowSpan) PaintLine {
+	return PaintLine{Spans: append(append([]RowSpan(nil), mark.Spans...), spans...)}
+}
+
+// retryLine is a retry row: the sign and heading in the warning color and
+// the provider's reason in supporting ink.
+func (s *ActivityStrip) retryLine(heading string) PaintLine {
+	spans := []RowSpan{{Text: heading, Role: ui.ColorWarning}}
+	if s.retryReason != "" {
+		spans = append(spans, RowSpan{Text: " · " + s.retryReason, Role: ui.ColorActivityText})
+	}
+	return fitStripLine(markedLine(s.retryMark, spans...), s.width)
+}
+
+// fitStripLine truncates a row wider than the strip with an ellipsis.
+func fitStripLine(line PaintLine, width int) PaintLine {
+	if line.VisibleWidth() > width {
+		line = TruncatePaintLine(line, max(0, width-1))
+		line.Spans = append(line.Spans, RowSpan{Text: "…", Role: ui.ColorActivityText})
+	}
+	return line
+}
+
 // livePlan reports whether the plan describes the work of the running agent.
 // A paused plan waits for the user; a later run that works on something else
 // must not show it as its activity. The plan popover still shows it.
@@ -243,10 +286,7 @@ func compactPlanLine(p *activity.Plan) PaintLine {
 // add packs complete facts when space permits; otherwise it creates a bounded
 // page. Higher-priority facts enter first and are never displaced by later ones.
 func (s *ActivityStrip) add(line PaintLine) {
-	if line.VisibleWidth() > s.width {
-		line = TruncatePaintLine(line, max(0, s.width-1))
-		line.Spans = append(line.Spans, RowSpan{Text: "…", Role: ui.ColorActivityText})
-	}
+	line = fitStripLine(line, s.width)
 	if len(s.pages) > 0 {
 		last := &s.pages[len(s.pages)-1]
 		if last.VisibleWidth()+3+line.VisibleWidth() <= s.width {
@@ -276,12 +316,7 @@ func (s *ActivityStrip) Line(frame int) PaintLine {
 	if !s.retryAt.IsZero() {
 		remaining := max(0, (int(s.retryAt.UnixMilli())-frame+999)/1000)
 		if remaining != s.waitSecond {
-			text := s.retryPrefix + fmt.Sprintf(" · in %ds", remaining)
-			if s.retryReason != "" {
-				text += " · " + s.retryReason
-			}
-			text = rendering.TruncateVisual(text, s.width, "…")
-			s.waitLine = PaintLine{Spans: []RowSpan{{Text: text, Role: ui.ColorActivityText}}}
+			s.waitLine = s.retryLine(s.retryPrefix + fmt.Sprintf(" · in %ds", remaining))
 			s.waitSecond = remaining
 		}
 		line = s.waitLine

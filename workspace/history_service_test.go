@@ -13,6 +13,8 @@ import (
 	"crude/types/setting"
 	"crude/workspace/fileio"
 	"crude/workspace/localhistory"
+
+	"github.com/gofrs/flock"
 )
 
 func historyServiceHarness(t *testing.T) (*LocalHistoryService, *localhistory.Store, string) {
@@ -155,6 +157,68 @@ func TestRestoreAdmissionWaitsForWakeContinuationLease(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("restore did not proceed after continuation ended")
+	}
+}
+
+// Turning Local History off cancels a running capture but does not wait for
+// it. A project switch right after it was refused with "local history capture
+// or restore is active" until the capture returned. The capture is held where
+// it cannot see its cancellation: behind another capture that waits for the
+// store's mutation lock.
+func TestCancelledCaptureDoesNotRefuseProjectSwitch(t *testing.T) {
+	root, storeRoot := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "file"), []byte("content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store, err := localhistory.Open(storeRoot, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := NewLocalHistoryService(root, store, nopLogger{})
+	t.Cleanup(func() { service.Stop(); _ = store.Close() })
+	mutation := flock.New(filepath.Join(storeRoot, "mutation.lock"))
+	if err := mutation.Lock(); err != nil {
+		t.Fatal(err)
+	}
+	released := false
+	release := func() {
+		if !released {
+			released = true
+			_ = mutation.Unlock()
+		}
+	}
+	t.Cleanup(release)
+	holder := make(chan error, 1)
+	go func() {
+		_, _, err := store.SnapshotIfChanged(context.Background(), localhistory.SnapshotOptions{})
+		holder <- err
+	}()
+	time.Sleep(50 * time.Millisecond) // the holder takes the store, then waits for the lock
+	service.UpdateSettings(setting.LocalHistory{Enabled: "on"})
+	waitHistory(t, func() bool { return service.Status().Capturing })
+	if !service.Busy() {
+		t.Fatal("a live capture did not refuse a project switch")
+	}
+	service.UpdateSettings(setting.LocalHistory{Enabled: "off"})
+	if !service.Status().Capturing {
+		t.Fatal("the cancelled capture returned before the check; the test no longer holds it")
+	}
+	if service.Busy() {
+		t.Fatal("a capture cancelled by turning Local History off refused a project switch")
+	}
+	release()
+	if err := <-holder; err != nil {
+		t.Fatal(err)
+	}
+	stopped := make(chan struct{})
+	go func() { service.Stop(); close(stopped) }()
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop did not join the cancelled capture")
+	}
+	if service.Status().Capturing {
+		t.Fatal("Stop returned while the cancelled capture still ran")
 	}
 }
 

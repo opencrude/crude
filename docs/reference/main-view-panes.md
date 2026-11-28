@@ -360,9 +360,13 @@ composer path.
   on the main area gives it keys (`launcherHostVisible`).
 - Window chrome: the title row names the active tab; the tab strip appears only
   when the window holds more than one tab. Title buttons, right to left: **✕**,
-  **⇲** (dock), **+** (a New Session / Open File… menu whose result lands in that
-  window). The frame fills with the shell background (`WindowFrame.SetFill`),
-  not popup chrome, so every element paints as it does in the main area.
+  **⇲** (move to the main tabs), **+** (a New Session / Open File… menu whose
+  result lands in that window). A window that holds only a workspace surface
+  shows **✕**, **⇲** (dock to the bottom panel), **⧉** (move to the main tabs,
+  the dock header's glyph for a main tab) and **+**; the buttons follow what
+  the window holds (`paneWindowTitleActions`). The frame fills with the shell
+  background (`WindowFrame.SetFill`), not popup chrome, so every element paints
+  as it does in the main area.
 - `syncPaneWindows` keeps one WM window per floating group and lays it out every
   frame before focused-view geometry is derived. The frame body mounts the
   group's `mainPaneGroup` through the same `configureGroup` docked groups use;
@@ -389,17 +393,20 @@ composer path.
   not a target. Window hosts report pointer geometry in window coordinates;
   `windowScreenAction` converts it before the shared drop logic runs.
 - The title bar's **⇲** returns the tabs to the main area; a window holding only
-  a workspace surface returns it to the bottom dock. The window **✕** closes
+  a workspace surface returns it to the bottom dock, and its **⧉** merges it into
+  the main tab strip as an ordinary main tab (`moveWindowToMainTabs`). The tab
+  menu's **Move to main area** moves one tab (`moveTabToMainTabs`). The window **✕** closes
   its tabs, each under its own close policy (`closePaneWindowTabs`): an agent tab
   minimizes, a workspace surface hides, and a file with unsaved edits still asks
   first; the window disappears with its last tab. Esc is never a window close
   for pane windows; it belongs to the editor or composer.
 - Entry points: tab context menu **Open in window** (in a window: **Move to Main
   Area**), file tree **Open in window**, Agents panel **Open in window**, the
-  **⇱ window** control on a sub-agent's transcript pane, the dock header **⇱**,
-  and palette **Open Tab in Window** / **Move Window to Main Area**. A
-  core-backed document opens asynchronously; the window intent travels with the
-  open request and the landed tab floats.
+  **⇱ window** control on a sub-agent's transcript pane and the dock header
+  **⇱**. Back to the main tabs: the window's **⇲**, a surface window's **⧉** and
+  the tab menu's **Move to main area**. A core-backed document opens
+  asynchronously; the window intent travels with the open request and the
+  landed tab floats.
 - Pane windows open without the popup reveal animation: their content geometry
   must be exact from the first frame. Windows are process-local like the split
   layout and are not restored on restart.

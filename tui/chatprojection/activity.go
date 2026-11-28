@@ -155,14 +155,66 @@ func (r *Renderer) activityEligibleCached(msg *conversation.ChatMessage) bool {
 		r.eligibility = make(map[*conversation.ChatMessage]eligibilityMemo)
 	}
 	eligible := activityEligible(msg)
+	r.eligibility[msg] = newEligibilityMemo(msg, eligible)
+	return eligible
+}
+
+func newEligibilityMemo(msg *conversation.ChatMessage, eligible bool) eligibilityMemo {
 	var controlInput string
 	if msg.ToolName == "crude_control" {
 		controlInput = msg.ToolInput
 	}
-	r.eligibility[msg] = eligibilityMemo{role: msg.Role, toolName: msg.ToolName, toolStatus: msg.ToolStatus,
+	return eligibilityMemo{role: msg.Role, toolName: msg.ToolName, toolStatus: msg.ToolStatus,
 		incomplete: msg.Incomplete, unsuccessful: msg.ToolOutcome.Unsuccessful(), permTag: msg.PermTag, subPaneID: msg.SubPaneID, content: msg.Content, controlInput: controlInput,
 		thinkingActive: msg.ThinkingActive, thinkingInterrupted: msg.ThinkingInterrupted, eligible: eligible}
-	return eligible
+}
+
+// prepareEligibility decides eligibility for every message without a valid
+// memo before a sync reads them one at a time. Each command result is a JSON
+// document of its own; activityEligible reads only its message, so a whole
+// history splits across cores and memos are still written on this goroutine.
+func (r *Renderer) prepareEligibility(messages []*conversation.ChatMessage) {
+	var unknown []*conversation.ChatMessage
+	for _, msg := range messages {
+		if msg == nil || msg.Role != conversation.RoleTool {
+			continue
+		}
+		if memo, ok := r.eligibility[msg]; ok && memo.matches(msg) {
+			continue
+		}
+		unknown = append(unknown, msg)
+	}
+	eligible := make([]bool, len(unknown))
+	derivePerMessage(len(unknown), func(i int) { eligible[i] = activityEligible(unknown[i]) })
+	if r.eligibility == nil {
+		r.eligibility = make(map[*conversation.ChatMessage]eligibilityMemo, len(unknown))
+	}
+	for i, msg := range unknown {
+		r.eligibility[msg] = newEligibilityMemo(msg, eligible[i])
+	}
+}
+
+// prepareParallelBatches parses the parallel tool calls a sync must flatten,
+// on several cores when a whole history arrives, and reports the calls it
+// parsed. Command evidence and flattening then reuse r.activityBatches.
+func (r *Renderer) prepareParallelBatches(messages []*conversation.ChatMessage, changed map[string]bool) map[string]bool {
+	var pending []*conversation.ChatMessage
+	for _, msg := range messages {
+		if msg.ToolName != "multi_tool_use.parallel" {
+			continue
+		}
+		if _, ok := r.activityBatches[msg.InternalID]; !ok || changed[msg.InternalID] {
+			pending = append(pending, msg)
+		}
+	}
+	batches := make([][]*conversation.ChatMessage, len(pending))
+	derivePerMessage(len(pending), func(i int) { batches[i] = parallelMessages(pending[i]) })
+	parsed := make(map[string]bool, len(pending))
+	for i, msg := range pending {
+		r.activityBatches[msg.InternalID] = batches[i]
+		parsed[msg.InternalID] = true
+	}
+	return parsed
 }
 
 // pruneEligibility drops memos for messages no longer retained. It runs only
@@ -337,6 +389,7 @@ func (g *activityGroup) title() string {
 // new tool row costs proportional work to the tail, not to the whole session.
 // A nil changedIDs requests a complete rebuild (disclosure toggles, reflow).
 func (r *Renderer) syncActivityItems(changedIDs []string) {
+	r.plans.valid = false
 	changed := make(map[string]bool, len(changedIDs))
 	for _, id := range changedIDs {
 		changed[id] = true
@@ -349,7 +402,10 @@ func (r *Renderer) syncActivityItems(changedIDs []string) {
 	if r.activityBatches == nil {
 		r.activityBatches = make(map[string][]*conversation.ChatMessage)
 	}
-	from = r.indexCommandEvidence(canonical, from, changed)
+	// Parallel batches are parsed once per sync, here, before command
+	// evidence and flattening read them.
+	parsed := r.prepareParallelBatches(canonical[from:], changed)
+	from = r.indexCommandEvidence(canonical, from, changed, parsed)
 	if r.activityMessages == nil || from == 0 {
 		r.activityMessages = make(map[string]*conversation.ChatMessage)
 		r.activityParallel = make(map[string]bool)
@@ -373,7 +429,7 @@ func (r *Renderer) syncActivityItems(changedIDs []string) {
 		starts = append(starts, len(messages))
 		if msg.ToolName == "multi_tool_use.parallel" {
 			batch, ok := r.activityBatches[msg.InternalID]
-			if !ok || changed[msg.InternalID] {
+			if !ok || changed[msg.InternalID] && !parsed[msg.InternalID] {
 				batch = parallelMessages(msg)
 				r.activityBatches[msg.InternalID] = batch
 			}
@@ -399,6 +455,7 @@ func (r *Renderer) syncActivityItems(changedIDs []string) {
 		}
 	}
 	r.activityFlat, r.activityFlatStart = messages, starts
+	r.prepareEligibility(messages[flatFrom:])
 	flatFrom = r.invalidateRelatedPlanRows(messages, flatFrom, changed)
 	// First flat index of each tool round. Prefix entries stay exact; an entry
 	// at or after flatFrom is re-established on its first sight in this build.

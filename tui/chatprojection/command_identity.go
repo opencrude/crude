@@ -34,7 +34,7 @@ func settlementID(message *conversation.ChatMessage) string {
 // indexCommandEvidence runs only on a source change. It widens the incremental
 // rebuild to an originating row when a later exact settlement changes that row.
 // The canonical audit and journal messages are never rewritten or acknowledged.
-func (r *Renderer) indexCommandEvidence(canonical []*conversation.ChatMessage, from int, changed map[string]bool) int {
+func (r *Renderer) indexCommandEvidence(canonical []*conversation.ChatMessage, from int, changed, parsed map[string]bool) int {
 	if r.commandOrigins == nil || from == 0 {
 		r.commandOrigins = make(map[string]commandOrigin)
 		r.commandSettlements = make(map[string]commandSettlement)
@@ -58,7 +58,7 @@ func (r *Renderer) indexCommandEvidence(canonical []*conversation.ChatMessage, f
 		leaves := []*conversation.ChatMessage{message}
 		if message.ToolName == "multi_tool_use.parallel" {
 			batch, ok := r.activityBatches[message.InternalID]
-			if !ok || changed[message.InternalID] {
+			if !ok || changed[message.InternalID] && !parsed[message.InternalID] {
 				batch = parallelMessages(message)
 				r.activityBatches[message.InternalID] = batch
 			}

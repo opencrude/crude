@@ -614,6 +614,29 @@ both sizes. Keyboard and window behavior is covered headlessly by
 `TestWorkspacePanelWindowTabWalksEveryControl`,
 `TestHistorySafetyVisualHarnessHeadless` and `TestFeatureVisualHarnessHeadless`.
 
+A surface window's **⧉** (move to the main tabs) is covered by
+`TestDockSurfaceWindowMovesToMainTabs`, and a page that keeps its place while
+it refreshes by `TestOverviewRefreshKeepsTotalsAndScroll`.
+
+### Dense session journeys
+
+`TestDenseArchiveJourney` replays real use of large sessions through a real
+core and a connected shell, with no model. Set `CRUDE_TEST_ARCHIVES` to one or
+more session databases (a path list); the test copies them into a temporary
+workspace, so a live session is never opened. Copy a session that is running
+before you use it: its open recovery incident makes the open take the
+recovery path. The journey opens each session, idles, pages through the whole
+transcript, scrolls with the wheel, resizes, runs chat find, shows every
+Workspace panel page, switches between the sessions, and watches the
+Workspace Tabs and Sessions selections while updates arrive. Commands run off
+the test goroutine as Bubble Tea runs them; only Update and View are timed.
+It prints each scenario's frame count, p95, frames over 16 ms and the worst
+message, fails when one frame exceeds `CRUDE_TEST_FRAME_BUDGET` (default
+100ms), and fails on any blocking core request or disk read on the UI
+goroutine (`ui.blocking`). `CRUDE_TEST_PROFILE` writes a CPU profile with
+`scenario` and `stage` (`update`, `view`) labels; filter one frame type with
+`go tool pprof -tagfocus=scenario=open.*`.
+
 `go test ./internal/crashlog -count=1` runs genuine subprocess fatal/recovered crashes
 and checks report contents, private permissions and normal-exit cleanup.
 `TestCoreFatalCrashReportAtCLIEntry` also sends a fatal signal to one exact

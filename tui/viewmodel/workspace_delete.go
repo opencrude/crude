@@ -134,7 +134,7 @@ func (m *App) openWorkspaceDelete(entry launcher.WorkspaceEntry) {
 	p.entry = entry
 	w, h := min(80, max(24, m.width-4)), min(18, max(5, m.height-4))
 	frame := ui.NewWindowFrameWidget(m.Theme, "workspace-delete/frame", ui.FrameDialog, "Delete workspace", p, nil, false, w, h)
-	frame.Frame().SetBorderAccent(ui.NewTokenSet(m.Theme).Color(ui.ColorError))
+	frame.Frame().SetBorderAccent(ui.ColorError)
 	frame.Host().Focus(p.actions.ID())
 	fw := wm.NewFloatingWindow(string(ui.OverlayWorkspaceDelete), "", frame, w, h, wm.WithDecoration(true), wm.WithMovable(true), wm.WithModal(true), wm.WithFocusable(true), wm.WithClosable(false), wm.WithClickOutside(wm.ClickOutsideIgnore))
 	wm.CenterOnScreen(fw, m.width, m.height)

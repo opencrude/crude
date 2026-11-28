@@ -3,6 +3,7 @@ package ui
 import (
 	"strings"
 	"testing"
+	"unicode"
 
 	"crude/tui/cell"
 	"crude/tui/rendering"
@@ -129,12 +130,51 @@ func TestConfirmFrameSeverityAccent(t *testing.T) {
 	if !ok {
 		t.Fatal("expected WindowFrame root")
 	}
-	if frame.borderAccent.IsDefault() {
-		t.Fatal("danger frame should carry an error accent")
+	if !frame.hasBorderAccent || frame.borderAccent != ColorError {
+		t.Fatalf("danger frame should carry the error accent: %v %v", frame.hasBorderAccent, frame.borderAccent)
 	}
-	want := rendering.ThemeColorToCell(th.Colors.Error)
-	if frame.borderAccent != want {
-		t.Fatalf("accent=%v want error %v", frame.borderAccent, want)
+	w, h := cw.Measure(80, 40)
+	surf := surface.NewSurface("danger", w, h, cell.TransparentBlank())
+	cw.Render(surf, &wm.RenderContext{Theme: th, Focused: true})
+	if got, want := surf.Buffer().Get(0, 0).FG, rendering.ThemeColorToCell(th.Colors.Error); got != want {
+		t.Fatalf("border=%v want error %v", got, want)
+	}
+}
+
+// Switching the theme while a dialog is open painted the old theme's colors
+// inside the new frame: every text row had the old popup background and ink
+// baked in. All of the dialog's colors are roles of the host's tokens.
+func TestConfirmFrameFollowsThemeSwitch(t *testing.T) {
+	dark, light := theme.DefaultDark(), theme.DefaultLight()
+	cw := BuildTreeDeleteFrame(dark, `Delete "x"?`, "/tmp/x", 1)
+	cw.Host().SetTheme(light)
+	w, h := cw.Measure(80, 40)
+	surf := surface.NewSurface("switched", w, h, cell.TransparentBlank())
+	cw.Render(surf, &wm.RenderContext{Theme: light, Focused: true})
+	buf := surf.Buffer()
+	tokens := NewTokenSet(light)
+	if got, want := buf.Get(0, 0).FG, tokens.Color(ColorError); got != want {
+		t.Fatalf("border keeps the old theme: %v want %v", got, want)
+	}
+	question := -1
+	for y := range h {
+		if strings.Contains(rowText(buf, y), `"x"?`) {
+			question = y
+			break
+		}
+	}
+	if question < 0 {
+		t.Fatalf("no question row:\n%s", testBufferText(buf))
+	}
+	fill := tokens.Color(ColorPopupBg)
+	for x := 1; x < w-1; x++ {
+		c := buf.Get(x, question)
+		if c.BG != fill {
+			t.Fatalf("question row cell %d has background %v, want the light popup %v", x, c.BG, fill)
+		}
+		if unicode.IsLetter(c.Char) && c.FG != tokens.Color(ColorFg) {
+			t.Fatalf("question ink %v at %d, want the light foreground %v", c.FG, x, tokens.Color(ColorFg))
+		}
 	}
 }
 

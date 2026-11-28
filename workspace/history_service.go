@@ -49,6 +49,9 @@ type LocalHistoryService struct {
 	generation uint64
 	ready      bool
 	capturing  bool
+	// captureCtx is the running capture's context. A cancelled capture is
+	// already stopping: Stop joins it, so it never refuses a switch.
+	captureCtx context.Context
 	lastErr    error
 	pending    map[string]bool
 	active     map[string]*historyScopeState
@@ -332,11 +335,11 @@ func (s *LocalHistoryService) captureIfChanged(ctx context.Context, opts localhi
 		s.mu.Unlock()
 		return localhistory.Manifest{}, false, nil
 	}
-	s.capturing = true
+	s.capturing, s.captureCtx = true, ctx
 	s.mu.Unlock()
 	manifest, changed, err := s.store.SnapshotIfChanged(ctx, opts)
 	s.mu.Lock()
-	s.capturing = false
+	s.capturing, s.captureCtx = false, nil
 	if err != nil {
 		// Maintenance that yields to agent work is not a failure.
 		if ctx.Err() == nil {
@@ -872,10 +875,15 @@ func (s *LocalHistoryService) ApplyRestoreChoices(ctx context.Context, planID st
 	return s.store.ApplyRestoreChoices(ctx, planID, choices)
 }
 
+// Busy reports work a project switch would interrupt: a restore, an open
+// message scope or a live capture. A capture whose context was cancelled, for
+// example because Local History was turned off, is not work to protect;
+// Stop waits for it to return.
 func (s *LocalHistoryService) Busy() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.restoring || s.capturing || len(s.active) > 0
+	liveCapture := s.capturing && (s.captureCtx == nil || s.captureCtx.Err() == nil)
+	return s.restoring || liveCapture || len(s.active) > 0
 }
 
 func (w *Workspace) bindSessionHistory(backend *session.Session) {

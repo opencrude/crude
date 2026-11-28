@@ -66,7 +66,7 @@ func (m *App) showNextOperationIssue() {
 	w := min(78, max(1, m.width-4))
 	h := min(max(1, m.height-4), min(18, max(8, screen.PreferredHeight(max(1, w-6)))))
 	frame := ui.NewWindowFrameWidget(m.Theme, "operation-issue/frame", ui.FrameDialog, issue.Title, screen, nil, false, w, h)
-	frame.Frame().SetBorderAccent(ui.NewTokenSet(m.Theme).Color(ui.ColorWarning))
+	frame.Frame().SetBorderAccent(ui.ColorWarning)
 	frame.Host().Focus(operationissue.ActionsID)
 	window := wm.NewFloatingWindow(string(ui.OverlayOperationIssue), "", frame, w, h,
 		wm.WithDecoration(true), wm.WithMovable(true), wm.WithResizable(true), wm.WithModal(true), wm.WithFocusable(true), wm.WithClosable(false), wm.WithClickOutside(wm.ClickOutsideIgnore))

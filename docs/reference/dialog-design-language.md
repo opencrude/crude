@@ -23,7 +23,11 @@ implementation is `tui/ui/confirm_frame.go` (confirms) and
   `✕`, warning `⚠`, question `?`, info `i` — sourced from the severity enum,
   never inline literals in product code.
 - Severity tints the border accent (`SetBorderAccent`): danger → `ColorError`,
-  warning → `ColorWarning`, otherwise default popup chrome.
+  warning → `ColorWarning`, otherwise default popup chrome. The accent is a
+  role, and dialog text rows set only an ink role over the frame's fill
+  (`dialogLabel`), so a theme switch recolors an open dialog
+  (`TestConfirmFrameFollowsThemeSwitch`). Never bake a resolved color or a
+  background into dialog content.
 - Dialogs are **movable by the frame title row** (`wm.WithMovable(true)`).
   Row 0 of the frame is the title bar whether or not WM decoration is on.
 - Terminal resize constrains modal windows to the available screen, retires

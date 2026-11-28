@@ -114,7 +114,7 @@ func (m *App) openDiagnosticPopover(id ui.OverlayID, ed *editor.Editor, factID s
 		focus = area.ID()
 	}
 	frame, fw := m.newEditorPopover(id, label, reader, focus, bounds)
-	frame.Frame().SetBorderAccent(tokens.Color(accent))
+	frame.Frame().SetBorderAccent(accent)
 	s := &diagnosticPopover{workspace: m.ws, editor: ed, generation: m.workspaceSwitchGen.Load(), revision: ed.Revision(), factID: factID, line: line, col: col, selection: currentCodeActionSelection(ed), frame: frame, reader: reader, preferredWidth: preferredWidth}
 	policy := ui.PopoverPolicy(true)
 	policy.Passive = !explicit

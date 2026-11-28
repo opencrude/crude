@@ -82,7 +82,7 @@ func TestFailedActivityStripDoesNotRepeatTheDiagnostic(t *testing.T) {
 	var strip ActivityStrip
 	strip.Update(statuscenter.AgentActivityView{Status: statuscenter.AgentStatusSnapshot{Phase: statuscenter.AgentFailed, Detail: "sync C:\\history: Access is denied."}}, 80, th, ui.NewTokenSet(th))
 	line := strip.Line(1000)
-	if line.PlainText() != "Turn failed · details in transcript" || line.TextTide {
+	if line.PlainText() != "✕ Turn failed · details in transcript" || line.TextTide {
 		t.Fatalf("failure strip repeats/animates a diagnostic: %+v", line)
 	}
 }

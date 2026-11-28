@@ -98,3 +98,17 @@ func TestANSIControlsDoNotBecomePaintedText(t *testing.T) {
 		})
 	}
 }
+
+// An unlabeled code fence asks chroma for the lexer named "". Chroma globs
+// every file pattern twice before it analyses the text (about 3 ms), on
+// every render: a dense transcript repaints many such fences.
+func BenchmarkMarkdownUnlabeledFence(b *testing.B) {
+	renderer := MakeMdRenderer(100, theme.DefaultDark())
+	source := "Output:\n\n```\nok  \tcrude/tui/rendering\t3.307s\nPASS\n```\n\n```go\npackage main\n```\n"
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := renderer.Render(source); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

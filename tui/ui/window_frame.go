@@ -27,15 +27,18 @@ const (
 // / hand-drawn borders onto this frame.
 type WindowFrame struct {
 	Base
-	role         FrameRole
-	title        string
-	icon         string
-	tokens       *TokenSet
-	content      Component
-	closable     bool
-	closeGlyph   string
-	borderAccent cell.Color // optional accent override for border
-	titleAccent  cell.Color // optional accent override for title
+	role       FrameRole
+	title      string
+	icon       string
+	tokens     *TokenSet
+	content    Component
+	closable   bool
+	closeGlyph string
+	// Optional severity accents for the border and title. They are roles,
+	// resolved from the frame's tokens at paint, so a theme switch recolors
+	// an open dialog.
+	borderAccent, titleAccent       SemanticColor
+	hasBorderAccent, hasTitleAccent bool
 	// Optional title-bar buttons left of close, rightmost first (JetBrains
 	// tool-window style). A click emits "window.titleaction" with the
 	// button's ID as payload.
@@ -95,12 +98,16 @@ func (f *WindowFrame) SetClosable(v bool) { f.closable = v }
 // SetCloseGlyph identifies a destructive resource action instead of dismissal.
 func (f *WindowFrame) SetCloseGlyph(glyph string) { f.closeGlyph = glyph }
 
-// SetBorderAccent overrides the border color with an explicit accent.
-// Used by diagnostic popups to tint the border by severity.
-func (f *WindowFrame) SetBorderAccent(c cell.Color) { f.borderAccent = c }
+// SetBorderAccent tints the border with a severity role, for example the
+// error color of a delete dialog.
+func (f *WindowFrame) SetBorderAccent(role SemanticColor) {
+	f.borderAccent, f.hasBorderAccent = role, true
+}
 
-// SetTitleAccent overrides the title color with an explicit accent.
-func (f *WindowFrame) SetTitleAccent(c cell.Color) { f.titleAccent = c }
+// SetTitleAccent tints the title with a severity role.
+func (f *WindowFrame) SetTitleAccent(role SemanticColor) {
+	f.titleAccent, f.hasTitleAccent = role, true
+}
 
 // SetReveal sets the content-reveal progress in [0,1]. At 0 the content
 // area collapses to zero height (top-to-bottom slide-in start); at 1 the
@@ -282,13 +289,13 @@ func (f *WindowFrame) Paint(buf *surface.CellBuffer, originX, originY int, ctx P
 			titleFG = f.tokens.Color(ColorPopupTitle)
 		}
 		bg = f.tokens.Color(f.Fill())
-	}
-	// Apply severity accent overrides
-	if !f.borderAccent.IsDefault() {
-		borderFG = f.borderAccent
-	}
-	if !f.titleAccent.IsDefault() {
-		titleFG = f.titleAccent
+		// Apply severity accent overrides
+		if f.hasBorderAccent {
+			borderFG = f.tokens.Color(f.borderAccent)
+		}
+		if f.hasTitleAccent {
+			titleFG = f.tokens.Color(f.titleAccent)
+		}
 	}
 	ox, oy := originX+r.X, originY+r.Y
 	// Background fill

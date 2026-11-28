@@ -41,12 +41,11 @@ func TextPromptBody(th *theme.Theme, st *TextPromptState) Component {
 	// tokens (same pipeline as every other dialog). A rejected value states
 	// why in the guidance row, where the accepted input normally stands, so
 	// the dialog itself says what to do next.
-	guidance, guidanceColor := st.Prompt, tokens.Color(ColorMuted)
+	guidance, guidanceColor := st.Prompt, ColorMuted
 	if st.Error != "" {
-		guidance, guidanceColor = sentenceStart(st.Error), tokens.Color(ColorError)
+		guidance, guidanceColor = sentenceStart(st.Error), ColorError
 	}
-	promptLabel := NewLabel(NewID(RootID, "text-prompt/prompt"), guidance, th)
-	promptLabel.SetStyle(guidanceColor, tokens.Color(ColorPopupBg), 0)
+	promptLabel := dialogLabel(th, "text-prompt/prompt", guidance, guidanceColor, 0)
 
 	placeholder := "name"
 	switch st.Kind {
@@ -84,8 +83,7 @@ func TextPromptBody(th *theme.Theme, st *TextPromptState) Component {
 	case TextPromptComment:
 		hintText = "enter save · esc cancel"
 	}
-	hint := NewLabel(NewID(RootID, "text-prompt/hint"), hintText, th)
-	hint.SetStyle(tokens.Color(ColorMuted), tokens.Color(ColorPopupBg), cell.AttrItalic)
+	hint := dialogLabel(th, "text-prompt/hint", hintText, ColorMuted, cell.AttrItalic)
 
 	// Blank row between the field and hint becomes Inset bottom padding on the
 	// field, preserving the exact 4-row body layout.

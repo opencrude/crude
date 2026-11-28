@@ -204,8 +204,15 @@ func tileColumns(width int) int {
 }
 
 // contentHeight is how many rows the page paints at width.
+// waiting reports that the page shows only a short message: no totals were
+// read yet. A refresh keeps the previous totals on screen, and its height,
+// so the page never jumps back to its top while the core reads.
+func (o *Overview) waiting() bool {
+	return (o.data.Loading || o.data.Problem != "") && len(o.data.Report.Days) == 0
+}
+
 func (o *Overview) contentHeight(width int) int {
-	if o.data.Loading || o.data.Problem != "" && len(o.data.Report.Days) == 0 {
+	if o.waiting() {
 		return 4
 	}
 	rows := 1 + 2 // heading and gap
@@ -229,15 +236,19 @@ func (o *Overview) Paint(buf *surface.CellBuffer, originX, originY int, _ ui.Pai
 	row := 1
 	p.text(0, row, width, "Cost and use", ui.ColorFg, cell.AttrBold)
 	if !o.data.Read.IsZero() {
-		p.text(13, row, max(0, width-24), "· updated "+ui.RelativeAge(o.data.Read, now), ui.ColorMuted, 0)
+		state := "updated " + ui.RelativeAge(o.data.Read, now)
+		if o.data.Loading {
+			state = "updating…"
+		}
+		p.text(13, row, max(0, width-24), "· "+state, ui.ColorMuted, 0)
 	}
 	row += 2
-	switch {
-	case o.data.Loading && len(o.data.Report.Days) == 0:
-		p.text(0, row, width, "Reading the cost of every session…", ui.ColorMuted, 0)
-		return
-	case o.data.Problem != "" && len(o.data.Report.Days) == 0:
-		p.text(0, row, width, o.data.Problem, ui.ColorError, 0)
+	if o.waiting() {
+		if o.data.Loading {
+			p.text(0, row, width, "Reading the cost of every session…", ui.ColorMuted, 0)
+		} else {
+			p.text(0, row, width, o.data.Problem, ui.ColorError, 0)
+		}
 		return
 	}
 	row = o.paintTiles(p, row, width)

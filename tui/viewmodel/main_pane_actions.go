@@ -1073,11 +1073,7 @@ func (m *App) paneMenuSections(tab window.TabID) []ui.ContextMenuSection {
 	group := m.Win.GroupOf(tab)
 	if m.Win.IsFloating(group) {
 		items := []ui.ContextMenuItem{{Label: "Move to main area", Action: owner.action(m, func() {
-			m.Win.MoveTabToGroup(tab, m.Win.DockedGroup(), 0)
-			m.unfocus()
-			m.handleTabSwitch()
-			m.syncPaneWindows()
-			m.forceFrame()
+			m.moveTabToMainTabs(tab)
 		})}}
 		// Several windows can be open at once: a window holding more than one
 		// tab can give any of them its own window.

@@ -168,20 +168,49 @@ func (m *App) openFileInWindow(path string) tea.Cmd {
 	return cmd
 }
 
+// windowSurface is the workspace surface a window holds alone, if any.
+func (m *App) windowSurface(group window.GroupID) (string, bool) {
+	tabs := m.Win.GroupTabs(group)
+	if len(tabs) == 1 && tabs[0].Resource.Kind == window.ResourcePanel && m.placementOf(tabs[0].Resource.ID) == placeTab {
+		return tabs[0].Resource.ID, true
+	}
+	return "", false
+}
+
 // dockPaneWindow returns a window's tabs to the main area. A window that
-// holds only a workspace surface returns it to the bottom dock, its home.
+// holds only a workspace surface returns it to the bottom dock, its home;
+// moveWindowToMainTabs merges such a window into the main tabs instead.
 func (m *App) dockPaneWindow(group window.GroupID) {
 	if m.Win == nil || !m.Win.IsFloating(group) {
 		return
 	}
-	if tabs := m.Win.GroupTabs(group); len(tabs) == 1 && tabs[0].Resource.Kind == window.ResourcePanel && m.placementOf(tabs[0].Resource.ID) == placeTab {
-		m.dockPanel(tabs[0].Resource.ID)
+	if surface, ok := m.windowSurface(group); ok {
+		m.dockPanel(surface)
 		m.syncPaneWindows()
 		return
 	}
-	if !m.Win.DockGroup(group) {
+	m.moveWindowToMainTabs(group)
+}
+
+// moveWindowToMainTabs merges every tab of a window into the main area's
+// tab strip, a workspace surface included: it then stays a main tab, which
+// can be split, moved or closed back to the dock like a file.
+func (m *App) moveWindowToMainTabs(group window.GroupID) {
+	if m.Win == nil || !m.Win.IsFloating(group) || !m.Win.DockGroup(group) {
 		return
 	}
+	m.unfocus()
+	m.handleTabSwitch()
+	m.syncPaneWindows()
+	m.forceFrame()
+}
+
+// moveTabToMainTabs moves one tab of a window into the main area's strip.
+func (m *App) moveTabToMainTabs(tab window.TabID) {
+	if m.Win == nil || m.Win.IndexOf(tab) < 0 || !m.Win.IsFloating(m.Win.GroupOf(tab)) {
+		return
+	}
+	m.Win.MoveTabToGroup(tab, m.Win.DockedGroup(), 0)
 	m.unfocus()
 	m.handleTabSwitch()
 	m.syncPaneWindows()
@@ -201,13 +230,11 @@ func (m *App) newPaneWindow(group window.GroupID) *paneWindow {
 		// A pane window is main content: it paints on the shell background,
 		// so every element looks as it does in the main area.
 		frame.Frame().SetFill(ui.ColorBg)
-		frame.Frame().SetTitleActions(paneWindowTitleActions)
 	}
 	fw := wm.NewFloatingWindow(string(oid), m.paneWindowTitle(group), frame, w, h,
 		wm.WithDecoration(true), wm.WithMovable(true), wm.WithResizable(true),
 		wm.WithClosable(true), wm.WithFocusable(true), wm.WithMinSize(min(30, w), min(8, h)),
 		wm.WithClickOutside(wm.ClickOutsideKeepRoute))
-	fw.SetTitleActionWidth(ui.TitleActionWidth * len(paneWindowTitleActions))
 	wm.CenterOnScreen(fw, m.width, m.height)
 	if count > 0 {
 		x, y := fw.Position()
@@ -216,6 +243,7 @@ func (m *App) newPaneWindow(group window.GroupID) *paneWindow {
 	}
 	body.fw = fw
 	pw := &paneWindow{fw: fw, frame: frame, body: body}
+	m.syncPaneWindowActions(group, pw)
 	// Closing the window never closes its tabs: they return to the main area.
 	m.overlayHost.Open(oid, fw, ui.DefaultOverlayPolicy(), func() {
 		if p.windows[group] == pw {
@@ -232,15 +260,34 @@ func (m *App) newPaneWindow(group window.GroupID) *paneWindow {
 
 // paneWindowTitleActions are a pane window's title-bar buttons, rightmost
 // first: Dock beside close, then + to open another tab in the window, which
-// has no tab strip while it holds a single tab.
-var paneWindowTitleActions = []ui.TitleAction{
-	{Glyph: "⇲", Hint: "Dock", ID: paneWindowDock},
-	{Glyph: "+", Hint: "New tab in this window", ID: paneWindowNewTab},
+// has no tab strip while it holds a single tab. Dock returns the tabs to the
+// main area. A window that holds only a workspace surface docks it to the
+// bottom panel and also offers ⧉, the dock header's glyph for a main tab.
+func (m *App) paneWindowTitleActions(group window.GroupID) []ui.TitleAction {
+	newTab := ui.TitleAction{Glyph: "+", Hint: "New tab in this window", ID: paneWindowNewTab}
+	if _, ok := m.windowSurface(group); ok {
+		return []ui.TitleAction{
+			{Glyph: "⇲", Hint: "Dock to the bottom panel", ID: paneWindowDock},
+			{Glyph: "⧉", Hint: "Move to the main tabs", ID: paneWindowMainTabs},
+			newTab,
+		}
+	}
+	return []ui.TitleAction{{Glyph: "⇲", Hint: "Move to the main tabs", ID: paneWindowDock}, newTab}
+}
+
+// syncPaneWindowActions keeps a window's buttons right for what it holds now.
+func (m *App) syncPaneWindowActions(group window.GroupID, pw *paneWindow) {
+	actions := m.paneWindowTitleActions(group)
+	if frame := pw.frame.Frame(); frame != nil {
+		frame.SetTitleActions(actions)
+	}
+	pw.fw.SetTitleActionWidth(ui.TitleActionWidth * len(actions))
 }
 
 const (
-	paneWindowDock   = "pane-window.dock"
-	paneWindowNewTab = "pane-window.new-tab"
+	paneWindowDock     = "pane-window.dock"
+	paneWindowMainTabs = "pane-window.main-tabs"
+	paneWindowNewTab   = "pane-window.new-tab"
 )
 
 // paneWindowNewTabMenu offers what a new tab in the window holds, the same
@@ -295,6 +342,7 @@ func (m *App) syncPaneWindows() {
 		}
 		title := m.paneWindowTitle(group)
 		pw.fw.Title = title
+		m.syncPaneWindowActions(group, pw)
 		if pw.frame.Frame() != nil {
 			pw.frame.Frame().SetTitle(title)
 			pw.frame.Frame().SetTokens(m.rootHost.Tokens())

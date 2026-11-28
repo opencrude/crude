@@ -926,7 +926,13 @@ task when exhausted; it never replays accepted stochastic output. If tool constr
 interrupted, execute none of that response's calls, discard unfinished protocol
 fragments, and ask for complete calls. These are `Not run`, not failed operations.
 Retry feedback starts on the first retry, occupies the fixed activity strip, states the
-reason/attempt/countdown, and remains immediately cancellable with Esc.
+reason/attempt/countdown, and remains immediately cancellable with Esc. A strip
+row about a problem leads with the transcript's sign in its color: **⚠** in the
+warning color for a retry, recovery, needs-attention, interrupted or recovering
+compaction row, **✕** in the error color for a failed turn or compaction. The
+retry heading and countdown use the warning color; the provider's reason stays
+supporting text. Ordinary work, waits and a stop by the user carry no sign
+(`TestActivityStripMarksProblemStates`).
 
 Stopping preserves completed effects and accepted text. Do not strike through
 assistant text, thinking, or tool titles. Show one quiet `Stopped` in the fixed

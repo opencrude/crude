@@ -37,6 +37,74 @@ workload. Tighten the allocation ceilings when all three have headroom. Use
 actual reference hardware for latency and dropped-frame claims; GOMAXPROCS=2
 on a faster processor is a useful contention test, not T470 certification.
 
+## Opening dense sessions and the Workspace panel (2026-11-28)
+
+The dashboard showed "UI froze 1× (worst 48ms) — longest in frame paint after
+shellport.ReplicaChangesMsg" and "Slow core requests: session.open — 1.5s". The
+archived stall stack was `rendering.MatchLexer` inside `lexers.Match`: the first
+paint of an opened session globbed chroma's thousand file patterns once per
+distinct extension, about 2 ms each, on the UI goroutine.
+`TestDenseArchiveJourney` ([validation](../guides/validation.md#dense-session-journeys))
+replays four real sessions (2,201–4,255 rows, up to 1.1 GB) through a real core
+and connected shell on a 12-thread i7-9850H. Scrolling the whole transcript,
+the wheel, resizing, find, every Workspace page and tab switches stayed under
+16 ms p95 (worst 14.6 ms, a page key). Only opening a session crossed the
+budget, and the journey found no blocking call on the UI goroutine.
+
+| Session open, worst frame (Update + View) | Before | After |
+| --- | --- | --- |
+| 2,973 rows, first open after start | 41 + 51 ms | 17–23 + 18 ms |
+| 2,745 rows | 32 + 21 ms | 14 + 22 ms |
+| 2,201 rows | 43 + 11 ms | 16–26 + 7–8 ms |
+| 4,255 rows, 1.1 GB | 59 + 18 ms | 26–37 + 15–18 ms |
+
+What changed, each measured on the same copies:
+
+- `rendering.MatchLexer` replays chroma's matching walk over only the
+  patterns that can match a name: the `*.ext` patterns of its extension (with
+  or without a backup suffix) and the 81 other patterns, in chroma's order and
+  with chroma's own test and priority sort. It agrees with `lexers.Match` for a
+  name derived from every registered pattern
+  (`TestMatchLexerAgreesWithChromaForEveryPattern`). A name without an
+  extension, such as a folder or `Makefile`, took 2 ms and takes 13 µs
+  (`BenchmarkMatchLexerDistinctNamesWithoutExtension`). The cold first view of
+  the 2,973-row session fell from 29–31 ms to 16–17 ms, the same as a warm one.
+- Glamour's code blocks memoize chroma's lexer lookup by fence language
+  (`third_party/glamour/CRUDE.md`). An unlabeled fence asked `lexers.Get("")`,
+  which globbed every pattern twice on each render: a two-fence message took
+  3.6 ms and takes 0.65 ms (`BenchmarkMarkdownUnlabeledFence`).
+- A sync derives tool eligibility (each command result is a JSON document:
+  1,251 results took 25 ms on one core) and parallel batches on several cores
+  while Update waits (`derivePerMessage`); results are installed on the UI
+  goroutine and a sync parses each batch once, not once for command evidence
+  and again for flattening (`TestBulkSyncGroupsLikeIncrementalSync`).
+- A plan row asked whether a later plan replaced it by parsing every later
+  plan message on each render. The answer is now derived once per transcript
+  change, with plan IDs memoized by content.
+- Local History reads the timeline's manifests in batches of 8 on several cores:
+  the first `history.events` after a restart (55 points, 84 MB of manifests)
+  took 1.5 s on one core and 0.6 s after.
+
+Still open, measured: a first view renders the visible Markdown with glamour
+(about half of its 16 ms) and the Update that installs a 4,255-row history
+takes up to 37 ms; both stay under the dashboard's freeze limits (33 ms paint,
+50 ms Update). The core's `session.open` is 0.25–0.3 s for a 3,300-message
+session with no unfinished run, but 1.6 s when a run was unfinished at
+shutdown: `restoreRecoveryTranscript` sends the whole archive to
+`PublishContext`, which checks each committed message against its immutable
+identity and its transcript row again (0.64 s), after the restore already
+compared every identity itself (0.4 s), and the open recovery list takes 0.2 s
+to load. Removing one of the two identity passes changes what the recovery path
+proves, so it needs its own change with the recovery tests. The first turn
+after a core restart still rewrites the archive (1.2 s for 34 MB), as described
+in the next section.
+
+The Workspace panel's Overview jumped to its top on every refresh: while the
+core read the totals, the page reported its loading height, and the scroll
+model clamped the offset. A refresh now keeps the previous totals, their
+height and the reader's place, and the heading says "updating…"
+(`TestOverviewRefreshKeepsTotalsAndScroll`).
+
 ## Prompt send in dense sessions and dashboard false alarms (2026-11-27)
 
 The Performance archive of a 66,000-second Windows core showed every
