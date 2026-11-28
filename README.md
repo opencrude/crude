@@ -27,6 +27,10 @@
   <a href="https://opencrude.github.io/">Website</a>
 </p>
 
+<p align="center">
+  <a href="assets/crude-demo.mp4"><img src="assets/crude-demo.png" width="860" alt="Watch the Crude demo (1:41). Install Crude, give two agents a rate limiter to build, review the diff and open the load plot in the terminal."></a>
+</p>
+
 > [!WARNING]
 > **Crude is beta software.** Crude and its agents change files and run commands with your user permissions. Crude is not a security sandbox. Commit your work, keep backups and review what agents do.
 

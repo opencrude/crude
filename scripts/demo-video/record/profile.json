@@ -1,0 +1,4 @@
+{
+  "theme": {"pad_top": 1, "preset": "dark"},
+  "ui": {"show_icons": true, "sidebar_width": 30, "use_nerd_font": true}
+}

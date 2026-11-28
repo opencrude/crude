@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="icon" href="/crude-icon.png">
+<title>Crude demo player</title>
+<style>
+  @font-face { font-family: 'JBM'; src: url('/fonts/JetBrainsMonoNerdFont-Regular.ttf'); font-weight: 400; font-style: normal; }
+  @font-face { font-family: 'JBM'; src: url('/fonts/JetBrainsMonoNerdFont-Bold.ttf'); font-weight: 700; font-style: normal; }
+  @font-face { font-family: 'JBM'; src: url('/fonts/JetBrainsMonoNerdFont-Italic.ttf'); font-weight: 400; font-style: italic; }
+  @font-face { font-family: 'JBM'; src: url('/fonts/JetBrainsMonoNerdFont-BoldItalic.ttf'); font-weight: 700; font-style: italic; }
+  @font-face { font-family: 'RTL'; src: url('/fonts/CrudeRTL-Regular.ttf'); font-weight: 400; }
+  @font-face { font-family: 'RTL'; src: url('/fonts/CrudeRTL-Bold.ttf'); font-weight: 700; }
+  html, body { margin: 0; background: #000; overflow: hidden; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="out" width="1920" height="1080"></canvas>
+<script src="engine.js"></script>
+<script src="fx.js"></script>
+<script src="story.js"></script>
+<script>
+  const out = document.getElementById('out');
+  const ctx = out.getContext('2d', { alpha: false });
+  // renderCast paints one raw recorded frame, for review stills.
+  window.renderCast = async (name, t) => {
+    const g = await window.castGrid(name, t);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = '#0d1117'; ctx.fillRect(0, 0, 1920, 1080);
+    paintGrid(ctx, g, 0, 0, 1920 / (g.cols * CELL_W), { cursor: true });
+  };
+  (async () => {
+    for (const f of ['20px JBM', 'bold 20px JBM', 'italic 20px JBM', 'bold italic 20px JBM', '20px RTL', 'bold 20px RTL']) await document.fonts.load(f, 'aبت');
+    window.chartImage = new Image(); window.chartImage.src = '/assets/load.png'; await window.chartImage.decode();
+    window.crudeIcon = new Image(); window.crudeIcon.src = '/crude-icon.png'; await window.crudeIcon.decode();
+    window.renderPoster = () => poster(ctx);
+    if (window.initStory) await window.initStory(ctx);
+    window.videoReady = true;
+  })();
+</script>
+</body>
+</html>

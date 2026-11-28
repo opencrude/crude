@@ -1,0 +1,6 @@
+# Raw recordings and renders. The repository keeps the reviewed casts as
+# casts/*.cast.gz; personal names are removed from them first (see README).
+casts/*.cast
+casts/*.inject
+casts/*.done
+out/

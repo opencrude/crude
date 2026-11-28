@@ -26,7 +26,7 @@ them, are in [code layout](../reference/code-layout.md).
 | `text/` | Group: `anchor/`, `indentation/`, `jsonrepair/`, `snippet/`, `textdiff/`, `textencoding/`, `textsearch/`, `unidiff/`. |
 | `types/` | Group of neutral contracts by subject: `setting/`, `conversation/`, `insight/`, `statuscenter/`, `syntaxdata/`, `accounting/`, `activity/`, `attachment/`, `capability/`, `command/`, `control/`, `handover/`, `inspect/`, `jsondoc/`, `reasoning/`, `recovery/`, `toolresult/`. |
 | `internal/` | Group of shared support with no product rules: `buildinfo/`, `clientstate/`, `clipboard/`, `console/`, `crashlog/`, `filelink/`, `fileuri/`, `hostenv/`, `logger/`, `metrics/`, `network/`, `perfdata/`, `providersim/`, `retry/`, `sysload/`, `terminalvt/`, `testhome/`, `testsymlink/`, `testterminal/`. |
-| `tools/` | Group of development programs: `wiregen/`, `namesgate/`, `layoutcheck/`, `catalogimport/`, `coreshellobserver/`. |
+| `tools/` | Group of development programs: `wiregen/`, `namesgate/`, `layoutcheck/`, `catalogimport/`, `coreshellobserver/`, `castrec/`. |
 
 ## Application and runtime
 
@@ -91,6 +91,7 @@ them, are in [code layout](../reference/code-layout.md).
 | `insight/syntax/` | Bounded native syntax sessions, selected grammar/query pins, byte spans and syntax findings; not the canonical text owner or a semantic engine ([native syntax](../reference/native-syntax.md)). |
 | `insight/catalog/`, `tools/catalogimport/` | Languages, language servers and installable tools as validated data with provenance, detection through Linguist data, resource hints and release assets; generated from pinned sources by the development importer, plus editor data (comment tokens, formatters, grammar names) and runtime packs ([catalog](../reference/code-intelligence-catalog.md)). |
 | `tools/namesgate/` | Development gate: fails when product Go code names a language, tool or server that the catalog owns; reviewed exceptions in `allow.txt` ([names gate](../reference/code-intelligence-catalog.md#names-gate)). |
+| `tools/castrec/` | Development recorder for the demo video: runs a console program in a Windows pseudo console, drives it from a step script and writes an asciicast; `scripts/demo-video` plays the casts back ([demo video](../../scripts/demo-video/README.md)). |
 | `insight/project/` | Bounded passive compilation-database artifact observations with exact byte identity and detached argv/opaque command projections; not a project model, execution authority or semantic coverage. |
 | `insight/project/cmake/` | Bounded passive CMake File API artifact observations with exact byte identity and detached configuration/target projections; native-shell fragments stay opaque, and parsing grants no read/execute authority, freshness or semantic coverage. |
 | `insight/predictionbudget/` | Sessionless durable token reservations, single-attempt tickets and conservative unknown-usage settlement; library-only, not egress consent or an enabled editor request path. |

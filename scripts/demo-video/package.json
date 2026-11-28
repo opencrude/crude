@@ -1,0 +1,11 @@
+{
+  "name": "crude-demo-video",
+  "private": true,
+  "description": "Plays recorded Crude sessions back as the demo video. See README.md.",
+  "type": "module",
+  "dependencies": {
+    "@xterm/addon-unicode11": "0.8.0",
+    "@xterm/headless": "^5.5.0",
+    "puppeteer-core": "^25.19.0"
+  }
+}
