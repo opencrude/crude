@@ -70,7 +70,7 @@ Everything starts from `crude`. The table shows where each way of working lives.
 | **One file, fast** | Run `crude path/to/file`. The file opens in the full editor, with the folder tree closed and no project scan. Choose **Open folder as workspace** to get the whole project; your unsaved edits stay. |
 | **Several projects** | Open **Recent Workspaces** in the side rail, or **Switch Workspace** in the command palette. Work in the other projects keeps running. |
 | **Earlier sessions** | Open **Workspace** in the footer and choose **Sessions**. Previous sessions are listed by day. |
-| **A remote machine** | Run `crude --ssh build-host --workspace /srv/project` on your computer. The window stays local. Agents, language servers and terminals run on the server, and SSH alone is enough. |
+| **A remote machine** | Open **Remotes** in the side rail, add an SSH connection and connect, or run `crude --ssh build-host --workspace /srv/project`. The window stays local. Agents, language servers and terminals run on the server, and SSH alone is enough. |
 | **Automation** | Run `crude --mcp` so that another agent or a script can control a running Crude as an MCP server. It is read-only unless you allow more with `--mcp-effects`. |
 
 For a remote machine, use the same Crude build on both computers, set up key-based SSH and verify the server's host key first. See [remote sessions](docs/guides/core-shell-workflows.md#ssh-and-invocation-selection).
@@ -103,7 +103,7 @@ Right-to-left support is a v1 gate: it must not regress. See the [bidi reference
 
 ## The road to v1
 
-Crude is beta and ships often; see the [releases](https://github.com/opencrude/crude/releases). A version number alone does not make a release stable, so v1 has five gates. Each gate needs evidence on real hardware. The [stable v1 plan](docs/plans/stable-v1.md) holds the criteria, the order of work and what already ships.
+Crude is beta and ships often; see the [releases](https://github.com/opencrude/crude/releases). A version number alone does not make a release stable, so v1 has six gates. Each gate needs evidence on real hardware. The [stable v1 plan](docs/plans/stable-v1.md) holds the criteria, the order of work and what already ships.
 
 | Gate | What v1 requires | Status |
 |---|---|---|
@@ -112,6 +112,7 @@ Crude is beta and ships often; see the [releases](https://github.com/opencrude/c
 | **3. History import** | Browse, search and import sessions from widely used coding agents (Claude Code, Codex, Cursor, Gemini CLI, OpenCode and more) in a visual browser like [agent-dump](https://github.com/xingkaixin/agent-dump). | Open |
 | **4. Native ACP** | Run vendor agents over the [Agent Client Protocol](https://agentclientprotocol.com/) under your own login and subscription, within the vendor's terms. Crude does not copy, store or proxy your credentials. | Open |
 | **5. Bidirectional text** | Arabic, Persian and Hebrew ship today. They must not regress. | Shipped |
+| **6. Plugins** | A plugin platform in Lua or WebAssembly that gives plugins Crude's own TUI components, a registry with a browser in the product, and three complete plugins: an HTTP client in the class of the JetBrains HTTP Client and Postman, a database browser, and a notebook in the style of NotebookLM. Each core has its own plugins, and switching between local and remote cores never breaks the TUI. | Open |
 
 ## Build from source
 
@@ -164,7 +165,7 @@ Source builds use the `~/.crude-dev` profile, separate from the installed releas
 - [Code map](docs/architecture/code-map.md): which package owns what.
 - [Remote sessions](docs/guides/core-shell-workflows.md): the core, shells and SSH.
 - [Right-to-left text](docs/reference/bidi.md): how Crude arranges bidirectional text.
-- [Stable v1 plan](docs/plans/stable-v1.md): the five gates and the shipped baseline.
+- [Stable v1 plan](docs/plans/stable-v1.md): the six gates and the shipped baseline.
 
 ## Contributing
 

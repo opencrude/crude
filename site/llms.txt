@@ -15,7 +15,7 @@ Notes for agents helping a person:
 - [This site as Markdown](https://opencrude.github.io/index.md): install, features, FAQ
 - [README](https://github.com/opencrude/crude/blob/master/README.md): overview, install and first steps
 - [Documentation index](https://github.com/opencrude/crude/blob/master/docs/README.md): every reference and guide
-- [Stable v1 plan](https://github.com/opencrude/crude/blob/master/docs/plans/stable-v1.md): the five release gates (weak-machine smoothness, trampoline sandbox, history import, native ACP, bidirectional text) and the shipped baseline
+- [Stable v1 plan](https://github.com/opencrude/crude/blob/master/docs/plans/stable-v1.md): the six release gates (weak-machine smoothness, trampoline sandbox, history import, native ACP, bidirectional text, plugins) and the shipped baseline
 
 ## Feature references
 

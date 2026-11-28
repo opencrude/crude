@@ -165,9 +165,9 @@ documents to read before changing each area.
 
 ### Plans (active work only)
 
-- [Stable v1](plans/stable-v1.md): the five gates that make v1 a promise
-  (weak-machine smoothness, trampoline sandbox, history import, native ACP and
-  bidirectional text), built on the shipped baseline they apply to.
+- [Stable v1](plans/stable-v1.md): the six gates that make v1 a promise
+  (weak-machine smoothness, trampoline sandbox, history import, native ACP,
+  bidirectional text and plugins), built on the shipped baseline they apply to.
 
 - [Complete editor experience](plans/editor-parity.md) — audited gaps, one complete
   target UX, implementation owners and behavioral acceptance for later agents.

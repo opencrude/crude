@@ -19,9 +19,9 @@ change plus a map to the detailed contracts. Area-specific contracts live in
 Remove this section when the plan below is no longer active.
 
 The path to a stable v1 is tracked in [stable v1](docs/plans/stable-v1.md).
-Its five gates are release requirements: weak-machine smoothness, the trampoline
-sandbox, history import, native ACP and bidirectional text. Do not drop, rename
-or reorder a gate; change the plan first and say why.
+Its six gates are release requirements: weak-machine smoothness, the trampoline
+sandbox, history import, native ACP, bidirectional text and plugins. Do not
+drop, rename or reorder a gate; change the plan first and say why.
 
 Editor interaction gaps and the complete target experience are tracked in
 [Complete editor experience](docs/plans/editor-parity.md). Use its ownership,
