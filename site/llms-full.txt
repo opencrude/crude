@@ -2,9 +2,23 @@
 
 > Humans and agents, side by side. Crude is an agentic development environment (ADE) for your terminal: a real editor, language servers, terminals and Git, with a team of AI agents that remember how you work.
 
-Crude is free and open source (Apache-2.0 OR MIT) for Linux x86-64 and Windows x64. Beta.
+Crude is free and open source (Apache-2.0 OR MIT). It is cross-platform: Linux x86-64, Windows x64, and macOS from source. Beta.
 
 **Beta warning.** Crude and its agents can change files and run commands. Agent commands run with your user permissions; Crude is not a sandbox. Commit your work and keep backups. The installer shows this warning and asks for consent before it changes anything.
+
+## Ways to use Crude
+
+One binary covers several workflows.
+
+- A project workspace: run `crude` in a folder, or name it: `crude ~/code/example`. The session stays alive when the window closes.
+- One file, the full IDE: run `crude src/main.go`. The file opens, its folder becomes the workspace, and the folder tree stays closed until you ask for it.
+- Several workspaces in one window: open another workspace or session without leaving the terminal, and switch with the tabs and the command palette.
+- A remote machine over SSH: `crude --ssh build-host --workspace /srv/project` keeps the editor local and runs agents, language servers and terminals on the server.
+- From another program: `crude --mcp` offers Crude's control as an MCP server, so a script or another agent can drive a running Crude.
+
+## Right-to-left text
+
+Crude arranges bidirectional text itself: Arabic, Persian and Hebrew read correctly in the editor, the chat, the terminal and every dialog, even in terminals that show these languages reversed. The caret, selections, search matches and copied text stay in logical order.
 
 ## Install
 
@@ -125,7 +139,16 @@ No. Risky commands wait for your approval. If you turn on YOLO mode, hard blocks
 Nothing stops. A per-user core keeps sessions, agents and terminals running. Open Crude again to attach, locally or over SSH.
 
 **Is Crude a sandbox?**
-No. Crude is beta software and agent commands run with your user permissions. Commit your work, keep backups and review agent actions.
+No. Crude is beta software and agent commands run with your user permissions. Commit your work, keep backups and review agent actions. A trampoline sandbox, where risky work runs in a disposable microVM and the host core audits the traffic, is a v1 gate.
+
+**In which ways can I use Crude?**
+Open a project workspace with `crude`. Open one file with the full IDE with `crude path/to/file`. Keep several workspaces or sessions in one window. Run the core on a remote machine with `crude --ssh HOST --workspace PATH`. Or let another program drive a running Crude with `crude --mcp`.
+
+**Does Crude support right-to-left languages?**
+Yes. Crude arranges Arabic, Persian and Hebrew itself with UAX #9 and Arabic joining, in every pane, even in terminals that show these languages reversed. Editing, search and copy stay in logical order.
+
+**Can I keep using a subscription I already pay for?**
+Not yet. Crude uses your model accounts today. v1 adds native Agent Client Protocol support, so Crude can start a vendor agent under your own login without copying or sharing your credentials.
 
 ## Links
 

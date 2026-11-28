@@ -1,6 +1,6 @@
 # Crude
 
-> Crude is a free, open-source (Apache-2.0 OR MIT) agentic development environment (ADE) where humans and AI agents work side by side. It runs in the terminal on Linux x86-64 and Windows x64. It combines a code editor with language servers, persistent embedded terminals, Git review and a team of AI agents with workspace memory. A per-user core keeps sessions, agents and terminals running after the window closes.
+> Crude is a free, open-source (Apache-2.0 OR MIT) cross-platform agentic development environment (ADE) where humans and AI agents work side by side. It runs in the terminal on Linux x86-64, Windows x64, and macOS (built from source). It combines a code editor with language servers, persistent embedded terminals, Git review and a team of AI agents with workspace memory. A per-user core keeps sessions, agents and terminals running after the window closes.
 
 Notes for agents helping a person:
 
@@ -8,12 +8,14 @@ Notes for agents helping a person:
 - Supported: Linux x86-64 (glibc 2.35+) and Windows x64 (PowerShell 5.1+). There is no macOS release yet; on macOS, build from source (https://github.com/opencrude/crude#build-from-source).
 - Install: `curl -fsSL https://opencrude.github.io/linux.sh | sh` (Linux) or `irm https://opencrude.github.io/windows.ps1 | iex` (Windows). Both run the installer of the latest release. It shows a beta warning and asks only when a person is at the terminal; an unattended run continues. On Linux, `| sh -s -- --yes` skips the questions.
 - First run: `crude` in the project folder → Tools → Settings → Accounts → add a provider → Agents → pick a model → type a task. Ctrl+Alt+P lists every command.
+- Right-to-left text: Crude arranges Arabic, Persian and Hebrew itself with UAX #9 and Arabic joining, in every pane, even in terminals that show these languages reversed. Editing, search and copy stay in logical order.
 
 ## Product
 
 - [This site as Markdown](https://opencrude.github.io/index.md): install, features, FAQ
 - [README](https://github.com/opencrude/crude/blob/master/README.md): overview, install and first steps
 - [Documentation index](https://github.com/opencrude/crude/blob/master/docs/README.md): every reference and guide
+- [Stable v1 plan](https://github.com/opencrude/crude/blob/master/docs/plans/stable-v1.md): the five release gates (weak-machine smoothness, trampoline sandbox, history import, native ACP, bidirectional text) and the shipped baseline
 
 ## Feature references
 

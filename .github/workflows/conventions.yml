@@ -31,5 +31,10 @@ jobs:
         env:
           BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
         run: |
-          if [[ -z "$BASE" || "$BASE" =~ ^0+$ ]]; then BASE=origin/master; fi
+          # A force push replaces the previous tip, so github.event.before can
+          # name a commit this clone cannot see. Fall back to a commit that
+          # exists here: the push commit's parent, then the root commit.
+          if [[ -z "$BASE" || "$BASE" =~ ^0+$ ]] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            BASE="$(git rev-parse --verify --quiet HEAD^ || git rev-list --max-parents=0 HEAD | tail -1)"
+          fi
           make lint-new DOC_BASE="$BASE"

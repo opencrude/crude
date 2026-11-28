@@ -3,29 +3,29 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Crude — the agentic development environment (ADE) for your terminal</title>
-<meta name="description" content="Crude is an agentic development environment (ADE) where humans and AI agents work side by side: an editor with language servers, persistent terminals, Git review and agents with workspace memory. Free and open source for Linux and Windows.">
+<title>Crude: cross-platform agentic development environment (ADE) for the terminal</title>
+<meta name="description" content="Crude is an open-source, cross-platform agentic development environment (ADE) for the terminal. Agentic coding with subagents, a language-server editor, persistent terminals, Git review and workspace memory. Right-to-left text works in every pane.">
 <link rel="canonical" href="https://opencrude.github.io/">
 <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
 <meta name="theme-color" content="#0d1117">
 <meta name="color-scheme" content="dark">
 <meta name="author" content="opencrude">
 <meta name="application-name" content="Crude">
-<meta name="keywords" content="agentic development environment, ADE, terminal IDE, AI coding agent, agentic IDE, multi-agent coding, LSP editor, TUI IDE, open source IDE, AI pair programmer, Linux IDE, Windows terminal IDE, open-source models, local models, MCP, agent skills">
+<meta name="keywords" content="agentic development environment, ADE, agentic coding, agentic engineering, agentic IDE, terminal AI coding agent, AI-native development environment, context engineering, harness, subagents, multi-agent coding, AI coding agent, LSP editor, TUI IDE, open source IDE, cross-platform terminal IDE, terminal IDE, open-source models, local models, BYO model, MCP, agent skills, right-to-left IDE, RTL terminal editor, Arabic IDE, Hebrew IDE, bidi text editor, agent client protocol, ACP, agent sandbox">
 
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Crude">
 <meta property="og:locale" content="en_US">
 <meta property="og:url" content="https://opencrude.github.io/">
 <meta property="og:title" content="Crude — the agentic development environment">
-<meta property="og:description" content="Humans and agents, side by side. Editor, language servers, terminals, Git and a team of AI agents that remember how you work.">
+<meta property="og:description" content="Agentic coding in your terminal: subagents, a real editor, context that survives and a harness you can edit. Cross-platform. Right-to-left text works in every pane.">
 <meta property="og:image" content="https://opencrude.github.io/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta property="og:image:alt" content="The CRUDE wordmark in orange terminal type above the line: Humans and agents, side by side.">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Crude — the agentic development environment">
-<meta name="twitter:description" content="Humans and agents, side by side, in your terminal. Free and open source for Linux and Windows.">
+<meta name="twitter:description" content="Agentic coding in your terminal: subagents, a real editor, context that survives, a harness you can edit. Cross-platform, open source, with right-to-left text in every pane.">
 <meta name="twitter:image" content="https://opencrude.github.io/og.png">
 
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
@@ -63,10 +63,10 @@
       "@id": "https://opencrude.github.io/#app",
       "name": "Crude",
       "alternateName": ["Crude ADE", "Crude IDE"],
-      "description": "An agentic development environment (ADE) where humans and AI agents work side by side: an editor with language servers, persistent terminals, Git review and multi-agent AI with workspace memory.",
+      "description": "A cross-platform agentic development environment (ADE) where humans and AI agents work side by side: agentic coding with subagents in isolated worktrees, an editor with language servers, persistent terminals, Git review and workspace memory. Right-to-left text works in every pane, even in terminals that show it wrongly.",
       "applicationCategory": "DeveloperApplication",
       "applicationSubCategory": "Agentic development environment",
-      "operatingSystem": "Linux (x86-64, glibc 2.35+), Windows 10/11 (x64)",
+      "operatingSystem": "Cross-platform: Linux (x86-64, glibc 2.35+), Windows 10/11 (x64), macOS from source",
       "license": "https://github.com/opencrude/crude/blob/master/LICENSE-APACHE",
       "isAccessibleForFree": true,
       "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"},
@@ -88,7 +88,9 @@
         "Errand, a background workspace agent that investigates problems",
         "Plan mode, goals with an independent verifier and session fork",
         "Agent Skills and MCP servers with exact install previews",
-        "Any open-source or closed model, hosted or local"
+        "Any open-source or closed model, hosted or local",
+        "Right-to-left text arranged by Crude, not by the terminal: Arabic, Persian and Hebrew in every pane",
+        "Entry modes: a project workspace, one file with the full IDE, several workspaces, a remote machine over SSH, or another program over MCP"
       ]
     },
     {
@@ -100,7 +102,10 @@
         {"@type": "Question", "name": "Which AI models can Crude use?", "acceptedAnswer": {"@type": "Answer", "text": "Any model you like: open-source or closed, from a hosted provider or running on your own machine. You choose a model for each agent role."}},
         {"@type": "Question", "name": "Do agents run commands without asking?", "acceptedAnswer": {"@type": "Answer", "text": "No. Risky commands wait for your approval. If you turn on YOLO mode, hard blocks and restore safeguards still apply, and Local History keeps a snapshot before agent edits."}},
         {"@type": "Question", "name": "What happens when I close the window?", "acceptedAnswer": {"@type": "Answer", "text": "Nothing stops. A per-user core keeps sessions, agents and terminals running. Open Crude again to attach, locally or over SSH."}},
-        {"@type": "Question", "name": "Is Crude a sandbox?", "acceptedAnswer": {"@type": "Answer", "text": "No. Crude is beta software and agent commands run with your user permissions. Commit your work, keep backups and review agent actions."}}
+        {"@type": "Question", "name": "Is Crude a sandbox?", "acceptedAnswer": {"@type": "Answer", "text": "No. Crude is beta software and agent commands run with your user permissions. Commit your work, keep backups and review agent actions. A trampoline sandbox, where risky work runs in a disposable microVM and the host core audits the traffic, is a v1 gate."}},
+        {"@type": "Question", "name": "In which ways can I use Crude?", "acceptedAnswer": {"@type": "Answer", "text": "Open a project workspace with crude. Open one file with the full IDE with crude path/to/file. Keep several workspaces or sessions in one window. Run the core on a remote machine with crude --ssh HOST --workspace PATH. Or let another program drive a running Crude with crude --mcp."}},
+        {"@type": "Question", "name": "Does Crude support right-to-left languages?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Crude arranges Arabic, Persian and Hebrew itself with UAX #9 and Arabic joining, in every pane, even in terminals that show these languages reversed. Editing, search and copy stay in logical order."}},
+        {"@type": "Question", "name": "Can I keep using a subscription I already pay for?", "acceptedAnswer": {"@type": "Answer", "text": "Not yet. Crude uses your model accounts today. v1 adds native Agent Client Protocol support, so Crude can start a vendor agent under your own login without copying or sharing your credentials."}}
       ]
     }
   ]
@@ -116,7 +121,7 @@
 <script type="text/llms.txt">
 # Crude — notes for AI agents
 
-Crude is a free, open-source (Apache-2.0 OR MIT) agentic development environment (ADE): editor + language servers + embedded terminals + Git review + multi-agent AI with workspace memory. A per-user core keeps sessions, agents and terminals alive after the window closes.
+Crude is a free, open-source (Apache-2.0 OR MIT) cross-platform agentic development environment (ADE): editor + language servers + embedded terminals + Git review + multi-agent AI with workspace memory. A per-user core keeps sessions, agents and terminals alive after the window closes. It arranges right-to-left text itself, so Arabic, Persian and Hebrew work in every pane.
 
 ## Install (ask the person first; the installer shows a beta warning)
 - Linux x86-64 (glibc 2.35+): curl -fsSL https://opencrude.github.io/linux.sh | sh
@@ -129,6 +134,7 @@ Crude is a free, open-source (Apache-2.0 OR MIT) agentic development environment
 2. Tools → Settings → Accounts: add a provider account.
 3. Agents: select a model. Type a task and press Enter.
 Ctrl+Alt+P shows every command and its shortcut.
+Right-to-left text: Crude arranges Arabic, Persian and Hebrew itself, so it works in terminals that show these languages reversed.
 
 ## Links
 - Source: https://github.com/opencrude/crude
@@ -644,7 +650,10 @@ Ctrl+Alt+P shows every command and its shortcut.
     <details><summary>Which AI models can Crude use?</summary><p>Any model you like: open-source or closed, from a hosted provider or running on your own machine. You choose a model for each agent role.</p></details>
     <details><summary>Do agents run commands without asking?</summary><p>No. Risky commands wait for your approval. If you turn on YOLO mode, hard blocks and restore safeguards still apply, and Local History keeps a snapshot before agent edits.</p></details>
     <details><summary>What happens when I close the window?</summary><p>Nothing stops. A per-user core keeps sessions, agents and terminals running. Open Crude again to attach, locally or over SSH.</p></details>
-    <details><summary>Is Crude a sandbox?</summary><p>No. Crude is beta software and agent commands run with your user permissions. Commit your work, keep backups and review agent actions.</p></details>
+    <details><summary>Is Crude a sandbox?</summary><p>No. Crude is beta software and agent commands run with your user permissions. Commit your work, keep backups and review agent actions. A trampoline sandbox, where risky work runs in a disposable microVM and the host core audits the traffic, is a v1 gate.</p></details>
+    <details><summary>In which ways can I use Crude?</summary><p>Open a project workspace with <code>crude</code>. Open one file with the full IDE with <code>crude path/to/file</code>. Keep several workspaces or sessions in one window. Run the core on a remote machine with <code>crude --ssh HOST --workspace PATH</code>. Or let another program drive a running Crude with <code>crude --mcp</code>.</p></details>
+    <details><summary>Does Crude support right-to-left languages?</summary><p>Yes. Crude arranges Arabic, Persian and Hebrew itself with UAX #9 and Arabic joining, in every pane, even in terminals that show these languages reversed. Editing, search and copy stay in logical order.</p></details>
+    <details><summary>Can I keep using a subscription I already pay for?</summary><p>Not yet. Crude uses your model accounts today. v1 adds native Agent Client Protocol support, so Crude can start a vendor agent under your own login without copying or sharing your credentials.</p></details>
   </section>
 
 </main>

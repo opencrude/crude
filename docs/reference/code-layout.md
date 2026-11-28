@@ -186,6 +186,11 @@ the same change. Import the owning package instead of re-exporting its types.
 | Import aliases only to avoid a collision, lowercase | revive `import-alias-naming` and `redundant-import-alias` |
 | Every new exported name has a doc comment that starts with its name | revive `exported`, on code added since the upstream branch (`make lint-new`) |
 
+The CI gate compares with the commit before the push. A force push replaces that
+commit, so when the base commit is missing the gate falls back to the parent of
+the pushed commit. A rewritten history therefore lints the commit it validates,
+not the whole repository.
+
 ## Rules for review
 
 A machine cannot judge these; reviewers do:

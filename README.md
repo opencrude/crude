@@ -5,8 +5,15 @@
 <h1 align="center">Crude</h1>
 
 <p align="center">
-  An open-source, terminal-native agentic development environment (ADE) for Linux and Windows.<br>
-  AI coding agents, an LSP-powered editor, persistent terminals, Git review, and workspace memory.
+  <strong>An open-source, cross-platform agentic development environment (ADE) for the terminal.</strong><br>
+  Agentic coding with subagents, a language-server editor, persistent terminals, Git review and workspace memory.<br>
+  Linux, Windows, and macOS from source. Right-to-left text works in every pane.
+</p>
+
+<p align="center">
+  <a href="https://github.com/opencrude/crude/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/opencrude/crude?include_prereleases&amp;style=flat-square"></a>
+  <a href="LICENSE-APACHE"><img alt="License: Apache-2.0 OR MIT" src="https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-blue?style=flat-square"></a>
+  <a href="https://opencrude.github.io/"><img alt="Website" src="https://img.shields.io/badge/website-opencrude.github.io-informational?style=flat-square"></a>
 </p>
 
 <p align="center">
@@ -21,6 +28,14 @@
 >
 > Crude and its agents can change files and run commands with your user permissions. Crude is not a security sandbox. Commit your work, keep backups, and review agent actions.
 
+## What Crude is
+
+Crude is an agentic development environment (ADE) that runs in your terminal. It is an editor, a terminal and a Git view that agents share with you. You read and edit the code. Agents work in the same workspace with real tools. Every change they make stays reviewable: a diff, a report with evidence, and Local History to restore it.
+
+Crude is the harness around the agent. Project guidance, prompts, tools, Skills and MCP servers stay editable. Context is compacted with the whole history kept, and workspace memory carries decisions forward. Subagents work in isolated Git worktrees and report back.
+
+Use Crude when you want the whole development loop in one window, on a laptop or over SSH. It is cross-platform: Linux x86-64, Windows x64, and macOS when built from source. It works with any model, hosted or local, open or closed.
+
 ## Features
 
 - **AI coding agents:** Delegate tasks to parallel agents, with optional isolated Git worktrees. Use plan mode, goals, and session forks, then review reports with evidence.
@@ -29,6 +44,37 @@
 - **Workspace memory:** Retain evidence-backed decisions, conventions, and lessons across sessions. Search past sessions and edit or remove memories.
 - **Review and recovery:** Stage or discard files and hunks, approve risky commands, and restore changes from Local History.
 - **Models and tools:** Choose hosted or local models for each agent role. Extend agents with Agent Skills and MCP servers.
+- **Right-to-left text:** Arabic, Persian and Hebrew work in every pane, even in terminals that draw them wrongly or not at all.
+
+## Ways to use Crude
+
+One binary covers several workflows. Pick the one that matches the task.
+
+**A project workspace.** Run `crude` in a folder, or name the folder: `crude ~/code/example`. Crude opens the editor, the terminal, Git and the agents for that project. The session stays alive when you close the window; open Crude again to attach.
+
+**One file, the full IDE.** Run `crude src/main.go`. Crude opens the file, uses its folder as the workspace, and keeps the folder tree closed. Language servers stay off until you ask for them. This is the fast path from "I need to read this file" to a real editor with agents beside it.
+
+**Several workspaces in one window.** Open another workspace or another session without leaving the terminal. Switch between them with the tabs and the command palette; the core keeps each one running.
+
+**A remote machine over SSH.** Run `crude --ssh build-host --workspace /srv/project` on your computer. The editor stays local. Agents, language servers and terminals run on the server, and SSH alone is enough; you do not expose another port.
+
+**From another program.** Run `crude --mcp` to offer Crude's own control as an MCP server. Another agent or a script can then drive a running Crude without an interactive window.
+
+## Right-to-left and bidirectional text
+
+Crude arranges bidirectional text itself, so Arabic, Persian and Hebrew read correctly in the editor, the chat, the terminal and every dialog. Windows Terminal reverses and unjoins Persian; Crude sends arranged cells and does not depend on the terminal for it.
+
+Editing stays logical. The caret, selections, search matches, diagnostics and copied text follow the source order of the code, not the order on screen. Code tokens keep their own direction inside mixed sentences. See [right-to-left and bidirectional text](docs/reference/bidi.md).
+
+## The road to v1
+
+Crude is at v0.x. A version number alone does not make a release stable, so v1 has five gates. Each gate needs evidence in this repository, on real hardware. The [stable v1 plan](docs/plans/stable-v1.md) holds the current criteria and the work that remains.
+
+1. **Smooth on a weak laptop.** No visible slowdown on a ThinkPad T450-class machine: a dual-core mobile CPU, 8 GiB of RAM and an SSD. The existing smoothness targets (p95 input-to-paint under 16 ms, no stall over 32 ms, idle at 2 FPS or more) must hold there, measured on that hardware.
+2. **Trampoline sandbox.** A sandboxed Crude core runs the untrusted work in a microVM, and the master core on the host hides host details and audits every message that enters or leaves the sandbox. Built on [microsandbox](https://github.com/superradcompany/microsandbox).
+3. **History import.** Bring sessions from other coding agents (Codex, Claude Code, Cursor and others) into Crude, and browse, search and read them in the product, in the shape of [agent-dump](https://github.com/xingkaixin/agent-dump).
+4. **Native ACP.** Speak the [Agent Client Protocol](https://agentclientprotocol.com/) so Crude can run the vendor agents a person already pays for, under that person's own login, with no credential sharing.
+5. **Bidirectional text cannot regress.** Arabic, Persian and Hebrew ship today. The v1 gate keeps them correct.
 
 ## Installation
 
