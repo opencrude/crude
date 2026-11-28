@@ -3,7 +3,7 @@
 //   node music.mjs cues.json out.wav
 //
 // cues.json: { bpm, duration, sections: [{start, end, kind}],
-//   ticks: [t], spectro, stinger }
+//   ticks: [t], clicks: [t], zooms: [t], glitches: [t], spectro, stinger }
 // Section kinds: intro, build, work, break, outro. Everything is generated
 // sample by sample, so the result is deterministic.
 
@@ -154,6 +154,43 @@ for (let b = 0; b * bar < cue.duration; b++) {
   }
 }
 for (const t of cue.ticks) tick(t, 0.5);
+
+// Pointer clicks, camera pushes and signal breaks: short and quiet.
+function clickSound(t0) {
+  const i0 = Math.round(t0 * SR), len = Math.round(0.03 * SR);
+  let lp = 0;
+  for (let i = 0; i < len && i0 + i < N; i++) {
+    const t = i / SR, n = rand();
+    lp += 0.25 * (n - lp);
+    const v = (lp * 0.8 + Math.sin(2 * Math.PI * 1500 * t) * 0.2) * Math.exp(-t * 220) * 0.16;
+    busFx[0][i0 + i] += v; busFx[1][i0 + i] += v;
+  }
+}
+function push(t0) {
+  const i0 = Math.round((t0 - 0.05) * SR), len = Math.round(0.42 * SR);
+  let lp = 0, ph = 0;
+  for (let i = 0; i < len && i0 + i < N; i++) {
+    const t = i / SR, x = t / 0.42, n = rand();
+    const k = 0.02 + 0.25 * x;
+    lp += k * (n - lp);
+    ph += (2 * Math.PI * (520 + 900 * x)) / SR;
+    const env = Math.sin(Math.PI * Math.min(1, x * 1.15)) ** 2;
+    const v = (lp * 0.5 + Math.sin(ph) * 0.05) * env * 0.11;
+    busFx[0][i0 + i] += v * (1 - 0.3 * x); busFx[1][i0 + i] += v * (0.7 + 0.3 * x);
+  }
+}
+function signalBreak(t0) {
+  const i0 = Math.round(t0 * SR), len = Math.round(0.16 * SR);
+  let hold = 0;
+  for (let i = 0; i < len && i0 + i < N; i++) {
+    if (i % 24 === 0) hold = rand() * (rand() > 0.6 ? 1 : 0.25);
+    const env = 1 - i / len;
+    busDry[i0 + i] += hold * env * 0.07;
+  }
+}
+for (const t of cue.clicks || []) clickSound(t);
+for (const t of cue.zooms || []) push(t);
+for (const t of cue.glitches || []) signalBreak(t);
 
 // Text drawn into the spectrogram: each lit pixel of a 5x7 font is a sine
 // tone in a high band, too quiet to notice under the mix.

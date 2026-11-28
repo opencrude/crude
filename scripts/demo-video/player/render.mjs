@@ -3,10 +3,12 @@
 //   node player/render.mjs --out video.mp4 [--from S --to S] [--fps 60] [--cues cues.json]
 //   node player/render.mjs --stills 3,12.5 --dir stills
 //   node player/render.mjs --cast r2 --at mark+1,40 --dir stills   (raw cast frames)
+//   node player/render.mjs --list                                  (the shot list)
 //
 // The terminal state comes from @xterm/headless, a real terminal emulator.
 // The page paints the cells with the same fonts Crude uses in Windows
-// Terminal and adds camera moves, captions and transitions from story.js.
+// Terminal and adds the pointer, camera inserts, captions and transitions
+// from story.js.
 
 import { createServer } from 'node:http';
 import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -48,7 +50,12 @@ class Clip {
     this.hdr = JSON.parse(lines[0]);
     this.ev = lines.slice(1).map((l) => JSON.parse(l)).filter((e) => e[1] === 'o');
     this.marks = {};
-    for (const l of lines.slice(1)) { const e = JSON.parse(l); if (e[1] === 'm') this.marks[e[2]] = e[0]; }
+    this.inputs = [];
+    for (const l of lines.slice(1)) {
+      const e = JSON.parse(l);
+      if (e[1] === 'm') this.marks[e[2]] = e[0];
+      if (e[1] === 'i') this.inputs.push([e[0], e[2]]);
+    }
     this.reset();
   }
   reset() {
@@ -124,9 +131,18 @@ page.on('console', (m) => console.error('page:', m.text()));
 page.on('pageerror', (e) => console.error('page error:', e.message));
 await page.exposeFunction('castGrid', (name, t) => clip(name).at(t));
 await page.exposeFunction('castMarks', (name) => clip(name).marks);
+await page.exposeFunction('castInputs', (name) => clip(name).inputs);
 await page.goto(`http://127.0.0.1:${port}/index.html?render=1`);
 await page.waitForFunction('window.videoReady === true', { timeout: 60000 });
 const { duration, fps } = await page.evaluate(() => ({ duration: window.DURATION, fps: window.FPS }));
+if (args.list) {
+  // Prints the shot list and stops.
+  const rows = await page.evaluate(() => window.SHOTS.map((s) => [s.start, s.end, s.cast || '-', typeof s.mark === 'string' ? s.mark : s.mark.name, s.caption || '']));
+  for (const [a, b, c, m, cap] of rows) console.log(`${a.toFixed(2).padStart(7)} ${b.toFixed(2).padStart(7)}  ${c.padEnd(3)} ${m.padEnd(16)} ${cap}`);
+  await browser.close();
+  server.close();
+  process.exit(0);
+}
 if (args.cues) { writeFileSync(resolve(args.cues), JSON.stringify(await page.evaluate(() => window.CUES), null, 1)); console.log('wrote cues', args.cues); }
 
 async function frame(t) {

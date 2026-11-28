@@ -92,7 +92,11 @@ function drawBox(ctx, ch, x, y, cw, chh, color, s) {
 }
 
 function drawBlock(ctx, ch, x, y, cw, chh, color) {
-  const f = (a, b, w, h) => { ctx.fillStyle = color; ctx.fillRect(x + a * cw, y + b * chh, w * cw + 0.5, h * chh + 0.5); };
+  // Edges snap to whole pixels, so neighbouring blocks meet without seams.
+  const f = (a, b, w, h) => {
+    const x0 = Math.round(x + a * cw), y0 = Math.round(y + b * chh), x1 = Math.round(x + (a + w) * cw), y1 = Math.round(y + (b + h) * chh);
+    ctx.fillStyle = color; ctx.fillRect(x0, y0, Math.max(1, x1 - x0), Math.max(1, y1 - y0));
+  };
   switch (ch) {
     case '\u2588': f(0, 0, 1, 1); return true;
     case '\u2580': f(0, 0, 1, 0.5); return true;
@@ -204,4 +208,85 @@ function underline(ctx, g, k, x, y, w, h, s) {
   ctx.fillRect(x, y + h - 2.5 * s, w, Math.max(1, s * 1.1));
 }
 
-if (typeof window !== 'undefined') Object.assign(window, { THEME, FAMILY, CELL_W, CELL_H, EASE, clamp, prog, lerp, hex, paintGrid });
+// ---------- text substitution ----------
+// The film may relabel a few words on screen (for example the model name).
+// Each cell maps to one character of rowText, so indexes are columns.
+function rowText(g, y) {
+  let s = '';
+  for (let x = 0; x < g.cols; x++) {
+    const c = g.ch[y * g.cols + x];
+    s += c === '' ? '\0' : c.length === 1 ? c : '\u0001';
+  }
+  return s;
+}
+function cloneGrid(g) {
+  return { ...g, ch: g.ch.slice(), fg: g.fg.slice(), bg: g.bg.slice(), fl: g.fl.slice() };
+}
+// replaceAt writes text over the n cells at (x, y) and keeps the layout
+// around it: right-aligned text keeps its right edge, text followed by a gap
+// is padded, and text followed by more text pushes the words on its left
+// into the nearest gap.
+function replaceAt(g, y, x, n, text) {
+  const cols = g.cols, row = y * cols, end = x + n, d = n - text.length;
+  const k0 = row + x, style = [g.fg[k0], g.bg[k0], g.fl[k0] & ~64];
+  const blank = (i) => (!g.ch[row + i] || g.ch[row + i] === ' ');
+  const clear = (i) => { g.ch[row + i] = ' '; g.fl[row + i] &= ~(64 | 4); };
+  const put = (at) => {
+    for (let i = 0; i < text.length && at + i < cols; i++) {
+      const k = row + at + i;
+      g.ch[k] = text[i]; [g.fg[k], g.bg[k], g.fl[k]] = style;
+    }
+  };
+  let tail = true;
+  for (let i = end; i < cols; i++) if (!blank(i)) { tail = false; break; }
+  if (d < 0) { put(x); return; }
+  if (tail && x > cols / 2) { for (let i = x; i < x + d; i++) clear(i); put(x + d); return; }
+  if (end >= cols || (blank(end) && (end + 1 >= cols || blank(end + 1)))) {
+    put(x); for (let i = x + text.length; i < end; i++) clear(i); return;
+  }
+  let gap = -1;
+  for (let i = x - 1; i > 0; i--) if (blank(i) && blank(i - 1)) { gap = i; break; }
+  if (gap < 0 || gap + d >= x) { put(x); for (let i = x + text.length; i < end; i++) clear(i); return; }
+  for (let i = x - 1; i > gap; i--) {
+    const a = row + i, b = row + i + d;
+    g.ch[b] = g.ch[a]; g.fg[b] = g.fg[a]; g.bg[b] = g.bg[a]; g.fl[b] = g.fl[a];
+  }
+  for (let i = gap + 1; i <= gap + d; i++) clear(i);
+  put(x + d);
+}
+// substitute applies [from, to] rules to rows y0..y1 and returns a new grid
+// when anything changed. The cached grid of a cast is never modified.
+function substitute(g, rules, y0 = 0, y1 = g.rows - 1) {
+  let out = null;
+  for (let y = y0; y <= Math.min(y1, g.rows - 1); y++) {
+    for (const [from, to] of rules) {
+      let line = rowText(out || g, y), at = line.indexOf(from);
+      while (at >= 0) {
+        out = out || cloneGrid(g);
+        replaceAt(out, y, at, from.length, to);
+        line = rowText(out, y);
+        at = line.indexOf(from, at + Math.max(1, to.length));
+      }
+    }
+  }
+  return out || g;
+}
+
+// ---------- synthetic terminals ----------
+// makeGrid and put build a terminal screen for the staged shell scenes.
+function makeGrid(cols, rows) {
+  const n = cols * rows;
+  return { cols, rows, ch: new Array(n).fill(' '), fg: new Array(n).fill(-1), bg: new Array(n).fill(-1), fl: new Array(n).fill(0), cx: 0, cy: 0, cv: false };
+}
+function put(g, x, y, str, fg = -1, fl = 0) {
+  if (y < 0 || y >= g.rows) return x;
+  for (const c of str) {
+    if (x >= g.cols) break;
+    const k = y * g.cols + x;
+    g.ch[k] = c; g.fg[k] = fg; g.fl[k] = fl;
+    x++;
+  }
+  return x;
+}
+
+if (typeof window !== 'undefined') Object.assign(window, { THEME, FAMILY, CELL_W, CELL_H, EASE, clamp, prog, lerp, hex, paintGrid, substitute, makeGrid, put });

@@ -28,7 +28,7 @@
 </p>
 
 <p align="center">
-  <a href="assets/crude-demo.mp4"><img src="assets/crude-demo.png" width="860" alt="Watch the Crude demo (1:41). Install Crude, give two agents a rate limiter to build, review the diff and open the load plot in the terminal."></a>
+  <a href="assets/crude-demo.mp4"><img src="assets/crude-demo.png" width="860" alt="Watch the Crude demo (2:17). Install Crude from a Linux terminal, pick an account and model, let two agents build a rate limiter, edit by hand, let Errand set up a language server, check cost per model and read Arabic, Persian and Hebrew."></a>
 </p>
 
 > [!WARNING]
